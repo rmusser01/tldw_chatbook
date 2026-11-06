@@ -410,8 +410,11 @@ class ConsoleReadinessConfigProjection:
             getattr(app, "app_config", None),
         )
 
-    def run(self, body: Callable[[], Any]) -> bool:
-        """Defer a cold owner; use only its own last mapping during expiry."""
+    def run(self, body: Callable[[], Any], *, life: float | None = None) -> bool:
+        """Defer a cold owner; use only its own last mapping during expiry.
+
+        ``life`` re-reads a display younger than ``max_age`` (``warm()``).
+        """
         screen = self.screen
         runtime = _readiness_runtime(screen)
         if getattr(screen, "_closing", False) or getattr(runtime, "_disposed", False):
@@ -422,9 +425,10 @@ class ConsoleReadinessConfigProjection:
             and self.value is not None
             and self._runtime_owner is runtime
         )
-        life = self.max_age
-        if getattr(screen, "_console_transcript_sync_timer", None) is not None:
-            life *= REFRESH_AHEAD_SHARE
+        if life is None:
+            life = self.max_age
+            if getattr(screen, "_console_transcript_sync_timer", None) is not None:
+                life *= REFRESH_AHEAD_SHARE
         now = time.monotonic()
         tokenizer_due = any(
             slot.asked and not slot.prepared and now >= slot.retry_at
@@ -500,7 +504,10 @@ class ConsoleReadinessConfigProjection:
         ):
             return False
         key = self._key()
-        self.run(lambda: None)
+        # TASK-38967: a proof handed back close to its expiry expired in the
+        # FULL render that followed, which refused it and replayed the whole
+        # sync 0.2 s later; re-read one past the run poll's refresh-ahead share.
+        self.run(lambda: None, life=self.max_age * REFRESH_AHEAD_SHARE)
         if self.pending:
             await self._settled.wait()
         return (

@@ -172,6 +172,37 @@ async def test_a_projection_rereads_an_aging_display_ahead_of_its_expiry(
 
 
 @pytest.mark.asyncio
+async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
+    monkeypatch,
+):
+    """TASK-38967: a FULL sync's warm-up never hands back a proof about to expire.
+
+    ``warm()`` returned True for any display younger than its 1 s life, while
+    ``run()`` re-reads one only once it is that old, so a 0.99 s proof came
+    back as warm. The render that followed refused it as expired, and the
+    whole sync replayed 0.2 s later (11 of 191 warm-ups in three mounted files
+    at load 9-11). The warm-up now re-reads a display past half its life, the
+    share the run poll's projections already refresh ahead at.
+    """
+    clock = _install_clock(monkeypatch)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            projection = await _fresh_display(console)
+            console._stop_console_transcript_sync_timer()  # No run poll.
+            await until(lambda: not projection.pending, timeout=30)
+
+            clock.now += projection.max_age - 0.01
+            assert await projection.warm()
+            clock.now += 0.05  # The FULL sync's own render takes time.
+            result, _ops = _project(console)
+            assert result is True, (
+                "the render refused the display its warm-up had just handed back"
+            )
+
+
+@pytest.mark.asyncio
 async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_tick(
     monkeypatch,
 ):

@@ -1,8 +1,11 @@
 ---
 id: TASK-38967
 title: "Console readiness warm-up hands back a display proof about to expire, so the FULL sync it prepared refuses and replays 0.2 s later"
-status: To Do
+status: Done
+assignee:
+  - '@claude'
 created_date: 2026-11-06 01:21
+updated_date: 2026-11-06 17:27
 labels:
 - follow-up
 - console
@@ -56,8 +59,56 @@ None of them is on a PR lane. Each passed 6 of 6 here.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Measured first: over a stated workload, the number of FULL syncs whose warm-up returned True but whose render refused on proof age is counted before and after the change; if a refresh-ahead margin does not reduce it, the notes record the numbers and the product stays unchanged
-- [ ] #2 If changed, warm-up re-reads a proof within a margin of max_age before returning True, so the render that follows it does not refuse on age; a deterministic test with the proof aged to max_age minus a small epsilon is red on dev
-- [ ] #3 The margin adds no config read to an idle Console, with re-reads per idle minute measured before and after
-- [ ] #4 The three tests assert that their sync rendered, or retry as TASK-38745's _prepared does, and pass 10 of 10 -n 4 runs with the load recorded
+- [x] #1 Measured first: over a stated workload, the number of FULL syncs whose warm-up returned True but whose render refused on proof age is counted before and after the change; if a refresh-ahead margin does not reduce it, the notes record the numbers and the product stays unchanged
+- [x] #2 If changed, warm-up re-reads a proof within a margin of max_age before returning True, so the render that follows it does not refuse on age; a deterministic test with the proof aged to max_age minus a small epsilon is red on dev
+- [x] #3 The margin adds no config read to an idle Console, with re-reads per idle minute measured before and after
+- [x] #4 The three tests assert that their sync rendered, or retry as TASK-38745's _prepared does, and pass 10 of 10 -n 4 runs with the load recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Measure on the base first: run the three named files 5 times at `-n 4` under a call-through probe that counts FULL syncs whose warm-up returned True and whose render (`project_console_tick`) then refused on proof age, plus the display re-reads. Measure an idle Console's re-reads over a minute.
+2. If a refresh-ahead margin can help, have `ConsoleReadinessConfigProjection.warm()` re-read a proof past `REFRESH_AHEAD_SHARE` of its life (the share the run poll's projections already use) before it returns, so the FULL render that follows gets a fresh proof. `run()` takes the shorter life as a keyword; its other callers keep theirs.
+3. Add a deterministic test with the checked display's clock replaced: age the proof to `max_age` minus a small epsilon, warm it, let the render take a little time, and project. Show it red on the base.
+4. Re-measure the same workload and the idle minute on the branch.
+5. Make the three tests retry until their sync renders, as TASK-38745's `_prepared` does, and run them 10 times at `-n 4`, recording the load.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Approach.** `ConsoleReadinessConfigProjection.warm()` now re-reads a display that is past `REFRESH_AHEAD_SHARE` (half) of its 1 s life before it returns. That is the share the run poll's projections already refresh ahead at, so the FULL render that follows starts with a fresh proof. `run()` takes the shorter life as a keyword (`life=`), and every other caller keeps the life it had. An idle Console calls `warm()` only from a FULL sync's preparation, so idle cost is unchanged.
+
+**Measured (AC#1).** Workload: the three named files, `-n 4`, through run.sh. A call-through probe (`r11c_warm_probe`, loaded with `PYTEST_PLUGINS` so that xdist workers and private-profile children load it too; not committed) wraps `prepare_console_presentation_sync`, `project_console_tick` and `_checked_display_status`. It counts each FULL sync whose warm-up returned True, and whether that sync's own render then refused on proof age or for another reason.
+
+| Base and branch, interleaved, 6 rounds each, load 44-54 | base | branch |
+|---|---|---|
+| FULL syncs whose warm-up returned True | 127 | 125 |
+| ... warm-up handed back a proof at least 0.5 s old | 39 | 0 |
+| ... at least 0.9 s old | 8 | 0 |
+| ... render refused on proof age | 1 | 0 |
+| ... render refused for another reason (all on `storage._lock.acquire(blocking=False)`) | 11 | 11 |
+| ... render returned False, so the whole sync replayed | 11 | 9 |
+| Checked-display re-reads | 112 | 138 |
+
+- Earlier sequential sets, not interleaved, agree on the age figures. Base, 10 runs: 209 FULL syncs, 9 warm-ups at least 0.9 s old, 2 age refusals. Branch, 10 runs: 223 FULL syncs, 0 and 0.
+- **What the margin does not fix.** The remaining replays are storage-admission lock contention, not age. In the interleaved base arm, 8 of the 35 FULL warm-ups that re-read were refused on that lock, against 3 of the 92 that did not re-read. The branch showed 7 of 61 against 4 of 64.
+  - So a render straight after a re-read meets a busy storage lock more often. These files also write config, which both invalidates the display and takes storage locks, so that correlation may be the tests' own.
+  - The margin roughly doubles the warm-ups that re-read (35 -> 61), and the lock refusals stayed level (11 and 11). Listed as a proposed follow-up, not changed here.
+- **Cost.** About 23% more checked-display re-reads while FULL syncs run (112 -> 138). They are off-loop reads.
+
+**AC#2.** `Tests/UI/test_console_projection_reads_off_loop.py::test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it` replaces the checked display's clock and stops the run poll. It ages the proof to `max_age - 0.01`, awaits `warm()`, advances 0.05 s for the render, and projects.
+- Base: red, `the render refused the display its warm-up had just handed back` (`False is True`).
+- Fix: green.
+
+**AC#3.** An idle Console minute (send harness at 160x45, after a 3 s settle; scratch probe `test_r11c_idle_rereads.py`) made 0 checked-display re-reads, 0 warm-ups and 0 FULL preparations. That held on both base and branch, in 2 interleaved runs each, at load 20-53.
+
+**AC#4.** The three files now call `sync_rendered` (in `test_console_pending_facts_cold_readiness.py`), which retries warm-up plus sync until the sync renders, as TASK-38745's `_prepared` does.
+- 10 of 10 runs at `-n 4` passed, 3 tests each, at load 26-62.
+- Before this change, each file had passed 6 of 6 for the filer.
+
+**Covering.** 18 files that use the readiness projection, `prepare_console_presentation_sync` or the checked display, at `-n 4` with `-p no:randomly`, run on head and on base with the same command. Head: 2 failed, 244 passed. Base: 2 failed, 242 passed. The same 2 nodes failed on both (`test_console_readiness_config_projection.py::test_actual_mode_bar_defers_cold_confi…` and `test_console_shared_context_policy.py::test_actual_settings_open_waits_for_shared_c…`). Head's 2 extra passes are the new tests.
+
+**Files:** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/UI/test_console_pending_facts_cold_readiness.py`, `Tests/UI/test_console_pending_facts_direct_control_cold_readiness.py`, `Tests/UI/test_first_persistence_getter_attribution.py`.
+<!-- SECTION:NOTES:END -->
