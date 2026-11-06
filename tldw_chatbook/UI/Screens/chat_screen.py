@@ -18116,6 +18116,10 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
+    def request_transcript_sync(self) -> None:
+        """Public seam: ConsoleRuntime asks the view to re-arm its sync poll."""
+        self._start_console_transcript_sync_timer()
+
     def _start_console_transcript_sync_timer(self) -> None:
         self._console_transcript_poll_asked = True
         if self._console_transcript_sync_timer is not None:

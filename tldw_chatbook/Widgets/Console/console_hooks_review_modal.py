@@ -77,6 +77,8 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         self._runtime_ready_pending = False
         self._runtime_result = on_result
         self._runtime_detach = on_detach
+        # Public on purpose: ConsoleRuntime reads it via the HookReviewScreen
+        # protocol (Chat/console_runtime.py); do not re-privatise.
         self.hook_review_projection = runtime_projection
         self._generation = 0
         self._answer: asyncio.Future[HookReviewResult] | None = None
