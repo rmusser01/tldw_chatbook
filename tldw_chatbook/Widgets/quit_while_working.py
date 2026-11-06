@@ -36,18 +36,28 @@ through its own ``_close_with``, because its quit hook reads that close; and
 the Console Prompts mix-in leave (a Discard, Close or Browse held for its
 Library save) through the modal's own ``on_screen_resume``.
 
-Known limits. The refused activity is remembered on the modal for its
-lifetime, so after one refusal a later operation with the same words in the
-same modal asks on its first Ctrl+Q. The session switcher's character open
-reveals the chat synchronously as it commits; under the question that
-reveal is refused, so the open rolls back and the switcher explains "Open
-interrupted by quit confirmation" with explicit exact-target Retry. Genuine
-open or rollback failures still show "Could not open chat". And
-BulkSourcesModal's owner drops a batch's result
+Known limits. Four modals forget the refused activity when their operation
+ends (``forget_quit_refusal``), so each operation gets its own first
+refusal: the goal setup's launch, the portrait region editor's save, the
+response rules editor's test, save or pin change, and the Console Prompts
+mix-in save. Every other caller remembers it for the modal's lifetime, so
+after one refusal a later operation with the same words in the same modal
+asks on its first Ctrl+Q: the fork dialog, the message-Delete receipt, the
+capture-policy and trace-privacy dialogs, the project-skills offer, both
+export dialogs, the prompt collection manager, the buddy character review,
+both personal-context reviews, BulkSourcesModal, the session switcher, the
+Console Prompts apply and ProfileInterviewScreen.
+
+The session switcher's character open reveals the chat synchronously as it
+commits; under the question that reveal is refused, so the open rolls back
+and the switcher explains "Open interrupted by quit confirmation" with
+explicit exact-target Retry. Genuine open or rollback failures still show
+"Could not open chat". And BulkSourcesModal's owner drops a batch's result
 when anything covers the modal, this question included, so Wait can reveal
 it still creating sources; Ctrl+Q there still asks and quits.
 
-It is imported lazily from each ``confirm_quit``, so it never joins the
+It is imported lazily from each ``confirm_quit`` (and, for
+``forget_quit_refusal``, where the operation ends), so it never joins the
 ADR-097 boot census.
 """
 
@@ -96,3 +106,16 @@ async def refuse_quit_while_working(screen: Any, activity: str) -> bool:
         severity="warning",
     )
     return False
+
+
+def forget_quit_refusal(screen: Any) -> None:
+    """Forget the activity ``screen`` last refused a quit for.
+
+    Called where a modal's operation ends, so the first Ctrl+Q during its
+    next operation says "still working" again instead of asking to quit
+    anyway. Does nothing when no refusal is remembered.
+
+    Args:
+        screen: The modal whose operation just ended.
+    """
+    vars(screen).pop(_REFUSED_ACTIVITY_ATTR, None)

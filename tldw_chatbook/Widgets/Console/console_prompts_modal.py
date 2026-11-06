@@ -574,6 +574,9 @@ class ConsolePromptsModal(
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker is self._mixin_save_worker and event.worker.is_finished:
+            from tldw_chatbook.Widgets.quit_while_working import forget_quit_refusal
+
+            forget_quit_refusal(self)
             await self._finish_mixin_leave()
 
     def on_screen_resume(self) -> None:

@@ -683,6 +683,9 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
         finally:
             self._busy = False
+            from tldw_chatbook.Widgets.quit_while_working import forget_quit_refusal
+
+            forget_quit_refusal(self)
             if self.is_mounted:
                 self._buttons()
 

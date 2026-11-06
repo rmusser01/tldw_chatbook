@@ -447,6 +447,9 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
                     self.dismiss_safe_once_when_on_top(True)
             finally:
                 self._saving = False
+                from ..quit_while_working import forget_quit_refusal
+
+                forget_quit_refusal(self)
                 if self._current() and validation.is_attached:
                     for control in self.query("Input, Select, Checkbox, Button"):
                         control.disabled = False

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 06:34
-updated_date: '2026-11-05 23:12'
+updated_date: '2026-11-06 01:56'
 labels:
 - follow-up
 - architecture
@@ -78,6 +78,14 @@ The hooks import their helpers lazily, as the existing ones do, so the quit-anyw
 Neither file is on a PR lane.
 
 **Docs.** `Docs/User_Guide/index.md`'s Ctrl+Q row names starting a goal, saving portrait regions, testing, saving or changing a response rule, and a response rule's unsaved edits. The portrait regions save also joins the row's list of dialogs that close themselves when done, and the matching list in `Widgets/quit_while_working.py`'s docstring. The editor's save closes through `dismiss_safe_once_when_on_top`, so a close made under the quit question finishes after Wait. No test covers that path for this editor; `test_close_under_quit_question.py` pins the helper.
+
+**Review of #3418 (Qodo): each operation gets its own first refusal.** `refuse_quit_while_working` remembered the refused activity for the modal's lifetime. So after one refused Ctrl+Q during a response-rule operation, the first Ctrl+Q during a later operation asked "Quit anyway" instead of refusing. New `forget_quit_refusal(screen)` in `Widgets/quit_while_working.py` clears it, and does nothing if nothing is remembered. It is called where each operation ends:
+- `ResponseRulesModal._action`'s `finally` (test, save, enable/disable, exclude, delete);
+- `ConsoleGoalSetupModal.launch`'s `finally`;
+- `PortraitRegionEditor._pressed`'s save `finally`;
+- `ConsolePromptsModal.on_worker_state_changed`, when the mix-in save worker finishes (TASK-38748's code, edited here).
+
+The module's "Known limits" paragraph now says which modals forget it and lists the 13 other call sites, which still remember it. `test_the_next_operations_first_ctrl_q_refuses_again` (4 cases, in the lane-run `test_modal_quit_in_flight_hooks.py`) runs each modal's own operation code on a stand-in: refuse, finish, start again, refuse again without asking. Red with the helper made a no-op (4 failed). Red with each call site removed alone: only that modal's case failed.
 
 **Lesson.** `backlog/docs/lessons-testing-evidence.md`: a modal that awaits its work in a message handler blocks Pilot and app shutdown.
 

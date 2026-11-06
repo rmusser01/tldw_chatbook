@@ -15,6 +15,7 @@ told.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -40,6 +41,7 @@ from tldw_chatbook.Widgets.Console.console_message_delete_receipt import (
     ConsoleMessageDeleteReceiptModal,
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
 )
@@ -300,4 +302,162 @@ async def test_response_rules_ctrl_q_waits_for_a_test_and_asks_before_dropping_e
     clean, notices = _stand_in(_busy=False, _has_unsaved=lambda: False)
     assert await ResponseRulesModal.confirm_quit(clean) is True
     assert notices == [] and len(asked) == 1
+
+
+# --- Each operation gets its own first refusal (review of #3418) --------------
+# These four modals forget a refusal when their operation ends. Before that, a
+# Ctrl+Q refused during one operation made the first Ctrl+Q of the NEXT one ask
+# "Quit while still working?" instead of saying it is still working. Each
+# driver runs the modal's own operation code on a stand-in, held mid-way.
+
+
+async def _no_op(*_args, **_kwargs) -> None:
+    return None
+
+
+class _Held:
+    """The awaited step of one running operation, released by ``finish``."""
+
+    def __init__(self, result: object = None) -> None:
+        self.result = result
+        self.gate: asyncio.Event | None = None
+        self.task: asyncio.Future | None = None
+
+    async def wait(self, *_args, **_kwargs) -> object:
+        self.gate = asyncio.Event()
+        await self.gate.wait()
+        return self.result
+
+    def schedule(self, operation) -> None:
+        self.gate = None
+        self.task = asyncio.ensure_future(operation)
+
+    async def started(self) -> None:
+        while self.gate is None:
+            await asyncio.sleep(0)
+
+    async def finish(self) -> None:
+        self.gate.set()
+        await self.task
+
+
+def _rule_pin_deletes():
+    """ResponseRulesModal: Delete local pin, held in its database call."""
+    held = _Held()
+    screen, notices = _stand_in(
+        _busy=False,
+        is_mounted=True,
+        is_attached=True,
+        query=lambda _selector: [object()],
+        _current_scope=lambda: True,
+        _selected=SimpleNamespace(rule_id="rule", revision=1),
+        session_id="session",
+        scope="scope",
+        _expected=0,
+        store=SimpleNamespace(delete_binding=None),
+        runtime=SimpleNamespace(run_db_call=held.wait),
+        _reload=_no_op,
+        _status=lambda _text: None,
+        _buttons=lambda: None,
+    )
+
+    async def begin() -> None:
+        held.schedule(ResponseRulesModal._action(screen, "delete"))
+        await held.started()
+
+    return ResponseRulesModal, screen, notices, begin, held.finish
+
+
+def _goal_launches():
+    """ConsoleGoalSetupModal: Start, held in the start call."""
+    held = _Held("started")
+    screen, notices = _stand_in(
+        _busy=False,
+        _refreshing_tools=False,
+        _submitted=object(),
+        launch_id="launch",
+        is_current=False,
+        is_mounted=False,
+        _start=held.wait,
+        _update_controls=lambda: None,
+    )
+    screen.launch = lambda: held.schedule(
+        ConsoleGoalSetupModal.launch.__wrapped__(screen)
+    )
+
+    async def begin() -> None:
+        ConsoleGoalSetupModal.start_pressed(screen)
+        await held.started()
+
+    return ConsoleGoalSetupModal, screen, notices, begin, held.finish
+
+
+def _region_saves():
+    """PortraitRegionEditor: Save regions, held in the save call."""
+    held = _Held(False)
+    field = SimpleNamespace(value=True, is_attached=False)
+    screen, notices = _stand_in(
+        _saving=False,
+        _current=lambda: True,
+        _validate=lambda: None,
+        query=lambda _selector: [],
+        query_one=lambda *_args: field,
+        _recipe=lambda **_kwargs: None,
+        _save=held.wait,
+    )
+    pressed = SimpleNamespace(
+        stop=lambda: None, button=SimpleNamespace(id="portrait-regions-save")
+    )
+
+    async def begin() -> None:
+        held.schedule(PortraitRegionEditor._pressed(screen, pressed))
+        await held.started()
+
+    return PortraitRegionEditor, screen, notices, begin, held.finish
+
+
+def _mixin_saves():
+    """ConsolePromptsModal: a mix-in Library save, settled by its worker event."""
+    screen, notices = _stand_in(
+        _apply_in_progress=False,
+        _mixin_save_worker=None,
+        _finish_mixin_leave=_no_op,
+    )
+    screen._mixin_save_in_flight = lambda: ConsolePromptsModal._mixin_save_in_flight(
+        screen
+    )
+
+    async def begin() -> None:
+        screen._mixin_save_worker = SimpleNamespace(is_finished=False)
+
+    async def finish() -> None:
+        worker = screen._mixin_save_worker
+        worker.is_finished = True
+        await ConsolePromptsModal.on_worker_state_changed(
+            screen, SimpleNamespace(worker=worker)
+        )
+
+    return ConsolePromptsModal, screen, notices, begin, finish
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    [_rule_pin_deletes, _goal_launches, _region_saves, _mixin_saves],
+    ids=["response-rules", "goal-setup", "region-editor", "prompts-mixin-save"],
+)
+async def test_the_next_operations_first_ctrl_q_refuses_again(operation, quit_anyway):
+    modal, screen, notices, begin, finish = operation()
+
+    await begin()
+    assert await modal.confirm_quit(screen) is False
+    assert len(notices) == 1
+    await finish()
+
+    await begin()
+    assert await modal.confirm_quit(screen) is False
+    assert len(notices) == 2, "the second operation's first Ctrl+Q must refuse"
+    assert notices[1][0] == notices[0][0]
+    assert quit_anyway.calls == [], "it asked to quit anyway instead"
+    await finish()
 
