@@ -1312,6 +1312,12 @@ _BUDGETS: dict[str, int] = {
     # pushes a rebuild: 8961 -> 9147 (+186).
     # pushes a rebuild: 8961 -> 9149 (+188).
     # pushes a rebuild: 8961 -> 9160 (+199).
+    # TASK-36571.1 review fix, 2026-11-06: same waiver (owner rule: a fix
+    # over a size ratchet raises the row by the branch's growth with a dated
+    # comment). The label and open-flag reads ask for the TTL-gated re-reads
+    # (folder availability, saved rows, sub-agent counts) the idle builds
+    # they replaced asked for, and two stale docstrings are corrected:
+    # 9160 -> 9231 (+71).
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8958,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
