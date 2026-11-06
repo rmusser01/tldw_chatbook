@@ -1020,6 +1020,9 @@ MINIMUM_FILES = 2787
 # workspace state builder reuse and the view key pins. The floor is the
 # entry count.
 MINIMUM_FILES = 2790
+# workspace state builder reuse, the view key and the cached label read
+# pins. The floor is the entry count.
+MINIMUM_FILES = 2791
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
@@ -1380,6 +1383,9 @@ MINIMUM_FILES = 2819
 # 2026-11-22: re-counted after rebasing onto dev fe8c87e3e2. The floor is the measured entry count.
 MINIMUM_FILES = 2821
 MINIMUM_FILES = 2824
+# 2026-11-22: re-counted after rebasing onto dev fe8c87e3e2. The floor is the measured entry count.
+# 2026-11-23: re-counted after rebasing onto dev af4b13ea75. The floor is the measured entry count.
+MINIMUM_FILES = 2825
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

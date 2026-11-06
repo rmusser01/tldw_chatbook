@@ -1310,6 +1310,7 @@ _BUDGETS: dict[str, int] = {
     # registry view's reads are unmoved, the projection reads the workspace
     # label alone, and an unchanged folder-availability re-read no longer
     # pushes a rebuild: 8961 -> 9147 (+186).
+    # pushes a rebuild: 8961 -> 9149 (+188).
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8958,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).

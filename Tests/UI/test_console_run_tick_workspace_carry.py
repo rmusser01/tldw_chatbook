@@ -595,3 +595,25 @@ async def test_an_unchanged_folder_availability_reread_pushes_nothing():
             assert dict(controller._workspace_files_availability_by_id) == before
         finally:
             controller._sync_workspace_context_fn = original
+
+
+@pytest.mark.asyncio
+async def test_a_cached_label_read_enters_no_stale_read_context(monkeypatch):
+    """The label read the projection makes several times a tick is a dict lookup."""
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        controller = console._workspace
+        entered = []
+        original = controller._stale_display_reads
+
+        def counting():
+            entered.append(1)
+            return original()
+
+        monkeypatch.setattr(controller, "_stale_display_reads", counting)
+        with controller.tick_workspace_build_scope():
+            label = controller.console_workspace_label()  # May fill the cache once.
+            entered.clear()
+            assert controller.console_workspace_label() == label
+            assert entered == [], "a cached label read entered the stale-read context"
