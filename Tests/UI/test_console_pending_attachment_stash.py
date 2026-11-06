@@ -122,7 +122,10 @@ def _patch_h3_enabled(monkeypatch) -> None:
 
 async def _wait_for_h3_state(pilot, predicate, *, detail: str) -> None:
     """Bounded event-loop polling for asynchronous Textual settlement."""
-    deadline = time.monotonic() + 2.0
+    # TASK-38752: late H3 settlements took up to 1.16 s (medians 0.83-0.91 s)
+    # at load 16-24, rising with load, against the old 2 s; it returns as soon
+    # as the predicate holds.
+    deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
         if predicate():
             return
@@ -751,8 +754,14 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             await fresh._sync_native_console_chat_ui()
             assert fresh._native_run_status_copy() == "Stopping image edit…"
             stop = fresh.query_one("#console-stop-generation", Button)
-            assert stop.styles.display != "none"
-            assert not stop.disabled
+            # TASK-38752: the sync above often returns at once (a sync already
+            # in flight, or the whole-sync replay pending), so a sync before or
+            # after it paints Stop. The held edit keeps Stop live for 10 s.
+            await _wait_for_h3_state(
+                pilot,
+                lambda: stop.styles.display != "none" and not stop.disabled,
+                detail="the adopted screen's Stop control",
+            )
 
             settlement_events: list[str] = []
             original_reconcile = fresh._image._reconcile_h3_image_edit_completions
@@ -912,7 +921,9 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 )
                 assert transcript_syncs == 0
                 assert control_syncs == 0
-                assert stop.styles.display != "none"
+                # No Stop check here: the newer edit has ended, so any Console
+                # repaint may now hide Stop (TASK-38752). The counters above pin
+                # that this stale settlement requested no sync of its own.
     finally:
         db.close_connection()
 

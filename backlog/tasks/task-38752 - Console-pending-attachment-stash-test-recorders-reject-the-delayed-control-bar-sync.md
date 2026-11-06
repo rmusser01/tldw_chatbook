@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-05 07:11
-updated_date: 2026-11-05 23:18
+updated_date: 2026-11-06 00:00
 labels:
 - follow-up
 - tests
@@ -72,7 +72,16 @@ Each recorder (and both `[cancel]` counters) now counts a call only when `_settl
   - its control-bar request dropped.
 - A temporary edit that lets a stale generation settle failed `[cancel]` at the attributed counter (`assert 1 == 0`).
 
-**AC#2.** The final node passed 30 of 30 `-n 4` runs, 3 of 3 cases each: 10 at load 10.4-17.3, then two batches of 10 in parallel at load 20.9-47.9 (1-minute average). No TypeError and no failure. One `[cancel]` settlement timeout in an intermediate run (load 20.5) did not recur in the 82 later runs; the other failures in those runs were the pop timeout and the row text above. Its events were not captured.
+**Re-review r8c-rev2: the Stop precondition, a second racy Stop read, and the wait deadline.**
+- **The precondition.** After the adopted screen's `await fresh._sync_native_console_chat_ui()`, the test asserted `stop.styles.display != "none"` once. It failed 1 in 10 runs on the branch and once in 10 at base (`assert 'none' != 'none'`). A temporary probe over 60 cases (load 9-15) found that the awaited sync returned False in 39 of them without reaching `prepare_console_presentation_sync`. In 32 of those the whole-sync replay was pending after the call; the other 7 had coalesced into a sync already in flight. So the awaited sync usually paints nothing, and Stop shows only once some earlier or later sync paints the control bar. Holding the fresh screen's `_sync_console_control_bar_under_config` for 0.3 s after the awaited sync reproduced the failure in all 3 cases on the old code, twice (load ~10). The node now waits, with `_wait_for_h3_state`, until Stop is displayed and enabled; it passed both runs under the same hold. The run-status copy check stays a one-shot assert: it was right in 60 of 60 cases.
+- **`[cancel]`'s last Stop check.** It read Stop after the newer edit had ended (`remove_active` runs when its task finishes). By then any repaint may hide Stop legitimately. One forced control-bar repaint there failed it (`assert 'none' != 'none'`), and a delayed-read control had hit the same assertion once. The check is removed; the attributed counters pin that the stale settlement requested no sync of its own. The Stop check made while the newer edit is still active stays.
+- **`_wait_for_h3_state`'s deadline is now 10 s, up from 2 s.** Timed per wait across 15 runs at load 16-24: late `[success]` settlements took up to 1.163 s (median 0.914 s) and `[failure]` up to 1.143 s (median 0.831 s). At load 8-15 the maxima were 0.99 and 0.76 s, so the time grows with load. The helper returns as soon as its predicate holds, so only a failing wait takes longer. This may explain the one-off `[cancel]` timeout above, which was never caught with its events.
+
+**AC#2.**
+- After the Stop wait and deadline change (aa446e54fd plus this commit): 20 of 20 `-n 4` runs, two parallel batches of 10, 3 of 3 cases each, load 15.1-24.0 (1-minute average).
+- The previous version passed 30 of 30 (load 10.4-47.9).
+- No TypeError and no failure.
+- The reorder control, re-run on the final node, was still red in all 3 cases.
 
 **Whole file** (`-n 4`): 8 other plain nodes fail with `RecoveryRequired: raw_source_selection_changed` on the branch and at base with the same command. That is TASK-38111's trap. At base the same run also failed this node's `[success]` and `[failure]` cases.
 <!-- SECTION:NOTES:END -->
