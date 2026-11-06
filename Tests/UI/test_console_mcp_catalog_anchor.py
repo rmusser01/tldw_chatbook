@@ -18,7 +18,9 @@ composition), then pins one way a change between the anchored composition
 and the next run start must be refused: the next run composes from the
 stores and offers what they hold now, never the pending catalog. Negative
 controls (run by hand, task notes): dropping the refusal each test names
-from ``_proven`` turns that test red.
+from ``_proven`` or ``_keep`` turns that test red; re-taking the anchor's
+stamps at keep time, after the composition read, turns
+``test_a_store_write_after_the_anchored_composition_read_is_refused`` red.
 """
 
 from __future__ import annotations
@@ -144,6 +146,49 @@ async def test_a_store_write_during_the_anchored_composition_is_refused(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_a_store_write_after_the_anchored_composition_read_is_refused(
+    monkeypatch,
+):
+    """A write after the composition read and before it is kept is seen next run.
+
+    The anchored composition reads the permission states with the tool
+    allowed, and the tool is denied the moment that read returns, before
+    the composition is kept; nothing is put back. Every file reads as
+    settled, so only a stamp taken before the composition's reads can tell:
+    an anchor taken at keep time would already hold the denied file's stamp,
+    the next fingerprint would match it, and the next run would offer the
+    allowed state's catalog for a file that denies the tool.
+    """
+    _every_file_settled(monkeypatch)
+
+    async def check(c: _Console) -> None:
+        fingerprints = Fingerprints(c.service, monkeypatch)
+        first = await _cold_run_start(c, fingerprints)
+        names = list(first._entry_by_llm_name.items())
+        (_n1, (one, _s1)), (llm_two, (two, _s2)) = names[0], names[1]
+        c.set_state(one, "ask")
+        real = c.service.effective_tool_states
+        fired = []
+
+        def deny_after_the_read(tools, **kwargs):
+            states = real(tools, **kwargs)
+            if not fired:
+                fired.append(True)
+                c.set_state(two, "deny")
+            return states
+
+        monkeypatch.setattr(c.service, "effective_tool_states", deny_after_the_read)
+        during = await _cold_run_start(c, fingerprints)
+        assert fired and llm_two in _ids(during), "the composition saw the deny"
+        assert _pending(), "precondition: the composition was kept pending"
+        monkeypatch.setattr(c.service, "effective_tool_states", real)
+        after = await _recomposed(c.console, c.reads)
+        assert llm_two not in _ids(after), "offered a tool the store denies"
+
+    await _with_console(check)
+
+
+@pytest.mark.asyncio
 async def test_the_kill_switch_turned_on_after_the_anchored_composition_drops_mcp(
     monkeypatch,
 ):
@@ -235,6 +280,10 @@ async def test_a_store_over_another_generation_file_is_refused(monkeypatch, tmp_
     The newly selected store reads an older, settled generation file with a
     server the composition never saw. The pending catalog's anchor names the
     store it was composed from; the next run composes from the one selected.
+    Two checks refuse it here, the anchored stamps (another file's path) and
+    the anchored sources (another store), so dropping either one alone
+    leaves this green; the source check alone is pinned by
+    ``test_another_store_over_the_same_file_is_refused``.
     """
     from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
 
@@ -263,6 +312,38 @@ async def test_a_store_over_another_generation_file_is_refused(monkeypatch, tmp_
         finally:
             local.store = selected
         assert any("olderserver" in name for name in _ids(after)), _ids(after)
+
+    await _with_console(check)
+
+
+@pytest.mark.asyncio
+async def test_another_store_over_the_same_file_is_refused(monkeypatch):
+    """Only the selected store differs: the anchored sources refuse it.
+
+    The second store reads the very file the composition read, so its stamp,
+    the admission epoch and the content all match; a composition proven by
+    them alone would be reused through a receiver it never read. (With the
+    source check dropped from ``_proven`` this test is the one that fails.)
+    """
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+
+    _every_file_settled(monkeypatch)
+
+    async def check(c: _Console) -> None:
+        fingerprints = Fingerprints(c.service, monkeypatch)
+        local = c.service.local_service
+        first = await _cold_run_start(c, fingerprints)
+        assert _pending(), "precondition: the composition was kept pending"
+        selected = local.store
+        again = LocalMCPStore(selected.path)
+        assert again is not selected and again.path == selected.path
+        local.store = again
+        try:
+            after = await _recomposed(c.console, c.reads)
+        finally:
+            local.store = selected
+        assert fingerprints.calls == 1
+        assert _ids(after) == _ids(first), "the same file offers the same tools"
 
     await _with_console(check)
 
