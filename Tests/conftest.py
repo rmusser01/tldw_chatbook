@@ -1134,15 +1134,26 @@ class _StorageLeaseGuard:
     the leak. Registered for ``--storage-lease-guard``, which the
     dreams-boundary step passes. The autouse fixture is set up before, and
     torn down after, the test's own function fixtures; leases of wider-scoped
-    fixtures are already in ``before``.
+    fixtures are already in ``before``. Startup admissions are left out, as
+    the drain leaves them: one per selected profile (``select_config_source``
+    selects a fresh one), each held until exit by design.
     """
 
     @staticmethod
     def _live() -> set:
-        from tldw_chatbook.Backup_Recovery import storage_admission
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
-        with storage_admission._lock:
-            return set(storage_admission._live_leases)
+        with storage._lock:
+            return set(storage._live_leases) - set(storage._startups.values())
+
+    @staticmethod
+    def _describe(lease) -> str:
+        if lease.resource_path is not None:
+            thread = getattr(lease.resource_thread, "name", None)
+            return f"SQLite {lease.resource_path} on thread {thread}"
+        key = lease._key
+        root = key[1] if key else "a retired key"
+        return f"storage lease without a SQLite handle, admission root {root}"
 
     @pytest.fixture(autouse=True)
     def _no_new_live_storage_lease(self, request):
@@ -1150,10 +1161,7 @@ class _StorageLeaseGuard:
         yield
         leaked = self._live() - before
         if leaked:
-            where = sorted(
-                f"{lease.resource_path} on {getattr(lease.resource_thread, 'name', None)}"
-                for lease in leaked
-            )
+            where = sorted(self._describe(lease) for lease in leaked)
             pytest.fail(
                 f"{request.node.nodeid} left {len(leaked)} new live storage "
                 f"lease(s) open: {where}",

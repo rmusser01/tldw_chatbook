@@ -4,7 +4,7 @@ title: "Five dreams-boundary Guardian tests leave a storage lease open, so a lat
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 05:00
+updated_date: 2026-11-06 10:07
 labels:
 - follow-up
 - tests
@@ -101,5 +101,14 @@ The production lease of this shape is the sync-log retention pass, which TASK-38
   - Locally, the step's exact command with the flag, serially (my `stepguard.sh`, which parses the targets the way `dreamstep.sh` does): 472 passed in 340 s, 287 s and 316 s at load 34-51.
   - The unguarded, unfixed run was 326 s.
 - CI pins: `Tests/CI` ran 410 passed, and the preflight lane-resolution pair passed 2.
+
+**Follow-up after the rebase onto #3434 (PR #3435, 2026-11-06).** On the stacked base, the step's exact command with the flag gave 667 passed and 109 errors, every one in the new TASK-38963/38964 `make_default` tests in `Tests/Chat/test_local_server_discovery.py`. Each was reported as `['None on None']`.
+- **Cause.** A probe recorded each new lease's creation stack. The lease is a startup admission. `select_config_source` (`Tests/Backup_Recovery/config_test_support.py`) re-executes a fresh `tldw_chatbook.config`, whose `admit_startup()` admits that test's scratch profile. `_admit_startup` files the lease in `_startups`, keyed by (pid, bootstrap root), and `_shutdown` releases it at exit.
+- **Not a product leak.** Production admits once per process. `_LocalPause.drain()` counts `_live_leases - startups`, so these leases cannot make a later pause time out: the guard was stricter than the drain it protects.
+- **Fix: the guard now subtracts `_startups`, exactly as the drain does.** Any other new lease still fails the test. The test files are unchanged.
+- **Clearer report.** Each lease is named by kind: `SQLite <path> on thread <name>`, or `storage lease without a SQLite handle, admission root <root>`.
+- **Evidence.**
+  - `test_local_server_discovery.py` with the flag: 282 passed, 0 errors (it was 109 errors).
+  - Negative controls, reverted afterwards: the `test_crisis_resources.py` leak reintroduced was flagged as `SQLite .../guardian.sqlite on thread MainThread`. A temporary test calling `acquire_storage()` without closing it was flagged as `storage lease without a SQLite handle, admission root ...`.
 <!-- SECTION:NOTES:END -->
 
