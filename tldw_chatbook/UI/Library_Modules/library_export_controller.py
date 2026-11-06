@@ -217,7 +217,6 @@ Conversations' plural/singular split.
 """
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import json
 import threading
@@ -1011,8 +1010,9 @@ class LibraryExportController:
         """Execute one export through ``service``, synchronously: zip first, registry only on success.
 
         Runs both of ``service``'s async-signature/sync-body methods
-        through ``asyncio.run`` -- they never touch the app's own event
-        loop, so this is only ever safe to call from a genuine OS thread
+        through ``run_async`` (a fresh loop inside this call's lifetime
+        span) -- they never touch the app's own event loop, so this is
+        only ever safe to call from a genuine OS thread
         (never the UI thread, which already owns a running loop). Exposed
         as its own (non-``@work``) static method so tests can call it
         directly with a fake ``service`` and assert call ordering /
@@ -1029,78 +1029,87 @@ class LibraryExportController:
         Returns a plain dict: ``success``, ``message``, ``path``,
         ``dependency_info``, ``registry_recorded``.
         """
-        try:
-            export_result = asyncio.run(  # policy-exception: worker-thread loop
-                service.export_chatbook(
-                    payload,
-                    progress_callback=progress_callback,
-                    cancel_check=cancel_check,
+        # TASK-38989: b5251e9a6e's lifetime span, from the screen's stale copy
+        # (it lacked task-32232's empty-export copy and artifact receipt).
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+            operation,
+            run_async,
+        )
+
+        paths = (getattr(service, "registry_path", None), payload.get("output_path"))
+        with operation(paths):
+            try:
+                export_result = run_async(
+                    service.export_chatbook(
+                        payload,
+                        progress_callback=progress_callback,
+                        cancel_check=cancel_check,
+                    )
                 )
-            )
-        except Exception as exc:
-            logger.opt(exception=True).warning("Library export service call failed.")
+            except Exception as exc:
+                logger.opt(exception=True).warning("Library export service call failed.")
+                return {
+                    "success": False,
+                    "message": f"Export failed: {exc}",
+                    "path": "",
+                    "dependency_info": {},
+                    "registry_recorded": False,
+                    "cancelled": False,
+                }
+
+            if not export_result.get("success"):
+                failure_info = export_result.get("dependency_info") or {}
+                # task-32232 AC#3: "asked for N, collected 0" is the one failure
+                # the creator reports structurally (``empty_export_requested``),
+                # so the canvas can name the selection size instead of showing
+                # the creator's own internal sentence.
+                requested = (
+                    failure_info.get("empty_export_requested")
+                    if isinstance(failure_info, dict)
+                    else None
+                )
+                return {
+                    "success": False,
+                    "message": (
+                        format_empty_export_error(int(requested))
+                        if requested
+                        else str(export_result.get("message") or "Export failed.")
+                    ),
+                    "path": export_result.get("path") or payload.get("output_path", ""),
+                    "dependency_info": failure_info,
+                    "registry_recorded": False,
+                    "cancelled": bool(export_result.get("cancelled", False)),
+                }
+
+            output_path = export_result.get("path") or payload.get("output_path", "")
+            dependency_info = export_result.get("dependency_info") or {}
+            item_count, size_bytes = _read_export_artifact_facts(output_path)
+            registry_recorded = False
+            try:
+                run_async(
+                    service.create_chatbook(
+                        name=name,
+                        description=description,
+                        file_path=output_path,
+                        tags=["library-export"],
+                    )
+                )
+                registry_recorded = True
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Library export succeeded but registry recording failed for {output_path!r}."
+                )
+
             return {
-                "success": False,
-                "message": f"Export failed: {exc}",
-                "path": "",
-                "dependency_info": {},
-                "registry_recorded": False,
+                "success": True,
+                "message": export_result.get("message") or "",
+                "path": output_path,
+                "dependency_info": dependency_info,
+                "registry_recorded": registry_recorded,
                 "cancelled": False,
+                "item_count": item_count,
+                "size_bytes": size_bytes,
             }
-
-        if not export_result.get("success"):
-            failure_info = export_result.get("dependency_info") or {}
-            # task-32232 AC#3: "asked for N, collected 0" is the one failure
-            # the creator reports structurally (``empty_export_requested``),
-            # so the canvas can name the selection size instead of showing
-            # the creator's own internal sentence.
-            requested = (
-                failure_info.get("empty_export_requested")
-                if isinstance(failure_info, dict)
-                else None
-            )
-            return {
-                "success": False,
-                "message": (
-                    format_empty_export_error(int(requested))
-                    if requested
-                    else str(export_result.get("message") or "Export failed.")
-                ),
-                "path": export_result.get("path") or payload.get("output_path", ""),
-                "dependency_info": failure_info,
-                "registry_recorded": False,
-                "cancelled": bool(export_result.get("cancelled", False)),
-            }
-
-        output_path = export_result.get("path") or payload.get("output_path", "")
-        dependency_info = export_result.get("dependency_info") or {}
-        item_count, size_bytes = _read_export_artifact_facts(output_path)
-        registry_recorded = False
-        try:
-            asyncio.run(  # policy-exception: worker-thread loop
-                service.create_chatbook(
-                    name=name,
-                    description=description,
-                    file_path=output_path,
-                    tags=["library-export"],
-                )
-            )
-            registry_recorded = True
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Library export succeeded but registry recording failed for {output_path!r}."
-            )
-
-        return {
-            "success": True,
-            "message": export_result.get("message") or "",
-            "path": output_path,
-            "dependency_info": dependency_info,
-            "registry_recorded": registry_recorded,
-            "cancelled": False,
-            "item_count": item_count,
-            "size_bytes": size_bytes,
-        }
 
     def _marshal_library_export_success(
         self,

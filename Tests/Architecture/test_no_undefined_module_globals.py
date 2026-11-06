@@ -37,10 +37,8 @@ _BUILTINS = set(dir(builtins))
 #: Shrink-only: a module listed here that has become clean fails the companion
 #: test below, so the list cannot outlive what it excuses.
 _EXEMPT: dict[str, str] = {
-    "tldw_chatbook/Local_Ingestion/API_Endpoint_Sample.py": (
-        "Dead (0 production importers); deleted by TASK-32899. Drop this row "
-        "with the file."
-    ),
+    # TASK-38989: Local_Ingestion/API_Endpoint_Sample.py's row went with the
+    # file (TASK-32899 deleted it).
 }
 
 
@@ -63,6 +61,18 @@ def _module_level_bindings(tree: ast.Module) -> set[str]:
     binds the name for that call site, and treating it as unbound would be a
     false positive.
     """
+    names = _scope_level_names(tree.body)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.Global):
+            names.update(node.names)
+    return names
+
+
+def _scope_level_names(body: list[ast.stmt]) -> set[str]:
+    """Names one module or class body binds in its own namespace."""
     names: set[str] = set()
 
     def walk_module_scope(body):
@@ -89,13 +99,7 @@ def _module_level_bindings(tree: ast.Module) -> set[str]:
             for handler in getattr(node, "handlers", []) or []:
                 walk_module_scope(handler.body)
 
-    walk_module_scope(tree.body)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                names.add(alias.asname or alias.name.split(".")[0])
-        elif isinstance(node, ast.Global):
-            names.update(node.names)
+    walk_module_scope(body)
     return names
 
 
@@ -143,12 +147,26 @@ def _unresolved_private_calls(tree: ast.Module) -> set[str]:
         if name in module_names or name in _BUILTINS:
             continue
         # only the scopes this call actually sits inside can bind the name
-        cursor, bound = parents.get(node), False
+        cursor, bound, innermost = parents.get(node), False, True
         while cursor is not None:
             if isinstance(cursor, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if name in _local_bindings(cursor):
                     bound = True
                     break
+                innermost = False
+            elif isinstance(cursor, ast.ClassDef):
+                # TASK-38989: a call made directly in a class body resolves in
+                # that class's namespace (e.g. hook_permissions' class-body
+                # `_store_lock = _bind_store_lock(...)`). Methods, lambdas and
+                # comprehensions never see class-body names.
+                if innermost and name in _scope_level_names(cursor.body):
+                    bound = True
+                    break
+                innermost = False
+            elif isinstance(cursor, (ast.Lambda, ast.comprehension)) or isinstance(
+                cursor, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+            ):
+                innermost = False
             cursor = parents.get(cursor)
         if not bound:
             unresolved.add(name)
@@ -195,3 +213,23 @@ def test_no_exemption_outlives_the_thing_it_excuses() -> None:
         if not _unresolved_private_calls(tree):
             stale.append(f"{rel} (now clean — drop the row): {reason}")
     assert not stale, "Exemptions no longer needed:\n  " + "\n  ".join(stale)
+
+
+def test_class_body_helper_resolves_only_in_its_own_class_body() -> None:
+    """TASK-38989: class scope binds for class-body calls, not for methods."""
+    head = (
+        "class Store:\n"
+        "    def _bind(definition):\n"
+        "        return definition\n"
+    )
+    resolved = ast.parse(head + "    _lock = _bind(1)\n    del _bind\n")
+    assert _unresolved_private_calls(resolved) == set()
+    for unbound_use in (
+        "    def method(self):\n        return _bind(2)\n",
+        "    handlers = [_bind(x) for x in (3,)]\n",
+        "    handler = lambda: _bind(4)\n",
+    ):
+        tree = ast.parse(head + unbound_use)
+        assert _unresolved_private_calls(tree) == {"_bind"}, unbound_use
+    deleted = ast.parse("def f():\n    return _deleted_helper(1)\n")
+    assert _unresolved_private_calls(deleted) == {"_deleted_helper"}

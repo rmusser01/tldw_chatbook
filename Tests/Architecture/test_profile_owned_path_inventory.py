@@ -304,6 +304,11 @@ data_dir / "export"
     assert _base_data_dir_cli_consumer_lines(tree) == (4, 5)
 
 
+#: TASK-38989: Python under Docs/ is evidence and snippets, never runtime
+#: (bffa2bffed added a QA excerpt that is not even parseable on its own).
+NON_RUNTIME_PYTHON_ROOTS = ("Docs/",)
+
+
 def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners() -> (
     None
 ):
@@ -312,6 +317,8 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
     runtime_constant_definitions: list[str] = []
     for source_path in sorted(REPO_ROOT.rglob("*.py")):
         relative_path = source_path.relative_to(REPO_ROOT).as_posix()
+        if relative_path.startswith(NON_RUNTIME_PYTHON_ROOTS):
+            continue
         tree = ast.parse(source_path.read_text(encoding="utf-8"), relative_path)
         base_data_consumers.extend(
             (relative_path, line) for line in _base_data_dir_cli_consumer_lines(tree)

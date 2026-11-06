@@ -46,7 +46,10 @@ def captured():
 
 
 def _rendered(records) -> str:
-    return "".join(str(record.record["message"]) for record in records)
+    """Message plus bound fields: the class rides in ``extra`` (TASK-38989)."""
+    return "".join(
+        f"{record.record['message']} {record.record['extra']}" for record in records
+    )
 
 
 def _attached_tracebacks(records) -> list:
@@ -66,7 +69,7 @@ def test_graph_read_failure_is_recorded(captured):
     assert controller._read_graph("persona-1") is None
     rendered = _rendered(captured)
     # Diagnosable: the site and the failure class both land in the message.
-    assert "visual graph unreadable" in rendered
+    assert "persona_buddy_visual_graph_unreadable" in rendered
     assert "RuntimeError" in rendered
     # Bounded: the exception's own text and traceback do not.
     assert "visual pack schema mismatch" not in rendered
@@ -108,7 +111,7 @@ def test_private_library_boundary_never_logs_its_exception_payload(
 
     assert controller._read_local_buddy(BuddySelection(buddy_id="buddy-1")) is None
     rendered = _rendered(captured)
-    assert "private library authority rejected" in rendered
+    assert "persona_buddy_library_authority_rejected" in rendered
     assert "/Users/someone/private" not in rendered
     assert _attached_tracebacks(captured) == []
 
