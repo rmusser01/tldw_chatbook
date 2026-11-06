@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A test server's sleeping handler is paid in full when `async with server` exits (TASK-38965, 2026-11-06)
+
+**Incident.** `test_real_tls_stalls_are_timeouts_not_plain_http[handshake-stall]` took 32.5 s, although its probe gave up after 0.5 s. Its `asyncio.start_server` handler read once and then slept 30 s to "never answer". Since Python 3.12, `Server.wait_closed()` (which `async with server` calls on exit) waits until every connection is closed, and the handler closed its writer only when it returned, so each run waited out the sleep. That was 32 s of every PR's serial dreams-boundary step. The sibling case looked fine (2.6 s) only because its TLS read raised and ended the handler early.
+
+**What to do.** A handler that must stay silent should read until the client hangs up (`while await reader.read(n): pass`) and keep a long timeout only as a backstop. The client's timeout then ends the handler too, and the stall it tests is unchanged. To check a negative control, make the handler answer. The case then fails on its assertion, and it may still wait for the backstop, because a client that got an answer keeps its connection open.
+
 ## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
 
 **Incident.** Two Prompts DB privacy pins forbid `str(second_id)` in a log that must contain `count=2`, and the filed task called them self-contradictory: `second_id` was 2. The tests meant to seed ids 71,234,567 and 81,234,567 by INSERTing a `sqlite_sequence` row. The v5->v6 mix-in migration (7970fbcada) rebuilds `Prompts` and keeps its sequence, so a fresh database already has a `('Prompts', 0)` row; SQLite reads the first row and ignored the test's second, and the ids fell back to 1 and 2. Dropping the id check, the obvious "fix", would have weakened a privacy pin. The negative controls then found a second hole: stored keywords are lower-cased, so `"PRIVATE KEYWORD"` never matched a leaked keyword (2 passed with the keyword logged).
