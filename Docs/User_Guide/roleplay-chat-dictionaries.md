@@ -212,8 +212,9 @@ then "100+" until the total is known. A server search reads "Characters
 12 of 340" against the full list's last count, or "12 of 100+" while that
 count still read "100+"; a search that fills its page reads "100+ of 340".
 Neither costs another server call. With no full-list count from this server
-yet (its full list could not load, say), a search reads just "Characters
-12". "(?)" means the list could not load.
+yet (its full list could not load, say), or a search that found more than
+that count, a search reads just "Characters 12". "(?)" means the list could
+not load.
 
 The bottom border gives the open item's place in the list, "#4 of 28". It
 is blank while nothing is open, or while a search hides the open item.

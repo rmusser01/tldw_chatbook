@@ -2558,20 +2558,26 @@ async def test_a_server_search_title_reads_n_of_the_last_unfiltered_total(
 
 
 @pytest.mark.parametrize(
-    "unknown", ["unfiltered-read-failed", "another-server", "source-change"]
+    "unknown",
+    ["unfiltered-read-failed", "another-server", "source-change", "outgrown-total"],
 )
 async def test_a_server_search_with_no_unfiltered_total_keeps_its_bare_count(
     mock_app_instance, unknown
 ):
     """TASK-33910.37: with no unfiltered total known for this server (its
     unfiltered read failed, the total came from another server, or from
-    before a source change whose own read failed), the title keeps dev's
-    bare count ("Characters 12"), never a stale or made-up M. Unchanged
-    from dev."""
+    before a source change whose own read failed), or a known one the search
+    outgrew (the server listed 5 and its search found 12), the title keeps
+    dev's bare count ("Characters 12"), never a stale or made-up M.
+    Unchanged from dev."""
     records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 341)]
     service, calls = _counted_server(records, total=True, found=12)
     if unknown == "unfiltered-read-failed":
         service.list_characters = AsyncMock(side_effect=RuntimeError("unreachable"))
+    elif unknown == "outgrown-total":
+        service.list_characters = AsyncMock(
+            return_value={"items": [dict(r) for r in records[:5]], "total": 5}
+        )
     mock_app_instance.runtime_backend = "server"
     mock_app_instance.active_server_id = "server-a"
     mock_app_instance.character_persona_scope_service = service
@@ -2580,7 +2586,10 @@ async def test_a_server_search_with_no_unfiltered_total_keeps_its_bare_count(
         pane = screen.query_one("#personas-library-pane")
         await wait_until(
             pilot,
-            lambda: str(pane.border_title) in ("Characters 340", "Characters (?)"),
+            lambda: (
+                str(pane.border_title)
+                in ("Characters 340", "Characters 5", "Characters (?)")
+            ),
             what="the unfiltered server read",
         )
         await settle(pilot)
