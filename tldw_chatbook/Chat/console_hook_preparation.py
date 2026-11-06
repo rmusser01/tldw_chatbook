@@ -37,6 +37,7 @@ from .console_preparation_reads import (
 __all__ = (
     "ConsoleHookAttemptRead",
     "ConsoleHookPreparationRead",
+    "HookCheckOwnerChanged",
     "bind_hook_preparation_session",
     "drain_hook_preparation_reads",
     "hook_preparation_reads_for",
@@ -45,6 +46,14 @@ __all__ = (
     "observe_hook_preparation_reads",
     "run_hook_preparation_read",
 )
+
+
+class HookCheckOwnerChanged(RuntimeError):
+    """The chat a hook check read for moved; the read is void, not failed.
+
+    TASK-38751: ``console_automatic_submission`` turns it into "send again"
+    copy, never hooks advice.
+    """
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -242,7 +251,7 @@ def require_hook_preparation_source(self, source):
             )
         )
     ):
-        raise RuntimeError("Console hook preparation owner changed.")
+        raise HookCheckOwnerChanged("Console hook preparation owner changed.")
 
 
 async def read_hook_preparation(self, callback, source):

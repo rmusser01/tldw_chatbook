@@ -922,7 +922,8 @@ async def test_a_chat_closed_during_the_hook_check_says_send_again():
     """The owner moved; nothing is wrong with the hooks, so no hooks advice."""
 
     def close_chat(store, session):
-        assert store.close_session(session.id) is not None
+        store.close_session(session.id)
+        assert all(row.id != session.id for row in store.sessions())
 
     reason = await _hook_admission_copy(close_chat)
 
@@ -938,3 +939,60 @@ async def test_a_failed_hooks_read_still_says_review_or_disable_hooks():
     reason = await _hook_admission_copy(fail)
 
     assert reason == "Hooks unavailable; review or disable hooks before sending."
+
+
+@pytest.mark.asyncio
+async def test_a_chat_closed_during_v2_hook_preparation_says_send_again(
+    hook_file, monkeypatch
+):
+    """The v2 preparation read is voided the same way, not "failed"."""
+    from Tests.Chat.test_console_hook_preparation_demand import _save_hooks
+    from tldw_chatbook.Agents.hook_permissions import HookPermissions
+    from tldw_chatbook.Chat.console_automatic_submission import (
+        prepare_submission_hooks,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
+
+    _save_hooks(hook_file, {})
+    store = ConsoleChatStore()
+    session = store.create_session(session_id="hook-v2-owner", ephemeral=True)
+    runtime = ConsoleRuntime(app=None)
+    owner = runtime.ensure_hook_permissions()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=None,
+        hook_permissions_accessor=runtime.ensure_hook_permissions,
+    )
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    entered, release = threading.Event(), threading.Event()
+    original = HookPermissions.v2_configuration
+
+    def paused_read(self):
+        entered.set()
+        assert release.wait(5), "the test never released the read"
+        return original(self)
+
+    monkeypatch.setattr(HookPermissions, "v2_configuration", paused_read)
+    try:
+        task = asyncio.ensure_future(
+            prepare_submission_hooks(
+                controller, session, None, ConsoleSubmissionOrigin.MANUAL
+            )
+        )
+        for _ in range(250):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.02)
+        assert entered.is_set(), "v2 preparation never read the configuration"
+        store.close_session(session.id)  # the user closes the chat mid-read
+        assert all(row.id != session.id for row in store.sessions())
+        release.set()
+        result = await asyncio.wait_for(task, 5)
+    finally:
+        release.set()
+        await runtime.dispose()
+        owner.close()
+
+    assert result is not None and not result.accepted
+    assert result.visible_copy == "Chat changed during the hook check; send again."
