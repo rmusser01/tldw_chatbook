@@ -713,6 +713,18 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "SettingsScreen._update_provider_return_widgets",
         "self.query_one('#settings-provider-return-continuation-status', Static)",
     ): "NOT-PER-TICK: the prompt-summary clock path passes INTERNAL_PROMPTS, so its draft-status helper cannot call the provider-return branch. Explicit continuation changes may change wrapped height.",
+    # -- UI/Library_Modules/library_notes_controller.py (TASK-34000.29 N-14)
+    (
+        "tldw_chatbook/UI/Library_Modules/library_notes_controller.py",
+        "LibraryNotesController.loader",
+        "paths",
+    ): (
+        "NOT-A-WIDGET: `paths` is the enclosing "
+        "`_choose_library_notes_bulk_move_target`'s `dict[str, str]`, read "
+        "by the nested picker `loader` as a closure (so the per-scope "
+        "collection inference cannot see its binding); `paths.update` is "
+        "`dict.update` remembering the folder paths each page serves."
+    ),
     # -- UI/Library_Modules/skills_trust_modals.py (moved verbatim out of
     #    UI/Screens/skills_screen.py by task-34893; the row follows it)
     (

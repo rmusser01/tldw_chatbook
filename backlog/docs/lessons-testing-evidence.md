@@ -24750,3 +24750,89 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - For a timing window, act with the action itself (`screen.action_focus_previous()`) and plain `asyncio` polling, not `pilot.press`.
 - Pass a diagnostic as a callable (`message=lambda: ...`), so it reports the state at the timeout.
 - Show each case red on the buggy tree before trusting it green.
+
+## A delete that passes a column census can still leave the words in the index (TASK-34000.29 fix round 1, 2026-10-29)
+
+Delete forever's completeness pin (`Tests/ChaChaNotesDB/note_trace_census.py`)
+found every note-id column from the live schema, swept every text column of
+every ordinary table for the id, and checked the notes FTS index through
+`fts5vocab` instances, its integrity check, its row total and `MATCH` on the
+note's own words. All of it read clean, and review R0 accepted it. Review R0's
+m-3 asked for a byte-level token scan instead: every column of every table in
+`sqlite_master`, virtual and shadow tables included, compared with
+`instr(CAST(col AS BLOB), CAST(? AS BLOB))`. Its first run found
+`notes_fts_data.block` still holding the purged note's title and body words,
+in 4 blocks each. An FTS5 `'delete'` writes a delete marker, and the term
+bytes stay in older segments until a merge. The logical checks cannot see this
+by design: `MATCH` and `fts5vocab` both honour the marker. The fix is one
+`INSERT INTO notes_fts(notes_fts) VALUES('optimize')` inside the purge
+transaction (0.26 s on an 11 MB index). The same scan also showed that a
+column census misses ids inside JSON payloads.
+
+**What to do.** When a feature promises data is gone, scan values, not names.
+Search every column of every table, shadow tables too, as bytes, for the id in
+each form (bare and JSON-quoted) and for words only that record held. Keep an
+explicit, commented allowlist of what is kept on purpose, plus a negative
+control: a table the delete was never told about that holds the title inside
+JSON. Do not count a logical index check (`MATCH`, `fts5vocab`,
+`integrity-check`) as evidence that bytes are gone.
+
+## A paired run against the previous round's head calls your own red "pre-existing" (TASK-34000 polish-1b, 2026-10-29)
+
+Task 9 (Ctrl+S in every editor) moved the Media edit interlock claim into
+`_save_library_media_edit_from_form` in its first commit. That turned
+`Tests/UI/test_library_multiselect_media.py::test_every_media_mutation_claims_the_interlock_at_one_audited_seam`
+red. Fix rounds 1 and 2 each ran their paired comparison against the head
+the previous review had seen. By then the red was on both arms, so each round
+counted it as pre-existing, and the file is not censused, so CI never saw it
+either. Only review r2 caught it, by reading the claim's new location. Round 3
+re-paired against the task's original base, `500d09c43a`, and the red showed
+up as head-only at once.
+
+The final fix wave on the same branch missed a red for a related reason: the
+comparison covered too few files. Its brief said to re-run "Architecture and
+the ratchets", and the agent ran the two ratchets it already knew: the screen
+ratchet and the Library-modules ratchet (`70 passed`). The C-1 fix added 18
+lines to `app_service_wiring.py`, and that made
+`test_module_size_ratchet[app_service_wiring.py]` red. That is a third ratchet
+file, which neither run included. The next agent found it by running the whole
+of `Tests/Architecture` on both arms and comparing JUnit results by test name.
+
+**What to do.** A paired comparison answers "what did this work break?" only if
+its base is from before the work started.
+- Pair every fix round against the task's original BASE, not the last reviewed
+  head.
+- Pair the final fix wave against the base of the whole branch, or at least
+  against the head the final review saw.
+- Choose the files to compare by what the diff can reach, not by area name. A
+  wiring, size or import ratchet keyed on a file you touched counts as a
+  covering test.
+- Run `Tests/Architecture` whole on both arms rather than "the ratchets you
+  know". It has at least three size-ratchet files: screen, Library modules,
+  and module size.
+
+## Splitting a long write into per-item transactions does not let a waiting SQLite writer in (PR #3423 re-review N-1, 2026-11-06)
+
+**Incident.** The Library's bulk Add/Remove keyword held one `BEGIN IMMEDIATE`
+Notes transaction across every checked note, and on a ready Sync v2 profile
+each note paid about 0.12 s of `SyncStateRepository` reads inside it. The
+re-review measured a concurrent `add_conversation` waiting out the whole run
+and failing past about 15 s. The fix gave each note its own transaction, and a
+pin that started the writers at a gate between two notes went green at once.
+A scratch probe that started the writer at an arbitrary note found almost
+nothing had changed. `add_conversation` still got in only when the bulk
+ended: 3.0-3.2 s when started halfway through 50 notes, 7.8 s halfway through
+120, and "database is locked" after 15.6 s from the first of 120 under load.
+`add_note` still failed at once. The bulk retakes the write lock
+microseconds after each commit, while the waiter sleeps in SQLite's busy
+handler (its sleeps grow to 100 ms), so the waiter keeps missing the gaps. A
+deferred writer that must upgrade gets SQLITE_BUSY without the handler at
+all.
+
+**Rule.**
+- Per-item transactions help other writers only if the gaps between them are
+  real. The slow part of each item (here, reads of another store) has to run
+  outside the write transaction.
+- A gate at a commit boundary proves the lock is released there, not that
+  anyone can get it. Also time a writer that arrives inside an item, and
+  report both.

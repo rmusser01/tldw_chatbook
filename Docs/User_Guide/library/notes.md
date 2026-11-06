@@ -408,7 +408,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. With nothing checked, "Export selected" is blocked, and the count line under the row names it: "0 selected — Export selected unavailable" (task-32549). The reason is on that line rather than in the button, because this row is measured to the cell and a line of its own would cost the list a row; it reverts to the plain count the moment you check something. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", "Export selected" and "Actions…". **Space** checks or unchecks the focused row, as Enter does. "Select all N shown" selects exactly the N notes on screen — the rows the tree has loaded — so the number it names is the number it selects, with a filter applied or after coming back from Export. The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. The row fits the list pane it sits in, not the terminal: when the pane cannot hold it on one line, Export selected and Actions… move to a second row; when even that does not fit (a compact terminal, or the narrower list pane a 120-column terminal gives) the row shortens to "Done", "All N", "Clear", "Export" and "Actions…" and drops its own copy of the count, keeping the line below it — every action stays on the pane. With nothing checked, "Export selected" and "Actions…" are blocked, and the count line under the row names it: "0 selected — Export selected unavailable" (task-32549). The reason is on that line rather than in the button, because this row is measured to the cell and a line of its own would cost the list a row; it reverts to the plain count the moment you check something. **Actions…** opens a strip of Move to folder… / Add keyword… / Remove keyword… under the row (Escape closes it and returns to Actions…). Move to folder… opens the same all-folders picker as Move note, titled "Move N notes to…", and puts every checked note in the folder you choose, taking it out of the folders it was filed in by hand (a placement a sync root manages stays). Add keyword… and Remove keyword… ask for one keyword and add it to, or remove it from, every checked note, the same way a keyword typed in the editor is saved — so on a device that syncs notes the change syncs like an editor edit; text with no keyword in it (a lone comma, say) changes nothing and says so: "No keywords entered — nothing changed." Nothing changes until you choose a folder or press Apply; Escape or Cancel leaves every note as it was. A receipt then names the count — "Moved 3 of 3 notes to Projects / Thesis", "Added 'travel' to 2 notes · 1 already had it", "Removed 'travel' from 3 notes" — and select mode ends. If some notes could not be changed (for a keyword change, the open note while it has unsaved edits, or a note your sync setup or policy will not let change) the receipt says how many, and for a keyword change why — "The open note has unsaved changes.", the policy's own sentence, or that Sync v2 is not ready yet — select mode stays, and only those notes stay checked, so the same action retries just them. A keyword change saves each note on its own, so a note that fails part-way is left exactly as it was. Notes cannot be deleted in bulk. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
 
 **Keyboard on this toolbar (the Notes list only).** `/` focuses the filter
 and selects whatever is already in it, so the next thing you type replaces
@@ -485,7 +485,7 @@ action so the list retains its row budget.
 | **Save** | Saves immediately, without waiting for autosave. It remains visible at every terminal size: beside the mode controls when the editor pane is wide enough for the whole header on one row, otherwise on the row directly under Edit / Preview / Info, with the save state on its own line above them. The header never pushes Save past the pane's edge, and F6 only lands on a Save you can see. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save** at every terminal size, with its whole label — never a clipped "Use in". On a new note you have not typed into, **Discard new note** sits beside it (worded "Discard" only where its row is too narrow for the full label — a 120-column terminal; wider stacked rows keep "Discard new note"); it keeps its place on the row when it does not apply, so Edit / Preview / Info never shift. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
-| **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick. The picker opens in the folder you last exported to this session (your home folder until then). If a file of that name already exists there, a "Replace existing file?" prompt names the file and its folder — `Replace "Reading list.md" in ~/exp?` — with **Cancel** focused; Escape, a click outside the prompt or **Cancel** leave the existing file exactly as it was, and only **Replace** writes. If the file you chose is a link to another file, the prompt names that file and its folder, and Replace writes through the link, leaving the link in place. The write is atomic (a temporary file in the same folder, then a rename), so a failed write never leaves a truncated file. Success shows "Note exported successfully to ~/exp/Reading list.md" — the folder and the file, not just the name. |
+| **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick. The picker opens in the folder you last exported to this session (your home folder until then). If a file of that name already exists there, a "Replace existing file?" prompt names the file and its folder — `Replace "Reading list.md" in ~/exp?` — with **Cancel** focused; Escape, a click outside the prompt or **Cancel** leave the existing file exactly as it was, and only **Replace** writes. If the file you chose is a link to another file, the prompt names that file and its folder, and Replace writes through the link, leaving the link in place. The write is atomic (a temporary file in the same folder, then a rename), so a failed write never leaves a truncated file. Success shows "Note exported successfully to ~/exp/Reading list.md" — the folder and the file, not just the name. Closing the file picker without choosing a file (Esc or Cancel), or keeping the existing file at the replace prompt, is not a failure: the only sign is the notification "Note export cancelled." (naming the kept file), and the status line keeps the note's own state. After an export — cancelled, written or failed — and after **Copy**, keyboard focus is back on the button you used, so Enter repeats it — never on **Delete**. If you moved focus yourself while the export was still writing (into the keywords field, say), it stays where you put it. |
 | **Delete** (Info → Danger) | Asks inline, in place — Info stays open and the prompt renders inside the Info box, on the row directly under the Delete button that raised it, at every terminal size: "Delete this note? Undo will be available in the Notes list." Info scrolls to the prompt by itself, so its copy and both buttons are in view without a manual scroll, and stay in view if the terminal is resized while it is open. Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. Cancelling puts focus back on Delete and leaves Info scrolled exactly where it was. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 Opening a note shows "Loading note…" only while the note is being read. If a
@@ -550,10 +550,18 @@ the editor alone, so keystrokes never land in the wrong box and focus never
 jumps away as you type or after you move to another field. The next refresh
 that arrives once your hands are off the field paints normally.
 
-Notes does not use **Ctrl+S**, and there is no replacement Notes save
-shortcut. Use the visible **Save** button when you want an immediate Library
-notes save; normal Tab navigation and **F6** can reach it. Autosave continues to
-handle ordinary typing.
+**Ctrl+S** saves the open note now, without waiting for the 2-second autosave,
+from anywhere in the note's pane: the body, Title, Keywords, the
+Edit/Preview/Info buttons or Info. It does what the **Save** button does, and
+focus stays where it was. With nothing unsaved it says "Saved — no changes."
+on the status line, with no pop-up — the same answer the **Save** button gives.
+Where a save is held it says why on the status line instead, with no pop-up,
+and moves nothing: "Save locked — finish or cancel the destructive action."
+while the Delete confirmation is open, "Save locked — resolve the note
+conflict below." in a conflict (the conflict choices are brought into view).
+With focus on the Notes list, the filter or the folder tree, Ctrl+S does
+nothing, even with a note open beside it. Autosave still handles ordinary
+typing.
 
 #### Editor keys
 
@@ -562,6 +570,7 @@ handle ordinary typing.
 | **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Keywords, Body, and back round to "‹ Notes". Tab out of the body stays inside that cycle, never wrapping round to the "Library notes / Folder files" switch above the pane. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
 | **F6** / **Shift+F6** | Leave the editor for the Notes list or the Library rail. This is the way out of the editor's Tab cycle; **Escape** is the other (it returns to the list). |
 | **Ctrl+End** / **Ctrl+Home** | Jump the caret to the end or the start of the note body. `End` and `Home` still move within the current line. |
+| **Ctrl+S** | Save the note now (see above). The footer and F1 show `ctrl+s save now` (`ctrl+s save` on a compact terminal) only while the note has unsaved changes — the key would save. |
 | **Escape** | Returns to the list — one press, from Edit, Preview, or Info. From Info it goes back to the editor first. |
 
 Arriving in the **Title** by keyboard puts the caret at the end of the
@@ -607,9 +616,10 @@ sort, selected note or placement, Notes-list scroll, Library-rail scroll, and
 semantic keyboard focus instead of starting over at the first row.
 
 If a save is blocked — most commonly a title that starts or ends with a
-space — Escape does not leave silently: it notifies "Can't leave yet — fix
-the title or press Discard new note." so there is always a visible way
-forward, either fixing the field or discarding a still-new note.
+space — Escape does not leave silently. The notification repeats the reason
+the status line shows, which names the field and the fix: "Can't leave yet —
+Title begins or ends with whitespace — remove it to save.", or "Can't leave
+yet — Keywords contain a case-insensitive duplicate — remove one to save."
 Clicking another destination in the nav bar while a save is blocked shows
 the same reason with the destination named ("Can't open Console yet: Title
 begins or ends with whitespace — remove it to save."), keeps Library
@@ -786,7 +796,16 @@ stage exactly one choice:
 - **Skip for now** changes nothing. The conflict stays in **Needs attention**
   and can be reviewed later.
 
-Staging or changing a choice does not alter either authority. **Apply
+Staging or changing a choice does not alter either authority. Choices you
+stage in a review are kept while the folder is unchanged, even if you leave and
+come back: the status line then reads "Choice staged. No changes yet." (or "2
+choices staged. No changes yet."), and nothing is applied until you choose
+**Apply reviewed**. A folder that changed in the meantime gets a fresh review
+with no choices staged. A review opened from **Manage sync folders** offers
+**‹ Sync folders** to go back there, and Escape goes there too (the footer
+reads `esc back to sync folders`); its receipt offers **‹ Sync folders** alone,
+since **Manage sync folders** would open the same list. One reached from
+**Add from files…** offers **‹ Notes**, and Escape returns to Notes. **Apply
 reviewed** rechecks the whole review against fresh file and note state, applies
 the safe actions and selected conflict resolutions that are still valid, and
 can finish partially when some rows were skipped. If anything changed since
@@ -1186,7 +1205,12 @@ selected items unavailable — Choose how to handle the folder name
 collision."), as **Check selection** does before a source is chosen.
 
 Progress remains visible and **Cancel import** stops cooperatively after the
-current item; completed items are not rolled back. Progress counts *planned
+current item; completed items are not rolled back. Escape leaves the import
+running (use **Cancel import** to stop it): it returns to the Notes list, as
+**‹ Notes** does, and the footer reads `esc back to notes`, as it does
+before the import starts. While the
+selection is still being checked, Escape cancels the check instead (`esc
+cancel`) and keeps you on the import with your selection. Progress counts *planned
 changes* — one per note a source creates, one per source otherwise — so a
 two-note CSV is two of them; the line says so ("67 of 67 planned changes
 complete").
@@ -1204,9 +1228,12 @@ created, with the count on its label. A file the app skipped for you — an unch
 unsupported source — keeps its own reason there; only a row you set to Skip
 yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry
-unfinished items**. **‹ Notes** may hide a running import without
+unfinished items**. **‹ Notes** or Escape may hide a running import without
 stopping it; the list then offers **View import** or **Continue import** until
-it settles. **Last import** reopens the same-session receipt afterward.
+it settles, and **View import** reopens the running import with its progress
+and **Cancel import**. Focus lands on the progress, not on **Cancel import**,
+so pressing Enter there does not stop the import; **Cancel import** is one Tab
+away. **Last import** reopens the same-session receipt afterward.
 
 #### Obsidian vaults
 
@@ -1367,6 +1394,9 @@ The receipt is then on screen. Tab stays inside Import once throughout —
    names where to see them (task-32545; was "N applied · durable receipt
    recorded"). The receipt's bar offers **Manage sync folders** and
    **‹ Notes**; a second folder is set up from **Add from files…** again.
+   Escape from these pages returns to Notes, like **‹ Notes**; from a review
+   you opened in **Manage sync folders** it returns to that list, like the
+   page's **‹ Sync folders**.
    Choosing **‹ Notes** returns to a Notes list that already
    counts the synced notes and shows them under a **⇄ Sync managed** folder
    named after the display name — no restart needed (task-32518).
@@ -1401,8 +1431,8 @@ not carry your edits either way for them. To put an already-imported vault
 under lasting sync, delete the notes Import once made from it first and then
 run **Check changes** again — each file is then created once and kept synced.
 **Know the cost before you start:** Chatbook has no bulk delete for notes, so
-that is one note at a time, each with its own confirmation — select mode
-offers Export selected and nothing else. For a vault of any size it is worth
+that is one note at a time, each with its own confirmation — select mode can
+export, move and re-keyword notes in bulk, but not delete them. For a vault of any size it is worth
 setting the sync up on a folder you have not imported, rather than undoing an
 import of fifty notes by hand.
 
@@ -1440,8 +1470,9 @@ skipped · 0 folder moves" with every imported file "Already imported by
 Import once — left as it is", and activating applied 0 — the database still
 holds 64 notes. The other order is untested and unprotected, as this section
 now says. The "no bulk delete" clause is read from source, not driven: select
-mode yields Done / Select all / Clear / Export selected and nothing else
-(`Widgets/Library/library_notes_canvas.py:1636-1683`), and no bulk-delete
+mode yielded Done / Select all / Clear / Export selected and nothing else
+(`Widgets/Library/library_notes_canvas.py:1636-1683`; TASK-34000.29 later
+added Actions… — move and keyword only), and no bulk-delete
 handler exists — deletion is per note through the editor's confirm).*
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
@@ -1522,9 +1553,42 @@ and not yet restored; it is absent while that count is zero.
    return exactly as **Undo** returns them; it is the same restore.
 3. Press **Escape** (or **‹ Notes**) to go back to the list.
 
-The view holds the 20 most recent deletions and says so when there are more.
-Nothing here deletes anything for good: the Trash offers **Restore** and no
-permanent delete.
+The list pages 20 at a time with the exact total — for example
+"1–20 of 37 · Page 1 of 2" — and **Previous** / **Next** under it move
+between pages; while every deleted note fits one page, only the range is
+shown. Restoring a row keeps you on the same page: the rows below it move up,
+and focus lands on the row now in its place — or on the new last row when you
+restored the bottom one. Restoring the only row left on the last page shows
+the page before it, with focus on its first row. If a page cannot be read, the
+view keeps what it shows, says "Couldn't load recently deleted notes." and
+offers **Retry**.
+
+**Delete forever** (x) removes a note for good after a confirm that names it.
+It shows on the focused row only, so every other row keeps its whole title;
+with the mouse, click a row's title to focus that row (this restores nothing),
+then click its **Delete forever**.
+A note kept in sync with a folder is refused with "This note is kept in sync
+with a folder, so it can't be deleted forever here."; this release has no way
+to take one note out of its folder's sync. When that cannot be checked — sync
+folders failed to start this session, say — nothing is deleted either, and
+the view says "Couldn't check whether a sync folder holds this note — nothing
+was deleted." The confirm opens on **Cancel**,
+and **Escape** cancels it without changing anything. There is no Undo
+afterwards: the note, its keyword and folder links and its sync history are
+gone, and focus lands on the row now in its place.
+
+Delete forever removes the note from this device's notes only. A file that a
+synced folder wrote for it before that folder was disconnected stays on disk,
+and copies already on a sync server are not removed; the confirm adds "Its
+file in the synced folder stays on disk." or "Copies on your sync server are
+not removed." when it knows this note has either. The note's keywords stay:
+only its link to them goes. While another change to your notes is still
+running, Delete forever deletes nothing and the view says "Delete forever
+waits: another change to your notes is still running." until that change
+finishes. While a notes import is still running, **Restore** (r) restores
+nothing and the view says "Restore waits: another change to your notes is
+still running." Focus stays on the row, and the line clears when the import
+ends.
 
 ## Keyboard & commands
 
@@ -1534,11 +1598,13 @@ permanent delete.
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". The footer drops the "/ find note" chip while a text field has focus, for that reason. |
 | **g** | Go to the folder tree beside the list — focus lands on the selected placement when there is one, otherwise on the first folder row. |
 | **e** (in select mode) | Export the checked notes. Advertised only once at least one row is checked, which is also when the **Export selected** button stops being disabled. |
+| **Space** (in select mode) | Toggle the focused note — check it or uncheck it, as Enter on its row does. Only on a note row: on Done, Select all, Clear, Export selected or Actions… it does nothing, a pane grip keeps its own Space (it collapses or expands its pane, as outside select mode), and in the filter box it types a space. |
 | **↑ / ↓** (Notes tree) | Move through folder rows, note rows and the "more" pager in the order shown — one list, top to bottom. Enter on a "more" pager loads the next page and puts focus on the first row it added. |
 | **→ / ←** (on a folder row) | Expand the folder; collapse it, or jump to its parent folder when it is already collapsed. Selecting a folder (Enter) stays separate from these. |
 | **Enter** (on **Sort**) | Opens the chooser with the current choice focused. **← / →** (or ↹ Tab) move between the choices without choosing, and Enter picks the focused one; Enter on a choice or Escape returns focus to **Sort**. |
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list). In the filter: leave the field, keeping what you typed; the applied filter is unchanged. |
 | **r** (in **Recently deleted**) | Restore the focused row |
+| **x** (in **Recently deleted**) | Delete the focused row forever, after a confirm that names it |
 | Enter (in "Filter notes… (Enter)") | Apply the filter; Enter again on the same filter opens the first result |
 | ↓ (in the filter) | Focus the first result row. Text you have not applied yet is applied first, the way Enter applies it, and focus lands on the first row of the new result; with no result, focus stays in the filter. An emptied box clears the filter, as Enter does, and focus lands on the first folder or note of the list — the same row ↓ reaches from an empty box with no filter applied. Any key or click while the result is still loading — including F6, Shift+F6 and Tab — or a dialog opening over Library cancels that move to the first row. A mouse-wheel scroll that moves a pane does not: the pane takes the wheel, and focus still lands on the first row when the result paints. |
 | **‹ \<note\>** (note heading) | After following a link or a backlink, returns to the note you came from (one hop) |
@@ -1557,11 +1623,13 @@ Title, Keywords and body announce themselves the same way — `typing in field
 | esc back to notes`, plus `ctrl+end end of note` in the body. Below 64
 columns the Escape chip comes first, because the footer may have room for
 only one chip there. In select mode the tier becomes
-`enter select note | e export selected | esc done`, with the **e** chip
-present only while something is checked. Notes does not register **Ctrl+S** and does not replace it with
-another save shortcut. Use the visible
-Library notes **Save** button for an immediate save; Folder files saves
-automatically. Global navigation keys live in the [guide index](../index.md).
+`space toggle | enter select note | e export selected | esc done`, with the
+**space** chip present only while a note row has focus and the **e** chip only
+while something is checked; with the Actions… strip open it reads
+`enter choose action | esc cancel`. **Ctrl+S** belongs to the note's pane, not
+the list: the list's footer never shows it, and pressing it there does nothing
+(see Editor keys). In Folder files it writes the file now. Global navigation
+keys live in the [guide index](../index.md).
 
 ## Related settings & docs
 
@@ -1841,7 +1909,8 @@ which taught that adapter to detect one.)*
 soft-deleted notes, newest first, with a per-row Restore and `r` on the
 focused row. Restore commits through the same seam the delete receipt's Undo
 uses, so the row returns to its folder and the rail count moves identically.
-The view offers no permanent delete.)*
+The view offers no permanent delete — superseded by TASK-34000.29, which
+added Delete forever; see "Recently deleted" above.)*
 
 *Verified against fix/library-notes-i-backlinks — 2026-09-09 (task-32145:
 Info → Properties now lists "Linked from (N)" — the notes whose bodies carry

@@ -328,6 +328,13 @@ from ...Library.library_rail_state import (
 )
 from ...Library.library_shell_state import (
     LIBRARY_CANVAS_LANDING_COPY,
+    LIBRARY_EDITOR_SAVE_BUSY_COPY,
+    LIBRARY_EDITOR_SAVE_NO_CHANGES,
+    LIBRARY_FILE_NOTES_SAVE_REFUSED,
+    LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY,
+    LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY,
+    LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY,
+    LIBRARY_SKILL_SAVE_PLUGIN_OWNED_COPY,
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -462,6 +469,7 @@ from ...Widgets.Library.library_file_notes_events import (
     FileNotesIdentityCleared,
     FileNotesReloadConfirmationChanged,
     FileNotesRootChanged,
+    FileNotesSaveStateChanged,
 )
 from ...Widgets.Library.library_media_content import LibraryMediaContentBody
 from ...Widgets.Library.library_media_canvas import (
@@ -692,7 +700,9 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 # (dev commit 53d1789a6 -- new since PR 0a's base, kept inline here rather
 # than moved: it is new screen code, not part of the extracted support layer.)
 _MEDIA_SELECT_MODE_KEY = "s"
-_MEDIA_ROW_SELECT_KEY = "space"
+#: TASK-34000.29 (N-14, review R0 M-10): the select-mode row toggle key, one
+#: name for the Media and Notes bindings and their footer chips.
+_ROW_SELECT_KEY = "space"
 #: TASK-34000.25: how many LAYOUT-SIGNAL continuations (``LibraryMediaContent
 #: Body.run_when_laid_out`` -- the Raw view's index build, the Markdown's last
 #: mounted batch, or the next refresh once something is laid out) the
@@ -922,7 +932,9 @@ def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
     same information reworded for a one-shot toast.
     """
     if kind is NoteFlushOutcomeKind.VALIDATION_VETO:
-        return "Can't leave yet — fix the title or press Discard new note."
+        # TASK-34000.29 (N-25): only reached when the veto carried no reason
+        # (``_library_note_exit_veto_toast`` repeats it when it does).
+        return "Can't leave yet — fix the field named in the status line."
     if kind is NoteFlushOutcomeKind.FAILED:
         return "Can't leave yet — the save failed; press Save to retry or Discard."
     if kind is NoteFlushOutcomeKind.CONFLICTED:
@@ -932,6 +944,35 @@ def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
     if kind is NoteFlushOutcomeKind.BLOCKED:
         return "Can't leave yet — another action is already in progress; wait for it to finish."
     return "Can't leave yet — the note changed while saving; try again."  # STALE
+
+
+def _library_note_exit_veto_toast(
+    outcome: NoteFlushOutcome, *, discard_visible: bool
+) -> str:
+    """The toast for a refused leave from the note editor (TASK-34000.29 N-25).
+
+    A validation veto repeats the save's own reason -- the sentence the status
+    line shows, which already names the field and the fix ("Title begins or
+    ends with whitespace — remove it to save."), so a keyword veto never
+    blames the title. "Discard new note" is offered only while that control
+    is on screen. Today no typed edit reaches that branch: the first genuine
+    edit clears the session's ``untouched_create_token``, which hides Discard,
+    and an untouched note has nothing to veto. It stays as the correct copy
+    for any later path that shows Discard during a veto. Every other kind
+    keeps its own sentence.
+
+    Args:
+        outcome: The typed barrier result the flush refused with.
+        discard_visible: Whether "Discard new note" is shown right now.
+
+    Returns:
+        The one-shot toast text.
+    """
+    reason = outcome.message.strip()
+    if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO and reason:
+        tail = " Or press Discard new note." if discard_visible else ""
+        return f"Can't leave yet — {reason.rstrip('.')}.{tail}"
+    return _library_note_editor_exit_veto_message(outcome.kind)
 
 
 def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
@@ -1004,6 +1045,21 @@ _LIBRARY_SYNC_ROOTS_ENTER_LABELS = {
     "disconnect": "",
 }
 
+#: TASK-34000.40 (N-33): the six Library editors Ctrl+S saves (ADR-299
+#: refinement 2026-10-03, owner ruling "ctrl-s should save in every editor").
+#: ``LibraryScreen._library_editor_save_target`` names at most one of them --
+#: the one holding focus -- and ``action_library_editor_save`` runs that
+#: editor's visible commit. ``Tests/Architecture/test_ctrl_s_binding_contract.py``
+#: pins the count and that the dispatcher names each.
+_EDITOR_SAVE_TARGETS = (
+    "notes",
+    "prompt",
+    "skill",
+    "file_notes",
+    "media_analysis",
+    "media_edit",
+)
+
 
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
@@ -1051,10 +1107,15 @@ class LibraryScreen(BaseAppScreen):
         Binding("g", "library_notes_focus_folders", "Go to folder", show=False),
         Binding("e", "library_notes_export_selected", "Export selected", show=False),
         ("escape", "library_notes_escape", "Back"),
-        # task-424: skill-editor accelerators. ``check_action`` gates both
-        # to the open skill editor, so the keys pass through untouched
-        # everywhere else on the screen.
-        ("ctrl+s", "library_skill_save", "Save skill"),
+        # TASK-34000.40 (N-33): ONE Ctrl+S for the six Library editors --
+        # notes, prompts, skills, Folder files and the Media reader's two
+        # forms (ADR-299 refinement 2026-10-03). It replaced task-424's
+        # skill-only binding. ``check_action`` keeps it inactive unless an
+        # editor holds focus (rule (d)), so F1 lists it only there. Not
+        # priority: no focused Input/TextArea binds ctrl+s, so the key
+        # bubbles here (the Skills editor has relied on that since task-424).
+        Binding("ctrl+s", "library_editor_save", "Save", show=False),
+        # task-424: the skill editor's Escape, gated to the open editor.
         ("escape", "library_skill_back", "Back to skills list"),
         # task-2850: a second "escape" binding on the SAME key is legal --
         # Textual tries every binding registered for a key in order and
@@ -1191,7 +1252,7 @@ class LibraryScreen(BaseAppScreen):
             show=False,
         ),
         Binding(
-            _MEDIA_ROW_SELECT_KEY,
+            _ROW_SELECT_KEY,
             "library_media_toggle_row_selection",
             "Toggle selection",
             show=False,
@@ -1199,6 +1260,17 @@ class LibraryScreen(BaseAppScreen):
             # FOCUSED widget up, so a focused Button's own "space" binding
             # ran first and the screen never saw the key. check_action
             # keeps this inert outside select mode.
+            priority=True,
+        ),
+        # TASK-34000.29 (N-14): the Notes twin. Priority for the same reason
+        # (a focused row Button would otherwise see the key first); the
+        # ``check_action`` gate claims ONLY a focused Notes row in select
+        # mode (ruling T7-c), so every other control keeps its key.
+        Binding(
+            _ROW_SELECT_KEY,
+            "library_notes_toggle_row_selection",
+            "Toggle selection",
+            show=False,
             priority=True,
         ),
         # task-28027: Reader action-row accelerators. check_action gates them
@@ -1250,6 +1322,10 @@ class LibraryScreen(BaseAppScreen):
         # other two) -- disjoint contexts, and Textual tries each binding for
         # a key until one's ``check_action`` passes.
         Binding("r", "library_notes_trash_restore", "Restore note", show=False),
+        # TASK-34000.29 (N-29, 8b; ruling T8b-d): the Notes Trash's Delete
+        # forever, live only on a focused Trash row -- disjoint from the
+        # Media Trash's "x" above, which gates on the Media row.
+        Binding("x", "library_notes_trash_delete", "Delete forever", show=False),
     ]
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
@@ -1354,23 +1430,6 @@ class LibraryScreen(BaseAppScreen):
         ("esc", "close"),
     )
 
-    #: task-3020 AC4: the skill editor's own working keys -- Ctrl+S saves,
-    #: Escape returns to the skills list (``action_library_skill_save``/
-    #: ``action_library_skill_back``, both gated to
-    #: ``_library_skill_editor_active()``). Previously unadvertised: with
-    #: no branch for this state, ``_library_footer_shortcuts_for_current_
-    #: state`` fell through to ``_library_list_canvas_showing_list()``,
-    #: which is False here (the skills view is "editor", not "list"), and
-    #: landed on the bare ``LIBRARY_GENERAL_SHORTCUTS`` -- an asymmetry
-    #: beside the note/prompt editors, which already advertise their own
-    #: "esc" hint via ``LIBRARY_DETAIL_BACK_SHORTCUTS``.
-    LIBRARY_SKILL_EDITOR_SHORTCUTS = (
-        ("/", "focus search"),
-        ("F6", "next pane"),
-        ("ctrl+s", "save skill"),
-        ("esc", "back to skills list"),
-    )
-
     #: task-3020 AC2: an ARMED bulk-delete confirmation on the Media list --
     #: Escape cancels it (``action_library_media_bulk_delete_cancel``)
     #: rather than moving focus to the rail; the plain list's "focus rail"
@@ -1402,7 +1461,7 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_MEDIA_SELECT_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        (_MEDIA_ROW_SELECT_KEY, "toggle selection"),
+        (_ROW_SELECT_KEY, "toggle selection"),
         (_MEDIA_SELECT_MODE_KEY, "done selecting"),
         ("esc", "focus rail"),
     )
@@ -4377,6 +4436,9 @@ class LibraryScreen(BaseAppScreen):
             if workspace is not None and workspace.reload_confirmation_active:
                 return self.LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS
             shortcuts = list(self.LIBRARY_NOTES_FILES_SHORTCUTS)
+            # TASK-34000.40 (N-33): Ctrl+S flushes the autosave from the
+            # editor -- ahead of Ctrl+End, as the Notes editor tier orders it.
+            shortcuts.extend(self._library_ctrl_s_chip("file_notes"))
             # task-32552 AC#1: Ctrl+End/Ctrl+Home are live while the editor
             # has focus, as the Library editor advertises its own
             # (task-32247). Focus-gated rather than open-file-gated because
@@ -4402,12 +4464,18 @@ class LibraryScreen(BaseAppScreen):
             # never re-literalled -- the constant stays the one definition
             # of the keys this set shares (the Trash branch's rule, F2).
             escape_label = self._library_media_escape_label()
-            if escape_label == "close":
+            # TASK-34000.40 (N-33; TASK-34000.22 AC#7): Ctrl+S is the focused
+            # form's Save, chipped ahead of Escape.
+            save_chip = self._library_ctrl_s_chip(
+                "media_analysis"
+            ) or self._library_ctrl_s_chip("media_edit")
+            if escape_label == "close" and not save_chip:
                 return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
             return tuple(
-                ("esc", escape_label) if pair[0] == "esc" else pair
+                pair
                 for pair in self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
-            )
+                if pair[0] != "esc"
+            ) + save_chip + (("esc", escape_label),)
         if (
             (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
@@ -4582,20 +4650,29 @@ class LibraryScreen(BaseAppScreen):
                         else ""
                     )
                 )
-                if blocker:
+                # TASK-34000.40 (N-33): Ctrl+S, ahead of Escape as the skill
+                # editor orders it, only while the key would save here.
+                save_chip = self._library_ctrl_s_chip("prompt")
+                if blocker or save_chip:
                     # Spliced, never re-literalled -- the Trash branch's rule
                     # above (review round 1, F2): the constant stays the one
                     # definition of the keys this set shares with it.
-                    return tuple(
-                        pair
-                        for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
-                        if pair[0] != "esc"
-                    ) + (("esc", blocker),)
+                    escape = blocker or dict(self.LIBRARY_DETAIL_BACK_SHORTCUTS)["esc"]
+                    return (
+                        tuple(
+                            pair
+                            for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                            if pair[0] != "esc"
+                        )
+                        + save_chip
+                        + (("esc", escape),)
+                    )
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
-            if self._library_skill_save_available():
-                shortcuts.append(("ctrl+s", "save skill"))
+            # TASK-34000.40 (N-33): the one Ctrl+S chip seam -- shown while
+            # the skill editor holds focus and the key would save.
+            shortcuts.extend(self._library_ctrl_s_chip("skill"))
             shortcuts.append(
                 (
                     "esc",
@@ -4653,6 +4730,10 @@ class LibraryScreen(BaseAppScreen):
             typing,
             self._library_focus_enter_label(focused),
             getattr(focused, "id", None) == "file-notes-editor",
+            # TASK-34000.40 (N-33): the Ctrl+S chip follows focus into and
+            # out of an editor -- e.g. from a prompt field to the Prompts
+            # filter, a move that flips none of the three above.
+            self._library_editor_save_target(),
         )
         if context != getattr(self, "_library_footer_focus_context", None):
             self._library_footer_focus_context = context
@@ -4723,6 +4804,19 @@ class LibraryScreen(BaseAppScreen):
         if widget_id.startswith("notes-sync-root-"):
             action = widget_id.removeprefix("notes-sync-root-").rsplit("-", 1)[0]
             return _LIBRARY_SYNC_ROOTS_ENTER_LABELS.get(action, "")
+        # TASK-34000.40 final review (Task 10 N-1): the lasting-sync canvases'
+        # two Back controls name where Enter goes from the SAME decision the
+        # control, Escape and the Escape chip read -- never the tier's
+        # literal "run action" -- and the import's Cancel import names its
+        # own action once Tab reaches it.
+        if widget_id in ("notes-sync-roots-back", "notes-sync-back"):
+            return (
+                "back to sync folders"
+                if self._notes_controller._library_notes_lasting_back_returns_to_roots()
+                else "back to notes"
+            )
+        if widget_id == "note-import-cancel":
+            return "cancel import"
         navigator_label = _LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS.get(widget_id)
         if navigator_label:
             return navigator_label
@@ -5103,6 +5197,24 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_mutation_fenced(self) -> bool:
         return self._notes_controller._library_notes_mutation_fenced()
 
+    def _release_library_notes_mutation(self) -> None:
+        """Release the Notes interlock through the ONE release body (I-3).
+
+        ``LibraryNotesController._release_library_notes_mutation`` is the
+        only body: it clears the flag through the shared notes state and
+        runs everything a release owes (the held-back visit reload, a Trash
+        page read queued under a Restore, the Trash's busy reason). Class-
+        forwarded (``LibraryScreen._release_library_notes_mutation(self)``)
+        from the tree mutation, whose orchestration tests run it on a fake
+        that carries a notes state and no controller -- that fake is then
+        the receiver, and owes nothing.
+        """
+        from ..Library_Modules.library_notes_controller import LibraryNotesController
+
+        LibraryNotesController._release_library_notes_mutation(
+            getattr(self, "_notes_controller", None) or self
+        )
+
     def _begin_library_notes_operation(
         self, kind: Literal["import", "export", "copy", "console"]
     ) -> LibraryNotesOperationState | None:
@@ -5294,12 +5406,33 @@ class LibraryScreen(BaseAppScreen):
             "library-notes-sort": "sort",
             "library-notes-notice-refresh": "notice-refresh",  # TASK-34000.28
             "library-note-link-back": "link-back",  # TASK-34000.28 N-21
+            # TASK-34000.29 (N-12): focus returns here after Use in Console.
+            "library-note-use-in-console": "use-in-console",
+            # TASK-34000.29 (N-14): the select strip's controls hold focus
+            # across the canvas sync their own press (or a slice page) runs.
+            "library-notes-select-all": "select-all",
+            "library-notes-select-clear": "select-clear",
+            "library-notes-select-actions": "select-actions",
+            # TASK-34000.29 (N-29): the Trash pager and Back keep focus across
+            # the reload a page or a Restore runs; the controller resolves
+            # each to where focus belongs on the new page
+            # (``_library_notes_trash_focus_target``).
+            "library-notes-trash-previous": "trash-previous",
+            "library-notes-trash-next": "trash-next",
+            "library-notes-trash-back": "trash-back",
+            "library-notes-trash-retry": "trash-retry",  # review R1 N-2
         }
         if widget_id in direct_roles:
             return direct_roles[widget_id]
+        trash_restore = "library-notes-trash-restore-"
+        if widget_id.startswith(trash_restore):
+            return f"trash-restore:{widget_id.removeprefix(trash_restore)}"
         sort_choice = "library-notes-sort-"
         if widget_id.startswith(sort_choice):
             return f"sort-choice:{widget_id.removeprefix(sort_choice)}"
+        select_action = "library-notes-select-action-"
+        if widget_id.startswith(select_action):
+            return f"select-action-choice:{widget_id.removeprefix(select_action)}"
         if widget_id in {
             "library-note-back",
             "library-note-context-back",
@@ -5370,6 +5503,34 @@ class LibraryScreen(BaseAppScreen):
     ) -> LibraryNotesFocusIdentity:
         """Capture only portable focus, selection, and scroll values."""
         focused = self.focused
+        if not self._library_notes_semantic_role(focused):
+            # TASK-34000.29 (ruling T6-a): a Notes recompose pruned the focused
+            # control and focus is still on the landing Textual's reset picked
+            # (or on nothing). That landing is not the user's place; the pruned
+            # control is. A move the user made elsewhere is captured as made.
+            for canvas in (
+                self._library_compose_scoped_ref("#library-note-work-pane"),
+                self._library_layout_ref("#library-notes-canvas"),
+            ):
+                pruned = getattr(canvas, "focus_before_prune", None)
+                if pruned is not None and (focused is None or focused is pruned[1]):
+                    focused = pruned[0]
+                    break
+            # TASK-34000.29 (N-14, fix round 1): the same rule for the entry
+            # reconcile's own window. ``_capture_library_entry_focus``
+            # detaches focus on purpose until its restore; a tree slice that
+            # lands inside it read nothing, and its replay fell back to the
+            # filter, which the entry restore then took for a user move
+            # (measured 1 in ~8: Escape in the bulk Move picker, focus in the
+            # filter, not on Actions…).
+            entry = self._library_entry_focus_capture
+            if (
+                focused is None
+                and entry is not None
+                and entry.notes_identity is not None
+                and entry.route_key == self._library_entry_route_key()
+            ):
+                focused = entry.outgoing_focus
         region = self._library_notes_focus_region()
         stage = (
             self._library_notes_focus_stage(focused)
@@ -8649,9 +8810,25 @@ class LibraryScreen(BaseAppScreen):
                     else ()
                 )
                 export_compact = () if not export else (("e", "export"),)
+                if self._notes_state.select_actions_visible:
+                    # TASK-34000.29 (N-14): the open Actions… chooser, the
+                    # Sort chooser's grammar below.
+                    return self._notes_footer_tier(
+                        (("enter", "choose action"), ("esc", "cancel")),
+                        (("enter", "choose"), ("esc", "cancel")),
+                    )
+                # TASK-34000.29 (N-14): "space toggle" only where Space
+                # toggles -- a focused note row, never a grip or a button.
+                toggle = (
+                    ((_ROW_SELECT_KEY, "toggle"),)
+                    if self.focused is not None
+                    and self.focused.has_class("library-notes-row")
+                    and self.check_action("library_notes_toggle_row_selection", ())
+                    else ()
+                )
                 return self._notes_footer_tier(
-                    (("enter", "select note"),) + export + (("esc", "done"),),
-                    (("enter", "select"),) + export_compact + (("esc", "done"),),
+                    toggle + (("enter", "select note"),) + export + (("esc", "done"),),
+                    toggle + (("enter", "select"),) + export_compact + (("esc", "done"),),
                 )
             if self._notes_state.sort_choices_visible:
                 return self._notes_footer_tier(
@@ -8713,7 +8890,10 @@ class LibraryScreen(BaseAppScreen):
                     + (follow,)
                     + tuple(pair for pair in tier if pair[0] == "esc")
                 )
-            return self._with_library_notes_focus_chip(tier)
+            # TASK-34000.40 (N-33): Ctrl+S saves the open note from its pane.
+            return self._with_library_notes_focus_chip(
+                tier + self._library_ctrl_s_chip("notes")
+            )
         if region == "context":
             # task-32607 AC#1: this was the ONE Notes tier still rendering
             # its literal "enter run action" on every stop -- eleven Tabs
@@ -8730,14 +8910,16 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
             )
             enter_label = self._library_focus_enter_label()
+            # TASK-34000.40 (N-33): Ctrl+S saves the open note from Info too.
+            save_chip = self._library_ctrl_s_chip("notes")
             if not enter_label:
                 # TASK-34000.40 (N-31): Info's Keywords box is a text field.
                 return self._library_typing_field_footer(
-                    tuple(pair for pair in tier if pair[0] != "enter")
+                    tuple(pair for pair in tier if pair[0] != "enter") + save_chip
                 )
             return tuple(
                 (key, enter_label if key == "enter" else label) for key, label in tier
-            )
+            ) + save_chip
         if region == "editor":
             # task-32246 AC#2: Tab out of the body lands on a toolbar Button,
             # where typed characters go nowhere. Name it, so focus is never
@@ -8760,6 +8942,14 @@ class LibraryScreen(BaseAppScreen):
             # `_library_focus_enter_label` already uses, not a fresh query.
             if str(getattr(self.focused, "id", "") or "") != "library-note-body":
                 tier = tuple(pair for pair in tier if pair[0] != "ctrl+end")
+            # TASK-34000.40 (N-33): Ctrl+S saves now -- "save now" because
+            # the editor also autosaves (ADR-299 rule (b)). Ahead of Ctrl+End:
+            # the footer keeps a prefix, and at 80x24 one of the two drops.
+            tier = (
+                tuple(pair for pair in tier if pair[0] != "ctrl+end")
+                + self._library_ctrl_s_chip("notes")
+                + tuple(pair for pair in tier if pair[0] == "ctrl+end")
+            )
             # TASK-34000.40 (N-31): the body, Title and Keywords announce
             # themselves like every other Library text field.
             return self._with_library_notes_focus_chip(
@@ -8785,9 +8975,15 @@ class LibraryScreen(BaseAppScreen):
             phase = self._library_notes_sync_controller.snapshot.phase
             if phase in {"checking", "activating"}:
                 return (("wait", "current step"),)
+            # TASK-34000.40 fix round 1 (review R0 I-1): Escape goes where the
+            # back control goes, and the chip says where -- the same decision.
+            if self._notes_controller._library_notes_lasting_back_returns_to_roots():
+                back_wide, back_compact = "back to sync folders", "sync folders"
+            else:
+                back_wide, back_compact = "back to notes", "notes"
             tier = self._notes_footer_tier(
-                (("enter", "run action"), ("esc", "back to notes")),
-                (("enter", "act"), ("esc", "notes")),
+                (("enter", "run action"), ("esc", back_wide)),
+                (("enter", "act"), ("esc", back_compact)),
             )
             # task-32545 AC#2: name the focused control, in place -- the
             # editor tier appends its chip, but this tier already spends the
@@ -8806,15 +9002,34 @@ class LibraryScreen(BaseAppScreen):
                 return self._notes_footer_tier(
                     (("esc", "back to notes"),), (("esc", "notes"),)
                 )
+            # TASK-34000.29 (8b; ruling T8b-d): "x" only where it deletes --
+            # the binding's own gate, which F1 reads too (ruling T9-h). Both
+            # tiers keep "forever": the chip is the only warning before the
+            # confirm.
+            purge = (
+                (("x", "delete forever"),)
+                if self.check_action("library_notes_trash_delete", ())
+                else ()
+            )
             return self._notes_footer_tier(
-                (("r", "restore note"), ("esc", "back to notes")),
-                (("r", "restore"), ("esc", "notes")),
+                (("r", "restore note"), *purge, ("esc", "back to notes")),
+                (("r", "restore"), *purge, ("esc", "notes")),
             )
         if region == "import":
             phase = self._library_note_import_controller.snapshot.phase
-            if phase in {NoteImportPhase.CHECKING, NoteImportPhase.IMPORTING}:
+            # TASK-34000.40 (ruling T10-c): Escape cancels only a running
+            # check; otherwise it returns to Notes, running import or not --
+            # one action, one spelling (fix round 1, review R0 M-4).
+            if phase is NoteImportPhase.CHECKING:
                 return (("esc", "cancel"),)
-            return (("esc", "back to notes"),)
+            # Final review (Task 10): name the focused control's Enter --
+            # "enter cancel import" once Tab reaches Cancel import -- the
+            # way the editor, Preview and list tiers do (F1 mirrors it).
+            return self._with_library_notes_focus_chip(
+                self._notes_footer_tier(
+                    (("esc", "back to notes"),), (("esc", "notes"),)
+                )
+            )
         return self._library_footer_shortcuts_for_current_state()
 
     def _apply_library_notes_footer_context(self) -> None:
@@ -9047,38 +9262,262 @@ class LibraryScreen(BaseAppScreen):
     def _show_library_note_shortcut_refusal(self, message: str) -> None:
         return self._notes_controller._show_library_note_shortcut_refusal(message)
 
-    async def action_library_notes_save(self) -> None:
-        """Request an immediate save or explain the owning safety gate."""
+    def _library_note_save_refusal(self) -> str:
+        """Why the open note's Save is held right now, or "".
+
+        TASK-34000.40 (N-33): one reading for Ctrl+S's refusal and for the
+        footer chip it suppresses.
+        """
         if self._notes_state.select_mode:
-            self._show_library_note_shortcut_refusal(
-                "Save unavailable — finish bulk selection first."
-            )
-            return
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None:
-            return
+            return "Save unavailable — finish bulk selection first."
         if (
             self._notes_state.confirming_delete
             or self._library_note_session.destructive_running
             or self._library_note_session.destructive_admission is not None
         ):
-            self._show_library_note_shortcut_refusal(
-                "Save locked — finish or cancel the destructive action."
-            )
-            if self._notes_state.confirming_delete:
-                self._focus_library_note_control("#library-note-delete-cancel")
-            return
-        if (
+            return "Save locked — finish or cancel the destructive action."
+        snapshot = self._library_note_session.snapshot
+        if snapshot is not None and (
             snapshot.in_conflict
             or self._library_note_session.conflict_resolution_running
         ):
-            self._show_library_note_shortcut_refusal(
-                "Save locked — resolve the note conflict below."
-            )
-            self._focus_library_note_conflict_callout()
+            return "Save locked — resolve the note conflict below."
+        return ""
+
+    async def action_library_notes_save(self) -> None:
+        """Ctrl+S in a note: its Save button's commit, or why not.
+
+        TASK-34000.40 (N-33), reached through ``action_library_editor_save``.
+        A refusal is said on the editor's own status line -- no toast, as the
+        other five editors answer -- and moves no focus (ADR-299 rule (c);
+        while unbound, the delete-confirm and conflict branches moved it to
+        Cancel and to the callout); a conflict's callout is brought into view.
+        Otherwise the commit is the Save press's own, LIB-14's "keep it"
+        included, and a note with nothing unsaved answers through it, as the
+        press does: "Saved — no changes." (ruling T9-g).
+        """
+        refusal = self._library_note_save_refusal()
+        if refusal:
+            self._notes_state.shortcut_status = refusal
+            self._apply_library_note_presentation_state()
+            snapshot = self._library_note_session.snapshot
+            if snapshot is not None and snapshot.in_conflict:
+                for callout in self.query("#library-note-conflict-copy"):
+                    callout.scroll_visible(animate=False)
             return
-        self._invalidate_library_note_autosave()
-        await self._save_library_note(explicit=True)
+        if self._library_note_session.snapshot is None:
+            return
+        self._notes_controller._begin_library_note_explicit_save()
+
+    def _library_focus_within(self, *pane_ids: str) -> bool:
+        """Whether the focused widget sits inside one of ``pane_ids``.
+
+        TASK-34000.40 (N-33): an id on an ancestor -- the
+        ``_library_note_work_pane_owns_tab`` idiom.
+        """
+        focused = self.focused
+        if focused is None:
+            return False
+        return any(node.id in pane_ids for node in focused.ancestors_with_self)
+
+    def _library_editor_save_target(self) -> str | None:
+        """The ONE editor whose visible commit Ctrl+S performs now, or None.
+
+        TASK-34000.40 (N-33), ADR-299 refinement 2026-10-03 (a)/(d): decided
+        from the editor that holds FOCUS, never from a view flag alone, so the
+        key can never save an editor the user is not in -- a dirty note open
+        beside a focused Notes list or tree (ruling T9-d), a prompt or skill
+        beside its Items list, a Media form left open on another Reader tab,
+        the rail. The panes are disjoint, so at most one test passes; None
+        deactivates the binding (``check_action``).
+        """
+        if self._file_notes_active():
+            workspace = self._notes_state.file_notes_workspace
+            if workspace is not None and workspace.editor_focused:
+                return "file_notes"
+            return None
+        if self._media_state.editing_analysis and self._library_focus_within(
+            "library-media-analysis-edit-form"
+        ):
+            return "media_analysis"
+        if self._media_state.editing and self._library_focus_within(
+            "library-media-edit-form"
+        ):
+            return "media_edit"
+        if self._library_skill_editor_active() and self._library_focus_within(
+            "library-skill-work-pane"
+        ):
+            return "skill"
+        if (
+            self._library_prompt_editor_active()
+            and self._library_focus_within("library-prompt-work-pane")
+            # The embedded block editor binds its own Ctrl+S (its "Save…"
+            # menu, TASK-34000.43's allowlist) and sits nearer in the focus
+            # chain, so this binding is never reached from inside it.
+            and not self._library_focus_within("library-prompt-block-editor")
+        ):
+            return "prompt"
+        if self.check_action("library_notes_save", ()) and self._library_focus_within(
+            "library-note-work-pane"
+        ):
+            return "notes"
+        return None
+
+    def _library_editor_save_refusal(self, target: str) -> str:
+        """Why Ctrl+S would refuse in ``target`` right now, or "" (N-33)."""
+        if target == "notes":
+            return self._library_note_save_refusal()
+        if target == "prompt":
+            return self._prompts_controller._library_prompt_save_key_refusal()
+        if target == "skill":
+            return self._library_skill_save_key_refusal()
+        if target == "file_notes":
+            workspace = self._notes_state.file_notes_workspace
+            if workspace is not None and workspace.save_state in {"conflict", "error"}:
+                # Final review m-2: a marker, never the raw state string --
+                # ``report_key_save`` owns the words.
+                return LIBRARY_FILE_NOTES_SAVE_REFUSED
+        if target == "media_analysis" and self._media_state.saving_analysis:
+            return LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY
+        if target == "media_edit" and self._media_state.bulk_delete_in_flight:
+            return LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY
+        return ""
+
+    def _library_editor_save_pending(self, target: str) -> bool:
+        """Whether Ctrl+S in ``target`` would WRITE now -- the chip's own test.
+
+        TASK-34000.40 ruling T9-j: the chip promises a save, so it shows only
+        while the editor's visible commit would write -- a dirty note, a
+        shown prompt or skill Save, a dirty Folder files draft, an open Media
+        form (both forms always write). Never part of the binding's gate: a
+        clean editor still answers the key ("Saved — no changes.").
+        """
+        if target == "notes":
+            snapshot = self._library_note_session.snapshot
+            return bool(snapshot is not None and snapshot.dirty)
+        if target == "prompt":
+            # The Save button's own display rule (``sync_lifecycle_actions``),
+            # read from the state it is synced from: the footer re-registers
+            # on the dirty flip BEFORE the button is patched.
+            state = self._prompts_state
+            return state.conflict_snapshot is None and (
+                state.selected_prompt_id is None or state.dirty
+            )
+        if target == "skill":
+            return self._library_skill_save_available()
+        if target == "file_notes":
+            workspace = self._notes_state.file_notes_workspace
+            return workspace is not None and workspace.save_state == "dirty"
+        return target in {"media_analysis", "media_edit"}
+
+    def _library_ctrl_s_chip(self, target: str) -> tuple[tuple[str, str], ...]:
+        """``(("ctrl+s", verb),)`` for ``target``'s footer tier, or ``()``.
+
+        TASK-34000.40 (N-33), ADR-299 rule (e): the ONE chip seam every editor
+        tier -- and F1 (ruling T9-h) -- asks. Present only while ``target``
+        holds focus AND the key would save there (ruling T9-j). Where it
+        refuses (a conflict, an armed delete, a held Save) or has nothing to
+        write, it still answers at the editor (rule (c)), but a chip
+        promising "save" would be the dead-chip lie.
+        """
+        if self._library_editor_save_target() != target:
+            return ()
+        if self._library_editor_save_refusal(target):
+            return ()
+        if not self._library_editor_save_pending(target):
+            return ()
+        if target == "notes":
+            verb = "save" if self._notes_state.compact else "save now"
+        elif target == "prompt":
+            verb = (
+                "save prompt"
+                if self._prompts_state.selected_prompt_id is None
+                else "save changes"
+            )
+        elif target == "skill":
+            verb = "save skill"
+        elif target == "file_notes":
+            verb = "save file"
+        else:
+            verb = "save"
+        return (("ctrl+s", verb),)
+
+    async def action_library_editor_save(self) -> None:
+        """Ctrl+S: the focused editor's visible commit (TASK-34000.40 N-33).
+
+        One dispatcher for ``_EDITOR_SAVE_TARGETS``; each branch is the
+        editor's own Save seam, so the key never does what its button would
+        not. A focus move alone never reaches here -- only the key does.
+        """
+        target = self._library_editor_save_target()
+        if target == "notes":
+            await self.action_library_notes_save()
+        elif target == "prompt":
+            self._prompts_controller._save_library_prompt_from_key()
+        elif target == "skill":
+            self._save_library_skill_from_key()
+        elif target == "file_notes":
+            # A worker, as the Save presses are: the write runs on a thread
+            # and the screen keeps taking keys meanwhile.
+            self.run_worker(
+                self._flush_library_file_notes_from_key(),
+                exclusive=True,
+                group="library_file_notes_key_save",
+            )
+        elif target == "media_analysis":
+            self._media_controller._save_library_media_analysis_from_form()
+        elif target == "media_edit":
+            self._save_library_media_edit_from_form()
+
+    def _library_skill_save_key_refusal(self) -> str:
+        """Why Ctrl+S would not save the open skill now, or "" (N-33).
+
+        A plugin-owned skill is read-only package content with no Save
+        (PR #3423 review m-6): the key says so rather than "no changes".
+        """
+        state = self._skills_state
+        if getattr(state.editor_state, "plugin_owned", False):
+            return LIBRARY_SKILL_SAVE_PLUGIN_OWNED_COPY
+        if state.conflict:
+            return "conflict"
+        if state.confirming_delete:
+            return LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY
+        if state.mutation_in_flight:
+            return LIBRARY_EDITOR_SAVE_BUSY_COPY
+        return ""
+
+    def _save_library_skill_from_key(self) -> None:
+        """Ctrl+S in the skill editor (TASK-34000.40 N-33, ADR-299 a/c).
+
+        The save itself is unchanged (``action_library_skill_save``). Held,
+        the key says why on the editor's status line -- the conflict banner,
+        which replaces that line and names its way out, is brought into view
+        instead; with nothing unsaved it says so. No focus moves.
+        """
+        refusal = self._library_skill_save_key_refusal()
+        if refusal == "conflict":
+            for copy in self.query("#library-skill-conflict-copy"):
+                copy.scroll_visible(animate=False)
+            return
+        if refusal or not self._library_skill_save_available():
+            self._update_library_skill_status_static(
+                refusal or LIBRARY_EDITOR_SAVE_NO_CHANGES
+            )
+            return
+        self.action_library_skill_save()
+
+    async def _flush_library_file_notes_from_key(self) -> None:
+        """Ctrl+S in the Folder files editor: flush the autosave now (rule b).
+
+        The result is reported on the workspace's own action line; focus is
+        never moved (TASK-34000.40 N-33).
+        """
+        workspace = self._notes_state.file_notes_workspace
+        if workspace is None:
+            return
+        before = workspace.save_state
+        ok = await workspace.flush_pending_work()
+        workspace.report_key_save(before, ok)
 
     async def action_library_notes_escape(self) -> None:
         return await self._notes_controller.action_library_notes_escape()
@@ -9280,7 +9719,10 @@ class LibraryScreen(BaseAppScreen):
         if (
             event.key in ("right", "left")
             and self.focused is not None
-            and self.focused.has_class("library-notes-sort-choice")
+            and (
+                self.focused.has_class("library-notes-sort-choice")
+                or self.focused.has_class("library-notes-select-action-choice")
+            )
         ):
             # TASK-34000.28 fix round 1 (I-2): the open Sort strip is one row
             # of choices; Left/Right move between them (no wrap, never a
@@ -9940,7 +10382,17 @@ class LibraryScreen(BaseAppScreen):
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
-            self._request_library_notes_tree_initial_load()
+            if self._library_notes_mutation_fenced():
+                # TASK-34000.29 (N-14, ruling T7-f): deferred, never skipped.
+                # A dialog's choice starts a Notes mutation as the dialog
+                # closes, and this reload would clear the tree under it. So
+                # the reload is recorded as owed, and the interlock's release
+                # (``_release_library_notes_mutation``) runs it exactly once.
+                # A bulk action's in-place refresh reloads every loaded slice
+                # itself, and that settles the debt.
+                self._notes_controller._tree_reload_owed = True
+            else:
+                self._request_library_notes_tree_initial_load()
         if (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
@@ -11153,6 +11605,29 @@ class LibraryScreen(BaseAppScreen):
     def _disarm_library_media_return_for_route_change(self) -> None:
         return self._media_controller._disarm_library_media_return_for_route_change()
 
+    def _library_notes_reset_landing_canvas(self, focused: Widget | None) -> Any:
+        """The Notes canvas whose prune put Textual's reset landing on ``focused``.
+
+        TASK-34000.29 (N-14, fix round 1, review R0 M-3): while a Notes canvas
+        prunes its focused child, Textual's reset parks focus on a landing
+        (the canvas records it in ``focus_before_prune``). That focus change
+        still counts as intent here -- older deferred restores rely on its
+        veto (measured: without it, leaving a blank note left focus in the
+        filter) -- but the canvas is told, so its own same-id refocus gate
+        does not read the framework's move as the user's (measured: Escape in
+        the bulk Move picker, then focus left on the Library grip).
+        """
+        if focused is None or not self._library_notes_workflow_active():
+            return None
+        for canvas in (
+            self._library_compose_scoped_ref("#library-note-work-pane"),
+            self._library_layout_ref("#library-notes-canvas"),
+        ):
+            pruned = getattr(canvas, "focus_before_prune", None)
+            if pruned is not None and focused is pruned[1]:
+                return canvas
+        return None
+
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Record Notes focus intent and disarm foreign list-entry focus.
 
@@ -11259,6 +11734,9 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._notes_state.focus_intent_generation += 1
+                landing_canvas = self._library_notes_reset_landing_canvas(focused)
+                if landing_canvas is not None:
+                    landing_canvas.reset_landing_intents += 1
                 # PR #2571 review, finding 4: the supersede below does four
                 # more things -- it clears the pending focus handoff, the
                 # navigation status and the branch navigation requests. None
@@ -17084,6 +17562,11 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.mutation_scope = None
         self._media_state.mutation_authority = None
         self._media_state.bulk_delete_in_flight = False
+        # TASK-34000.40 review R1 N-2: the metadata form's "Media change in
+        # progress." refusal ends with the interlock it named.
+        viewer = self._mounted_library_media_viewer()
+        if viewer is not None:
+            viewer.show_form_status("edit", "")
         if not committed and not remove_ids and not upsert_items:
             if has_authority:
                 self._sync_library_media_browse_state(None)
@@ -17216,6 +17699,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.highlights = []
         self._media_state.editing = False
         self._media_state.editing_analysis = False
+        self._media_state.saving_analysis = None  # see the field (N-6)
         # TASK-34000.22 fix round 1 (I-2): the forms go with the item they
         # were typed for -- a reset that cleared the flags but left the
         # drafts kept the dirty predicate true for a form nobody could see.
@@ -17794,13 +18278,21 @@ class LibraryScreen(BaseAppScreen):
                 and self._notes_state.notice_refresh_offered
                 and self._notes_state.notice in FOLDER_CONFLICT_COPY.values()
             ),
+            # TASK-34000.29 (N-14): the Actions… chooser, open only inside
+            # select mode (a stale flag can never reopen it on re-entry).
+            select_actions_visible=bool(
+                self._notes_state.select_mode
+                and self._notes_state.select_actions_visible
+            ),
             status_copy=(
                 self._notes_state.notice
                 if operation is None and self._notes_state.notice
                 else state.status_copy
             ),
         )
-        if self._notes_state.select_mode:
+        if self._notes_state.select_mode and not LibraryScreen._library_notes_rows_reloading(
+            self._notes_state
+        ):
             projection = self._build_library_notes_tree_projection()
             if projection is None:
                 visible_note_ids = (row.note_id for row in state.rows)
@@ -17812,6 +18304,27 @@ class LibraryScreen(BaseAppScreen):
                 )
             self._notes_state.row_selection.reconcile(visible_note_ids)
         return state
+
+    @staticmethod
+    def _library_notes_rows_reloading(state: Any) -> bool:
+        """Whether the rendered Notes rows are mid-reload (TASK-34000.29 N-14).
+
+        Select mode drops a checked id once its row is no longer rendered.
+        A reload renders NO rows until its pages land -- and every return to
+        Library reloads the tree (``_refresh_library_visit_surfaces``), so a
+        dialog opened from select mode, or a partial bulk failure's "still
+        checked" retry, came back to an empty selection. Measured: the bulk
+        Move picker's Escape reconciled 3 checked notes against 0 rows.
+        Pruning waits for the reload to land instead.
+        """
+        filter_state = getattr(state, "tree_filter_state", None)
+        if getattr(state, "filter", "").strip() and filter_state is not None:
+            return bool(filter_state.loading)
+        branches = getattr(state, "tree_branches", {}) or {}
+        if not branches:
+            return False
+        root = branches.get(NotesBranchKey(None, "placements"))
+        return root is None or any(branch.loading for branch in branches.values())
 
     def _build_library_notes_tree_projection(
         self,
@@ -17890,6 +18403,10 @@ class LibraryScreen(BaseAppScreen):
         was already reachable from the import/editor-return refreshes.
         """
         expanded = sorted(getattr(self._notes_state, "tree_expanded_ids", set()))
+        # TASK-34000.29 (ruling T7-f): any full reload settles an owed one.
+        controller = getattr(self, "_notes_controller", None)
+        if controller is not None:
+            controller._tree_reload_owed = False
         LibraryScreen._begin_library_notes_tree_visit(self)
         # task-32144: and the tombstones behind them, so the "Recently
         # deleted (N)" row is truthful on the visit's first paint.
@@ -19396,14 +19913,14 @@ class LibraryScreen(BaseAppScreen):
         fenced_epoch = payload.pop("_fenced_epoch", None)
         if self._library_note_import_execution_active():
             if preclaimed:
-                self._notes_state.mutation_in_flight = False
+                LibraryScreen._release_library_notes_mutation(self)
             return False
         if payload.get("protected"):
             self._notes_state.notice = (
                 "This item is managed by sync; change its sync root instead."
             )
             if preclaimed:
-                self._notes_state.mutation_in_flight = False
+                LibraryScreen._release_library_notes_mutation(self)
             return False
         if self._notes_state.mutation_in_flight and not preclaimed:
             return False
@@ -19428,7 +19945,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             self._notes_state.notice = "That folder action is unavailable."
             if preclaimed:
-                self._notes_state.mutation_in_flight = False
+                LibraryScreen._release_library_notes_mutation(self)
             return False
 
         if fenced_epoch is None:
@@ -19470,7 +19987,7 @@ class LibraryScreen(BaseAppScreen):
                 "Could not verify affected folders — no changes were made."
             )
             if preclaimed:
-                self._notes_state.mutation_in_flight = False
+                LibraryScreen._release_library_notes_mutation(self)
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
             return False
 
@@ -19617,7 +20134,7 @@ class LibraryScreen(BaseAppScreen):
             )
             return False
         finally:
-            self._notes_state.mutation_in_flight = False
+            LibraryScreen._release_library_notes_mutation(self)
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
     def _schedule_library_notes_tree_mutation(
@@ -21852,8 +22369,12 @@ class LibraryScreen(BaseAppScreen):
     def _focus_library_note_conflict_callout(self) -> None:
         return self._notes_controller._focus_library_note_conflict_callout()
 
-    def _apply_library_note_save_outcome(self, outcome: NoteSaveOutcome) -> None:
-        return self._notes_controller._apply_library_note_save_outcome(outcome)
+    def _apply_library_note_save_outcome(
+        self, outcome: NoteSaveOutcome, *, explicit: bool = False
+    ) -> None:
+        return self._notes_controller._apply_library_note_save_outcome(
+            outcome, explicit=explicit
+        )
 
     async def _save_library_note(
         self,
@@ -21894,7 +22415,7 @@ class LibraryScreen(BaseAppScreen):
         outcome = await self._library_note_session.request_save(explicit=explicit)
         # TASK-34000.1 (N-07): a refused AUTOSAVE never moves a typing user.
         if explicit or not autosave.keep_autosave_veto_in_place(self, outcome):
-            self._apply_library_note_save_outcome(outcome)
+            self._apply_library_note_save_outcome(outcome, explicit=explicit)
 
     async def _flush_library_note_save(
         self, *, gc_untouched_blank: bool = True
@@ -22033,13 +22554,11 @@ class LibraryScreen(BaseAppScreen):
             return
         notify = getattr(self.app_instance, "notify", None)
         if not selected_path:
+            # TASK-34000.29 (N-12): a dismissed dialog is the user's cancel,
+            # not a failure -- the toast is its one signal.
             if callable(notify):
-                notify("Note export cancelled.", severity="information")
-            self._finish_library_notes_operation(
-                active_operation,
-                success=False,
-                failure_next_action="choose another destination and try again",
-            )
+                notify("Note export cancelled.", severity="information", markup=False)
+            self._notes_controller._cancel_library_notes_operation(active_operation)
             return
         try:
             validated_path = validate_path_simple(selected_path, require_exists=False)
@@ -22900,6 +23419,13 @@ class LibraryScreen(BaseAppScreen):
             event
         )
 
+    @on(FileNotesSaveStateChanged)
+    def _handle_file_notes_save_state_changed(
+        self, event: FileNotesSaveStateChanged
+    ) -> None:
+        """TASK-34000.40 ruling T9-i: the Ctrl+S chip follows the save state."""
+        self._apply_library_notes_footer_context()
+
     @on(FileNotesEditableOpened)
     def _handle_file_notes_editable_opened(
         self, event: FileNotesEditableOpened
@@ -23393,6 +23919,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.editing = False
             self._media_state.edit_draft = None
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = None  # see the field (N-6)
             self._media_state.analysis_draft = None
         self._media_state.confirming_delete = False
         self._close_library_media_find()
@@ -24085,6 +24612,21 @@ class LibraryScreen(BaseAppScreen):
             return
         self._media_state.row_selection.toggle(media_id)
         _apply_library_row_toggle(self, "media", focused, media_id)
+
+    @staticmethod
+    def _library_notes_space_claims(focused: Widget | None) -> bool:
+        """Whether select-mode Space belongs to ``focused`` (TASK-34000.29 N-14).
+
+        Only a focused Notes row (ruling T7-c; T7-e over the brief's "grips"
+        line). A pane grip keeps its own Space -- it collapses or expands its
+        pane in select mode exactly as outside it -- and the footer never
+        promises "space toggle" there: its chip shows only while a note row
+        has focus. Media claims its grips because its footer does promise it.
+        """
+        return focused is not None and focused.has_class("library-notes-row")
+
+    def action_library_notes_toggle_row_selection(self) -> None:
+        return self._notes_controller.action_library_notes_toggle_row_selection()
 
     def _exit_library_media_select_mode(self, *, announce_discard: bool) -> None:
         """Leave media Select mode: clear the selection and any pending
@@ -25433,6 +25975,13 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_filter_row_handoff = (handoff[0], False)
         # TASK-38981: and a pick's landing in the opened item.
         self._library_stage_pick_landing = None
+        # TASK-34000.29 (ruling T8-d): the Trash view's landing after a page
+        # or a Restore (``LibraryNotesController._trash_focus_role``).
+        controller = getattr(self, "_notes_controller", None)
+        if controller is not None:
+            controller._trash_focus_role = ""
+            # TASK-34000.29 8b (parked R4-1): and the offset it withheld.
+            controller._trash_landing_settling = ""
         if self._notes_state.pending_focus_identity is not None:
             self._notes_state.pending_focus_identity = None
             self._notes_state.pending_focus_waits_for_snapshot = False
@@ -26441,6 +26990,13 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_skill_save(self, event: Button.Pressed) -> None:
         return self._skills_controller.handle_library_skill_save(event)
 
+    @on(LibrarySkillsListCanvas.SaveStateChanged)
+    def _handle_library_skill_save_state_changed(
+        self, event: LibrarySkillsListCanvas.SaveStateChanged
+    ) -> None:
+        """TASK-34000.40 ruling T9-j: the Ctrl+S chip follows the skill Save."""
+        self._apply_library_notes_footer_context()
+
     def _begin_library_skill_save(self) -> bool:
         """Admit one save and expose its shared lifecycle interlock."""
         if not self._library_skill_save_available():
@@ -26566,6 +27122,18 @@ class LibraryScreen(BaseAppScreen):
                 self._library_emergency_stage == "canvas-only"
                 and self._library_emergency_restore_receipt is not None
             )
+        if action == "library_notes_toggle_row_selection":
+            # TASK-34000.29 (N-14): the Notes Space. The binding is priority,
+            # so this gate is the whole safety: it claims a focused Notes row
+            # in select mode and nothing else (ruling T7-c) -- Done, Select
+            # all, Clear, Export selected, Actions… and the pane grips keep
+            # their own keys, and a focused Input still types its space first
+            # (Textual filters a consumed key out of the binding chain).
+            return bool(
+                self._notes_state.select_mode
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and self._library_notes_space_claims(self.focused)
+            )
         if action in {
             "library_notes_new",
             "library_notes_focus_filter",
@@ -26626,8 +27194,9 @@ class LibraryScreen(BaseAppScreen):
                     and region in {"editor", "preview", "context"}
                 )
             return visible_notes
-        if action == "library_skill_save":
-            return self._library_skill_save_available()
+        if action == "library_editor_save":
+            # TASK-34000.40 (N-33): bound only while an editor holds focus.
+            return self._library_editor_save_target() is not None
         if action == "library_skill_back":
             return self._library_skill_editor_active()
         if action == "library_note_preview_follow_link":
@@ -26669,15 +27238,28 @@ class LibraryScreen(BaseAppScreen):
             )
         if action == "library_notes_trash_restore":
             # Exactly when a Restore button is on screen to stand for -- the
-            # Notes canvas showing its Trash view, with rows and no mutation
-            # already in flight.
+            # Notes Trash view with rows and no Notes writer in flight; under an
+            # import's fence r reaches the handler, which says why (NB-1).
             trash = self._notes_state.trash
             return bool(
                 self._library_notes_workflow_active()
                 and self._notes_state.view == "trash"
                 and trash is not None
                 and trash.rows
-                and not self._library_notes_mutation_fenced()
+                and not self._notes_controller._library_notes_writer_held()
+            )
+        if action == "library_notes_trash_delete":
+            # TASK-34000.29 (8b; T8b-d, review R0 I-2/m-5): the focused Trash
+            # row, whose Delete forever shows -- the one decision the binding,
+            # the chip and F1 read. Not gated on the Notes interlock: x then
+            # reaches the handler, which paints why it waits.
+            trash = self._notes_state.trash
+            return bool(
+                self._library_notes_workflow_active()
+                and self._notes_state.view == "trash"
+                and trash is not None
+                and trash.rows
+                and self._focused_library_notes_trash_delete() is not None
             )
         if action in {
             "library_media_trash_restore",
@@ -27017,7 +27599,24 @@ class LibraryScreen(BaseAppScreen):
             WorkbenchHelpState,
         )
 
-        footer_shortcuts = self._library_footer_shortcuts_for_current_state()
+        # TASK-34000.40 ruling T9-h: F1 lists keys. A status-only footer entry
+        # (an empty key: "typing in field", the "after esc:" verbs, a review
+        # progress line) rendered as a keyless "- : …" row.
+        # Ruling T10-e: F1 starts from the footer the screen PAINTS --
+        # ``_library_notes_footer_shortcuts``, registered on every refresh,
+        # which is the generic set outside the Notes workflow. Reading the
+        # generic set alone listed "escape: Back" during an import whose
+        # footer said "esc cancel". The generic set's other keys follow, so
+        # F6 stays listed inside Notes too (RC-10).
+        painted = tuple(
+            pair for pair in self._library_notes_footer_shortcuts() if pair[0]
+        )
+        painted_keys = {_canonical_shortcut_key(key) for key, _label in painted}
+        footer_shortcuts = painted + tuple(
+            pair
+            for pair in self._library_footer_shortcuts_for_current_state()
+            if pair[0] and _canonical_shortcut_key(pair[0]) not in painted_keys
+        )
         # (task-3312 #1) Dedupe on the CANONICAL key, not the raw string:
         # the shared footer sets spell the exit key "esc" while BINDINGS
         # entries spell it "escape" (Textual's key name), so a raw-string
@@ -27040,6 +27639,13 @@ class LibraryScreen(BaseAppScreen):
             canonical = _canonical_shortcut_key(pair[0])
             if canonical in seen_keys:
                 continue
+            if canonical == _canonical_shortcut_key("ctrl+s"):
+                # T9-h: listed exactly where the footer chips it -- the ONE
+                # chip decision -- not wherever the binding is merely active
+                # (a refusing or clean editor still answers it, rule (c)).
+                save_target = self._library_editor_save_target()
+                if not (save_target and self._library_ctrl_s_chip(save_target)):
+                    continue
             seen_keys.add(canonical)
             binding_extras.append(pair)
         # (task-4023 AC#4 / RC-10) Name the surface the panel describes --
@@ -31863,26 +32469,47 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_select_all(self, event: Button.Pressed) -> None:
         """Select every note row currently rendered by the canvas.
 
+        TASK-34000.29 (N-14): the mounted list canvas is asked which notes it
+        renders -- the same ``rendered_note_ids`` its "Select all N shown"
+        label counts -- so the press selects exactly the N it names. A fresh
+        projection is the fallback only when no list canvas is mounted.
         Rebuilds only the mounted Notes canvas.
         """
         event.stop()
         if self._library_notes_mutation_fenced():
             return
-        projection = self._build_library_notes_tree_projection()
-        if projection is None:
-            note_ids = (row.note_id for row in self._build_library_notes_state().rows)
+        try:
+            canvas = self.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        except (NoMatches, QueryError):
+            canvas = None
+        if canvas is not None and canvas.mode == "list":
+            note_ids = canvas.rendered_note_ids()
         else:
-            note_ids = (
-                row.note_id
-                for row in projection.rows
-                if row.kind == "note" and row.note_id
-            )
+            projection = self._build_library_notes_tree_projection()
+            if projection is None:
+                note_ids = frozenset(
+                    row.note_id for row in self._build_library_notes_state().rows
+                )
+            else:
+                note_ids = frozenset(
+                    row.note_id
+                    for row in projection.rows
+                    if row.kind == "note" and row.note_id
+                )
         self._notes_state.row_selection.select_all(note_ids)
         _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-select-clear")
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_select_clear(event)
+
+    @on(Button.Pressed, "#library-notes-select-actions")
+    def handle_library_notes_select_actions(self, event: Button.Pressed) -> None:
+        return self._notes_controller.handle_library_notes_select_actions(event)
+
+    @on(Button.Pressed, ".library-notes-select-action-choice")
+    def handle_library_notes_select_action_choice(self, event: Button.Pressed) -> None:
+        return self._notes_controller.handle_library_notes_select_action_choice(event)
 
     @on(Button.Pressed, "#library-notes-export-selected")
     async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:
@@ -31901,6 +32528,18 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_note_back(event)
+
+    def _library_note_discard_control_visible(self) -> bool:
+        """Whether "Discard new note" is on screen (TASK-34000.29 N-25).
+
+        The control keeps its cells and is hidden by visibility, never by
+        display (TASK-34000.8), so both are read.
+        """
+        try:
+            control = self.query_one("#library-note-discard-new", Widget)
+        except (NoMatches, QueryError):
+            return False
+        return bool(control.display and control.visible)
 
     async def _exit_library_note_editor_guarded(self) -> bool:
         """Shared Back exit: veto while dirty, else reset to list.
@@ -31941,8 +32580,12 @@ class LibraryScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
-                    _library_note_editor_exit_veto_message(note_flush.kind),
+                    _library_note_exit_veto_toast(
+                        note_flush,
+                        discard_visible=self._library_note_discard_control_visible(),
+                    ),
                     severity="warning",
+                    markup=False,
                 )
             return False
         navigation_generation = self._supersede_library_notes_navigation()
@@ -32314,14 +32957,41 @@ class LibraryScreen(BaseAppScreen):
         """
         return self._notes_controller.handle_library_notes_trash_restore(event)
 
+    @on(Button.Pressed, "#library-notes-trash-previous")
+    def handle_library_notes_trash_previous(self, event: Button.Pressed) -> None:
+        """Read the Trash page before this one (TASK-34000.29, N-29).
+
+        Args:
+            event: Press of the Trash pager's Previous.
+        """
+        return self._notes_controller.handle_library_notes_trash_previous(event)
+
+    @on(Button.Pressed, "#library-notes-trash-next")
+    def handle_library_notes_trash_next(self, event: Button.Pressed) -> None:
+        """Read the Trash page after this one (TASK-34000.29, N-29).
+
+        Args:
+            event: Press of the Trash pager's Next.
+        """
+        return self._notes_controller.handle_library_notes_trash_next(event)
+
+    @on(Button.Pressed, "#library-notes-trash-retry")
+    def handle_library_notes_trash_retry(self, event: Button.Pressed) -> None:
+        """Re-run the failed Trash read (TASK-34000.29 review R1 N-2).
+
+        Args:
+            event: Press of the Trash failure line's Retry.
+        """
+        return self._notes_controller.handle_library_notes_trash_retry(event)
+
     def _leave_library_notes_trash(self) -> None:
         return self._notes_controller._leave_library_notes_trash()
 
     def _refresh_library_notes_trash(self) -> None:
         return self._notes_controller._refresh_library_notes_trash()
 
-    async def _load_library_notes_trash(self) -> None:
-        return await self._notes_controller._load_library_notes_trash()
+    async def _load_library_notes_trash(self, *, page: int | None = None) -> None:
+        return await self._notes_controller._load_library_notes_trash(page=page)
 
     def action_library_notes_trash_restore(self) -> None:
         """Keyboard "r": restore the focused Trash row (task-32144).
@@ -32341,6 +33011,44 @@ class LibraryScreen(BaseAppScreen):
         focused = getattr(self, "focused", None)
         if focused is not None and focused.has_class("library-notes-trash-restore"):
             focused.press()
+
+    @on(Button.Pressed, ".library-notes-trash-delete")
+    def handle_library_notes_trash_delete(self, event: Button.Pressed) -> None:
+        """Ask before deleting one Trash row's note forever (TASK-34000.29 8b).
+
+        Args:
+            event: Press of one Trash row's Delete forever button.
+        """
+        return self._notes_controller.handle_library_notes_trash_delete(event)
+
+    def _focused_library_notes_trash_delete(self) -> Button | None:
+        """The Delete forever of the focused Trash row, or ``None``.
+
+        A row's one focus stop is its Restore (Delete forever is not a Tab
+        stop), so the focused Restore names the row. Read by the ``x`` gate
+        in ``check_action`` and by the action, so the key, the footer chip
+        and F1 agree (ruling T8b-d).
+        """
+        focused = getattr(self, "focused", None)
+        prefix = "library-notes-trash-restore-"
+        focused_id = str(getattr(focused, "id", "") or "")
+        if focused is None or not focused_id.startswith(prefix):
+            return None
+        index = focused_id.removeprefix(prefix)
+        for button in self.query(f"#library-notes-trash-delete-{index}").results(Button):
+            return button
+        return None
+
+    def action_library_notes_trash_delete(self) -> None:
+        """Keyboard "x": Delete forever for the focused Trash row (8b).
+
+        Presses the row's own button, so the confirm opens from one place
+        and ``Button.press``'s refusal while disabled stays a second guard
+        behind ``check_action`` -- the shape ``r`` uses.
+        """
+        button = self._focused_library_notes_trash_delete()
+        if button is not None:
+            button.press()
 
     def _notify_library_note_missing_warning(self) -> None:
         return self._notes_controller._notify_library_note_missing_warning()
@@ -32588,6 +33296,8 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.notice = "Note created — select it from Notes to open."
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
 
+        # TASK-34000.29 (N-26): the open path's own per-note reset.
+        self._notes_controller._reset_library_note_facts()
         outcome = await self._library_note_session.open_session(
             created_id, untouched_create_token=active_token
         )
@@ -32622,7 +33332,6 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_filter_state = None
         self._notes_state.selected_note_id = created_id
         self._notes_state.view = "editor"
-        self._notes_state.link_origin = None  # TASK-34000.28: a plain open
         self._notes_state.load_state = "loaded"
         self._notes_state.load_message = ""
         self._notes_state.autosave_state = "idle"
@@ -32638,6 +33347,7 @@ class LibraryScreen(BaseAppScreen):
                 self._activate_database_note_work_session,
                 created_id,
             )
+            self._notes_controller._start_library_note_fact_loads(created_id)
         self._notes_state.pending_blank_gc_id = created_id if blank else None
         self._notes_state.session_blank_id = created_id if blank else None
         # (P0) A freshly created note's title is whatever the create seam
@@ -32665,7 +33375,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             await self._discard_new_library_note_claimed(create_token)
         finally:
-            self._notes_state.mutation_in_flight = False
+            LibraryScreen._release_library_notes_mutation(self)
             # task-16480: the claimed coroutine's list reconcile runs while
             # the interlock is still held, so the rebuilt canvas freezes
             # operation_running=True into the browse action toolbar
@@ -32713,6 +33423,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.edit_draft = None
         self._media_state.confirming_delete = False
         self._media_state.editing_analysis = False
+        self._media_state.saving_analysis = None  # see the field (N-6)
         self._media_state.analysis_draft = None
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
@@ -32772,6 +33483,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._media_state.editing_analysis:
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = None  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._sync_library_media_viewer_or_recompose()
             return
@@ -34120,7 +34832,17 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the edit form's "Save" action.
         """
         event.stop()
+        self._save_library_media_edit_from_form()
+
+    def _save_library_media_edit_from_form(self) -> None:
+        """The metadata form's Save, event-free: the press and Ctrl+S share it
+        (TASK-34000.40 N-33; TASK-34000.22 AC#7). The shared Media write
+        interlock single-flights it; a refused press says so on the form
+        (review M-4) instead of returning silently."""
         if self._media_state.bulk_delete_in_flight:
+            viewer = self._mounted_library_media_viewer()
+            if viewer is not None:
+                viewer.show_form_status("edit", LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY)
             return
         # TASK-34000.18: the form is prefilled from the Reader's item, so the
         # write targets that same item, not the list highlight.
@@ -34438,6 +35160,7 @@ class LibraryScreen(BaseAppScreen):
                 self._media_state.composed_detail = None
                 self._media_state.highlights = []
                 self._media_state.editing_analysis = False
+                self._media_state.saving_analysis = None  # see the field (N-6)
                 self._media_state.analysis_draft = None
                 self._close_library_media_find()
                 self._media_state.content_mode = "raw"
@@ -36849,6 +37572,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.confirming_delete = False
             self._media_state.highlights = []
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = None  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._close_library_media_find()
             self._media_state.content_mode = "raw"

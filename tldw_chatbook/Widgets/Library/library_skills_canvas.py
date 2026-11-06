@@ -33,6 +33,7 @@ from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
+from textual.message import Message
 from textual.widgets import Button, Input, SelectionList, Static, TextArea
 from textual.widgets.selection_list import Selection
 
@@ -762,6 +763,14 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             ``enabled``. Rendered by ``LibrarySkillWorkPane``.
     """
 
+    class SaveStateChanged(Message):
+        """The editor's Save availability may have changed (TASK-34000.40).
+
+        Posted by ``sync_lifecycle_actions`` -- the one seam every dirty,
+        conflict, delete and in-flight flip runs through -- so the Library
+        footer's Ctrl+S chip follows the Save button (ruling T9-j).
+        """
+
     def __init__(
         self,
         state: SkillsListState | None = None,
@@ -1170,6 +1179,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 )
                 if visibility[target]:
                     self.query_one(target, Button).focus()
+        self.post_message(self.SaveStateChanged())
 
     def _tool_picker_selections(self, filter_value: str = "") -> list[Selection]:
         """Build unique chooser rows while retaining raw content separately."""
@@ -1599,8 +1609,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             # F-019: the editor's ctrl+s/escape accelerators (task-424),
             # advertised inline -- the file-notes git panel's guide-line
             # pattern. Hidden during the conflict banner and the delete
-            # confirmation, where ctrl+s is gated off and the hint would
-            # be a lie.
+            # confirmation, where ctrl+s refuses rather than saves
+            # (TASK-34000.40) and "ctrl+s Save" would be a lie.
             yield Static(
                 SKILL_EDITOR_SHORTCUT_HINTS,
                 id="library-skill-editor-hints",

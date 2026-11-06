@@ -45,3 +45,16 @@ class FileNotesReloadConfirmationChanged(FileNotesWorkspaceMessage):
     def __init__(self, active: bool) -> None:
         super().__init__()
         self.active = active
+
+
+class FileNotesSaveStateChanged(FileNotesWorkspaceMessage):
+    """Announce a new save state (idle/dirty/saving/saved/conflict/error).
+
+    TASK-34000.40 ruling T9-i: the Library footer's Ctrl+S chip follows the
+    save state both ways -- it leaves on a conflict or an error, from the
+    key, the autosave or a poll alike, and returns with a dirty draft.
+    """
+
+    def __init__(self, state: str) -> None:
+        super().__init__()
+        self.state = state

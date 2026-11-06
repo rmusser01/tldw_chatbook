@@ -489,6 +489,15 @@ class ConflictError(CharactersRAGDBError, StoreConflictError):
         return f"{base} ({', '.join(details)})" if details else base
 
 
+class NoteNotInTrashError(ConflictError):
+    """``hard_delete_note`` was asked to purge a note that is not deleted.
+
+    TASK-34000.29 (N-29, 8b): Delete forever is offered only in Recently
+    deleted, so a live note reaching the purge means the row went stale (the
+    note was restored elsewhere). It is refused, never purged.
+    """
+
+
 # --- Reaction-avatar expression states (P3d) ---
 # ``idle`` is intentionally excluded: it reuses character_cards.image and is
 # never stored in character_expression_images.
@@ -20104,6 +20113,72 @@ DELETE FROM keywords
             )
             raise
 
+    def live_note_ids(self, note_ids: Iterable[str]) -> Set[str]:
+        """Return which of ``note_ids`` name a note that is not deleted.
+
+        TASK-34000.29 (review R0, I-1): Library semantic search asks this once
+        per result page, so a hit whose note was deleted for good, or sits in
+        Recently deleted, is never shown. One statement whatever the page
+        size: the ids travel as one JSON array, so no bound-variable limit
+        applies.
+
+        Args:
+            note_ids: Candidate note ids (strings; blanks are ignored).
+
+        Returns:
+            The subset of ``note_ids`` whose note exists with ``deleted = 0``.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        ids = sorted({str(note_id) for note_id in note_ids if str(note_id or "")})
+        if not ids:
+            return set()
+        query = (
+            "SELECT id FROM notes WHERE deleted = 0 "
+            "AND id IN (SELECT value FROM json_each(?))"
+        )
+        try:
+            cursor = self.execute_query(query, (json.dumps(ids),), redact_params=True)
+            return {row["id"] for row in cursor.fetchall()}
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error checking live note ids: exception_type={type(e).__name__}"
+            )
+            raise
+
+    def note_ids_present(self, note_ids: Iterable[str]) -> Set[str]:
+        """Return which of ``note_ids`` still have a ``notes`` row, deleted or not.
+
+        TASK-34000.29 (final review C-1): the Sync v2 push asks this once per
+        batch before an upsert leaves the device -- a note deleted for good
+        has no row, so its queued title and text are never pushed; a note in
+        Recently deleted still has one, so its upsert (followed by its
+        delete) may go. The same one-statement ``json_each`` shape as
+        ``live_note_ids``, without the ``deleted = 0`` clause.
+
+        Args:
+            note_ids: Candidate note ids (strings; blanks are ignored).
+
+        Returns:
+            The subset of ``note_ids`` whose ``notes`` row exists.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        ids = sorted({str(note_id) for note_id in note_ids if str(note_id or "")})
+        if not ids:
+            return set()
+        query = "SELECT id FROM notes WHERE id IN (SELECT value FROM json_each(?))"
+        try:
+            cursor = self.execute_query(query, (json.dumps(ids),), redact_params=True)
+            return {row["id"] for row in cursor.fetchall()}
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error checking note ids: exception_type={type(e).__name__}"
+            )
+            raise
+
     @staticmethod
     def normal_note_dispatch_predicate(note_id_sql: str) -> str:
         """Return the shared SQL guard for every ordinary Notes dispatcher.
@@ -20534,6 +20609,163 @@ DELETE FROM keywords
             raise
         except CharactersRAGDBError as e:
             logger.error("Database error restoring a note: {}", type(e).__name__)
+            raise
+
+    #: TASK-34000.29 (N-29, 8b): every row that names a purged note, in the
+    #: order ``hard_delete_note`` removes them. ``note_folder_memberships``,
+    #: ``note_organization_receipts`` and ``sync_conflicts`` reference
+    #: ``notes`` with NO ACTION, so they must go before the note row
+    #: (``foreign_keys = ON`` refuses the delete otherwise); the CASCADE
+    #: children are deleted explicitly too, so the purge never depends on the
+    #: pragma. ``note_links`` goes both ways: the note's own links, and the
+    #: backlinks other notes' bodies resolved to it (``target_note_id`` has no
+    #: foreign key). ``sync_conflicts.losing_content`` is an earlier version
+    #: of the note's text. The completeness pin
+    #: (``Tests/ChaChaNotesDB/test_note_hard_delete.py``) discovers these
+    #: tables from the live schema rather than trusting this list.
+    #: Publication intents are not deleted but reduced to id-only tombstones
+    #: (``_NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL``).
+    _NOTE_PURGE_DEPENDENTS_SQL: tuple[str, ...] = (
+        "DELETE FROM note_keywords WHERE note_id = ?",
+        "DELETE FROM note_folder_memberships WHERE note_id = ?",
+        "DELETE FROM note_folder_sync_suppressions WHERE note_id = ?",
+        "DELETE FROM note_organization_receipts WHERE note_id = ?",
+        "DELETE FROM research_quick_note_owner_proofs WHERE note_id = ?",
+        "DELETE FROM sync_conflicts WHERE note_id = ?",
+    )
+
+    #: TASK-34000.29 (review R0, m-1/m-2): a purge keeps each of the note's
+    #: Sync v2 publication intents as an id-only tombstone -- receipt id,
+    #: versions, fingerprint and status, nothing else. ``payload_json`` held
+    #: the note's title and text (``_insert_note_sync_intent``); it becomes
+    #: ``'{}'``, and the note id becomes ``purged:<receipt id>`` (unique, so
+    #: the UNIQUE(server, dataset, note, version, operation) key holds). An
+    #: unacknowledged intent is cancelled, so the drain
+    #: (``list_latest_dispatchable_note_sync_entries``) never copies it to
+    #: the outbox. The row itself must stay: a replayed agent ``save_note``
+    #: with that receipt id is answered from it -- refused, as "cancelled" or
+    #: "target changed" (``Notes_Library._validate_completed_receipt_retry``)
+    #: -- where a deleted row would let the replay create the note again.
+    #: Parameters: (now, note_id).
+    _NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL = (
+        "UPDATE note_sync_publication_intents SET "
+        "note_id = 'purged:' || intent_id, payload_json = '{}', "
+        "cancelled_at = CASE WHEN acknowledged_at IS NULL "
+        "THEN COALESCE(cancelled_at, ?) ELSE cancelled_at END "
+        "WHERE note_id = ?"
+    )
+
+    def hard_delete_note(
+        self, note_id: str, *, expected_version: Optional[int] = None
+    ) -> bool:
+        """Delete one soft-deleted note for good, with every row that names it.
+
+        TASK-34000.29 (N-29, 8b; owner ruling 2026-10-29). One
+        ``BEGIN IMMEDIATE`` transaction: the note's keyword and folder links,
+        its backlink edges, its sync suppressions, conflict history,
+        organization receipts and owner proof, its ``note_keywords`` sync-log
+        rows; its publication intents become id-only tombstones that keep
+        their receipt ids non-replayable
+        (``_NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL``); then the tombstone
+        itself -- whose
+        ``AFTER DELETE`` triggers drop its ``notes`` sync-log rows
+        (``sync_log_prune_notes_hard``, v46) and its FTS entry (``notes_ad``).
+        Nothing is committed unless all of it is.
+
+        ``notes_ad`` issues the external-content FTS ``'delete'`` command
+        unconditionally, but a soft delete already took the row out of
+        ``notes_fts`` (``notes_au`` is guarded, v76), and a ``'delete'`` for a
+        row the index does not hold corrupts it -- measured: the bare
+        ``DELETE`` raised "database disk image is malformed". So when the
+        index does not hold the row (no ``notes_fts_docsize`` entry -- the
+        v46->v47 membership test), the tombstone's own values are indexed
+        first, and the trigger's ``'delete'`` removes exactly them.
+
+        Args:
+            note_id: The deleted note to purge.
+            expected_version: The tombstone version the caller showed the
+                user; a different one is refused (the confirm named another
+                state of the note). ``None`` skips the check.
+
+        Returns:
+            ``True`` when the note was purged; ``False`` when no such note
+            exists (already purged).
+
+        Raises:
+            NoteNotInTrashError: If the note is live (``deleted = 0``).
+            ConflictError: If its version is not ``expected_version``.
+            CharactersRAGDBError: If the database operation fails.
+        """
+        try:
+            with self.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    "SELECT rowid, deleted, version, title, content FROM notes "
+                    "WHERE id = ?",
+                    (note_id,),
+                ).fetchone()
+                if row is None:
+                    return False
+                if not row["deleted"]:
+                    raise NoteNotInTrashError(
+                        "Only a deleted note can be deleted forever.",
+                        entity="notes",
+                        entity_id=note_id,
+                    )
+                if (
+                    expected_version is not None
+                    and int(row["version"]) != int(expected_version)
+                ):
+                    raise ConflictError(
+                        f"Delete forever for note ID {note_id} failed: version "
+                        f"mismatch (db has {row['version']}, client expected "
+                        f"{expected_version}).",
+                        entity="notes",
+                        entity_id=note_id,
+                    )
+                for statement in self._NOTE_PURGE_DEPENDENTS_SQL:
+                    conn.execute(statement, (note_id,))
+                conn.execute(
+                    self._NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL,
+                    (self._get_current_utc_timestamp_iso(), note_id),
+                )
+                conn.execute(
+                    "DELETE FROM note_links WHERE source_note_id = ? "
+                    "OR target_note_id = ?",
+                    (note_id, note_id),
+                )
+                # ``_manage_link`` logs each keyword link as entity
+                # ``note_keywords``, id ``<note>_<keyword>``, payload
+                # ``{"note_id": ...}``; the notes prune trigger never sees them.
+                conn.execute(
+                    "DELETE FROM sync_log WHERE entity = 'note_keywords' AND ("
+                    "substr(entity_id, 1, length(?) + 1) = ? || '_' OR "
+                    "(CASE WHEN json_valid(payload) "
+                    "THEN json_extract(payload, '$.note_id') END) = ?)",
+                    (note_id, note_id, note_id),
+                )
+                if not conn.execute(
+                    "SELECT 1 FROM notes_fts_docsize WHERE id = ?", (row["rowid"],)
+                ).fetchone():
+                    conn.execute(
+                        "INSERT INTO notes_fts(rowid, title, content) VALUES (?, ?, ?)",
+                        (row["rowid"], row["title"], row["content"]),
+                    )
+                conn.execute(
+                    "DELETE FROM notes WHERE id = ? AND deleted = 1", (note_id,)
+                )
+                # Review R0, m-3: an FTS5 'delete' only marks the note's
+                # terms deleted -- their bytes stay in older index segments
+                # (``notes_fts_data``) until a merge, where a byte scan still
+                # finds the note's words. 'optimize' merges every segment
+                # now, inside this transaction. Measured: 0.26 s for an
+                # 11 MB index (3,000 notes of 300 words).
+                conn.execute("INSERT INTO notes_fts(notes_fts) VALUES('optimize')")
+                logger.debug("Deleted a note forever")
+                return True
+        except ConflictError:
+            raise
+        except CharactersRAGDBError as e:
+            logger.error("Database error deleting a note forever: {}", type(e).__name__)
             raise
 
     def search_notes(

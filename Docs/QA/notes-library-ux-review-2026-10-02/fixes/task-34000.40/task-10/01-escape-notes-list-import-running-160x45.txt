@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│ │ ▊ Search Library…        ▎▊x▎  │  a  │ Library notes · Updating notes…                              │  o                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │  v  │ Notes (181)                                                  │  t                                                   │
+│ │                              ▂ │     │ These notes live in the Library's own database — for notes   │  e                                                   │
+│ │ ─────────────────────────────  │     │ that live in a folder on disk, switch to Folder files. To    │  s                                                   │
+│ │ Browse                    ▾    │     │ copy or keep a folder synced, choose Add from files.         │                                                      │
+│ │    Media (0) — your files      │     │                                                              │                                                      │
+│ │    Conversations (0)           │     │ Filter                                                       │                                                      │
+│ │  ▸ Notes (181)                 │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│ │    Prompts (0) — reuse         │     │ ▊ Filter notes… (Enter)                                    ▎ │                                                      │
+│ │    Skills (1) — AI add-ons     │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│ │    Collections (0)             │     │                                                              │                                                      │
+│ │    Search / RAG — find all     │     │    ○ New     ○ Sort: Newest     ○ Select                     │                                                      │
+│ │ ─────────────────────────────  │<--- │    View import     ○ Export     Manage sync folders          │                                                      │
+│ │ Artifacts                 ▾    │     │ Folders & placement                                          │                                                      │
+│ │    All artifacts               │     │    New folder     ○ Add to folder     ○ Move note            │                                                      │
+│ │    Chatbooks                   │     │    ○ Remove placement                                        │                                                      │
+│ │    Reports                     │     │ Note actions unavailable — select a note in the list         │                                                      │
+│ │    Dreams                      │     │                                                              │<---                                                  │
+│ │ ─────────────────────────────  │     │                                                              │                                                      │
+│ │ Create                    ▾    │     │  ▸ Agent_Lessons                                             │                                                      │
+│ │    New note                    │     │  ▸ md-folder                                                 │                                                      │
+│ │    New prompt                  │     │  ▸ md-folder-b                                               │                                                      │
+│ │    New skill                   │<--- │  ▸ md-folder-c                                               │                                                      │
+│ │ ─────────────────────────────  │     │  ▸ VSync  ⚠ Needs attention                                  │                                                      │
+│ │ Study                     ▾    │     │                                                              │                                                      │
+│ │    Study decks (0)             │     │                                                              │                                                      │
+│ │    Flashcards due: 0           │     │                                                              │                                                      │
+│ │    Quizzes (0)                 │     │                                                              │                                                      │
+│ │ ─────────────────────────────  │     │                                                              │                                                      │
+│ │ Import / Export           ▾    │     │                                                              │                                                      │
+│ │    Import…                     │     │                                                              │                                                      │
+│ │    Export                      │     │                                                              │                                                      │
+│ │ ─────────────────────────────  │     │                                                              │                                                      │
+│ │ Details                   ▸    │     │                                                              │                                                      │
+│ │  ▾ scroll for more             │     │                                                              │                                                      │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc focus rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

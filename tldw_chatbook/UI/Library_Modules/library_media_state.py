@@ -512,6 +512,18 @@ class LibraryMediaState:
     # TASK-34000.22: the analysis form's typed text, the same contract as
     # ``edit_draft`` for ``editing_analysis`` (``media_analysis_dirty``).
     analysis_draft: str | None = None
+    # TASK-34000.40 review I-3: the analysis form's own Save is in flight.
+    # One save per form at a time -- a double or held Ctrl+S (or a double
+    # click; the press shares the seam) answers "Already saving." instead
+    # of writing a second analysis version. Review R1 N-6: every reset of
+    # ``editing_analysis`` resets this too, so a save worker cancelled before
+    # its first step (its ``finally`` never runs) cannot strand the guard
+    # and refuse every later analysis Save. Review R2 N2-2: the guard is the
+    # TOKEN of the save that holds it (None when free), and a worker's
+    # ``finally`` clears it only while it still holds that worker's own
+    # token -- so after a reset, a newer save's guard is never cleared by
+    # the older save finishing.
+    saving_analysis: object | None = None
 
     # task-28006: an LLM analysis generation is in flight for the open item.
     generating_analysis: bool = False

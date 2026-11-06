@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌───────────────────────────────────────────────────────┐  N  Ready · Next: Create a note or add from files.          │
+│ │ Navigation                     │  a  │ Library notes · Ready · Next: Create a note or add    │  o  Recently deleted                                        │
+│ │     Import…                    │  v  │ from files.                                           │  t  Deleted notes stay here until you restore them. Restore │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ Notes (98)                                            │  e  puts a note back where it was; nothing is removed for   │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ These notes live in the Library's own database — for  │  s  good from here.                                         │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ notes that live in a folder on disk, switch to Folder │       ‹ Notes                                               │
+│ │                                │     │ files. To copy or keep a folder synced, choose Add    │     Daily log 2026-09-21 · 4m                   Restore     │
+│ │ ─────────────────────────────  │     │ from files.                                           │     Daily log 2026-09-22 · 4m                   Restore     │
+│ │ Browse                    ▾    │     │                                                       │     Daily log 2026-09-23 · 4m                   Restore     │
+│ │    Media (23) — your files     │     │ Filter                                                │     Daily log 2026-09-24 · 4m                 ┃ Restore ┃   │
+│ │    Conversations (0)           │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     21–24 of 24 · Page 2 of 2                               │
+│ │  ▸ Notes (98)                  │     │ ▊ Filter notes… (Enter)                             ▎ │       Previous   ○ Next                                     │
+│ │    Prompts (0) — reuse         │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                             │
+│ │    Skills (1) — AI add-ons     │<--- │                                                       │                                                             │
+│ │    Collections (0)             │     │    New     Sort: Newest     Select                    │                                                             │
+│ │    Search / RAG — find all     │     │    Add from files…     Export                         │                                                             │
+│ │ ─────────────────────────────  │     │ Folders & placement                                   │                                                             │
+│ │ Artifacts                 ▾    │     │    New folder     Add to folder     Move note         │                                                             │
+│ │    All artifacts               │     │    Remove placement                                   │<---                                                         │
+│ │    Chatbooks                   │     │                                                       │                                                             │
+│ │    Reports                     │     │                                                       │                                                             │
+│ │    Dreams                      │     │  ▸ Agent_Lessons                                      │                                                             │
+│ │ ─────────────────────────────  │     │  ▾ Journal                                            │                                                             │
+│ │ Create                    ▾    │<--- │    Daily log 2026-09-25 · now                         │                                                             │
+│ │    New note                    │     │    Daily log 2026-09-30 · 5m                          │                                                             │
+│ │    New prompt                  │     │    Daily log 2026-09-29 · 5m                          │                                                             │
+│ │    New skill                   │     │    Daily log 2026-09-28 · 5m                          │                                                             │
+│ │ ─────────────────────────────  │     │    Daily log 2026-09-27 · 5m                          │                                                             │
+│ │ Study                     ▾    │     │    Daily log 2026-09-26 · 5m                          │                                                             │
+│ │    Study decks (0)             │     │  ▸ Meetings                                           │                                                             │
+│ │    Flashcards due: 0           │     │  ▸ Projects                                           │                                                             │
+│ │    Quizzes (0)                 │     │  ▸ Recipes                                            │                                                             │
+│ │ ─────────────────────────────  │     │  ▸ Research                                           │                                                             │
+│ │ Import / Export           ▾  ▆ │     │  ▸ Study                                              │                                                             │
+│ │    Import…                     │     │  ▾ Unfiled                                            │                                                             │
+│ │  ▾ scroll for more             │     │    Scratch · 5m                                       │                                                             │
+│ └────────────────────────────────┘     └───────────────────────────────────────────────────────┘                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  r restore note | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

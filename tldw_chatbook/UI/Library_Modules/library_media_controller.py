@@ -505,6 +505,7 @@ from ...Library.library_media_viewer_state import (
     media_edit_form_dirty,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
@@ -3178,6 +3179,7 @@ class LibraryMediaController:
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = None  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
@@ -3200,6 +3202,7 @@ class LibraryMediaController:
         self._library_media_editing = False
         self._library_media_edit_draft = None
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = None  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
@@ -5130,6 +5133,7 @@ class LibraryMediaController:
         """
         event.stop()
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = None  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._sync_library_media_viewer_or_recompose()
 
@@ -5150,6 +5154,20 @@ class LibraryMediaController:
                 "Save" action.
         """
         event.stop()
+        self._save_library_media_analysis_from_form()
+
+    def _save_library_media_analysis_from_form(self) -> None:
+        """The analysis form's Save, event-free: the press and Ctrl+S share it
+        (TASK-34000.40 N-33; TASK-34000.22 AC#7). One save at a time (review
+        I-3): a second press while one is in flight writes nothing and says
+        so on the form."""
+        if self._library_media_saving_analysis:
+            viewer = self._mounted_library_media_viewer()
+            if viewer is not None:
+                viewer.show_form_status(
+                    "analysis", LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY
+                )
+            return
         media_id = self._library_media_reader_target_id()
         if not media_id:
             self._library_media_editing_analysis = False
@@ -5176,13 +5194,35 @@ class LibraryMediaController:
             else {}
         )
         content = str(detail.get("content") or "")
-        self.run_worker(
-            self._save_library_media_analysis(
-                media_id,
-                content=content,
-                analysis_content=analysis_content,
-            )
+        token = object()  # this save's own claim on the guard (review R2 N2-2)
+        self._library_media_saving_analysis = token
+        self._register_footer_shortcuts()
+        work = self._run_library_media_analysis_form_save(
+            media_id, content=content, analysis_content=analysis_content, token=token
         )
+        try:
+            self.run_worker(work)
+        except BaseException:
+            # Never strand the guard on a worker that could not be scheduled.
+            work.close()
+            if self._library_media_saving_analysis is token:
+                self._library_media_saving_analysis = None
+            raise
+
+    async def _run_library_media_analysis_form_save(
+        self, media_id: str, *, content: str, analysis_content: str, token: object
+    ) -> None:
+        """Run the form's save, releasing its in-flight guard on every path --
+        but only while the guard still holds THIS save's ``token``: a reset
+        may have cleared it and a newer save taken it (review R2 N2-2)."""
+        try:
+            await self._save_library_media_analysis(
+                media_id, content=content, analysis_content=analysis_content
+            )
+        finally:
+            if self._library_media_saving_analysis is token:
+                self._library_media_saving_analysis = None
+            self._register_footer_shortcuts()
 
     async def _fetch_library_media_analysis_detail(
         self, media_id: str, *, include_content: bool
