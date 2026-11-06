@@ -2215,22 +2215,25 @@ class PersonasScreen(BaseAppScreen):
             return frame_state.items_border_title("character", total=0, failed=True)
         if self.state.runtime_source == "server":
             unfiltered = self._server_unfiltered_total
-            if (
-                self.state.search_query
-                and unfiltered is not None
-                and unfiltered[0] == self._active_server_target()
-                and not (unfiltered[2] and self._character_total > unfiltered[1])
-            ):
-                # Owner decision 2026-11-05: "12 of 340", or "12 of 100+"
-                # when that page was full with no total; no server call. A
-                # known M the search outgrew is stale and is not shown.
-                return frame_state.items_border_title(
-                    "character",
-                    total=unfiltered[1],
-                    total_known=unfiltered[2],
-                    matched=self._character_total,
-                    matched_known=self._character_total_known,
-                )
+            if self.state.search_query and unfiltered is not None:
+                server, total, known = unfiltered
+                matched, exact = self._character_total, self._character_total_known
+                # Owner decision 2026-11-05: "12 of 340", or "12 of 100+" when
+                # that page was full with no total; no server call. An M the
+                # search outgrew, a full page at or past a known M, and
+                # "100+ of 100+" say nothing true: the bare count instead.
+                if server == self._active_server_target() and (
+                    (matched < total or (exact and matched == total))
+                    if known
+                    else exact
+                ):
+                    return frame_state.items_border_title(
+                        "character",
+                        total=total,
+                        total_known=known,
+                        matched=matched,
+                        matched_known=exact,
+                    )
             return frame_state.items_border_title(
                 "character",
                 total=self._character_total,
@@ -3518,7 +3521,8 @@ class PersonasScreen(BaseAppScreen):
         """How many of ``kind`` the query matches, with that kind's own search.
 
         Characters count with the list's FTS prefix expression (the database
-        method, not the wrapper that answers 0 on an error); the server
+        method; on dev the wrapper answered 0 on an error, and it raises since
+        TASK-38228); the server
         source asks its search once, as its list does. Personas page the
         service as their list does; lore books and chat dictionaries filter
         names as theirs do. Raises when a kind cannot be read.
@@ -3663,14 +3667,18 @@ class PersonasScreen(BaseAppScreen):
         except Exception as exc:
             if not self._list_fence_is_current(fence):
                 return
-            logger.opt(exception=True).warning("Character window load failed.")
+            # The category only: a database error carries SQL or the file's
+            # path. Dev logged and toasted the text; fixed here (TASK-38228).
+            logger.warning(
+                "Character window load failed (category={}).", type(exc).__name__
+            )
             self._window_read_failed(fence)
             if request.replace:
                 # A failed reload shows no rows of an older sort, tag or source.
                 await self._apply_character_window(
                     request, [], total=0, more=False, failed=True
                 )
-            self._notify(f"Could not load characters: {exc}", "error")
+            self._notify("Could not load characters.", "error")
             return
         if request.replace and not (search or fence.tag):
             self._character_unfiltered_total = total
@@ -4158,8 +4166,9 @@ class PersonasScreen(BaseAppScreen):
                 return
             await self._apply_tag_filter(picked)  # None clears the filter
         except Exception as exc:
-            logger.opt(exception=True).warning("Tag filter failed.")
-            self._notify(f"Tag filter failed: {exc}", "error")
+            # The category only, as the window read (TASK-38228).
+            logger.warning("Tag filter failed (category={}).", type(exc).__name__)
+            self._notify("Could not read character tags.", "error")
         finally:
             self._io_dialog_active = False
 

@@ -211,9 +211,12 @@ server, Characters reads "Characters (…)" until the server first answers,
 then "100+" until the total is known. A server search reads "Characters
 12 of 340" against the full list's last count, or "12 of 100+" while that
 count still read "100+"; a search that fills its page reads "100+ of 340".
-Neither costs another server call. With no full-list count from this server
-yet (its full list could not load, say), or a search that found more than
-that count, a search reads just "Characters 12". "(?)" means the list could
+Neither costs another server call, and a full list that later fails to
+reload keeps its last count. With no full-list count from this server yet
+(its first full-list read failed, say), a search reads just its own count:
+"Characters 12", or "Characters 100+" for a full page. It does the same when
+it found more than the full list's count, when a full search page meets that
+count, or when the full list also read "100+". "(?)" means the list could
 not load.
 
 The bottom border gives the open item's place in the list, "#4 of 28". It

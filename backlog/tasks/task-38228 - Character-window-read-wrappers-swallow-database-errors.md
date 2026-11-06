@@ -35,8 +35,13 @@ Fixed in burn-down PR 3 of the B2b follow-ups ("list failures read as failures")
 - **On dev (29592ecc9b):** `get_character_page_for_ui`, `count_character_page` and `list_character_tags` (`Character_Chat/Character_Chat_Lib.py`) caught every exception, logged it, and answered `[]` / `0` / `[]`. A database fault in Roleplay's character list therefore read as an empty library: "No characters yet - use New or Import to add one.", "Characters 0", Retry hidden. This PR fixes it.
 - **Fix:** the three wrappers no longer catch, so a `CharactersRAGDBError` reaches the caller. Their docstrings name the raise. The file stays at 4,775 lines, so its ratchet row is unchanged. The three `error` log statements went with the catches (both callers log the exception themselves); the diagnostic inventory was re-read and re-written for that file.
 - **Callers:** both production callers are in `personas_screen.py`, and both already catch and log, so no caller code changed.
-  - The window read (`_list_window`) falls into its existing `except Exception`: the B2b failure row with Retry, the "Characters (?)" title, and the toast.
-  - The tag picker (`_tag_filter_worker`) toasts "Tag filter failed: …" where dev opened an empty picker.
+  - The window read (`_list_window`) falls into its existing `except Exception`: the B2b failure row with Retry, the "Characters (?)" title, and the fixed toast "Could not load characters.".
+  - The tag picker (`_tag_filter_worker`) toasts the fixed "Could not read character tags." where dev opened an empty picker.
+  - Both toasts are fixed text, and both logs give the exception's category only.
+    - Dev already interpolated the exception text into both toasts and logged the traceback. On dev no database fault ever reached them; other errors did.
+    - Once the wrappers raised, the text would have shown SQL ("Query execution failed: no such table: character_cards") or, for a failed connection, the database file's path.
+    - PR #3427 review fix round 1 fixes it. `test_a_database_fault_toasts_fixed_text_never_the_database_error` pins it for both reads, and mutations restore the interpolation, name the path, and change the wording.
+    - The two re-worded log statements were read with `--statements` and re-pinned in the diagnostic inventory.
   - The Also-in count already called `db.count_character_cards` directly.
 - **Tests:**
   - AC#1: `Tests/DB/test_character_cards_paging.py::test_lib_wrappers_raise_a_database_fault_instead_of_an_empty_result`, 5 cases. It uses a real `:memory:` ChaChaNotes, and a SQLite authorizer denies reads of `character_cards`.
