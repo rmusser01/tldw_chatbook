@@ -392,7 +392,7 @@ def review_turn_possible(
     needs its state), and text naming no review-stage word. Run start checks
     it before importing the review composition, so an ordinary send loads no
     review service module and makes no worker hop for it (TASK-33620.15.53:
-    live, a first send imported that service on the UI loop, 14-111 ms).
+    live, a first send imported that service on the UI loop, 14-159 ms).
 
     Args:
         text: The trusted user message's text, or ``None`` when there is none.
@@ -406,7 +406,10 @@ def review_turn_possible(
         return True
     if review_owner is not None:
         return True
-    return text is not None and mentions_review_request(text)
+    if text is None:
+        return False
+    # Anything but text goes on to composition, whose failures never fail a turn.
+    return not isinstance(text, str) or mentions_review_request(text)
 
 
 _RECORD_KINDS = {
