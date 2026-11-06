@@ -214,6 +214,7 @@ def test_research_prepare_persists_exact_authority_without_dispatch(
     ingest_store.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_ordinary_submission_is_never_dispatch_held(tmp_path: Path) -> None:
     """The eligibility barrier is opt-in for Research preparation only."""
 
@@ -1163,6 +1164,7 @@ def test_headless_missing_vad_is_model_not_installed_without_acquisition(
     assert selected_path not in str(failed.error_detail)
 
 
+@pytest.mark.bootstrap_profile
 def test_folder_and_retry_context_keep_one_external_scope(tmp_path: Path) -> None:
     app = _minimal_app(media_db=object())
     folder = tmp_path / "batch"
@@ -1258,6 +1260,7 @@ def test_registry_releases_batch_scope_only_after_last_sibling_is_terminal(
     assert service.active_snapshots[-1] == set()
 
 
+@pytest.mark.bootstrap_profile
 def test_folder_submission_keeps_scope_while_terminal_siblings_are_constructed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1482,6 +1485,7 @@ def _direct_failed_attempt() -> dict[str, object]:
 class TestIngestJobOptions:
     """Coverage for TldwCli._ingest_job_options."""
 
+    @pytest.mark.bootstrap_profile
     def test_empty_ingest_options_uses_deprecated_job_fields(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -1506,6 +1510,7 @@ class TestIngestJobOptions:
             "overlap": 100,
         }
 
+    @pytest.mark.bootstrap_profile
     def test_generic_ingest_options_override_deprecated_fields(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -1684,6 +1689,7 @@ class TestIngestJobOptions:
         assert options["transcription_precision"] == "int8"
         assert options["transcription_local_files_only"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_document_group_options(self) -> None:
         """(task-3303 AC1) The document branch feeds ``process_document``."""
         app = _minimal_app()
@@ -1752,6 +1758,7 @@ class TestIngestJobOptions:
         assert options["ocr_language"] == "en"
         assert options["ocr_backend"] == "auto"
 
+    @pytest.mark.bootstrap_profile
     def test_ebook_chapters_choice_maps_to_ebook_chapters_method(self) -> None:
         """(task-3303 AC3) The human "chapters" choice becomes the real method."""
         app = _minimal_app()
@@ -1766,6 +1773,7 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "ebook_chapters"
 
+    @pytest.mark.bootstrap_profile
     def test_ebook_sentences_choice_travels_verbatim(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -1779,6 +1787,7 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "sentences"
 
+    @pytest.mark.bootstrap_profile
     def test_ebook_legacy_snapshot_without_chunk_method_keeps_sentences(
         self,
     ) -> None:
@@ -1800,6 +1809,7 @@ class TestIngestJobOptions:
         assert options["chunk_options"] is not None
         assert options["chunk_options"]["method"] == "sentences"
 
+    @pytest.mark.bootstrap_profile
     def test_fresh_untouched_form_snapshot_maps_to_ebook_chapters(self) -> None:
         """(F11) A FRESH untouched submission still chunks e-books by
         chapter: the submit-time snapshot carries the schema default
@@ -1897,6 +1907,7 @@ class TestIngestJobOptions:
 
         assert options["translation_target_language"] == "en"
 
+    @pytest.mark.bootstrap_profile
     def test_stale_translate_under_transcribe_cpp_is_ignored_not_fatal(
         self,
     ) -> None:
@@ -2210,6 +2221,7 @@ class TestIngestJobOptions:
         assert context["retry_of_job_id"] == "ingest-job-22"
         assert context["retry_source_failure_provenance"] == failed_attempt
 
+    @pytest.mark.bootstrap_profile
     def test_untouched_exact_faster_whisper_model_uses_visible_base_default(
         self,
     ) -> None:
@@ -2253,6 +2265,7 @@ class TestIngestJobOptions:
 
         assert options["translation_target_language"] is None
 
+    @pytest.mark.bootstrap_profile
     def test_untouched_audio_form_snapshot_resolves_closed_gate_default(self) -> None:
         provider_field = next(
             field
@@ -2319,6 +2332,7 @@ class TestIngestJobOptions:
         assert options["extraction_method"] == "markdown"
         assert options["include_toc"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_pdf_chunk_options_carry_explicit_words_method(self) -> None:
         """(task-3301/3303 xhigh review round 2, F12) The generic chunk-size
         hint promises WORDS ('words · 100–5000'), but ``process_pdf``
@@ -2335,6 +2349,7 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "words"
 
+    @pytest.mark.bootstrap_profile
     def test_audio_video_chunk_options_carry_explicit_words_method(self) -> None:
         """(F12) Same unit contract for the audio/video branch, whose
         processor defaults to sentences as well."""
@@ -2347,6 +2362,7 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "words"
 
+    @pytest.mark.bootstrap_profile
     def test_pdf_chunk_size_governs_word_budget_through_processor_tail(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2405,6 +2421,7 @@ class TestIngestJobOptions:
         for chunk in chunks:
             assert len(chunk["text"].split()) <= 120
 
+    @pytest.mark.bootstrap_profile
     def test_type_specific_overrides_generic(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -2476,6 +2493,7 @@ class TestIngestJobOptionsWiring:
         assert "custom_prompt" not in options
         assert "system_prompt" not in options
 
+    @pytest.mark.bootstrap_profile
     def test_untouched_overlap_default_is_schema_default(self) -> None:
         """Local fallback overlap == the generic schema default (100), the
         value the UI displays -- it used to be a hardcoded 50."""
@@ -2496,6 +2514,7 @@ class TestIngestJobOptionsWiring:
 
         assert options["chunk_options"]["overlap"] == schema_overlap == 100
 
+    @pytest.mark.bootstrap_profile
     def test_untouched_form_local_and_server_paths_agree_on_overlap(self) -> None:
         from tldw_chatbook.Library.server_ingest_request import (
             build_server_ingest_kwargs,
@@ -2569,6 +2588,7 @@ class TestIngestJobOptionsWiring:
             options["audio_video"]["transcription_external_scope_id"] == private_scope
         )
 
+    @pytest.mark.bootstrap_profile
     def test_display_string_sizes_are_coerced_to_int(self) -> None:
         """The panel Inputs hand back display text; processors get ints."""
         app = _minimal_app()
@@ -2590,6 +2610,7 @@ class TestIngestJobOptionsWiring:
         assert isinstance(options["chunk_options"]["size"], int)
         assert isinstance(options["chunk_options"]["overlap"], int)
 
+    @pytest.mark.bootstrap_profile
     def test_chunk_options_carry_max_size_for_chunking_service(self) -> None:
         """``improved_chunking_process`` reads ``max_size``; the legacy
         audio/video option map reads ``size``. Both spellings must travel."""
@@ -2850,6 +2871,7 @@ class TestIngestDoneProgress:
         assert progress["message"].startswith(INGEST_DUPLICATE_PROGRESS_PREFIX)
 
 
+@pytest.mark.bootstrap_profile
 def test_submit_refuses_active_local_duplicate_before_second_append(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2994,6 +3016,7 @@ async def test_remote_research_dispatch_rechecks_qualified_identity_before_servi
     assert "captured Server workspace authority" in failed.error
 
 
+@pytest.mark.bootstrap_profile
 def test_terminal_local_job_does_not_block_reingestion(tmp_path: Path) -> None:
     app = _minimal_app(media_db="present")
     source = tmp_path / "a.txt"
@@ -3008,6 +3031,7 @@ def test_terminal_local_job_does_not_block_reingestion(tmp_path: Path) -> None:
     assert second.job_id != first.job_id
 
 
+@pytest.mark.bootstrap_profile
 def test_local_active_job_does_not_block_server_submission(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3046,6 +3070,7 @@ def test_submit_refuses_active_server_duplicate_before_remote_call(
     remote.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_folder_refusal_occurs_before_any_admitted_child(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3061,7 +3086,15 @@ def test_folder_refusal_occurs_before_any_admitted_child(
     admitted = MagicMock()
     monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
     uuid4 = MagicMock()
-    monkeypatch.setattr(app_module.uuid, "uuid4", uuid4)
+    original_uuid4 = ingest_queue_module.uuid.uuid4
+    import uuid as stdlib_uuid
+
+    monkeypatch.setattr(
+        ingest_queue_module,
+        "uuid",
+        SimpleNamespace(**{**vars(stdlib_uuid), "uuid4": uuid4}),
+    )
+    assert stdlib_uuid.uuid4 is original_uuid4
     app._parakeet_submitting_scope_ids = {"existing-scope"}
     sync_scopes = MagicMock()
     monkeypatch.setattr(app, "_sync_parakeet_source_scopes", sync_scopes)
@@ -3082,6 +3115,7 @@ def test_folder_refusal_occurs_before_any_admitted_child(
     sync_scopes.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_confirmed_folder_routes_every_member_once_without_reentry(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3134,6 +3168,7 @@ def test_confirmed_folder_routes_every_member_once_without_reentry(
     assert len(admitted_calls) == admitted_count
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("mutation", ["added", "removed", "changed"])
 def test_folder_candidate_mutation_refuses_stale_consent_before_any_child(
     monkeypatch: pytest.MonkeyPatch,
@@ -3174,6 +3209,7 @@ def test_folder_candidate_mutation_refuses_stale_consent_before_any_child(
     admitted.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_new_active_match_absent_from_consent_refuses_before_any_child(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3209,6 +3245,7 @@ def test_new_active_match_absent_from_consent_refuses_before_any_child(
     admitted.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_consent_scope_allows_matching_job_to_finish_before_second_press(
     tmp_path: Path,
 ) -> None:
@@ -3234,6 +3271,7 @@ def test_consent_scope_allows_matching_job_to_finish_before_second_press(
     assert submitted.job_id != active.job_id
 
 
+@pytest.mark.bootstrap_profile
 def test_direct_refusal_is_privacy_safe_and_starts_no_work(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3613,6 +3651,7 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
 
 
 class TestImageIngestJobOptions:
+    @pytest.mark.bootstrap_profile
     def test_image_group_options_travel(self) -> None:
         """The image branch feeds ``process_image``'s OCR knobs."""
         app = _minimal_app()

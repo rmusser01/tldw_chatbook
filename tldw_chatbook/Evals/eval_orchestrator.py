@@ -90,6 +90,7 @@ class EvaluationOrchestrator:
         # TASK-38714: off-loop result writes share one thread, so they reuse
         # one EvalsDB connection, which _retire_write_thread closes there.
         self._write_executor: ThreadPoolExecutor | None = None
+        self._write_retirement_task: asyncio.Task[None] | None = None
 
         # Initialize task loader
         self.task_loader = TaskLoader()
@@ -109,7 +110,15 @@ class EvaluationOrchestrator:
             await asyncio.sleep(min(remaining, 0.02))
         # A connection held open on the write thread would keep the storage
         # pause waiting; the next write reopens it.
-        await asyncio.to_thread(self._retire_write_thread)
+        if self._write_retirement_task is None and self._write_executor is None:
+            return True
+        retirement = self._start_write_retirement()
+        done, _ = await asyncio.wait(
+            {retirement}, timeout=max(0.0, deadline - time.monotonic())
+        )
+        if not done:
+            return False
+        await self._await_write_retirement()
         return True
 
     def _maintenance_resume(self) -> None:
@@ -308,11 +317,30 @@ class EvaluationOrchestrator:
         if getattr(db, "is_memory_db", None) is True:
             db.store_result(**store_kwargs)
             return
+        await self._await_write_retirement()
         if self._write_executor is None:
-            self._write_executor = ThreadPoolExecutor(1, thread_name_prefix="evals-writes")
+            self._write_executor = ThreadPoolExecutor(
+                1, thread_name_prefix="evals-writes"
+            )
         await asyncio.get_running_loop().run_in_executor(
             self._write_executor, functools.partial(db.store_result, **store_kwargs)
         )
+
+    def _start_write_retirement(self) -> asyncio.Task[None]:
+        """Share the same physical retirement across maintenance and ordinary close."""
+        if self._write_retirement_task is None:
+            self._write_retirement_task = asyncio.create_task(
+                asyncio.to_thread(self._retire_write_thread)
+            )
+        return self._write_retirement_task
+
+    async def _await_write_retirement(self) -> None:
+        """Retain physical cleanup across cancellation before admitting another writer."""
+        retirement = self._write_retirement_task
+        if retirement is not None:
+            await asyncio.shield(retirement)
+            if self._write_retirement_task is retirement:
+                self._write_retirement_task = None
 
     def _retire_write_thread(self) -> None:
         """Close the write thread's connection on that thread, then the thread.
@@ -320,10 +348,12 @@ class EvaluationOrchestrator:
         EvalsDB keeps one connection per thread and ``close()`` reaches only
         the calling thread's (TASK-38714).
         """
-        executor, self._write_executor = self._write_executor, None
+        executor = self._write_executor
         if executor is not None:
             executor.submit(self.db.close).result()
             executor.shutdown(wait=True)
+            if self._write_executor is executor:
+                self._write_executor = None
 
     async def create_task_from_file(
         self, task_file_path: str, format_type: str = "auto"
@@ -1184,7 +1214,8 @@ class EvaluationOrchestrator:
                 task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.to_thread(self._retire_write_thread)
+        self._start_write_retirement()
+        await self._await_write_retirement()
         self.db.close()
 
     def close(self) -> None:
@@ -1194,6 +1225,12 @@ class EvaluationOrchestrator:
                 "Cannot close orchestrator while an active evaluation is running; "
                 "await aclose() instead"
             )
+        retirement = self._write_retirement_task
+        if retirement is not None:
+            if not retirement.done():
+                raise RuntimeError("Write retirement is pending; await aclose() instead")
+            retirement.result()
+            self._write_retirement_task = None
         self._retire_write_thread()
         self.db.close()
 

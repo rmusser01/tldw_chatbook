@@ -1,21 +1,28 @@
 {
   "_comment": "First-send warm-up payload census (the pre-import pass's last step, after the screen routes), counted from app + chat: an upper bound on what the warm-up adds. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
   "warmup_added_modules": 94,
-  "warmup_added_loc": 61609,
+  "warmup_added_loc": 59793,
   "listed": [
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
     "tldw_chatbook.UI.Console_Modules.sent_draft",
     "tldw_chatbook.Chat.console_received_intent",
     "tldw_chatbook.Chat.console_configuration_preparation",
+    "tldw_chatbook.Chat.console_settings_persistence",
     "tldw_chatbook.Chat.console_preparation_reads",
     "tldw_chatbook.Chat.console_configuration_capture",
     "tldw_chatbook.UI.Console_Modules.turn_admission",
     "tldw_chatbook.MCP.console_snapshot",
-    "tldw_chatbook.Chat.console_received_dispatch",
+    "tldw_chatbook.Chat.console_send_start",
     "tldw_chatbook.Chat.console_received_turn",
+    "tldw_chatbook.Chat.console_runtime_custody",
+    "tldw_chatbook.Chat.console_saved_sessions",
+    "tldw_chatbook.DB.mobile_consolidation_receipts",
+    "tldw_chatbook.Agents.scratch_admission",
     "tldw_chatbook.Chat.console_send_diagnostics",
     "tldw_chatbook.Chat.console_automatic_submission",
+    "tldw_chatbook.Chat.console_plugin_context",
     "tldw_chatbook.Chat.console_hook_preparation",
+    "tldw_chatbook.Agents.hook_permissions",
     "tldw_chatbook.Agents.run_hooks",
     "tldw_chatbook.Agents.automatic_work_runtime",
     "tldw_chatbook.Chat.console_references",
@@ -34,6 +41,10 @@
     "tldw_chatbook.Chat.console_visual_transcript",
     "tldw_chatbook.Chat.console_predispatch_block",
     "tldw_chatbook.Chat.console_native_commit",
+    "tldw_chatbook.Chat.console_prompt_mixin_service",
+    "tldw_chatbook.DB.console_prompt_mixins",
+    "tldw_chatbook.Chat.console_pre_provider_stop",
+    "tldw_chatbook.Chat.console_continuation_binding",
     "tldw_chatbook.Chat.console_trace_row_sources",
     "tldw_chatbook.Chat.response_rules.generation",
     "tldw_chatbook.Chat.response_rules.builder",
@@ -48,8 +59,7 @@
     "tldw_chatbook.Chat.response_rules.resolution",
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
-    "tldw_chatbook.app_served",
-    "tldw_chatbook.Web_Server.served_relay_publisher",
+    "textual_serve",
     "tldw_chatbook.Guardian.settings",
     "tldw_chatbook.Agents.local_tool_provider",
     "tldw_chatbook.Chat.console_run_start_tools",
@@ -59,42 +69,60 @@
     "tldw_chatbook.Tools.character_tool_service",
     "tldw_chatbook.Tools.git_tool_impls",
     "tldw_chatbook.Tools.web_tool_impls",
-    "tldw_chatbook.Web_Scraping.deep_search_citations",
     "tldw_chatbook.Agents.ask_user_questions",
     "tldw_chatbook.Agents.fs_read_ledger",
     "tldw_chatbook.Chat.conversation_archive_actions",
     "tldw_chatbook.Agents.canvas_tool_provider",
+    "tldw_chatbook.Chat.console_agent_reply",
+    "tldw_chatbook.Chat.citation_key_first_use",
     "tldw_chatbook.Canvas.guide",
     "tldw_chatbook.Chat.console_stream_persistence",
     "tldw_chatbook.Chat.provider_rate_limits",
-    "tldw_chatbook.Canvas.native_authority",
-    "tldw_chatbook.Canvas.compiler",
-    "tldw_chatbook.Canvas.gateway",
+    "webencodings",
+    "six",
+    "html5lib",
+    "tinycss2",
+    "multidict",
+    "propcache",
+    "yarl",
+    "frozenlist",
+    "aiosignal",
+    "aiohappyeyeballs",
+    "aiohttp",
     "tldw_chatbook.Canvas.capabilities",
     "tldw_chatbook.Canvas.control_protocol",
+    "tldw_chatbook.Canvas.compiler",
+    "tldw_chatbook.Canvas.gateway",
+    "tldw_chatbook.Canvas.native_authority",
     "tldw_chatbook.Tools.remote_session_registry",
-    "tldw_chatbook.Tools.remote_session_worker",
     "tldw_chatbook.UI.Console_Modules.citation_counts",
     "tldw_chatbook.UI.Console_Modules.config_sync",
     "tldw_chatbook.emergency_stop",
+    "tldw_chatbook.UI.Console_Modules.emergency_stop_hold",
     "tldw_chatbook.Chat.console_voice_input"
   ],
   "entries": {
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement": {
-      "loc": 1045,
+      "loc": 1165,
       "modules": [
         "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
         "tldw_chatbook.UI.Console_Modules.sent_draft"
       ]
     },
     "tldw_chatbook.Chat.console_configuration_preparation": {
-      "loc": 1463,
+      "loc": 1501,
       "modules": [
         "tldw_chatbook.Chat.console_configuration_preparation"
       ]
     },
+    "tldw_chatbook.Chat.console_settings_persistence": {
+      "loc": 788,
+      "modules": [
+        "tldw_chatbook.Chat.console_settings_persistence"
+      ]
+    },
     "tldw_chatbook.UI.Console_Modules.turn_admission": {
-      "loc": 383,
+      "loc": 443,
       "modules": [
         "tldw_chatbook.UI.Console_Modules.turn_admission"
       ]
@@ -105,38 +133,69 @@
         "tldw_chatbook.MCP.console_snapshot"
       ]
     },
-    "tldw_chatbook.Chat.console_received_dispatch": {
-      "loc": 568,
+    "tldw_chatbook.Chat.console_send_start": {
+      "loc": 151,
       "modules": [
-        "tldw_chatbook.Chat.console_received_dispatch"
+        "tldw_chatbook.Chat.console_send_start"
+      ]
+    },
+    "tldw_chatbook.Chat.console_runtime_custody": {
+      "loc": 344,
+      "modules": [
+        "tldw_chatbook.Chat.console_runtime_custody"
+      ]
+    },
+    "tldw_chatbook.Chat.console_saved_sessions": {
+      "loc": 764,
+      "modules": [
+        "tldw_chatbook.Chat.console_saved_sessions"
+      ]
+    },
+    "tldw_chatbook.DB.mobile_consolidation_receipts": {
+      "loc": 1020,
+      "modules": [
+        "tldw_chatbook.DB.mobile_consolidation_receipts"
+      ]
+    },
+    "tldw_chatbook.Agents.scratch_admission": {
+      "loc": 245,
+      "modules": [
+        "tldw_chatbook.Agents.scratch_admission"
       ]
     },
     "tldw_chatbook.Chat.console_send_diagnostics": {
-      "loc": 222,
+      "loc": 235,
       "modules": [
         "tldw_chatbook.Chat.console_send_diagnostics"
       ]
     },
     "tldw_chatbook.Chat.console_automatic_submission": {
-      "loc": 489,
+      "loc": 684,
       "modules": [
         "tldw_chatbook.Chat.console_automatic_submission"
       ]
     },
+    "tldw_chatbook.Chat.console_plugin_context": {
+      "loc": 437,
+      "modules": [
+        "tldw_chatbook.Chat.console_plugin_context"
+      ]
+    },
     "tldw_chatbook.Chat.console_hook_preparation": {
-      "loc": 389,
+      "loc": 438,
       "modules": [
         "tldw_chatbook.Chat.console_hook_preparation"
       ]
     },
-    "tldw_chatbook.Agents.run_hooks": {
-      "loc": 1281,
+    "tldw_chatbook.Agents.hook_permissions": {
+      "loc": 2713,
       "modules": [
+        "tldw_chatbook.Agents.hook_permissions",
         "tldw_chatbook.Agents.run_hooks"
       ]
     },
     "tldw_chatbook.Agents.automatic_work_runtime": {
-      "loc": 370,
+      "loc": 371,
       "modules": [
         "tldw_chatbook.Agents.automatic_work_budget",
         "tldw_chatbook.Agents.automatic_work_runtime"
@@ -149,7 +208,7 @@
       ]
     },
     "tldw_chatbook.Agents.hooks_v2.lifecycle": {
-      "loc": 3700,
+      "loc": 3799,
       "modules": [
         "tldw_chatbook.Agents.hooks_v2",
         "tldw_chatbook.Agents.hooks_v2.budgets",
@@ -171,7 +230,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_context_window": {
-      "loc": 346,
+      "loc": 381,
       "modules": [
         "tldw_chatbook.Chat.console_context_window"
       ]
@@ -189,9 +248,33 @@
       ]
     },
     "tldw_chatbook.Chat.console_native_commit": {
-      "loc": 1312,
+      "loc": 1473,
       "modules": [
         "tldw_chatbook.Chat.console_native_commit"
+      ]
+    },
+    "tldw_chatbook.Chat.console_prompt_mixin_service": {
+      "loc": 777,
+      "modules": [
+        "tldw_chatbook.Chat.console_prompt_mixin_service"
+      ]
+    },
+    "tldw_chatbook.DB.console_prompt_mixins": {
+      "loc": 536,
+      "modules": [
+        "tldw_chatbook.DB.console_prompt_mixins"
+      ]
+    },
+    "tldw_chatbook.Chat.console_pre_provider_stop": {
+      "loc": 523,
+      "modules": [
+        "tldw_chatbook.Chat.console_pre_provider_stop"
+      ]
+    },
+    "tldw_chatbook.Chat.console_continuation_binding": {
+      "loc": 341,
+      "modules": [
+        "tldw_chatbook.Chat.console_continuation_binding"
       ]
     },
     "tldw_chatbook.Chat.console_trace_row_sources": {
@@ -218,7 +301,7 @@
       ]
     },
     "tldw_chatbook.Chat.response_rules.runtime": {
-      "loc": 1955,
+      "loc": 1956,
       "modules": [
         "tldw_chatbook.Chat.response_rules.corrections",
         "tldw_chatbook.Chat.response_rules.evidence",
@@ -228,22 +311,9 @@
       ]
     },
     "tldw_chatbook.Chat.response_rules.chat_state": {
-      "loc": 184,
+      "loc": 188,
       "modules": [
         "tldw_chatbook.Chat.response_rules.chat_state"
-      ]
-    },
-    "tldw_chatbook.app_served": {
-      "loc": 125,
-      "modules": [
-        "tldw_chatbook.app_served"
-      ]
-    },
-    "tldw_chatbook.Web_Server.served_relay_publisher": {
-      "loc": 370,
-      "modules": [
-        "tldw_chatbook.Web_Server",
-        "tldw_chatbook.Web_Server.served_relay_publisher"
       ]
     },
     "tldw_chatbook.Guardian.settings": {
@@ -254,7 +324,7 @@
       ]
     },
     "tldw_chatbook.Agents.local_tool_provider": {
-      "loc": 10908,
+      "loc": 11064,
       "modules": [
         "tldw_chatbook.Agents.local_tool_provider",
         "tldw_chatbook.Tools.local_tool_impls",
@@ -267,13 +337,13 @@
       ]
     },
     "tldw_chatbook.Chat.console_run_start_tools": {
-      "loc": 412,
+      "loc": 420,
       "modules": [
         "tldw_chatbook.Chat.console_run_start_tools"
       ]
     },
     "tldw_chatbook.MCP.console_tool_preparation": {
-      "loc": 549,
+      "loc": 573,
       "modules": [
         "tldw_chatbook.MCP.console_tool_preparation"
       ]
@@ -291,24 +361,21 @@
       ]
     },
     "tldw_chatbook.Tools.character_tool_service": {
-      "loc": 769,
+      "loc": 647,
       "modules": [
-        "tldw_chatbook.Character_Chat.character_avatar",
         "tldw_chatbook.Tools.character_tool_service"
       ]
     },
     "tldw_chatbook.Tools.git_tool_impls": {
-      "loc": 1383,
+      "loc": 1636,
       "modules": [
         "tldw_chatbook.Tools.git_tool_impls"
       ]
     },
     "tldw_chatbook.Tools.web_tool_impls": {
-      "loc": 3132,
+      "loc": 2851,
       "modules": [
-        "tldw_chatbook.Tools.web_tool_impls",
-        "tldw_chatbook.Web_Scraping",
-        "tldw_chatbook.Web_Scraping.deep_search_citations"
+        "tldw_chatbook.Tools.web_tool_impls"
       ]
     },
     "tldw_chatbook.Agents.ask_user_questions": {
@@ -336,8 +403,20 @@
         "tldw_chatbook.Canvas.guide"
       ]
     },
+    "tldw_chatbook.Chat.console_agent_reply": {
+      "loc": 1130,
+      "modules": [
+        "tldw_chatbook.Chat.console_agent_reply"
+      ]
+    },
+    "tldw_chatbook.Chat.citation_key_first_use": {
+      "loc": 253,
+      "modules": [
+        "tldw_chatbook.Chat.citation_key_first_use"
+      ]
+    },
     "tldw_chatbook.Chat.console_stream_persistence": {
-      "loc": 122,
+      "loc": 145,
       "modules": [
         "tldw_chatbook.Chat.console_stream_persistence"
       ]
@@ -348,52 +427,65 @@
         "tldw_chatbook.Chat.provider_rate_limits"
       ]
     },
-    "tldw_chatbook.Canvas.native_authority": {
-      "loc": 8382,
+    "tldw_chatbook.Canvas.capabilities": {
+      "loc": 297,
       "modules": [
-        "tldw_chatbook.Canvas.capabilities",
-        "tldw_chatbook.Canvas.compilation",
+        "tldw_chatbook.Canvas.capabilities"
+      ]
+    },
+    "tldw_chatbook.Canvas.control_protocol": {
+      "loc": 1251,
+      "modules": [
+        "tldw_chatbook.Canvas.control_protocol"
+      ]
+    },
+    "tldw_chatbook.Canvas.compiler": {
+      "loc": 2477,
+      "modules": [
         "tldw_chatbook.Canvas.compiler",
-        "tldw_chatbook.Canvas.control_protocol",
-        "tldw_chatbook.Canvas.gateway",
-        "tldw_chatbook.Canvas.native_authority",
         "tldw_chatbook.Canvas.profiles",
         "tldw_chatbook.Canvas.runtime_assets"
       ]
     },
-    "tldw_chatbook.Tools.remote_session_registry": {
-      "loc": 11309,
+    "tldw_chatbook.Canvas.gateway": {
+      "loc": 3104,
       "modules": [
-        "tldw_chatbook.Tools.build_remote_worker_bundle",
-        "tldw_chatbook.Tools.remote_binding_locator",
-        "tldw_chatbook.Tools.remote_session_frames",
-        "tldw_chatbook.Tools.remote_session_registry",
-        "tldw_chatbook.Tools.remote_session_worker",
-        "tldw_chatbook.Tools.remote_worker_bundle",
-        "tldw_chatbook.Tools.remote_workspace_executor",
-        "tldw_chatbook.Tools.remote_workspace_transport"
+        "tldw_chatbook.Canvas.gateway"
+      ]
+    },
+    "tldw_chatbook.Canvas.native_authority": {
+      "loc": 1430,
+      "modules": [
+        "tldw_chatbook.Canvas.compilation",
+        "tldw_chatbook.Canvas.native_authority"
+      ]
+    },
+    "tldw_chatbook.Tools.remote_session_registry": {
+      "loc": 261,
+      "modules": [
+        "tldw_chatbook.Tools.remote_session_registry"
       ]
     },
     "tldw_chatbook.UI.Console_Modules.citation_counts": {
-      "loc": 39,
+      "loc": 65,
       "modules": [
         "tldw_chatbook.UI.Console_Modules.citation_counts"
       ]
     },
-    "tldw_chatbook.UI.Console_Modules.config_sync": {
-      "loc": 154,
-      "modules": [
-        "tldw_chatbook.UI.Console_Modules.config_sync"
-      ]
-    },
     "tldw_chatbook.emergency_stop": {
-      "loc": 98,
+      "loc": 103,
       "modules": [
         "tldw_chatbook.emergency_stop"
       ]
     },
+    "tldw_chatbook.UI.Console_Modules.emergency_stop_hold": {
+      "loc": 307,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.emergency_stop_hold"
+      ]
+    },
     "tldw_chatbook.Chat.console_voice_input": {
-      "loc": 2442,
+      "loc": 2798,
       "modules": [
         "tldw_chatbook.Chat.console_voice_input",
         "tldw_chatbook.Utils.local_stt_providers"

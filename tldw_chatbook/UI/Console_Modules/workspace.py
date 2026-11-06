@@ -540,36 +540,18 @@ class _ConsoleRegistryDisplayReads:
 
 
 class ConsoleTickWorkspaceBuilds:
-    """One run tick's shared workspace-context build (TASK-22201).
+    """Share one fingerprint-validated context build within its owning task.
 
-    ``_sync_native_console_chat_ui`` used to build
-    ``_build_console_workspace_context_state()`` SIX times per 0.2 s tick
-    (measured with a stack probe): the two rail-state legs, the
-    workspace-context push, the control bar's and the agent section's
-    inspector legs, and the settings summary's rail read. This object is
-    created fresh for ONE tick by ``tick_workspace_build_scope`` and serves
-    every build the tick's own task performs; each read revalidates the
-    controller's volatile-input fingerprint, so:
+    Ticks and control-bar syncs opt in through the workspace build scopes. A
+    settled scope builds once; session activation changes the fingerprint and
+    rebuilds before publication (PR #660). A missing fingerprint or another
+    task always builds live, including handlers interleaved across awaits.
+    Re-entrant builds bypass reuse. Inputs outside the fingerprint repaint on
+    the next tick, within its existing 0.2-second cadence.
 
-    * a settled tick pays for exactly one build;
-    * the PR #660 freshness ruling holds -- a session created/activated by
-      ``_sync_console_native_session_tabs`` mid-tick changes the store
-      fingerprint, and the workspace-context push and the visibility check
-      rebuild rather than reuse the pre-await snapshot;
-    * a ``None`` fingerprint (reduced doubles, any component failure) means
-      every read builds live, exactly the pre-cache behavior.
-
-    Task-scoped and never shared across ticks: ``accepts_current_task``
-    admits only the coroutine task that opened the scope, so workers,
-    message handlers, and search settles interleaving during the tick's
-    awaits keep building live -- a mutation followed by a push can never be
-    masked. Inputs outside the fingerprint changing DURING one tick are
-    repainted by the next tick, at most 0.2 s later -- the same cadence
-    every other tick-driven surface repaints at. TASK-36511.2:
-    ``_sync_console_control_bar`` and ``_sync_console_rail_and_controls``
-    open the scope too (``live_workspace_build_scope``), so one such sync
-    pays for one build, for that sync, read live (``stale_reads=False``).
-    """
+    Run ticks may use registry display snapshots; user-triggered control-bar
+    syncs use live reads (TASK-36511.2). The outermost scope creates and clears its cache,
+    including on failure; no cache crosses scopes."""
 
     __slots__ = (
         "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads"
@@ -6951,26 +6933,14 @@ class ConsoleWorkspaceController:
 
     @contextmanager
     def tick_workspace_build_scope(self, *, stale_reads: bool = True):
-        """Share ONE fingerprint-validated context build across a run tick.
+        """Share the owning task's build; nested scopes retain the outer cache.
 
-        Opened by ``_sync_native_console_chat_ui`` around its sync body
-        (TASK-22201): every ``_build_console_workspace_context_state`` call
-        the tick's own asyncio task performs -- directly or through the
-        inspector/control-bar/agent-section legs -- is served from one
-        :class:`ConsoleTickWorkspaceBuilds` cache. Deliberately opt-in and
-        scoped, like the screen's ``_console_derivation_scope``
-        (task-15452): outside a ``with`` block, and for any OTHER task
-        interleaving during the tick's awaits, every build is live exactly
-        as before. Re-entrant (an inner scope keeps the outer cache) and
-        always torn down, so a raising tick cannot leave a stale build
-        cached for the next one. ``config_sync.settle_stopped_poll`` opens
-        it for one synchronous pass.
+        Native run ticks and settle_stopped_poll opt in; cleanup also runs on error.
+        See ConsoleTickWorkspaceBuilds for fingerprint and interleaving rules.
 
         Args:
-            stale_reads: Serve the build's registry display reads from their
-                last snapshot while the run poll ticks (TASK-33620.15.4).
-                False reads them live.
-        """
+            stale_reads: Use registry display snapshots during run ticks; False
+                reads them live for user-triggered syncs (TASK-33620.15.4)."""
         if getattr(self, "_console_tick_builds", None) is not None:
             yield
             return
@@ -6981,13 +6951,10 @@ class ConsoleWorkspaceController:
             self._console_tick_builds = None
 
     def live_workspace_build_scope(self):
-        """One shared context build for a user-triggered sync, read live.
+        """Share one live context build across a control-bar sync's Inspector and rail.
 
-        TASK-36511.2: the control-bar syncs share one build across their
-        Inspector and rail-state legs. Unlike a run tick's build, it never
-        serves a stale registry snapshot, so a workspace change the user just
-        made shows in the sync that follows it (TASK-36511.2 review).
-        """
+        User workspace changes appear in this sync, without a stale registry read.
+        TASK-36511.2; run-tick scopes retain their separate snapshot policy."""
         return self.tick_workspace_build_scope(stale_reads=False)
 
     #: TASK-33620.15.4: True only inside a run tick's shared context build.
