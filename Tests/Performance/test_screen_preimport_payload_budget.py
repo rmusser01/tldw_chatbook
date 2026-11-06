@@ -212,6 +212,7 @@ MAX_PASS_ADDED_LOC = 427_830
 #: 2026-10-26 ("Pre-authorise LOC (Rec.)": a LOC-only re-pin; a new
 #: pre-imported module stays a STOP) and D6a, 2026-10-29 ("Pin + 15,000
 #: slack (Rec.)"); ADR-097 ledger.
+#: 2026-11-05: this B2b note predates polish-1b's raise of MAX_PASS_ADDED_LOC above; its "current dev 426,512" is dev 29592ecc9b's measurement.
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.
