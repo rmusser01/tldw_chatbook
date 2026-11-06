@@ -121,7 +121,8 @@ if route == "active":
                     raise AssertionError("native connection remains open")
     db.close = checked_close
 template.close_connection()
-home = SimpleNamespace(app_instance=SimpleNamespace(chachanotes_db=template))
+# An unmounted owner: the hidden-Home guard (8e8af97b91) reads is_mounted first (TASK-38973).
+home = SimpleNamespace(is_mounted=False, app_instance=SimpleNamespace(chachanotes_db=template))
 async def invoke():
     if app_call is not None:
         return await app_call()
@@ -130,6 +131,12 @@ async def run():
     task = asyncio.create_task(invoke())
     if outcome == "cancel":
         while not entered.is_set():
+            if task.done():
+                # A worker that dies before its query (a double missing an
+                # attribute) re-raises its own error now, instead of waiting
+                # out the subprocess timeout (TASK-38973).
+                await task
+                raise AssertionError("worker finished before entering its query")
             await asyncio.sleep(.01)
         task.cancel()
         try:
@@ -199,7 +206,7 @@ async def direct():
     else:
         raise AssertionError("original rejection was lost")
 asyncio.run(asyncio.to_thread(lambda: asyncio.run(direct())))
-home = SimpleNamespace(app_instance=SimpleNamespace(chachanotes_db=template))
+home = SimpleNamespace(is_mounted=False, app_instance=SimpleNamespace(chachanotes_db=template))
 assert asyncio.run(HomeScreen._home_content_seam_call(home, scope.list_notes, **kwargs)) is None
 assert not acquired, "rejected request acquired database"
 template.close_connection()
@@ -239,7 +246,7 @@ class CustomOwner:
     def close_connection(self):
         raise AssertionError("custom owner must not be closed")
 owner = CustomOwner()
-home = SimpleNamespace(app_instance=SimpleNamespace(chachanotes_db=owner))
+home = SimpleNamespace(is_mounted=False, app_instance=SimpleNamespace(chachanotes_db=owner))
 assert asyncio.run(HomeScreen._home_content_seam_call(home, lambda: [1])) == [1]
 print("retired and reopened")
 """

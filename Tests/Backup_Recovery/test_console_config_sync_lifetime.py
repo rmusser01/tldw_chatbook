@@ -47,7 +47,10 @@ if case=='cleanup_error':
 class Surface(SimpleNamespace):
  def __getattr__(self,name):
   attr=getattr(ChatScreen,name)  # A classmethod is already bound (TASK-36511).
-  return attr if isinstance(attr,MethodType) else MethodType(attr,self)
+  if isinstance(attr,MethodType):return attr
+  # A class default or property cannot be bound: name it (TASK-38973).
+  if not callable(attr):raise TypeError(f'Surface has no instance answer for ChatScreen.{name}')
+  return MethodType(attr,self)
 screen=Surface()
 scheduled=[]
 screen.set_timer=lambda delay,callback:scheduled.append((delay,callback))
@@ -467,6 +470,12 @@ screen._retrieval=SimpleNamespace(
 screen._character=SimpleNamespace(_refresh_active_character_avatar_if_scope_changed=no_async)
 screen._character_context=SimpleNamespace(refresh_if_scope_changed=no_async)
 screen._workspace=SimpleNamespace(tick_workspace_build_scope=nullcontext)
+# Since ab43a0303b a full sync reads its app's UI readiness and then syncs the
+# archive recovery view (TASK-38973); model a started app with no recovery.
+# Its readiness reads the app's config through ``screen.app`` once an app exists.
+screen.app=screen.app_instance=SimpleNamespace(_ui_ready=True,app_config={})
+screen._console_archive_recovery_view=SimpleNamespace(sync=no_async)
+screen._console_terminal_return_reading=None  # The class default.
 for name in ('_record_ui_worker_started','_record_ui_worker_finished','_sync_console_chat_core_state','_sync_console_settings_summary','_sync_console_settings_recovery_surfaces','_sync_console_live_work_readiness_rows','_dispatch_active_console_roleplay_refresh','_sync_console_workspace_context','_dispatch_console_rail_preference_prune'):
  setattr(screen,name,no_sync)
 screen._sync_console_native_session_tabs=no_async
