@@ -118,7 +118,8 @@ def recording(name, import_):
     cold = name not in sys.modules
     on_loop = threading.current_thread() is main
     if cold and on_loop:
-        frame, stack = sys._getframe(1), []
+        # f_back, not _getframe(1): an import made from C has no frame above.
+        frame, stack = sys._getframe(0).f_back, []
         while frame is not None and len(stack) < 8:
             stack.append(f"{frame.f_globals.get('__name__')}:{frame.f_code.co_name}")
             frame = frame.f_back
