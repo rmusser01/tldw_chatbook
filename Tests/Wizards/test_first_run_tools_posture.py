@@ -84,7 +84,11 @@ FALSE_CLAIMS = ("Everything is off", "everything is off", "all off", "tools off"
 async def test_first_run_step_states_the_light_set_and_claims_nothing_false() -> None:
     """The posture is the shared light-surface sentence; the retired
     "Also available (asks first)" line (web, Watchlists, character cards) is
-    gone -- plain chat is not offered those until Full agent tools is on."""
+    gone -- plain chat is not offered those until Full agent tools is on.
+
+    A non-regression pin of dev's TASK-34100.5.3 light surface, not RED
+    evidence for AC#2: it passes on the pre-fix base 29592ecc9b too
+    (review TEF-2)."""
     _wizard, step = _tools_step({})
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -101,7 +105,8 @@ async def test_first_run_step_states_the_light_set_and_claims_nothing_false() ->
 @pytest.mark.asyncio
 async def test_the_console_master_switch_is_not_offered_in_setup() -> None:
     """A non-regression pin, not RED evidence for AC#2: the base Tools step
-    never offered the ``[console]`` master switch either (review-tests F7).
+    never offered the ``[console]`` master switch either (review-tests F7;
+    it passes on the pre-fix base 29592ecc9b, review TEF-2).
     The switches are Full agent tools (TASK-34100.5.3) plus one per
     ``_GATEABLE_BUILTINS`` row."""
     _wizard, step = _tools_step({})
@@ -171,6 +176,9 @@ async def test_master_switch_off_names_no_local_tool() -> None:
 
 
 def test_master_switch_off_leaves_no_local_tool_in_the_quick_note() -> None:
+    """A non-regression pin of dev's TASK-34100.5.3 light surface, not RED
+    evidence for AC#2: it passes on the pre-fix base 29592ecc9b too
+    (review TEF-2)."""
     note = wizard_state.quick_track_defaults_note(
         {"tools": {}, "console": {"local_tools_enabled": False}}
     )
@@ -184,7 +192,11 @@ def test_the_summary_names_the_local_groups_only_while_the_local_tools_are_on(
 ) -> None:
     """Review V3 (TASK-34100.13), kept through the rebase: what the Summary
     says the agent gets follows the ``[console]`` master -- the to-do, web,
-    Watchlists and workspace tools live in the local provider it drops."""
+    Watchlists and workspace tools live in the local provider it drops.
+
+    A non-regression pin of dev's TASK-34100.5.3 light surface, not RED
+    evidence for AC#2: it passes on the pre-fix base 29592ecc9b too
+    (review TEF-2)."""
     config = {
         "tools": {"full_agent_tools_enabled": True},
         "console": {"local_tools_enabled": master},
@@ -205,6 +217,9 @@ def _summary_rows(config):
 
 
 def test_summary_tools_row_is_derived_not_all_off() -> None:
+    """A non-regression pin of dev's TASK-34100.5.3 light surface, not RED
+    evidence for AC#2: it passes on the pre-fix base 29592ecc9b too
+    (review TEF-2)."""
     row = _summary_rows({})["Tools"]
     assert row.state == wizard_state.ROW_DEFAULT
     for claim in FALSE_CLAIMS:
@@ -214,6 +229,9 @@ def test_summary_tools_row_is_derived_not_all_off() -> None:
 
 
 def test_summary_tools_row_names_the_switches_turned_on() -> None:
+    """A non-regression pin of dev's TASK-34100.5.3 light surface, not RED
+    evidence for AC#2: it passes on the pre-fix base 29592ecc9b too
+    (review TEF-2)."""
     row = _summary_rows({"tools": {"create_note_enabled": True}})["Tools"]
     assert row.state == wizard_state.ROW_CONFIGURED
     assert row.detail.startswith(
