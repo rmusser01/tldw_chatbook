@@ -430,7 +430,9 @@ def _parse_http_endpoint(
         return None
     hostname = hostname.lower()
     path = parsed.path.rstrip("/")
-    if not _is_allowed_endpoint_host(hostname, port=port, path=path):
+    if not _is_allowed_endpoint_host(
+        hostname, port=port, path=path if has_scheme else ""
+    ):
         return None
     return (has_scheme, scheme, hostname, port, path)
 
@@ -439,9 +441,16 @@ def _is_allowed_endpoint_host(hostname: str, *, port: int | None, path: str) -> 
     """The endpoint contract's host rule, plus a port or path for a single label.
 
     TASK-38963: a host the contract accepts displays as itself. A single
-    label other than localhost also needs a port or a path, with or without a
-    scheme, so a key pasted into the endpoint field is never echoed. An IPv6
-    zone id, which the contract refuses, still compares as itself.
+    label other than localhost also needs a port, or a path after a typed
+    scheme (review r10e-rev2: a key such as ``sk-abc/def`` has a "path"), so
+    a key pasted into the endpoint field is never echoed. An IPv6 zone id,
+    which the contract refuses, still compares as itself.
+
+    Args:
+        hostname: The lower-cased host.
+        port: The typed port, or None.
+        path: The typed path without its trailing "/"; "" when no scheme
+            was typed.
     """
     try:
         ip_address(hostname)

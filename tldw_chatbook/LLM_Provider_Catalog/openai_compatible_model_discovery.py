@@ -474,7 +474,8 @@ def contract_refusal_reason(
 
     Returns:
         The contract's first error for an endpoint it refuses, or None when
-        it accepts the endpoint or does not know the provider's key.
+        it accepts the endpoint or the provider key is missing or malformed
+        (any well-formed key is resolved, known or not).
     """
     resolution = resolve_provider_endpoint(
         _normalized_provider_identity(provider_identity), endpoint

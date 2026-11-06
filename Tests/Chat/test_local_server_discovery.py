@@ -1124,6 +1124,8 @@ def test_a_single_label_host_displays_and_compares_as_itself():
         assert generic_endpoint_differs(f"{saved}/", {"api_url": saved}) is False
         assert adoption_endpoints_differ("koboldcpp", saved, other) is True, saved
     assert safe_endpoint_display("http://kobold") == "invalid endpoint"
+    # Review r10e-rev2: the path counts only after a typed scheme.
+    assert safe_endpoint_display("unit-test-key/v1") == "invalid endpoint"
 
 
 @pytest.mark.asyncio

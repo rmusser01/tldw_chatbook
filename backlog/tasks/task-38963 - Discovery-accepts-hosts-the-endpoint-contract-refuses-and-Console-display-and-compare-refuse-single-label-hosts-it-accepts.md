@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: '2026-11-06 06:13'
+updated_date: '2026-11-06 07:18'
 labels:
 - follow-up
 - providers
@@ -97,6 +97,13 @@ Review r10e-rev1:
   - The 21-file UI set: 1286 passed, 18 failed, all 18 among base's 22.
   - `Tests/CI` with the size ratchets: 1416 passed, 1 skipped. Preflight passed. `bootbudget.sh`: 32 passed.
 
-- Proposed follow-ups, not changed here: Discover models still accepts a bracketed IPv6 zone id that the save refuses (pinned on purpose by discovery's test), and QwenCloud's Discover refuses a schemeless loopback endpoint (`localhost:5001/v1`) that the save accepts.
+Review r10e-rev2:
+- rev1's path allowance ignored whether a scheme was typed, so a pasted key with a "/" displayed and compared as itself. Examples: `sk-abc123def456/extra`, `unit-test-key/v1`, an AWS-style secret, in the unsaved-endpoint copy and the adoption toast. At base these read "invalid endpoint". The path now counts only after a typed `http://` or `https://`, and `http://kobold/v1` still displays as itself.
+- New `test_a_schemeless_token_with_a_slash_is_never_echoed` (`Tests/Chat/test_console_provider_endpoints.py`, 4 keys: display, compare and the unsaved copy) and one such case in the laned display test. Red at ec13dd49ef: 5 failed, e.g. `'sk-abc123def456/extra' == 'invalid endpoint'`. Green after.
+- Display helpers that bypass `_is_allowed_endpoint_host`: `local_server_discovery.endpoint_display` delegates to `safe_endpoint_display`. Discovery's `fingerprint_endpoint` echoes such keys (`http://sk-abc123def456/extra`), but it did so identically at base, so it is listed as a follow-up.
+- `contract_refusal_reason`'s docstring now says it returns None for a missing or malformed key; any well-formed key is resolved.
+- Runs: the endpoint-display, discovery, contract and LLM_Provider_Catalog files with `Tests/CI`, 2029 passed, 1 skipped. Preflight passed.
+
+- Proposed follow-ups, not changed here: Discover models still accepts a bracketed IPv6 zone id that the save refuses (pinned on purpose by discovery's test), and QwenCloud's Discover refuses a schemeless loopback endpoint (`localhost:5001/v1`) that the save accepts. Discovery's `fingerprint_endpoint` echoes a schemeless key-like input as `http://<key>/...`, as at base.
 
 Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py`, `tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py`, `Tests/UI/test_settings_provider_save_scope.py`, `Docs/User_Guide/settings.md`, `Docs/User_Guide/console.md`.
