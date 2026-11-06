@@ -1909,10 +1909,9 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             id="settings-default-model-title",
             classes="destination-section",
         )
-        # TASK-33007.3: a searchable picker over saved, catalog and
-        # discovered ids. The hidden Input keeps #settings-model-value and
-        # its value for staging, save and revert (the modal's legacy-adapter
-        # precedent).
+        # TASK-33007.3: a searchable picker over saved, catalog and discovered ids. The
+        # hidden Input keeps #settings-model-value and its value for staging, save and
+        # revert (the modal's legacy-adapter precedent).
         with Horizontal(id="settings-model-row", classes="settings-input-row"):
             yield Static("Model", classes="settings-input-label")
             app_instance = screen.app_instance
@@ -2065,14 +2064,12 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 )
         with advanced_disclosure(screen, SAVED_MODELS_DISCLOSURE_ID):
             yield from compose_saved_model_list(screen, provider)
-        # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
-        # inline from the saved config (the Connect block pattern) and
-        # persist immediately on change via the screen's handlers.
-        # task-1341 / ADR-303: instant-apply is the labeled exception to the
-        # staged default; the group and its hint line keep these operational
-        # flags apart from the staged fields (TASK-33007.6: no border, the
-        # pane's is the only frame, and its inputs are one row like the
-        # card's).
+        # ADR-020: [model_catalog] auto-refresh toggles. Values initialize inline from
+        # the saved config (the Connect block pattern) and persist immediately on change
+        # via the screen's handlers. task-1341 / ADR-303: instant-apply is the labeled
+        # exception to the staged default; the group and its hint line keep these
+        # operational flags apart from the staged fields (TASK-33007.6: no border, the
+        # pane's is the only frame, and its inputs are one row like the card's).
         model_catalog_settings = screen._model_catalog_card_settings()
         with (
             advanced_disclosure(screen, CATALOG_REFRESH_DISCLOSURE_ID),

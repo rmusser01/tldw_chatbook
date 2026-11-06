@@ -20561,18 +20561,15 @@ class SettingsScreen(BaseAppScreen):
         # panel's predicate could have flipped -- funnel through here rather
         # than duplicating a second fetch-and-toggle path.
         self._refresh_rag_first_run_panel_state()
-        # task-629: these SAME moments are also exactly when the active
-        # profile identity itself could have silently changed underneath
-        # this screen -- Backfill's get_shared_rag_service() call, on its
-        # first-ever invocation in the process, imports-and-activates the
-        # "Imported settings" profile as a side effect
-        # (ensure_imported_profile). Without this, the "Active: .../
-        # Editing: ..." rows and the editor card's border_title kept
-        # showing whatever was active at mount (e.g. "Hybrid Basic") until
-        # some UNRELATED direct profile action (Clone/Set active) next
-        # happened to resync them -- surfacing a profile name ("Imported
-        # settings") the user had never seen introduced, apparently out of
-        # nowhere.
+        # task-629: these SAME moments are also exactly when the active profile identity
+        # itself could have silently changed underneath this screen -- Backfill's
+        # get_shared_rag_service() call, on its first-ever invocation in the process,
+        # imports-and-activates the "Imported settings" profile as a side effect
+        # (ensure_imported_profile). Without this, the "Active: .../ Editing: ..." rows
+        # and the editor card's border_title kept showing whatever was active at mount
+        # (e.g. "Hybrid Basic") until some UNRELATED direct profile action (Clone/Set
+        # active) next happened to resync them -- surfacing a profile name ("Imported
+        # settings") the user had never seen introduced, apparently out of nowhere.
         self._refresh_library_rag_active_profile_identity_text()
 
     def _library_rag_cached_index_state(self) -> str:
@@ -20952,15 +20949,13 @@ class SettingsScreen(BaseAppScreen):
         # (touches on-disk Chroma) by the category-show/set-active/save
         # triggers, never here.
         #
-        # Deliberately NOT a `Static` + `Button` sharing one
-        # `.settings-action-row` Horizontal: `.settings-detail-row`/
-        # `.settings-status-row` are `width: 100%`, which -- inside a
-        # Horizontal -- claims the whole row and pushes/clips a sibling
-        # Button past the visible edge (the same class of bug already hit
-        # once in this program, RAG-Scope-button-clipped-off-rail). Own
-        # full-width row for the Static, Button in its own
-        # `.settings-action-row` right below it, exactly like the
-        # Set active/Clone/Rename/Delete row above.
+        # Deliberately NOT a `Static` + `Button` sharing one `.settings-action-row`
+        # Horizontal: `.settings-detail-row`/ `.settings-status-row` are `width: 100%`,
+        # which -- inside a Horizontal -- claims the whole row and pushes/clips a
+        # sibling Button past the visible edge (the same class of bug already hit once
+        # in this program, RAG-Scope-button-clipped-off-rail). Own full-width row for
+        # the Static, Button in its own `.settings-action-row` right below it, exactly
+        # like the Set active/Clone/Rename/Delete row above.
         yield Static(
             self._library_rag_index_status_text,
             id="settings-library-rag-index-status",
@@ -21104,22 +21099,19 @@ class SettingsScreen(BaseAppScreen):
         )
         try:
             select = self.query_one("#settings-library-rag-profile-select", Select)
-            # 541-v2 final review item 1: `set_options` alone resets the
-            # selection to `Select.NULL` (posting a transient Changed, see
-            # `Select._init_selected_option`), then the explicit assignment
-            # below posts a second one -- both are recorded as expected
-            # BEFORE the write that causes them so
-            # handle_library_rag_profile_select_changed can consume and
-            # ignore each once it actually arrives (see
-            # `_rag_select_suppress_queue`'s docstring for why a boolean
-            # flag here cannot work). NOTE: the resolved-value fallback
-            # deliberately uses `Select.NULL`, not `Select.BLANK` --
-            # `Select.BLANK` doesn't exist on this Textual version's
-            # `Select`; the attribute lookup silently resolves to the
-            # unrelated `Widget.BLANK` (`False`), and assigning that to
-            # `.value` would raise `InvalidSelectValueError` the one time
-            # this fallback (active id no longer a valid option) is ever
-            # actually hit.
+            # 541-v2 final review item 1: `set_options` alone resets the selection to
+            # `Select.NULL` (posting a transient Changed, see
+            # `Select._init_selected_option`), then the explicit assignment below posts
+            # a second one -- both are recorded as expected BEFORE the write that causes
+            # them so handle_library_rag_profile_select_changed can consume and ignore
+            # each once it actually arrives (see `_rag_select_suppress_queue`'s
+            # docstring for why a boolean flag here cannot work). NOTE: the
+            # resolved-value fallback deliberately uses `Select.NULL`, not
+            # `Select.BLANK` -- `Select.BLANK` doesn't exist on this Textual version's
+            # `Select`; the attribute lookup silently resolves to the unrelated
+            # `Widget.BLANK` (`False`), and assigning that to `.value` would raise
+            # `InvalidSelectValueError` the one time this fallback (active id no longer
+            # a valid option) is ever actually hit.
             resolved_target = target_id if target_id in valid_ids else Select.NULL
             self._queue_rag_select_suppression(select, Select.NULL)
             select.set_options(options)
@@ -21182,31 +21174,27 @@ class SettingsScreen(BaseAppScreen):
         rerank_field_disabled, rerank_suffix = self._library_rag_rerank_field_state(
             rerank_enabled=rerank_enabled, field_disabled=field_disabled
         )
-        # Task 5 (541 v2 UX AC5): whether to show the first-run starter
-        # panel INSTEAD of the "wall of disabled fields" as the first
-        # impression -- computed from whatever index status is already
-        # cached (never a fresh fetch of its own; see
-        # `_library_rag_first_run_active`). On the very first-ever compose
-        # (nothing fetched yet) this reads False -- compose optimistically
-        # WITHOUT the panel, exactly like the index-status row itself
-        # always composes its "checking…" placeholder; the real state
-        # lands imperatively once the off-thread fetch resolves (see
-        # `_apply_library_rag_index_status` -> `_refresh_rag_first_run_panel_state`,
-        # which flips this same panel + collapses Search below, without a
-        # recompose). A revisit within the same session, where the cache is
-        # already warm, composes the correct first-run appearance from the
+        # Task 5 (541 v2 UX AC5): whether to show the first-run starter panel INSTEAD of
+        # the "wall of disabled fields" as the first impression -- computed from
+        # whatever index status is already cached (never a fresh fetch of its own; see
+        # `_library_rag_first_run_active`). On the very first-ever compose (nothing
+        # fetched yet) this reads False -- compose optimistically WITHOUT the panel,
+        # exactly like the index-status row itself always composes its "checking…"
+        # placeholder; the real state lands imperatively once the off-thread fetch
+        # resolves (see `_apply_library_rag_index_status` ->
+        # `_refresh_rag_first_run_panel_state`, which flips this same panel + collapses
+        # Search below, without a recompose). A revisit within the same session, where
+        # the cache is already warm, composes the correct first-run appearance from the
         # very first paint -- no flicker either way.
         first_run = self._library_rag_first_run_active(info=info)
-        # Task 5 review (Important): keep `_rag_first_run_active` -- the
-        # transition tracker `_refresh_rag_first_run_panel_state` uses to
-        # decide whether to force Search's collapsed state -- in lockstep
-        # with whatever THIS compose actually rendered. Without this, a
-        # recompose that lands with a warm cache (composing the correct
-        # first-run appearance directly, per the comment above, entirely
-        # bypassing `_refresh_rag_first_run_panel_state`) would leave the
-        # tracker stale at its pre-compose value, so the NEXT first-run-exit
-        # trigger (clone/backfill completing) could wrongly see "no
-        # transition" and skip re-expanding Search.
+        # Task 5 review (Important): keep `_rag_first_run_active` -- the transition
+        # tracker `_refresh_rag_first_run_panel_state` uses to decide whether to force
+        # Search's collapsed state -- in lockstep with whatever THIS compose actually
+        # rendered. Without this, a recompose that lands with a warm cache (composing
+        # the correct first-run appearance directly, per the comment above, entirely
+        # bypassing `_refresh_rag_first_run_panel_state`) would leave the tracker stale
+        # at its pre-compose value, so the NEXT first-run-exit trigger (clone/backfill
+        # completing) could wrongly see "no transition" and skip re-expanding Search.
         self._rag_first_run_active = first_run
 
         yield Static("RAG", classes="destination-section settings-column-title")
@@ -29423,19 +29411,17 @@ class SettingsScreen(BaseAppScreen):
             return
         chosen = str(event.value or "").strip()
         loaded = str(self._library_rag_loaded_values().get("reranker_provider") or "")
-        # Compare the EFFECTIVE provider, not the raw strings: a blank field
-        # and an explicit "openai" are the same provider at run time, and
-        # they share one row in this Select. Without this, MOUNTING the
-        # category posts a `Select.Changed` carrying the resolved name over
-        # a blank loaded value and stages a draft nobody edited -- the
-        # task-15740 family (the app's own rewrites staged as user edits).
-        # Fold back ONLY when the loaded value is one the fold-back
-        # PRESERVES: blank (blank-means-default) or a registered name. An
-        # UNRECOGNISED loaded value also normalises to the default, so
-        # folding back there re-saved the broken value and made the picker
-        # unable to repair it -- Qodo PR-1751 finding 2 / the final review's
-        # F5. The guard's real target is the task-15740 mount echo, where
-        # the loaded value is blank and the echo is not a user edit.
+        # Compare the EFFECTIVE provider, not the raw strings: a blank field and an
+        # explicit "openai" are the same provider at run time, and they share one row in
+        # this Select. Without this, MOUNTING the category posts a `Select.Changed`
+        # carrying the resolved name over a blank loaded value and stages a draft nobody
+        # edited -- the task-15740 family (the app's own rewrites staged as user edits).
+        # Fold back ONLY when the loaded value is one the fold-back PRESERVES: blank
+        # (blank-means-default) or a registered name. An UNRECOGNISED loaded value also
+        # normalises to the default, so folding back there re-saved the broken value and
+        # made the picker unable to repair it -- Qodo PR-1751 finding 2 / the final
+        # review's F5. The guard's real target is the task-15740 mount echo, where the
+        # loaded value is blank and the echo is not a user edit.
         loaded_is_foldable = (
             not loaded.strip() or loaded in library_rag_reranker_providers()
         )
@@ -29614,22 +29600,19 @@ class SettingsScreen(BaseAppScreen):
         self, result: str | None, profile_id: str
     ) -> None:
         # Task 4 review (Critical fix): reaching THIS modal at all required
-        # `_library_rag_selected_profile_id()` (the Select's current value)
-        # to differ from the active profile -- which is exactly what
-        # entering a profile-picker PREVIEW means (handle_library_rag_
-        # profile_select_changed fires on every such browse). "discard" and
-        # "save" both act on the ACTIVE profile's own draft (discard pops
-        # it, save persists it) -- a still-armed preview must never survive
-        # into either: `action_settings_save_category`'s LIBRARY_RAG guard
-        # would otherwise silently no-op the save AND leak
-        # `_rag_profile_pending_activate` (its capture-and-clear sits BELOW
-        # that guard), and a bare `_sync_library_rag_widgets()` alone would
-        # leave the fields showing the previewed profile's stale,
-        # forced-disabled values under a stale "Previewing: ..." banner/
-        # title during the async gap before the set-active worker (discard)
-        # or save worker (save) completes. "cancel"/None deliberately does
-        # NOT clear it here -- the user chose to keep browsing/editing
-        # exactly as they left it.
+        # `_library_rag_selected_profile_id()` (the Select's current value) to differ
+        # from the active profile -- which is exactly what entering a profile-picker
+        # PREVIEW means (handle_library_rag_ profile_select_changed fires on every such
+        # browse). "discard" and "save" both act on the ACTIVE profile's own draft
+        # (discard pops it, save persists it) -- a still-armed preview must never
+        # survive into either: `action_settings_save_category`'s LIBRARY_RAG guard would
+        # otherwise silently no-op the save AND leak `_rag_profile_pending_activate`
+        # (its capture-and-clear sits BELOW that guard), and a bare
+        # `_sync_library_rag_widgets()` alone would leave the fields showing the
+        # previewed profile's stale, forced-disabled values under a stale "Previewing:
+        # ..." banner/ title during the async gap before the set-active worker (discard)
+        # or save worker (save) completes. "cancel"/None deliberately does NOT clear it
+        # here -- the user chose to keep browsing/editing exactly as they left it.
         if result not in {"save", "discard"}:
             return
         action = QueuedDefinitionAction()
@@ -29689,17 +29672,15 @@ class SettingsScreen(BaseAppScreen):
         reason: str,
         new_index_status: Mapping[str, object] | None = None,
     ) -> None:
-        # Task 4 (541 v2 UX AC1): either outcome ends any in-progress
-        # profile-picker PREVIEW -- on success the active profile itself
-        # changed (a stale preview reference is meaningless); on failure
-        # the Select snaps back to the real active id below, so a lingering
-        # "previewing <failed target>" flag would mismatch what's on
-        # screen. Explicit rather than relying on the Select.Changed
-        # cascade: `_sync_library_rag_profile_widgets` deliberately
-        # suppresses that cascade (see `_rag_select_suppress_queue`), and
-        # even without suppression a same-value reassignment (Set active on
-        # the profile already being previewed) posts no Changed message at
-        # all.
+        # Task 4 (541 v2 UX AC1): either outcome ends any in-progress profile-picker
+        # PREVIEW -- on success the active profile itself changed (a stale preview
+        # reference is meaningless); on failure the Select snaps back to the real active
+        # id below, so a lingering "previewing <failed target>" flag would mismatch
+        # what's on screen. Explicit rather than relying on the Select.Changed cascade:
+        # `_sync_library_rag_profile_widgets` deliberately suppresses that cascade (see
+        # `_rag_select_suppress_queue`), and even without suppression a same-value
+        # reassignment (Set active on the profile already being previewed) posts no
+        # Changed message at all.
         self._rag_preview_profile_id = None
         if ok:
             # task-32804.2: the active profile changed.
@@ -29707,18 +29688,16 @@ class SettingsScreen(BaseAppScreen):
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
             info = active_profile_info()
             message = f"Active profile: {info['name']}"
-            # Honest re-index warning (SP3 spec §3, trigger (b)): only when we
-            # actually KNOW the new profile's fingerprinted collection is
-            # genuinely absent/empty -- never noisy-by-default when the
-            # caller didn't supply a status (e.g. pre-task-4 callers/tests)
-            # or when it's already built (switching to a profile whose
-            # collection was indexed before). Task 4 review (Finding 2):
-            # a status-read failure ("unknown", see fetch_index_status's
-            # exception fallback) used to fall into this same "not built"
-            # branch and claim the switch "re-points to a new (empty)
-            # index" -- a false claim, since an unreadable status says
-            # nothing about whether the index actually changed. That case
-            # now gets its own honest, distinct notice instead.
+            # Honest re-index warning (SP3 spec §3, trigger (b)): only when we actually
+            # KNOW the new profile's fingerprinted collection is genuinely absent/empty
+            # -- never noisy-by-default when the caller didn't supply a status (e.g.
+            # pre-task-4 callers/tests) or when it's already built (switching to a
+            # profile whose collection was indexed before). Task 4 review (Finding 2): a
+            # status-read failure ("unknown", see fetch_index_status's exception
+            # fallback) used to fall into this same "not built" branch and claim the
+            # switch "re-points to a new (empty) index" -- a false claim, since an
+            # unreadable status says nothing about whether the index actually changed.
+            # That case now gets its own honest, distinct notice instead.
             state = (
                 new_index_status.get("state") if new_index_status is not None else None
             )
@@ -33991,15 +33970,13 @@ class SettingsScreen(BaseAppScreen):
     def _save_library_rag_category(self, action):
         """Prepare an accepted RAG save before any pending/draft mutation."""
         category = SettingsCategoryId.LIBRARY_RAG
-        # TASK-2 review (Finding 2): a "Save" choice from
-        # RagProfileSwitchConfirmModal arms `_rag_profile_pending_activate`
-        # then calls back in here -- but `_apply_library_rag_save_result`
-        # (the only clearing site) only runs once the save worker
-        # dispatches below. Capture-and-clear up front so EVERY early
-        # return in this branch (no-unsaved-changes, validation failure)
-        # drops the stale pending id instead of leaking it into a later,
-        # unrelated successful save; re-arm it only right before the
-        # worker dispatch that will actually consume it.
+        # TASK-2 review (Finding 2): a "Save" choice from RagProfileSwitchConfirmModal
+        # arms `_rag_profile_pending_activate` then calls back in here -- but
+        # `_apply_library_rag_save_result` (the only clearing site) only runs once the
+        # save worker dispatches below. Capture-and-clear up front so EVERY early return
+        # in this branch (no-unsaved-changes, validation failure) drops the stale
+        # pending id instead of leaking it into a later, unrelated successful save;
+        # re-arm it only right before the worker dispatch that will actually consume it.
         pending_activate = self._rag_profile_pending_activate
         self._rag_profile_pending_activate = None
         if not self._category_has_unsaved_changes(category):
@@ -34067,13 +34044,11 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         if self._rag_reindex_confirm_in_flight:
-            # Debounce (Task 2 review, Important): a status fetch for an
-            # earlier Save click's cache-miss window is already running --
-            # dispatching a SECOND worker in the same exclusive @work group
-            # would CANCEL the first one, silently dropping ITS
-            # pending_activate. No-op instead; the in-flight fetch will
-            # still complete and dispatch save for the FIRST click once it
-            # lands.
+            # Debounce (Task 2 review, Important): a status fetch for an earlier Save
+            # click's cache-miss window is already running -- dispatching a SECOND
+            # worker in the same exclusive @work group would CANCEL the first one,
+            # silently dropping ITS pending_activate. No-op instead; the in-flight fetch
+            # will still complete and dispatch save for the FIRST click once it lands.
             return
         action = QueuedDefinitionAction(
             parent=_definition_action,
@@ -34136,13 +34111,11 @@ class SettingsScreen(BaseAppScreen):
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
     ) -> None:
-        # Task 2 review (Important): defensive clear -- by the time this
-        # modal resolves the in-flight guard is normally already cleared
-        # (the worker callback below clears it right after the decision
-        # that pushed this very modal), but clearing it again here too,
-        # unconditionally, on BOTH the Confirm and Cancel branches, means
-        # this handler can never be the reason a future Save stays
-        # debounced.
+        # Task 2 review (Important): defensive clear -- by the time this modal resolves
+        # the in-flight guard is normally already cleared (the worker callback below
+        # clears it right after the decision that pushed this very modal), but clearing
+        # it again here too, unconditionally, on BOTH the Confirm and Cancel branches,
+        # means this handler can never be the reason a future Save stays debounced.
         if not confirmed:
             self._rag_reindex_confirm_in_flight = False
             # Cancel: the draft stays staged (never popped on this path) and

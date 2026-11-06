@@ -600,6 +600,8 @@ _BUDGETS: dict[str, int] = {
     # checked after the rebuild, and moves into the rebuilt panes do not count.
     # 2026-11-07, review r12s-rev3 (owner waiver): +38, a focus that was in
     # the old panes keeps the landing; new detail-pane focus counts as a move.
+    # Upstream Settings measurement history: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
+    # Historical upstream waiver (not the active ceiling): 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
     # 2026-11-06, TASK-1378.1: Network moved to its registered panel
     # (UI/Settings_Modules/category_panels.py); 2026-11-12 rebase onto dev
     # 4b90eb860b (round 13; dev 35,911): exact measurement 35,769.
@@ -659,7 +661,8 @@ _BUDGETS: dict[str, int] = {
     # guidance names its /api/v1/generate address (+3): 2,398 -> 2,401.
     # 2026-11-06, TASK-38964 (owner waiver): the Endpoint row says koboldcpp's
     # route refusal as it is typed (+4): 2,401 -> 2,405.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2405,
+    # Active integration retains the stricter existing feature ceiling.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2398,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
@@ -945,7 +948,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-38982, 2026-11-06 (same waiver): 9835 -> 9873 (+38). ‹ Files keeps
     # focus, the narrow navigator offers Manage, and a failed refresh shows
     # on the authority line.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
+    # Active integration retains the stricter existing feature ceiling.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9674,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
@@ -1159,7 +1163,7 @@ _BUDGETS: dict[str, int] = {
     # One-row Session Git buttons truncate instead of wrapping at width 0.
     # TASK-38755, 2026-11-05 (same waiver): 4265 -> 4278 (+13). Fixed-region
     # lines refit on their own Resize when a child scrollbar narrows them.
-    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4278,
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4265,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
     # 2026-11-12, restack onto dev e0186fa10a (owner size waiver): dev's
