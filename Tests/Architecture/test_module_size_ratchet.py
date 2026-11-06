@@ -527,7 +527,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-23, TASK-36381 (owner decision 2026-10-04: "expand the limits,
     # don't modify other code to make it fit"): Tools & MCP gets the
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35642,  # 2026-11-03: +4 capture/canvas policy imports from their new homes (TASK-36945.2)
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35669,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -571,7 +571,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-27: 2,365 -> 2,398. The Inspector's Key block says where to get
     # a key from the shared catalog (key_url_line, its compose and its
     # refresh), as first-run setup does.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2398,
+    # 2026-11-05, TASK-36516 review (owner waiver): koboldcpp's Endpoint
+    # guidance names its /api/v1/generate address (+3): 2,398 -> 2,401.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2401,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and

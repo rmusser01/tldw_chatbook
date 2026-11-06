@@ -1,15 +1,18 @@
 ---
 id: TASK-36517
 title: The endpoint contract refuses hostnames with underscores, such as Docker Compose service names, for every provider
-status: To Do
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-10-24 00:26
+updated_date: '2026-11-05 22:40'
 labels:
 - follow-up
 - settings
 - providers
 priority: low
 references:
-- tldw_chatbook/Chat/provider_endpoint_contract.py
+- tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
 - tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py
 dependencies:
 - TASK-36380
@@ -29,7 +32,46 @@ Two readers of the same endpoint disagree. Discovery's own URL parse accepts und
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An http or https endpoint whose host contains an underscore resolves for every provider the contract serves, or is refused with a message that names the underscore
-- [ ] #2 Discover models and the provider save make the same decision on such an endpoint
-- [ ] #3 Hosts the contract refuses today for any other reason are still refused, and a test pins both directions
+- [x] #1 An http or https endpoint whose host contains an underscore resolves for every provider the contract serves, or is refused with a message that names the underscore
+- [x] #2 Discover models and the provider save make the same decision on such an endpoint
+- [x] #3 Hosts the contract refuses today for any other reason are still refused, and a test pins both directions
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Resolve, not refuse: `_valid_dns_label` in `Provider_Contract/provider_endpoint_contract.py` accepts `_` anywhere in a label, like a letter. Discovery's own URL parse (`validate_url`) already accepts such hosts, so once the contract does, the save and Discover models agree, including koboldcpp, whose Discover follows the contract (AC#1, AC#2).
+2. Keep every other host rule as it is: ASCII only, no `%`, no empty or `..` labels, a hyphen never first or last, labels of 1-63 characters, a host of at most 253, not all digits and dots (AC#3).
+3. Tests in `Tests/Chat/test_local_server_discovery.py`, which a PR lane runs whole (dreams-boundary). For every provider the contract serves (`URL_BASED_PROVIDER_KEYS` plus openai, deepinfra, anthropic), the save builder and Discover's eligibility both accept `kobold_cpp` exactly as they accept `kobold-cpp`; hosts refused today, with and without an underscore, are still refused with the same message. Red before the fix.
+
+## Implementation Notes
+
+The endpoint contract accepts an underscore in a host, so a Docker Compose name such as `http://kobold_cpp:5001/v1` resolves and saves for every provider it serves, as Discover models already listed from it.
+- `valid_dns_label` (`Provider_Contract/provider_endpoint_contract.py`; private `_valid_dns_label` until review r8e-rev1 shared it) allows `_` anywhere in a label. Every other host rule is unchanged: ASCII only, no `%`, no empty label, a hyphen never first or last, 1-63 characters per label, at most 253 per host, and not all digits and dots. Discovery needed no change. Its own parse (`validate_url`) already accepted such hosts, and koboldcpp's Discover follows the contract (TASK-36380), so it now accepts the native route on such a host too.
+- How the criteria were read: AC#1 and AC#3 overlap on a host such as `-kobold_cpp`, which has an underscore and is also refused for another reason (here a leading hyphen). AC#3 decides it: such a host stays refused with the message it gets today, so AC#1 and AC#2 cover hosts whose only departure from the old rule is the underscore. Discovery's generic rules still accept some hosts the contract refuses for those other reasons, such as `-kobold`, `kob*old` or `1.2.3`, with or without an underscore. That disagreement is older than this task and is listed as a proposed follow-up, not changed here.
+- Tests, in `Tests/Chat/test_local_server_discovery.py` (run whole by the dreams-boundary lane):
+  - `test_an_underscore_host_saves_and_discovers_like_its_hyphen_spelling`: 19 providers, the 16 `URL_BASED_PROVIDER_KEYS` plus openai, deepinfra and anthropic; koboldcpp on `/api/v1/generate`. The contract resolves `kobold_cpp`, `build_provider_setup_mutation` saves exactly what it saves for `kobold-cpp` with the host respelled, and `supports_openai_compatible_model_discovery` accepts both spellings.
+  - `test_hosts_refused_for_another_reason_are_still_refused`: 14 hosts, with and without `_` (leading or trailing hyphen, `..`, `%`, `*`, all digits and dots, a 64-character label, a 304-character host), for all 19 providers. Each still gets "Endpoint URL must include a valid host and port." and the save refuses it.
+  - `Tests/Chat/test_provider_endpoint_contract.py` pinned `http://bad_host/v1` as rejected. It is rewritten on purpose to `http://-bad_host/v1`, which is still rejected.
+- Red before the fix: with the base contract, all 19 underscore cases failed with `assert ('Endpoint UR...t and port.',) == ()`. The refusal test pins rules dev already keeps. Under a temporary edit that dropped the hyphen-edge rule and allowed `*`, it failed for 6 hosts (`-kobold`, `kobold-`, `-kobold_cpp`, `kobold_cpp-`, `kob*old`, `kob_*old`). Green after the fix.
+- Covering run (`-n 4`, run.sh, load average 43-54): the contract, discovery, console endpoints, setup persistence, setup facts, switcher probe targets, both local-server discovery files, evidence hardening, custom endpoint registry and engine swap, Kimi/Z.ai, QwenCloud and Strata provider files, and two wizard endpoint files. Result: 1129 passed, 1 failed. The failure is `test_qwencloud_provider_contract.py::test_chat_api_call_forwards_qwencloud_mode_base_and_tools` (`assert 'api_mode' not in {...}`), and it fails the same way with the base contract module.
+
+Review r8e-rev1 (AC#2): two Console helpers kept the old label rule. The Console settings modal could then discover from an underscore host but dropped it on Apply to chat and Make default for new chats. Settings and model-switcher endpoint compares also collapsed every underscore host into one "invalid endpoint" sentinel.
+- `Chat/console_settings_defaults.py::_is_valid_ascii_hostname`, which `parse_console_endpoint_preview` uses, and `Chat/console_provider_endpoints.py::_is_dotted_dns_name`, which `safe_endpoint_display` and `normalize_generic_endpoint_for_compare` use, now apply the contract's `valid_dns_label`. Each keeps its own whole-host checks (ASCII, at most 253 characters, and a dot for the dotted-name helper). Single-label hosts with a scheme still display as invalid, as before; the coordinator is filing that separately.
+- Tests:
+  - `test_endpoint_preview_exposes_only_authority_and_network_class` (`Tests/Chat/test_console_settings_defaults.py`, which pr-fast-lane runs) gained `kobold_cpp:5001` and `My_Proxy.corp` cases.
+  - Its refusal pin `https://bad_host.example/v1` is rewritten on purpose to `-bad_host`.
+  - New `test_an_underscore_host_displays_and_compares_as_itself` in `Tests/Chat/test_local_server_discovery.py`: the host displays as itself, two underscore hosts compare distinct, and leading- or trailing-hyphen labels still read "invalid endpoint".
+- Red at the round-1 head fd45ecd087: both preview cases failed with `assert None is not None`, and the display test with `'invalid endpoint' == 'http://my_proxy.corp/v1'`. Green after.
+
+Review r8e-rev2 (AC#2): `Chat/console_project_instructions.py` had a third copy of the old label rule (`_valid_dns_label`, used by `_canonical_hostname`). With the contract accepting `kobold_cpp`, a Console send to such a host raised "invalid provider endpoint" while keying its project-instruction consent. The foreground run ended as RUN_CANCELLED, the background start raised, and traces read "[invalid endpoint]".
+- The private copy is deleted, and `_canonical_hostname` uses the contract's `valid_dns_label`. Its host has already been decoded to ASCII by httpx (an IDN becomes `xn--...`), and the only change is that `_` is now allowed. Every `canonical_provider_endpoint_identity` caller goes through this one parser: the provider gateway, trace final values, exchange capture and exchange export.
+- A grep of the provider-endpoint path found no other private label or hostname rule. `provider_continuation._validate_base_url`, `console_library_destination`, `console_settings_field_row.endpoint_host` and `safe_llm_url_host` do no label checks. The label checks in the TTS, watchlists, Notes git push and model-artifact modules guard other kinds of URL and were left alone.
+- New `test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label` (`Tests/Chat/test_local_server_discovery.py`):
+  - `kobold_cpp:5001` and `My_Proxy.corp` get a notice key, their canonical identity and a real-origin label.
+  - The consent keys of five hosts accepted before this change (a hyphen host, a mixed-case host, IPv4, an IDN, IPv6) equal their digests measured at 3795dee3bd.
+  - `-bad`, `bad-` and `-bad_x` still raise and read "(invalid endpoint)".
+- Red at 3795dee3bd: `ValueError: invalid provider endpoint`. Green after.
+- Covering run (`-n 4`, load average 12-16): 18 files, covering project instructions (Chat, Agents, UI), exchange capture and export, trace final values, the provider gateway, project setup refusal, the Console defaults and endpoints, the contract and local-server discovery. Result: 1268 passed, 28 failed. The 28 nodes failed identically, the same set, with all six changed source files at base 29592ecc9b; 54 of the failure lines are `RecoveryRequired`. `Tests/Architecture` ratchets, layer direction, the agent-runtime import footprint and the Agents/Chat boundary: 270 passed. The contract module was already loaded through `provider_continuation`, so the import sets do not change.
+
+Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/Chat/console_settings_defaults.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `tldw_chatbook/Chat/console_project_instructions.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Chat/test_provider_endpoint_contract.py`, `Tests/Chat/test_console_settings_defaults.py`.
+

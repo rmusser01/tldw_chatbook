@@ -1633,6 +1633,9 @@ def test_build_default_intent_quick_materializes_displayed_effective_values() ->
         ),
         ("host.example:443/path", "host.example:443", "Remote/unknown"),
         ("printer.local/api", "printer.local", "LAN"),
+        # TASK-36517 review: a Docker Compose name; the modal dropped it.
+        ("http://kobold_cpp:5001/v1", "kobold_cpp:5001", "Remote/unknown"),
+        ("https://My_Proxy.corp/v1", "my_proxy.corp", "Remote/unknown"),
     ],
 )
 def test_endpoint_preview_exposes_only_authority_and_network_class(
@@ -1660,7 +1663,9 @@ def test_endpoint_preview_exposes_only_authority_and_network_class(
         "https://example..com/v1",
         "https://-bad.example/v1",
         "https://bad-.example/v1",
-        "https://bad_host.example/v1",
+        # TASK-36517 review, rewritten on purpose: "_" alone no longer
+        # refuses a host (the endpoint contract's label rule); "-" first does.
+        "https://-bad_host.example/v1",
         "https://example.com|evil/v1",
         "https://example.com;evil/v1",
         "https://ex\x00ample.com/v1",

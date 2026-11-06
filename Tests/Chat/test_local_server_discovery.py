@@ -7,7 +7,12 @@ import httpx
 import pytest
 
 import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
-from tldw_chatbook.Chat.console_provider_endpoints import DEFAULT_LLAMACPP_BASE_URL
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    DEFAULT_LLAMACPP_BASE_URL,
+    generic_endpoint_differs,
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+)
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
     DEFAULT_OLLAMA_DISCOVERY_URL,
@@ -20,6 +25,23 @@ from tldw_chatbook.Chat.local_server_discovery import (
     model_ids_from_payload,
     normalize_probe_base_url,
     probe_models_endpoint,
+)
+from tldw_chatbook.Chat.console_project_instructions import (
+    canonical_provider_endpoint_identity,
+    fingerprint_canonical_locator,
+    project_instruction_notice_key,
+    sanitized_destination_label,
+)
+from tldw_chatbook.Chat.provider_setup_persistence import (
+    ProviderSetupDraft,
+    build_provider_setup_mutation,
+)
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    supports_openai_compatible_model_discovery,
+)
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    URL_BASED_PROVIDER_KEYS,
+    resolve_provider_endpoint,
 )
 
 # These ARE the tests of the probe implementation, so they opt out of the
@@ -864,3 +886,160 @@ async def test_probe_rejects_non_chat_and_unrecognized_only_listing() -> None:
     assert result.detail == (
         "No models endpoint at http://127.0.0.1:9099 (unrecognized API payload)."
     )
+
+
+#: TASK-36517: every provider the endpoint contract serves, as the task's
+#: dev probe listed them; koboldcpp on the native route its send needs.
+_CONTRACT_PROVIDERS = (
+    *sorted(URL_BASED_PROVIDER_KEYS),
+    "openai",
+    "deepinfra",
+    "anthropic",
+)
+
+
+def _endpoint_for(provider: str, host: str) -> str:
+    path = "/api/v1/generate" if provider == "koboldcpp" else "/v1"
+    return f"http://{host}:5001{path}"
+
+
+def _saved_endpoint(provider: str, endpoint: str) -> str | None:
+    """The endpoint the provider save writes, or None when it refuses."""
+    try:
+        mutation = build_provider_setup_mutation(
+            ProviderSetupDraft(
+                provider=provider,
+                model="m",
+                endpoint=endpoint,
+                credential_source="none",
+                credential_revision=0,
+                draft_generation=1,
+            ),
+            {"api_settings": {}},
+        )
+    except ValueError:
+        return None
+    (table,) = (
+        values
+        for section, values in mutation.section_values.items()
+        if section.startswith("api_settings.")
+    )
+    return table.get("api_url") or table.get("api_base_url")
+
+
+@pytest.mark.parametrize("provider", _CONTRACT_PROVIDERS)
+def test_an_underscore_host_saves_and_discovers_like_its_hyphen_spelling(provider):
+    """TASK-36517 AC#1/AC#2: a Docker Compose name such as ``kobold_cpp`` was
+    refused by the save ("valid host and port") while Discover models listed
+    from it. Both now accept it exactly as they accept ``kobold-cpp``."""
+    hyphen = _endpoint_for(provider, "kobold-cpp")
+    underscore = _endpoint_for(provider, "kobold_cpp")
+
+    assert resolve_provider_endpoint(provider, underscore).errors == ()
+    saved = _saved_endpoint(provider, underscore)
+    assert saved is not None
+    assert saved == _saved_endpoint(provider, hyphen).replace("-", "_")
+    assert supports_openai_compatible_model_discovery(provider, underscore) is True
+    assert supports_openai_compatible_model_discovery(provider, hyphen) is True
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "-kobold",
+        "kobold-",
+        "-kobold_cpp",
+        "kobold_cpp-",
+        "kob..old",
+        "kob_..old",
+        "kob%41ld",
+        "kob_%41ld",
+        "kob*old",
+        "kob_*old",
+        "1.2.3",
+        "a" * 64,
+        "a_" * 32,
+        ".".join(["a" * 60] * 5),
+    ],
+)
+def test_hosts_refused_for_another_reason_are_still_refused(host):
+    """TASK-36517 AC#3: allowing "_" relaxes no other host rule, with or
+    without an underscore in the host."""
+    for provider in _CONTRACT_PROVIDERS:
+        endpoint = _endpoint_for(provider, host)
+        assert resolve_provider_endpoint(provider, endpoint).errors == (
+            "Endpoint URL must include a valid host and port.",
+        ), provider
+        assert _saved_endpoint(provider, endpoint) is None, provider
+
+
+def test_an_underscore_host_displays_and_compares_as_itself():
+    """TASK-36517 review: Console's display and compare helpers kept the old
+    label rule, so every underscore host read "invalid endpoint" and two
+    different ones compared equal, as one sentinel."""
+    first, second = "http://my_proxy.corp/v1", "http://other_proxy.corp/v1"
+
+    assert safe_endpoint_display(first) == first
+    assert normalize_generic_endpoint_for_compare(first) == (
+        "http://my_proxy.corp/v1/chat/completions"
+    )
+    assert normalize_generic_endpoint_for_compare(
+        second
+    ) != normalize_generic_endpoint_for_compare(first)
+    assert generic_endpoint_differs(first, {"api_url": second}) is True
+    assert generic_endpoint_differs(first, {"api_url": first}) is False
+    # The other label rules still refuse.
+    for refused in ("http://-my_proxy.corp/v1", "http://my_proxy-.corp/v1"):
+        assert safe_endpoint_display(refused) == "invalid endpoint"
+
+
+#: Consent keys for hosts the project-instruction parser accepted before
+#: TASK-36517, measured at 3795dee3bd: allowing "_" must not move any of them.
+_NOTICE_KEYS_BEFORE_UNDERSCORES = {
+    "http://kobold-cpp:5001/v1": (
+        "735cc3db6de8cffdec48e7e1d3941c7c34b03d812c1a8e68dce0a8f01817180e"
+    ),
+    "https://My-Proxy.corp/v1/": (
+        "aa7ba74582109afee14981af841a0ee435ebc65e722a60584838664840bc6a90"
+    ),
+    "http://127.0.0.1:5001/api/v1/generate": (
+        "230a4eb202e98922dd8500ab912ba358797508c63878267e0edb3f8a0f2c7295"
+    ),
+    "https://bücher.example/v1": (
+        "9c2eb1086a90887408a48e6c5e276b214e1e40d3f0fcd41d8f7b99ef551623a3"
+    ),
+    "http://[::1]:8080/v1": (
+        "904ad8976b81be75c1b119602a56909d35d01517b07eee0aaa2128ca7ffc98b6"
+    ),
+}
+
+
+def test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label():
+    """TASK-36517 review r8e-rev2: project instructions kept their own label
+    rule, so a Console send to ``kobold_cpp`` raised "invalid provider
+    endpoint" while keying its consent (the foreground run was cancelled,
+    traces read "[invalid endpoint]")."""
+    locator = fingerprint_canonical_locator("workspace:/r8e")
+    for endpoint, origin in (
+        ("http://kobold_cpp:5001/v1", "http://kobold_cpp:5001"),
+        ("http://My_Proxy.corp/v1", "http://my_proxy.corp"),
+    ):
+        key = project_instruction_notice_key(locator, "koboldcpp", endpoint)
+        assert len(key) == 64 and int(key, 16) >= 0
+        assert canonical_provider_endpoint_identity(endpoint) == f"{origin}/v1"
+        assert sanitized_destination_label("KoboldCpp", endpoint) == (
+            f"KoboldCpp ({origin})"
+        )
+    for endpoint, key in _NOTICE_KEYS_BEFORE_UNDERSCORES.items():
+        assert project_instruction_notice_key(locator, "koboldcpp", endpoint) == key
+    for refused in (
+        "http://-bad.corp/v1",
+        "http://bad-.corp/v1",
+        "http://-bad_x.corp/v1",
+    ):
+        with pytest.raises(ValueError, match="invalid provider endpoint"):
+            project_instruction_notice_key(locator, "koboldcpp", refused)
+        assert sanitized_destination_label("KoboldCpp", refused) == (
+            "KoboldCpp (invalid endpoint)"
+        )
+

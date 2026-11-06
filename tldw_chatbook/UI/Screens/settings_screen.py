@@ -1692,7 +1692,7 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "custom_2": "https://your-openai-compatible-host/v1",
     "google": "https://generativelanguage.googleapis.com",
     "groq": "https://api.groq.com/openai/v1",
-    "koboldcpp": "http://127.0.0.1:5001",
+    "koboldcpp": "http://127.0.0.1:5001/api/v1/generate",
     "llama_cpp": "http://127.0.0.1:9099",
     "local_llamacpp": "http://127.0.0.1:9099",
     "local_ollama": "http://127.0.0.1:11434",
@@ -16127,6 +16127,23 @@ class SettingsScreen(BaseAppScreen):
                 "Endpoint must start with http:// or https:// and include a valid host."
             )
         return None
+
+    @staticmethod
+    def _provider_endpoint_route_refusal(endpoint: str, provider_key: str) -> str:
+        """TASK-36516: chat_with_kobold posts KoboldAI's native payload to the
+        saved URL, and a root saves as an OpenAI chat route; refuse as the
+        first-run wizard does. "" when the endpoint may be saved."""
+        if provider_key != "koboldcpp" or not endpoint:
+            return ""
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+            resolve_provider_endpoint,
+        )
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            first_run_endpoint_refusal,
+        )
+
+        resolution = resolve_provider_endpoint(provider_key, endpoint)
+        return first_run_endpoint_refusal(provider_key, resolution.chat_url)
 
     @staticmethod
     def _validate_credential_env_var(credential_env_var: object) -> str | None:
@@ -33362,6 +33379,16 @@ class SettingsScreen(BaseAppScreen):
             section_values: dict[str, dict[str, object]] = {}
             delete_keys: dict[str, list[str]] = {}
             if connection_dirty:
+                # Only a save that writes the endpoint refuses (review r8e-rev1).
+                if refusal := self._provider_endpoint_route_refusal(
+                    endpoint, provider_key
+                ):
+                    self._provider_save_result = refusal
+                    self._set_static_text(
+                        "#settings-provider-save-result", self._provider_save_result
+                    )
+                    self.app.notify(refusal, severity="error", markup=False)
+                    return
                 credential_source = self._provider_current_credential_source(provider)
                 try:
                     setup_mutation = build_provider_setup_mutation(

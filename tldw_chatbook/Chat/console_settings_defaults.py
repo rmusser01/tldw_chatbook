@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import valid_dns_label
 
 
 _ENDPOINT_KEYS = (
@@ -1459,17 +1460,7 @@ def _is_valid_ascii_hostname(hostname: str) -> bool:
 
     if not hostname.isascii() or len(hostname) > 253:
         return False
-    labels = hostname.split(".")
-    return all(
-        1 <= len(label) <= 63
-        and label[0] != "-"
-        and label[-1] != "-"
-        and all(
-            character.isascii() and (character.isalnum() or character == "-")
-            for character in label
-        )
-        for label in labels
-    )
+    return all(valid_dns_label(label) for label in hostname.split("."))
 
 
 def format_console_endpoint_preview(value: str) -> str | None:
