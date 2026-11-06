@@ -291,6 +291,63 @@ async def test_the_summary_search_row_is_repainted_with_the_resolved_model() -> 
 
 
 @pytest.mark.asyncio
+async def test_a_summary_whose_rows_are_pruned_mid_load_paints_nothing(monkeypatch) -> None:
+    """Review TE-2 (TASK-34100.13): under load the mounted-wizard tests failed
+    at run_test exit with NoMatches('#setup-exit-chat') raised by the
+    Summary's row paint. App teardown prunes a step's children before the
+    step's own worker is cancelled, so ``is_attached`` is still true while
+    ``_paint_rows`` queries widgets that are gone; the branch's extra
+    executor hop (the installed-engines probe) widened that window. A paint
+    over a removed subtree is now a no-op, as the Quick note's already is."""
+    import threading
+
+    from tldw_chatbook.UI.Wizards.first_run_summary_step import SummaryStep
+    from tldw_chatbook.Utils import local_stt_providers
+
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_probe():
+        entered.set()
+        release.wait(5)
+        return ()
+
+    monkeypatch.setattr(local_stt_providers, "installed_local_providers", slow_probe)
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "full"}},
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=10),
+        load_config=lambda: {},
+        rag_deps_installed=lambda: True,
+        speech_installed=lambda: False,
+        speech_runtime_installed=lambda: False,
+        rag_model=lambda: None,
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await pilot.pause(0.02)
+        assert entered.is_set(), "the Summary never started loading its rows"
+        await step.remove_children()
+        assert step.is_attached
+        release.set()
+        worker = step._render_worker
+        for _ in range(100):
+            if worker is None or worker.is_finished:
+                break
+            await pilot.pause(0.02)
+        error = worker.error if worker is not None else None
+    assert error is None, f"the row paint raised {error!r}"
+
+
+@pytest.mark.asyncio
 async def test_commit_reads_the_pressed_radio_without_a_changed_event() -> None:
     """review-tests F6 (the F-A pattern, ported to the new radio): a press
     whose ``RadioSet.Changed`` never reached the step is still what Next

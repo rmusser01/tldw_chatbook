@@ -261,6 +261,13 @@ class SummaryStep(SetupStep):
         speech_runtime_installed = await asyncio.get_running_loop().run_in_executor(
             None, speech_runtime_check
         )
+        from tldw_chatbook.Utils.local_stt_providers import installed_local_providers
+
+        # Review TE-2: probed with the other executor reads, so no await sits
+        # between the attachment recheck below and the first paint.
+        installed_stt = await asyncio.get_running_loop().run_in_executor(
+            None, installed_local_providers
+        )
         # TASK-32892: the wizard can be dismissed or advanced while the
         # await above is in flight, and a post-await `query_one` raising
         # out of a worker whose `exit_on_error` defaults to True exits the
@@ -294,15 +301,11 @@ class SummaryStep(SetupStep):
         except NoMatches:
             self._model_catalog_consent_offered = False
 
-        from tldw_chatbook.Utils.local_stt_providers import installed_local_providers
-
         rows_inputs = {
             "rag_deps_installed": deps(),
             "speech_installed": speech_installed,
             "speech_runtime_installed": speech_runtime_installed,
-            "installed_stt": await asyncio.get_running_loop().run_in_executor(
-                None, installed_local_providers
-            ),
+            "installed_stt": installed_stt,
         }
         self._paint_rows(config, rag_model=None, **rows_inputs)
         from tldw_chatbook.config import get_cli_config_path
@@ -356,7 +359,17 @@ class SummaryStep(SetupStep):
         installed_stt: tuple[str, ...],
         rag_model: Any,
     ) -> None:
-        """Build the read-back rows from ``config`` and paint them."""
+        """Build the read-back rows from ``config`` and paint them.
+
+        Review TE-2: called after an await. App teardown prunes this step's
+        children before its worker is cancelled, so ``is_attached`` can hold
+        while the widgets are gone; a removed subtree is a no-op, never a
+        NoMatches out of the worker.
+        """
+        rows_widget = next(iter(self.query("#setup-summary-rows").results(Static)), None)
+        primary_button = next(iter(self.query("#setup-exit-chat").results(Button)), None)
+        if rows_widget is None or primary_button is None:
+            return
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
 
         rows = build_summary_rows(
@@ -396,7 +409,6 @@ class SummaryStep(SetupStep):
             provider_probe_failed=bool(probe_failure),
         )
         self.provider_model_complete = primary == "start_chatting"
-        primary_button = self.query_one("#setup-exit-chat", Button)
         primary_button.label = (
             "Start chatting"
             if self.provider_model_complete
@@ -426,7 +438,7 @@ class SummaryStep(SetupStep):
             f"✗ {title} — step couldn't be shown (skipped); configure in Settings"
             for title in failed_titles
         )
-        self.query_one("#setup-summary-rows", Static).update("\n".join(lines))
+        rows_widget.update("\n".join(lines))
 
     @on(Button.Pressed, "#setup-exit-chat")
     def _exit_chat(self) -> None:
