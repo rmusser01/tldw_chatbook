@@ -210,9 +210,7 @@ def _visible_cells(screen, widget) -> int:
     """The cells of ``widget`` inside its compositor clip (lessons-textual)."""
     clip = screen.find_widget(widget).clip
     region = widget.region
-    return min(region.right, clip.right, screen.size.width) - max(
-        region.x, clip.x, 0
-    )
+    return min(region.right, clip.right, screen.size.width) - max(region.x, clip.x, 0)
 
 
 @pytest.mark.asyncio

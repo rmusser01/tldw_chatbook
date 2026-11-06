@@ -125,9 +125,7 @@ async def test_a_watcher_driven_hold_turns_the_three_surfaces_without_a_keypress
 
                 await _until(
                     pilot,
-                    lambda: _folder_row_reads(
-                        screen, NOTES_TREE_SYNC_ATTENTION_STATUS
-                    ),
+                    lambda: _folder_row_reads(screen, NOTES_TREE_SYNC_ATTENTION_STATUS),
                     "the tree row to say the folder needs attention",
                 )
                 await _until(
