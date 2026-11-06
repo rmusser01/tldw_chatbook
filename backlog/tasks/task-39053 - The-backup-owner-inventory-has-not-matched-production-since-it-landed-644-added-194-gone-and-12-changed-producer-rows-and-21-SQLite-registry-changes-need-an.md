@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 14:48
+updated_date: 2026-11-06 15:43
 labels:
 - follow-up
 - backup
@@ -58,11 +58,11 @@ Classifying rows into owners and backup cohorts is a product decision about what
 <!-- AC:BEGIN -->
 - [ ] #1 Each of the 13 new SQLite members has a reviewed row with a classification and a cohort; where a member's `SQLiteOwnerPolicy` flags do not settle its cohort, the owner decides it and the decision is recorded
 - [ ] #2 The owner decides whether a test-owned policy (`tests.store_kernel`) may stay in the production registry; the decision is recorded and the registry and census follow it
-- [ ] #3 The 8 rows that exist only in the doc are removed, each with its cause recorded
+- [x] #3 The 8 rows that exist only in the doc are removed, each with its cause recorded
 - [ ] #4 Every added and changed producer row has an owner-reviewed classification (the owner signs off the classifications, or the cohorts they fall in, in this task's notes), and every gone row is removed
-- [ ] #5 Both nodes pass; they are red before (2 of 2 on dev b2c618185f: 644 / 194 / 12, SQLite 13 / 8)
-- [ ] #6 Negative control: a synthetic unreviewed producer turns the test red, and the failure message lists every added, gone and changed row
-- [ ] #7 The file runs on a PR lane (the Architecture guards job, or another the owner picks; never the fast PR contract), with three timings of that lane's command recorded
+- [x] #5 Both nodes pass; they are red before (2 of 2 on dev b2c618185f: 644 / 194 / 12, SQLite 13 / 8)
+- [x] #6 Negative control: a synthetic unreviewed producer turns the test red, and the failure message lists every added, gone and changed row
+- [x] #7 The file runs on a PR lane (the Architecture guards job, or another the owner picks; never the fast PR contract), with three timings of that lane's command recorded
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -75,3 +75,91 @@ Classifying rows into owners and backup cohorts is a product decision about what
 5. Lane the file on the `architecture-guards` job, pin it in `ARCHITECTURE_GUARD_TARGETS`, time the step three times.
 6. Write the cohort sign-off table in Implementation Notes; leave AC#1, #2 and #4 unticked and the task In Progress pending owner sign-off.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Status: pending owner sign-off.** AC#1, #2 and #4 stay unticked until the owner signs off the cohort table below; nothing merges before that.
+
+Owner decision (2026-11-06): "Agent proposes, you sign off: a stream classifies every row by the existing doc's rules and each module's policy flags, groups them by cohort and flags only the ambiguous ones; you sign off the cohort table in the PR, and nothing merges until you do."
+
+**What changed.** Branch `fu/r11-backupinv`, base dev 2684e5453f.
+- The census had three blind spots. They hid live producers, so some rows looked gone. All three are fixed in the test only:
+  - `from <module> import os` never bound `os`. 60+ modules import `os` from `Utils/platform_files`, and 24 "gone" rows were live `os.replace` / `os.unlink` calls.
+  - A tuple assignment, `fn, flags = libc.renameatx_np, 0x4`, hid the native no-replace publication in `Backup_Recovery/native_platform.rename_noreplace`.
+  - The `Utils/atomic_file_ops` writers (`atomic_write_text`, `_bytes`, `_json`, `atomic_copy`) were not in the vocabulary. 19 modules call them, among them Model_Artifacts, the Chatbooks registry and the model catalog cache. The doc's own rule is that a new persistence API extends the vocabulary as part of owner review.
+- After those fixes, the drift at dev 2684e5453f was 682 added, 170 gone and 13 changed producer rows, plus 13 new and 8 gone SQLite members.
+- `backlog/docs/backup-recovery-owner-inventory.md`:
+  - Moved or renamed producers replace their old rows in place.
+  - The 13 changed counts are updated.
+  - The 170 gone rows are removed: 60 moved or renamed, 53 in 13 deleted files, 57 removed or refactored code.
+  - A new section, "Census reconciliation (TASK-39053)", holds the rules, the 12 new SQLite rows and the 621 new producer rows, grouped by cohort.
+  - The 8 doc-only SQLite rows are removed, each with its cause. `recovery.operations.receipts` was never a registry member: it was written for the doc in b5251e9a6e, and `git log -S` finds no registry commit. Four `settings.*` owners (`pre_restore_backup`, `restore`, `schema`, `single_backup`) left in c9f243f4a2 on 2026-08-29. The other three (`bulk_backup`, `integrity`, `vacuum`) left in bd1a4258ea (TASK-33244) on 2026-10-10. The task description's "all seven in bd1a4258ea" is corrected here.
+- AC#2, the recommended option: `tests.store_kernel` is removed from `_SQLITE_OWNER_POLICIES`. `Tests/DB/test_store_kernel.py` now registers the same policy with `monkeypatch.setitem` for its own tests. The SQLite census retires C97, in the `.md` row and in the id-sequence test. All of this is one commit (faeffb9c0e); reverting it restores the old arrangement.
+- AC#6: both nodes now raise with the full listing. Before, a bare `assert ==` let pytest truncate the diff ("851 lines hidden").
+- AC#7: the file is laned on `architecture-guards` ("Run Architecture guard contracts"), appended after the last target, and pinned in `ARCHITECTURE_GUARD_TARGETS`.
+- No production behaviour changed except the AC#2 registry entry. What a backup captures is unchanged.
+
+**Cohort sign-off table** (682 added producer rows, 12 new SQLite members, and AC#2):
+
+| # | Owner / cohort | Rule | Rows | Examples | Needs owner |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Moved or renamed producers (any cohort) | Same producer under a new symbol or module: it keeps its reviewed row, in place | 61 (replace 60) | `RunLogWriter._bind_under_scope` (qualified, agents.history); `NotesDeviceStateStore._connect` (qualified, notes.sync_state); `native_platform.rename_noreplace` (generic_boundary, backup_native_storage) | no |
+| 2 | Changed counts | The extra calls use the same mechanism, so the classification is kept | 13 | `ChatbookCreator._create_zip_archive` open 1→3; `BaseDB._get_connection` 1→2; `KeyringServerCredentialStore._save_index` set_password 1→3 | no |
+| 3 | Same mechanism in a reviewed module | A new symbol does what the module's reviewed rows do (read in source). File tools keep the old split: write is `external_input`, open and mkdir are `unsupported` | 52 | `ConsoleChatStore._persist_generation_variant` (memory); `ChatbookImporter._preflight_archive` (generic_boundary); `FileNotesService.restore_revision` (external_input); `models_dev_catalog._write_cache_file` (disposable, diagnostics) | no |
+| 4 | generic | Private path, SQLite or file utility boundary | 22 | `atomic_file_ops._publish_no_clobber`; `SQLiteStoreKernel._open_connection`; `private_sqlite_helper.run` | no |
+| 5 | memory, new modules | `value.to_json()` into a column or payload; `Image.open(BytesIO(...))`; exact `sqlite3.connect(":memory:")` | 37 | `ChatPersistenceService.commit_completed_voice_pair`; `contracts._validate_portrait`; `profile_sqlite_policy.require_native_close_policy_support` | no |
+| 6 | process-transport, new modules | Writes to a child's stdin or the module's own stdio, a pipe, a pty or a socket | 40 | `diarizer_worker.serve`; `PosixTerminalBackend.write`; `age_worker._encrypt` (pipe-only worker); `Petdex/network.fetch_bytes` (connect) | no |
+| 7 | Registered SQLite owners, unsupported | A row in an owner's production module takes the owner id as cohort; with no capture flag it stays `unsupported` | 23 | `PluginRegistry.__init__` (plugins.registry); `PersonalContextRepository._connect`; `LegacyCollectionsRecovery._write_export` | no |
+| 8 | Dreams and Guardian, qualified | `centralized_backup_allowed` and `recovery_capture_allowed`, with installed adapters and owner tests (f927f98add, c49d71439e), the same as the other `recovery.operations.*` owners | 6, plus 2 SQLite rows | `DreamsDB` inherits:BaseDB (qualified, db.dreams); `_GuardianAdapter.capture` (generic_boundary, native-operational-recovery) | no |
+| 9 | Named cohorts, unsupported | The module's reviewed cohort, else the cohort table's package cohort | 127 | agents 36, tts 23, models 15, mcp 13, assets 9, workspaces 9, config 7, skills 5, files 4, other 6 | no |
+| 10 | miscellaneous, unsupported | No named cohort, so the doc's conservative default applies. This includes pipes, sockets and widget writes that row 6 does not cover | 294 | Plugins 60, Actor_Packs 30, Audio 23, LLM_Management 23, UI 22, Web_Server 17, Personal_Context 15, Tool_Packs 15, Tools 13, other 76 | no |
+| 11 | Backup_Recovery's own new pipeline | Left `unsupported` until the backup owner reviews each symbol. The 20 rows are listed below | 20 | `produce_detached_archive`; `relocation_lock`; `acquire_source` | **yes** |
+| 12 | New SQLite members, settled by flags | No capture flag, so `sqlite/unsupported` | 8 | chat.launch_wake, plugins.registry, workflows.local | no |
+| 13 | New SQLite members whose policy reason says "excluded" | `db.workspace_project_index` ("excluded from backup and sync") and `personal_context.interview_drafts` ("excluded from centralized backup") are `sqlite/unsupported`. A False flag does not make an exclusion; `db.chachanotes.primary` has the same flags. Alternative: an installed exclusion adapter, like `notes.sync_state`'s `_DeviceStateExclusion` | 2 | — | **yes** |
+| 14 | AC#2: `tests.store_kernel` | Implemented: removed from the production registry, and the kernel tests register it themselves. Alternative: keep it in the registry, with a `tests/excluded` row in both inventories | 1 member | — | **yes** |
+| 15 | Scanner vocabulary | Three blind spots fixed (test only); they account for 24 "gone" rows, 1 changed count and 38 added rows. The doc says vocabulary extensions are part of owner review | — | `from …platform_files import os`; `fn, flags = libc.renameatx_np, …`; `atomic_write_*` | **yes** |
+
+The 20 row-11 rows, each with a proposed classification for the owner:
+- `detached_layout`: `_normalize_sqlite` connect, create_private_file ×2 and write; `produce_detached_archive` create_private_file ×2 and write ×2; `_restored_cache_paths` open. This is the confined import of acquired portable bytes. Proposed: `disposable`, private output staging.
+- `detached_source`: `_hash` write; `acquire_source` create_private_file and open; `review_source.walk` open. This is the read-only acquisition of detached files. Proposed: reads `external_input` ("verified acquired archive read only"); the private copy `disposable`.
+- `portable_relocation`: `_write` create_private_file and write; `relocation_lock` create_private_file and open. Proposed: `generic_boundary`, backup_control.
+- `config_binding.preserve_owned_binding`: os.replace and os.unlink. Proposed: `generic_boundary`, backup_control.
+- `destinations._configs` ZipFile and `effective_roots.effective_roots` open. Proposed: `generic_boundary`, reader.
+- `launcher._open_tty` open (`/dev/tty`). Proposed: `process_artifact`.
+- `agent_worktree_storage.prepare_agent_worktrees_base` secure_private_directory. Proposed: stays `unsupported`, cohort workspaces (durable agent worktrees).
+
+Observations for later cohort work (no decision needed now):
+- The Personal Context database is encrypted, and its keys are in the keyring (`key_protector`, `link_key_custody`, both rows `unsupported`). A backup of the database without its key cannot be read.
+- `Tools/local_tool_impls` reaches `os.replace` through a dynamic `file_os` binding, which the static census cannot see.
+
+**Evidence.**
+- Red before, recomputed with the test's own `production_census()` at dev 2684e5453f:
+  - Doc 1059 rows against production 1509: 644 added, 194 gone, 12 changed.
+  - SQLite: 13 new, 8 gone.
+  - At the base worktree, serial: 2 failed, 9 passed in 24.6 s: `test_every_persistence_source_symbol_has_reviewed_owner_row` and `test_sqlite_registry_members_have_explicit_census_rows`.
+- Each new census unit test was red before its fix, at `assert 0 == 1`: `test_census_tracks_os_bound_by_from_import_shim` and `test_census_tracks_native_callable_bound_by_tuple_assignment`.
+- Green after: `Tests/Architecture/test_backup_owner_inventory.py` (serial), 13 passed. Both inventory nodes pass, and the doc's 1571 rows equal production's 1571.
+- AC#6 negative control (temporary source edits, then reverted):
+  - The edits: a synthetic `_synthetic_unreviewed_producer` (open + write) in `Utils/file_durability.py`; a removed `mkdir` in `tls_trust._merged_bundle_path`; an extra `open` in `tls_trust._file_digest`.
+  - Result: "2 added, 1 gone, 1 changed", with all four rows listed.
+- AC#2 covering tests: `Tests/DB/test_store_kernel.py`, `test_private_sqlite_inventory.py` and `test_private_sqlite.py` at `-n 4`.
+  - Result: 23 failed, 399 passed. The same 23 fail on plain dev 2684e5453f with the same command (23 failed, 401 passed). The 2 fewer passes are `OWNER_KIND_CASES` parameters of the removed owner. No new failure.
+  - These three files are in no PR lane (only one inventory node is), and their 23 reds are pre-existing.
+- `Tests/CI` at `-n 4`: 1215 passed, 1 skipped.
+- AC#7 timings:
+  - CI before, read-only: on #3436 (fu/r10-arch, run 42218508176) the step took 402 s and the job 7.6 min, against a 20 min cap.
+  - Local, `bash $FU/jobstep.sh fu-r11-backupinv "Run Architecture guard contracts"`, serial, three runs: 318.6 s, 348.9 s and 370.8 s of pytest time (345, 375 and 398 s wall), 173 passed each time. Load average was 27-65, with other agents sharing the 18 CPUs.
+  - The file alone: 26.0 s serial (24.6 s at base).
+- `bash $FU/bootbudget.sh fu-r11-backupinv`: 32 passed. `./scripts/preflight.sh` through run.sh: all derived-artifact checks passed.
+
+**Files.**
+- `Tests/Architecture/test_backup_owner_inventory.py`
+- `backlog/docs/backup-recovery-owner-inventory.md`
+- `tldw_chatbook/DB/private_sqlite.py`
+- `Tests/DB/test_store_kernel.py`
+- `Tests/DB/test_private_sqlite_inventory.py`
+- `backlog/docs/sqlite-private-owner-inventory.md`
+- `.github/workflows/derived-artifacts.yml`
+- `Tests/CI/test_ci_queue_pressure_contract.py`
+<!-- SECTION:NOTES:END -->

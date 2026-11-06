@@ -1,5 +1,15 @@
 # Lessons: what counts as evidence a change works
 
+## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
+
+**Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
+- `Backup_Recovery/native_platform.rename_noreplace` bound the native no-replace publication by tuple assignment (`fn, flags = libc.renameatx_np, 0x4`).
+- 19 modules had moved onto the `Utils/atomic_file_ops` writers, which were outside the census vocabulary. Model_Artifacts and the Chatbooks registry were among them.
+
+Deleting those rows as "gone" would have certified that live durable writers had no owner row.
+
+**What to do.** Before removing a gone row from a source census, check whether its symbol still exists. If it does, read what the symbol calls now. A shim import, a new alias form or a repo-local helper that replaced the counted call is a scanner gap: extend the scanner, with a unit test that is red first. Only rows whose code is really gone (a deleted file, a removed call) leave the inventory.
+
 ## A test server's sleeping handler is paid in full when `async with server` exits (TASK-38965, 2026-11-06)
 
 **Incident.** `test_real_tls_stalls_are_timeouts_not_plain_http[handshake-stall]` took 32.5 s, although its probe gave up after 0.5 s. Its `asyncio.start_server` handler read once and then slept 30 s to "never answer". Since Python 3.12, `Server.wait_closed()` (which `async with server` calls on exit) waits until every connection is closed; it does not wait for handlers. Over plain TCP, the handshake-stall case, `StreamReaderProtocol.eof_received` returns True, so a connection the client has closed stays half-open until the handler calls `writer.close()`, and this handler did that only after its sleep. That was 32 s of every PR's serial dreams-boundary step. Over TLS, `eof_received` returns False and the client's EOF closes the transport, so the sibling tls-read-timeout case (2.6 s) let the server exit while its handler still slept. Review r10e-rev1 measured both with the old handler on Python 3.12.11: the TLS server exited at 0.52 s, and the plain-TCP server was still waiting after 4 s.
