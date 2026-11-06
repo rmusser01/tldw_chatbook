@@ -393,6 +393,12 @@ DREAMS_BOUNDARY_TARGETS = (
     # keeps an entry near 30 s. This job ran
     # 6.2-7.1 min of its 20 in three PR runs to 2026-11-05.
     "Tests/UI/test_library_modal_dismissal.py",
+    # TASK-39049: the mobile service suite (TASK-38972's mobile shutdown),
+    # green once TASK-38992 fixed its gateway stand-in. Sandboxed and
+    # guard-clean; 76 s serial at load 17-30. Its relay tests wait 5 s for
+    # events and time out above load ~50, on base too. Before the
+    # bootstrap-profile file below, which stays last.
+    "Tests/Web_Server/test_mobile_service.py",
     # TASK-39049: the quit-time store retirement (TASK-38955, TASK-39047,
     # TASK-39048) and the retention pass's worker handles, in no PR lane.
     # Bootstrap profile (Tests/DB, keep_bootstrap_profile), guard-clean,
@@ -1958,8 +1964,10 @@ def test_storage_lease_guard_reports_a_startup_admission_left_held() -> None:
 
     assert (held, guard._findings(before, startups)) == (
         [
-            "left 1 new startup admission(s) held, admission root(s): "
-            "['/no-such-profile/recovery-bootstrap']"
+            (
+                "left 1 new startup admission(s) held, admission root(s): "
+                "['/no-such-profile/recovery-bootstrap']"
+            )
         ],
         [],
     )
