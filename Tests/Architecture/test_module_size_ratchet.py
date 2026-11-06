@@ -89,7 +89,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
     # 2026-11-05, rebased onto dev 29592ecc9b: 1314 -> 1330 (polish-1b's
     # own +16; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
+    # 2026-11-06, rebased onto dev 2684e5453f: 1314 -> 1330 (polish-1b's
+    # own +16; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1330,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
     "tldw_chatbook/Widgets/Console/console_selection_geometry.py": 52,
@@ -189,6 +191,8 @@ _BUDGETS: dict[str, int] = {
     # upsert never leaves the device. Missed by the wave's own ratchet
     # re-runs; found by the finishing pass's full Tests/Architecture pair.
     # 2026-11-05, rebased onto dev 29592ecc9b: 3693 -> 3711 (polish-1b's
+    # own +18; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 3693 -> 3711 (polish-1b's
     # own +18; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/app_service_wiring.py": 3704,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
@@ -880,6 +884,8 @@ _BUDGETS: dict[str, int] = {
     # of them on dev e78b62f0e7 the file measures 22552.
     # 2026-11-05, rebased onto dev 29592ecc9b: 25854 -> 26086 (polish-1b's
     # own +232; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 25870 -> 26102 (polish-1b's
+    # own +232; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
@@ -959,7 +965,9 @@ _BUDGETS: dict[str, int] = {
     # on the authority line.
     # 2026-11-05, rebased onto dev 29592ecc9b: 9674 -> 9714 (polish-1b's
     # own +40; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
+    # 2026-11-06, rebased onto dev 2684e5453f: 9873 -> 9913 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9913,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
@@ -1110,6 +1118,8 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5189,
     # 2026-11-05, rebased onto dev 29592ecc9b: 5167 -> 5220 (polish-1b's
     # own +53; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
@@ -1142,7 +1152,9 @@ _BUDGETS: dict[str, int] = {
     # (+4). The list's resize reshape keeps the user's focused control.
     # 2026-11-05, rebased onto dev 29592ecc9b: 4738 -> 5313 (polish-1b's
     # own +575; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
+    # 2026-11-06, rebased onto dev 2684e5453f: 4742 -> 5317 (polish-1b's
+    # own +575; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 5317,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):

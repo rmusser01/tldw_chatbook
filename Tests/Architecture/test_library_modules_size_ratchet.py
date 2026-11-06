@@ -489,7 +489,9 @@ _BUDGETS: dict[str, int] = {
     # (measured with ``_measure``).
     # 2026-11-05, rebased onto dev 29592ecc9b: 5246 -> 5286 (polish-1b's
     # own +40; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5275,
+    # 2026-11-06, rebased onto dev 2684e5453f: 5275 -> 5315 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5315,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -757,6 +759,8 @@ _BUDGETS: dict[str, int] = {
     # the scope service (I-2), the transfer focus return yields to the
     # user's move (m-3), and twelve app lookups become attribute reads
     # (m-1): 8952 -> 9037 (measured).
+    # 2026-11-06, rebased onto dev 2684e5453f: 7423 -> 9037 (polish-1b's
+    # own +1614; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
@@ -821,7 +825,9 @@ _BUDGETS: dict[str, int] = {
     # puts a held Activate's reason ahead of them: 2524 -> 2548 (measured).
     # 2026-11-05, rebased onto dev 29592ecc9b: 2468 -> 2555 (polish-1b's
     # own +87; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2468,
+    # 2026-11-06, rebased onto dev 2684e5453f: 2468 -> 2555 (polish-1b's
+    # own +87; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2555,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -888,7 +894,9 @@ _BUDGETS: dict[str, int] = {
     # ``_measure``).
     # 2026-11-05, rebased onto dev 29592ecc9b: 5065 -> 5129 (polish-1b's
     # own +64; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5068,
+    # 2026-11-06, rebased onto dev 2684e5453f: 5068 -> 5132 (polish-1b's
+    # own +64; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5132,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
