@@ -249,6 +249,12 @@ The first fix warmed the display after the evidence settle, just before the poll
 
 **What to do.** Before you size or file census drift, import the test module and recompute the whole comparison with its own helpers, for every cluster or table. Do not read the truncated assertion diff, and do not stop at the first failing cluster. Record the full counts in the task, so a review-sized drift is scoped as one before anyone starts on it.
 
+## The first-send warm-up census counts a module's dependencies from app + chat, not from what the live app has loaded (TASK-33620.15.53, 2026-11-05)
+
+**Incident.** The warm-up row read 93/94, so one module fit. A closure probe that imported the app, the screen routes and the warm-up list, then `Agents.agent_lesson_promotion`, said it added one module. The row's own census (`test_first_send_warmup_payload_stays_within_budget`) then measured 95: it starts from app + chat only, without the routes or the app's service wiring, and there `agent_lesson_promotion`'s top-level `Notes.agent_lessons` import was a second new module, although the live app has it loaded long before any send. Moving that import into the one function that uses it made the census read 94.
+
+**What to do.** Size a warm-up addition with the census itself (`Tests/Performance/test_screen_preimport_payload_budget.py -k first_send_warmup -s` prints the per-entry modules), not with a probe of the live app's state. When the census counts a dependency the live app already holds, defer that import behind the call that needs it rather than asking for a raise.
+
 ## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
 
 **Incident.** Two Prompts DB privacy pins forbid `str(second_id)` in a log that must contain `count=2`, and the filed task called them self-contradictory: `second_id` was 2. The tests meant to seed ids 71,234,567 and 81,234,567 by INSERTing a `sqlite_sequence` row. The v5->v6 mix-in migration (7970fbcada) rebuilds `Prompts` and keeps its sequence, so a fresh database already has a `('Prompts', 0)` row; SQLite reads the first row and ignored the test's second, and the ids fell back to 1 and 2. Dropping the id check, the obvious "fix", would have weakened a privacy pin. The negative controls then found a second hole: stored keywords are lower-cased, so `"PRIVATE KEYWORD"` never matched a leaked keyword (2 passed with the keyword logged).
