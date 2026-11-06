@@ -271,6 +271,9 @@ subheadings:
   (`[tools] full_agent_tools_enabled`); turning it on gives chat sub-agents,
   skills, web search and fetch, Watchlists, workspace tools, character
   cards, Canvas, chat forks and chatbook's own MCP tools on the next send.
+  A profile from before the light tool surface that already used agent
+  features finds it switched on after the upgrade ([how that is
+  decided](console/agent-runs-and-tools.md#what-plain-chat-offers--the-light-tool-surface)).
   An individual **Agent built-ins** gate (or `web_deep_search`) needs no
   Full agent tools: plain chat offers that one tool as soon as it is on. A
   switch saved here also updates the running app, so re-running setup in the
