@@ -1628,6 +1628,7 @@ class TldwCli(
         self._wire_study_services()
         self._wire_research_services()
         self._wire_character_persona_services()
+        self._publish_application_services()
         # Persona Buddy: the controller slot itself is initialized earlier
         # (before ConsoleRuntime construction); see the lazy
         # persona_buddy_controller property (TASK-21103).
