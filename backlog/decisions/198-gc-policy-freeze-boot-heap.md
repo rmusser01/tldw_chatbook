@@ -85,12 +85,17 @@ TASK-33620.15.18 AC2, .49 and unmeasured .50 criteria remain open; .51's narrow
 historical acceptance does not transfer. Functional real-GC controls will be
 recorded separately from those performance limits.
 
-**Measured 2026-11-05 (TASK-33620.15.51).** A first send's provider latency was
-measured live on dev 29592ecc9b, against the same commit with #3336's runtime changes
-reverted. Setup: real Anthropic haiku, Enter 4.5 s after the warm-up ended, 16 ABBA
-pairs over two rounds with the profiles swapped. Enter to provider POST was a paired
-median 60 ms *earlier* on dev (bootstrap 95% CI -176 to +18 ms), and dev was slower in
-5 of 16 pairs.
+**Measured 2026-11-05 (TASK-33620.15.51).** The historical acceptance above named
+TASK-33620.15.18's reviewed head f1b164cc2f, and it still does not transfer: that head
+was not re-measured. .51 re-scoped its criteria to the merged code, and this note
+measures that. A first send's provider latency was measured live on dev 29592ecc9b,
+against the same commit with #3336's runtime changes reverted. Setup: real Anthropic
+haiku, Enter 4.5 s after the warm-up ended, 16 ABBA pairs over two rounds with the
+profiles swapped. Enter to provider POST was not later on dev within noise: a paired
+median of -60 ms (bootstrap 95% CI -176 to +18 ms), with dev slower in 5 of 16 pairs.
+Two of those pairs ran on a loaded host. Without them, and balanced across the two
+profiles, the estimate is -4 ms (CI -119 to +45). This design cannot resolve a 20 ms
+effect in either direction.
 
 The pass-end request usually re-froze 2.0 s after the warm-up ended. In 4 of 36 dev
 launches its timer found a compaction already due instead, because the runtime

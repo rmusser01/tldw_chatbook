@@ -11,6 +11,8 @@ pass's end. The task's text, its suspects and its three-change list all describe
 reviewed head. On dev 29592ecc9b, paired against the same commit with #3336's runtime
 changes reverted by hand (16 pairs over two rounds, profiles swapped), dev was a paired
 median -60 ms (bootstrap 95% CI -176 to +18 ms) and slower in only 5 of 16 pairs.
+Without two pairs that ran on a loaded host, and balanced across the two profiles, it
+was -4 ms (CI -119 to +45): no later within noise, which is all that design can say.
 
 **What to do.** Before reproducing a regression filed during a review, diff the merged
 code against the head it was measured on (`git diff <head> <merge> -- <runtime paths>`).
@@ -41,9 +43,16 @@ minutes into each gap, because load1 decays over minutes, and so missed most of 
 fallback that ran anyway after an hour of waiting started one pair at load 117, which
 was discarded. A second gate opened at once: the generator's processes absent for 15 s
 plus a 1 s `top` idle sample. Re-running any pair during which a generator appeared
-(checked before typing and 3 s after Enter) kept all 32 dev-against-revert pairs off
-generator load. Other agents' pytest and xdist runs alone held idle CPU at 20-60% that
-afternoon, so an idle threshold above about 40% would never have opened.
+(checked before typing and 3 s after Enter) kept all 16 dev-against-revert pairs (32
+launches) off generator load. Other agents' pytest and xdist runs alone held idle CPU at
+20-60% that afternoon, so an idle threshold above about 40% would never have opened.
+
+Keeping the generator out did not keep the load out. The gate also sampled idle CPU
+(at least 15%), but only before each pair. Inside two pairs, other agents' pytest runs
+took the host to 1-13% idle at the measured send. Those two pairs hold the round's two
+largest differences (-1,415 and -737 ms). Leaving them out moved that round's median
+from -25 ms to +67 ms, and the profile-balanced estimate (the mean of the two rounds'
+medians) from -50 ms to -4 ms.
 
 A design mistake in the same task cost a round. Its first four-arm blocks gave dev the
 two oldest profiles (20+ launches each) and two other arms the two seeded that
@@ -54,7 +63,9 @@ Enter and the POST than dev: the profiles' history, not their code.
 - Count the generator with `pgrep -f "signal[.]alarm"`; the brackets keep your own
   shell's command line from matching. Check before each pair and just before each
   measured input.
-- Record idle CPU per send.
+- Record idle CPU per send, gate each launch (not each pair) on it, and report the
+  result both with and without launches whose idle CPU at the measured input fell
+  below the gate.
 - Never fall back to running under a generator.
 - With more than two arms, rotate profiles across arms (a Latin square over blocks),
   so that each arm meets each profile equally often. Swapping pairs of profiles
