@@ -30,10 +30,13 @@ from Tests.UI.background_signals import wait_for_background_signal, wait_for_sig
 # Tests/UI/roleplay_frame_harness.py (spec 5.7.1); these names stay importable
 # from here for the modules that import them.
 from Tests.UI.roleplay_frame_harness import (
+    assert_painted_inside,
     item_at,
     list_state,
+    open_styled_roleplay,
     select_roleplay_item,
     start_new,
+    styled_tiers,
     visible_item_ids,
 )
 from Tests.UI.roleplay_frame_harness import PersonasTestApp, StyledPersonasTestApp
@@ -413,6 +416,79 @@ async def _mounted(pilot):
     return pilot.app.screen
 
 
+_WORKBENCH_PANE_IDS = (
+    "#personas-library-pane",
+    "#personas-work-area",
+    "#personas-inspector-pane",
+)
+
+#: The library's controls and rows that must stay whole inside the pane
+#: (TASK-33910.49 AC#1), in Characters mode, where every one shows.
+_LIBRARY_CONTROL_IDS = (
+    "#personas-library-import",
+    "#personas-library-search",
+    "#personas-library-sort",
+    "#personas-library-tag",
+    "#personas-library-new",
+    "#personas-library-rows",
+)
+
+#: Painted ``(x, width)`` of the library, the work area and the inspector at
+#: height 36 under both styled tiers. At or below 90 and from 98 up these are
+#: origin/dev 29592ecc9b's columns, measured there, and TASK-33910.49 keeps
+#: them. On that dev 91-97 painted the 2:4:2 split at about twice the screen
+#: (library 174-186 columns wide); this PR fixes that, and these rows are the
+#: compact split it shows there instead, as at 90 (measured on this branch).
+_WORKBENCH_COLUMNS_BY_WIDTH = {
+    80: ((1, 16), (17, 40), (57, 22)),
+    89: ((1, 16), (17, 49), (66, 22)),
+    90: ((1, 16), (17, 50), (67, 22)),
+    91: ((1, 16), (17, 51), (68, 22)),
+    94: ((1, 17), (18, 53), (71, 22)),
+    97: ((1, 18), (19, 55), (74, 22)),
+    98: ((2, 24), (26, 40), (66, 30)),
+    99: ((2, 24), (26, 41), (67, 30)),
+    120: ((2, 28), (30, 58), (88, 30)),
+    160: ((2, 39), (41, 78), (119, 39)),
+    220: ((2, 54), (56, 108), (164, 54)),
+}
+
+
+def _workbench_columns(screen) -> tuple[tuple[int, int], ...]:
+    """Painted ``(x, width)`` of the three workbench panes, left to right."""
+    return tuple(
+        (screen.query_one(pane_id).region.x, screen.query_one(pane_id).region.width)
+        for pane_id in _WORKBENCH_PANE_IDS
+    )
+
+
+def _assert_workbench_panes_fit(screen) -> None:
+    """The three panes sit side by side inside the workbench and the screen."""
+    width = screen.size.width
+    workbench = screen.query_one("#personas-workbench")
+    inner = workbench.content_region
+    assert workbench.region.right <= width, (
+        f"the workbench {workbench.region} overflows {width} columns"
+    )
+    left = inner.x
+    for pane_id in _WORKBENCH_PANE_IDS:
+        pane = screen.query_one(pane_id)
+        region = pane.region
+        assert pane.display and region.width > 0, f"{pane_id} paints nothing"
+        assert region.x >= left, f"{pane_id} {region} overlaps its neighbour"
+        assert region.right <= inner.right, (
+            f"{pane_id} {region} overflows the workbench {inner} at {width} columns"
+        )
+        left = region.right
+
+
+def _assert_library_controls_inside(screen) -> None:
+    """Every library control and the rows paint whole inside the library pane."""
+    library = screen.query_one("#personas-library-pane")
+    for control_id in _LIBRARY_CONTROL_IDS:
+        assert_painted_inside(screen.query_one(control_id), library)
+
+
 class TestWorkbenchShell:
     async def test_route_renders_destination_workbench(
         self, mock_app_instance, stub_characters
@@ -478,6 +554,77 @@ class TestWorkbenchShell:
             # readiness line never claims ready (F-031 auto-select means a
             # selection exists, so this is the provider gate talking).
             assert "blocked" in str(readiness.renderable).lower()
+
+    @styled_tiers
+    @pytest.mark.parametrize("width", sorted(_WORKBENCH_COLUMNS_BY_WIDTH))
+    async def test_workbench_panes_and_library_controls_fit_at_width(
+        self, styled_tier, width, mock_app_instance, stub_characters
+    ):
+        """TASK-33910.49: the panes and the library's controls fit, at dev's columns.
+
+        On origin/dev 29592ecc9b the compact cut-off is 90 while the 2:4:2
+        minimums need 98 columns, so from 91 to 97 the library pane paints
+        174-186 columns wide and its Import… and + New sit off-screen. This
+        PR fixes it. Outside 91-97 the columns are dev's, unchanged.
+        """
+        async with open_styled_roleplay(
+            styled_tier, mock_app_instance, size=(width, 36)
+        ) as pilot:
+            screen = pilot.app.screen
+            _assert_workbench_panes_fit(screen)
+            _assert_library_controls_inside(screen)
+            assert _workbench_columns(screen) == _WORKBENCH_COLUMNS_BY_WIDTH[width]
+
+    async def test_workbench_panes_fit_at_every_width_from_80_to_220(
+        self, mock_app_instance, stub_characters
+    ):
+        """TASK-33910.49: one resize sweep, every column count from 80 to 220.
+
+        On origin/dev 29592ecc9b this is red at 91 (the first width past the
+        compact cut-off of 90 that the 2:4:2 minimums cannot fill); this PR
+        fixes it.
+        """
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=(80, 36)
+        ) as pilot:
+            screen = pilot.app.screen
+            for width in range(80, 221):
+                await pilot.resize_terminal(width, 36)
+                await pilot.pause()
+                await pilot.pause()
+                assert screen.size.width == width
+                _assert_workbench_panes_fit(screen)
+                _assert_library_controls_inside(screen)
+
+    async def test_compact_cut_off_is_the_widest_width_the_minimums_cannot_fill(
+        self, mock_app_instance, stub_characters
+    ):
+        """TASK-33910.49: the cut-off is pinned to the CSS minimums it depends on.
+
+        The 2:4:2 split's minimum widths live in the stylesheet and the cut-off
+        in ``personas_screen.py``. On origin/dev 29592ecc9b they disagree (90
+        against the 98 columns the minimums need), which is the 91-97 overflow;
+        this PR fixes it. Measured from the mounted panes, so a CSS change to
+        a minimum, a margin or the workbench's border or padding fails here
+        until the cut-off follows.
+        """
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=(120, 36)
+        ) as pilot:
+            screen = pilot.app.screen
+            workbench = screen.query_one("#personas-workbench")
+            assert not workbench.has_class("personas-workbench-compact")
+            needed = screen.size.width - workbench.content_region.width
+            for pane_id in _WORKBENCH_PANE_IDS:
+                pane = screen.query_one(pane_id)
+                minimum = pane.styles.min_width
+                assert minimum is not None, f"{pane_id} has no minimum width"
+                needed += int(minimum.resolve(workbench.content_size, screen.size))
+                needed += pane.styles.margin.width
+            assert (
+                personas_screen_module.PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH
+                == needed - 1
+            )
 
     async def test_52_by_20_roleplay_shows_exactly_one_workbench_pane(
         self, mock_app_instance, stub_characters
