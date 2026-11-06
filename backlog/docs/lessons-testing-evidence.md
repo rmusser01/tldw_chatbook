@@ -823,6 +823,21 @@ The first fix warmed the display after the evidence settle, just before the poll
 **Incident.** TASK-33620.15.53 put a cheap word check (`REVIEW_REQUEST_WORDS`) in front of the review-stage parser and proved it safe with a Hypothesis property: with the check forced open, the parser returns the same stages for every text (400 derandomized examples over random text and joined phrase fragments). The pre-merge review removed `"retry"` from the word list and the property stayed green; only a hand-written `"Retry the verification"` case failed. The fragments almost never formed that whole clause. The same review found the parser itself broke the claim: one pattern kept `re.I` although it only ever sees `.lower()`ed text, so Unicode case-folding let `"resume revıew"` (dotless i) and `"reſume review"` (long s) parse as a stage that names no ASCII word.
 
 **What to do.** When a property says a pre-check never changes a parser's answer, enumerate one input per accepting branch (with its prefixes, suffixes and cases) and assert every branch was reached, beside any random strategy. Then remove each word from the pre-check's list and confirm a test fails. Drop `re.I` from patterns that match already-lowered text, or add `re.ASCII`.
+## An installed-wheel source guard also excludes a virtualenv inside the checkout (PR3345, 2026-11-06)
+
+**Incident.** Packaging reproduction595 stopped before importing the installed
+app because `INSTALLED_PROBE` rejects every `sys.path` entry under the checkout,
+including its local `.venv/site-packages`. It was not evidence for the missing
+mobile assets. A private external virtualenv reusing installed dependencies,
+without editable paths, let unchanged596 reach the real `tldw-serve --help`
+FileNotFoundError. Final597 passed35 including the original immutable full-App
+journey and both wheel origins. A subsequent audit initially counted pytest's
+`current` symlink as a second wheel; both names resolved to the same inode.
+
+**What to do.** Keep source-exclusion guards intact. Select a test interpreter
+outside the forbidden checkout and keep installed children pointed only at their
+private target. Count actual resolved artifact identities, retaining and checking
+all aliases; do not rerun passing tests to correct an audit's path assumption.
 
 ## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
 
