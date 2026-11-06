@@ -27,6 +27,7 @@ from textual import on
 from textual.css.query import NoMatches
 
 from ..config import get_cli_providers_and_models, resolve_provider_name
+from .prune_safe_select import PruneSafeSelect
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -666,7 +667,10 @@ class CompactModelBar(Horizontal):
         # Blank now means "nothing chosen" and the screen handler already
         # ignores empty values.
         provider_options = [(p, p) for p in available_providers]
-        yield Select(
+        # TASK-38951: a runtime identity flip removes the cached ChatScreen
+        # and a quit can land while a new one composes; both can prune these
+        # mid-mount.
+        yield PruneSafeSelect(
             options=provider_options,
             prompt="Provider",
             allow_blank=True,
@@ -676,7 +680,7 @@ class CompactModelBar(Horizontal):
         # Model select
         initial_models = providers_models.get(default_provider, [])
         model_options = [(m, m) for m in initial_models]
-        yield Select(
+        yield PruneSafeSelect(
             options=model_options,
             prompt="Model",
             allow_blank=True,

@@ -3,7 +3,7 @@ id: TASK-38951
 title: "Console: the archive-recovery scope Select can exit the app when a quit or session switch prunes it mid-mount"
 status: Done
 assignee: ['@claude']
-updated_date: '2026-11-06 04:57'
+updated_date: '2026-11-06 06:50'
 created_date: 2026-11-05 21:35
 labels:
 - follow-up
@@ -55,8 +55,19 @@ The scope control in `ArchiveRecoveryConfirmCard` is now a `PruneSafeSelect` (TA
 
 **AC#3: stock Selects a Console attach or sync always mounts.** I took this census from a mounted Console: the send harness at 235x52, after attach, after a whole sync, and after a new-tab switch. All three phases showed the same three `Select`s:
 - `#recovery-scope` (`ArchiveRecoveryConfirmCard`). Every sync that renders a new chat remounts it, so it can be pruned mid-mount. It is now prune-safe.
-- `#compact-api-provider` and `#compact-api-model` (`CompactModelBar` inside `ConsoleControlBar`, kept hidden as compatibility controls). These are composed once, with the ChatScreen's own compose. The `chat` route is `reusable` (TASK-31520), so the screen stays resident across visits. No attach or sync removes or remounts the bar: `ConsoleControlBar` remounts only its action buttons. So an attach or sync cannot prune them mid-mount. Only the resident screen's own teardown can remove them, and it runs only when the app shuts down.
+- `#compact-api-provider` and `#compact-api-model` (`CompactModelBar` inside `ConsoleControlBar`, kept hidden as compatibility controls). These are composed with each ChatScreen's own compose; a sync never remounts the bar (`ConsoleControlBar` remounts only its action buttons). The `chat` route is `reusable` (TASK-31520), but that screen is not resident for the app's whole life, as the first version of these notes said. When the runtime identity flips (local <-> server), `app_navigation` drops the cached ChatScreen, uninstalls it and removes it, and the next Console attach composes a new one with new compact Selects. A quit can also land during a ChatScreen's first compose. Either is the same prune window the card had. So these two are now prune-safe too (review fold-in below).
 
 The other stock `Select`s under `Widgets/Console`, `Widgets/Chat_Widgets` and `UI/Console_Modules` are mounted on demand, never by an attach or sync. They are in modals and pushed screens (the model popover, goal status and history, prompts, response rules, code review, terminal session, endpoint template, generate image, scope picker) and in per-request approval cards (`chat_approval_card.py`).
 
-Files: `tldw_chatbook/Widgets/Chat_Widgets/archive_recovery_cards.py`, `Tests/UI/test_console_archive_recovery_cards.py`. No user-visible copy changes, so no User Guide change.
+**Review fold-in (r10s-rev1).** `CompactModelBar` now builds `#compact-api-provider` and `#compact-api-model` as `PruneSafeSelect`. I added `test_a_bar_pruned_while_a_compact_select_composes_never_exits_the_app` to `Tests/UI/test_console_control_bar_recovery_height.py`, which runs in the UI PR gate. It is parametrized over both ids and mounts the production `ConsoleControlBar`. As each Select composes, it removes the bar, which sets `_pruning` on the whole subtree, as a ChatScreen's removal or a quit would. With the stock `Select` both cases were red with `NoMatches: No nodes match 'SelectOverlay' on Select(id='compact-api-…')`, and the app stopped running. After the swap both are green.
+
+Covering run, 13 files that touch the compact Selects (`-n 4`):
+- Head: 133 failed, 127 passed.
+- Base worktree e8eeae7db9: 134 failed, 124 passed.
+- Every head failure also fails at base. The one base-only failure is a `held_controller_body` parametrization. 128 of the head failures are the local `RecoveryRequired` trap (TASK-38111), 127 of them in `test_console_internals_decomposition.py`.
+- Under a temporary `bootstrap_profile` marker, removed afterwards: `test_console_provider_persistence_regressions.py` passed 7/7, which includes the compact provider-mirror and no-arbitrary-first-provider cases.
+- `test_console_internals_decomposition.py` under the same marker: 10 failed at head and 9 with the swap reverted. The extra failure is `test_console_composer_active_run_blocker_keeps_generic_placeholder`. It flakes at both: 3 of 5 failed at head and 2 of 5 with the swap reverted (a Send tooltip race, "Add API key…" vs "Wait for the active Console run…").
+
+**Boot budget.** `Widgets.prune_safe_select` is now resident at `_ui_ready`, measured 1037 against the old limit of 1037. Base measured 1036. The bootbudget step measured 1038 when `DB.character_conversation_search` also loaded before ready, which is the documented +/-1 wobble. Under the owner size waiver (2026-10-31), `MAX_TLDW_MODULES_AT_UI_READY` goes 1037 -> 1038, with a dated comment and an ADR-097 ledger row. I refreshed `Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt` with `scripts/update_boot_budget_snapshots.py --only ui-ready` through run.sh; it gains only `prune_safe_select`. Re-run, bootbudget.sh reports 32 passed.
+
+Files: `tldw_chatbook/Widgets/Chat_Widgets/archive_recovery_cards.py`, `tldw_chatbook/Widgets/compact_model_bar.py`, `Tests/UI/test_console_archive_recovery_cards.py`, `Tests/UI/test_console_control_bar_recovery_height.py`, `Tests/Performance/test_ui_ready_module_census.py`, `Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt`, `backlog/decisions/097-boot-budget-ratchets.md`. No user-visible copy changes, so no User Guide change.
