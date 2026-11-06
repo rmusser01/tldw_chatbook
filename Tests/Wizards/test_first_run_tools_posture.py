@@ -290,8 +290,67 @@ async def test_the_summary_quick_note_is_derived_from_the_reread_config() -> Non
     assert "Read file" in note
     assert "Library searched on every message" in note
     assert "default theme" not in note  # a saved Nord theme (review R6)
+    # Review G13-R2-01: nothing here is at its default, so nothing is
+    # called a recommended default (this pin used to accept the opposite).
+    assert "recommended defaults" not in note
     for claim in ("tools off", "RAG off"):
         assert claim not in note
+
+
+def _note_halves(config) -> tuple[str, str]:
+    """(what the note states as set, what it calls a recommended default)."""
+    note = wizard_state.quick_track_defaults_note(config)
+    stated, _, defaults = note.partition("Left at recommended defaults:")
+    return stated, defaults
+
+
+@pytest.mark.parametrize("tools", [{}, {"read_file_enabled": True}])
+def test_automatic_search_is_never_called_a_recommended_default(tools) -> None:
+    """Review G13-R2-01 (TASK-34100.13): the note listed "Library searched on
+    every message" under "Left at recommended defaults" whenever the saved
+    flag was on -- a Quick re-run after Full or Settings turned it on. The
+    Search step and Settings both name "only when I ask" as the default, so
+    the note follows R6's theme rule: a setting is named a recommended
+    default only while it is the default, and is otherwise stated on its
+    own with where to change it."""
+    from tldw_chatbook.UI.Wizards.first_run_rag_state import SEARCH_SETTINGS_PATH
+
+    config = {
+        "tools": tools,
+        "console": {},
+        "chat_defaults": {"rag_auto_retrieve_on_send": True},
+    }
+    stated, defaults = _note_halves(config)
+    assert (
+        f"Library searched on every message (change it in {SEARCH_SETTINGS_PATH})."
+        in stated
+    )
+    assert "Library searched" not in defaults
+    assert "default theme" in defaults  # the theme is still the default
+
+
+def test_search_only_when_you_ask_stays_a_recommended_default() -> None:
+    stated, defaults = _note_halves(
+        {"tools": {}, "console": {}, "chat_defaults": {"rag_auto_retrieve_on_send": False}}
+    )
+    assert "Library searched" not in stated
+    assert "Library searched only when you ask" in defaults
+
+
+def test_a_note_with_nothing_at_its_default_has_no_defaults_clause() -> None:
+    raw = {
+        "tools": {"read_file_enabled": True},
+        "console": {},
+        "chat_defaults": {"rag_auto_retrieve_on_send": True},
+        "general": {"default_theme": "nord"},
+    }
+    from tldw_chatbook.Agents.plain_chat_tool_surface import tool_surface_phrase
+    from tldw_chatbook.UI.Wizards.first_run_rag_state import SEARCH_SETTINGS_PATH
+
+    assert wizard_state.quick_track_defaults_note(raw) == (
+        f"Tools as you set them ({tool_surface_phrase(summarize_tool_surface(raw))}). "
+        f"Library searched on every message (change it in {SEARCH_SETTINGS_PATH})."
+    )
 
 
 # -- AC#2/#4: blurbs on the shared gate rows -----------------------------------
