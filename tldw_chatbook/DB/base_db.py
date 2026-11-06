@@ -355,9 +355,9 @@ class SQLiteConnectionQuiescenceRegistry:
     def close_if_idle(self) -> bool:
         """Close every registered handle now, or none while any is in use.
 
-        Unlike a quiescence barrier, this never makes new work fail: it holds
-        the registry lock throughout, so an acquisition or use arriving
-        meanwhile waits for the lock and then reopens (TASK-38955 quit close).
+        Unlike a quiescence barrier it sets no barrier: a fresh acquisition
+        waits for the lock and then reopens, but a handle fetched before the
+        close fails loudly on its next statement (TASK-38955 quit close).
 
         Returns:
             ``True`` when every handle was closed; ``False``, closing nothing,

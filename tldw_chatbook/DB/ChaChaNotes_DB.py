@@ -3256,7 +3256,7 @@ DELETE FROM keywords
         return self._connection_quiescence.connection_count()
 
     def close_idle_connections(self) -> bool:
-        """Close every same-file handle unless one is in use (never aborts work).
+        """Close every same-file handle unless one is in use; sets no barrier.
 
         Returns:
             Whether the handles were closed; see ``close_if_idle``.
