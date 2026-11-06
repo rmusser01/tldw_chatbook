@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import threading
 import time
-from typing import Any, Dict, Literal, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, Literal, Optional, TYPE_CHECKING
 from uuid import uuid4
 
 import toml
@@ -92,7 +92,10 @@ from ...LLM_Provider_Catalog.provider_model_resolution import (
 from ...state.settings_config_models import SettingsCategoryId
 from ..Console_Modules.attach_visit import ConsoleAttachVisit
 from ..Console_Modules.frame import (
+    apply_scoped_breakpoints,
     frame_console_region,
+    note_suspend_style_inputs,
+    skip_unchanged_resume_restyle,
     sync_console_focus_paint,
 )
 from ..Console_Modules.status_row import (
@@ -1704,6 +1707,8 @@ class ChatScreen(BaseAppScreen):
     #: same value — a warm revisit is promised the same settle window as a
     #: cold mount (task-31808 / Qodo #2449 review).
     CONSUMER_SETTLE_HEDGE_SECONDS = 0.15
+    #: TASK-38950: empty, so Textual skips its own; ``on_resize`` applies the base's, scoped.
+    VERTICAL_BREAKPOINTS: ClassVar[list[tuple[int, str]]] = []
 
     #: TASK-33622.5: defaults for the bare ``__new__`` screens tests build.
     _console_terminal_open = False
@@ -21287,8 +21292,9 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_workbench_actions_from_draft()
         return True
 
-    def on_resize(self) -> None:
+    def on_resize(self, event: Resize) -> None:
         """Keep an open command popup anchored above the composer."""
+        apply_scoped_breakpoints(self, BaseAppScreen.VERTICAL_BREAKPOINTS, event.size.height)
         popup = self._console_command_popup_or_none()
         if popup is not None and popup.is_open:
             popup.reposition()
@@ -22808,6 +22814,7 @@ class ChatScreen(BaseAppScreen):
           leave running/installed across a suspend.
         """
         self._console_attach_visit_generation += 1
+        note_suspend_style_inputs(self)  # TASK-38950
         self._console_discovery_rearm_pending = True
         if not self._hooks.review_open:
             self._hooks.cancel_pending()
@@ -22895,8 +22902,9 @@ class ChatScreen(BaseAppScreen):
         self._register_console_footer_shortcuts()
 
     @on(ScreenResume)
-    def _arm_console_arrival_focus(self) -> None:
-        """Hold the arrival focus for keys typed before the restore (TASK-33620.15.17)."""
+    def _prepare_console_resume(self, event: ScreenResume) -> None:
+        """Before Textual's resume: skip an idle restyle (TASK-38950), arm arrival focus."""
+        skip_unchanged_resume_restyle(self, event)
         run_controls.arm_arrival_focus(self)
 
     def on_screen_resume(self) -> None:

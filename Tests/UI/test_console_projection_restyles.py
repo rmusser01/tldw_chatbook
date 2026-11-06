@@ -35,9 +35,11 @@ from textual.app import App, ComposeResult
 from textual.css.model import CombinatorType, SelectorType
 from textual.css.styles import RulesMap
 from textual.css.stylesheet import Stylesheet
+from textual.screen import Screen
 from textual.widgets import Button, Static
 
 import tldw_chatbook
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_composer_reason_restyles import ComposerHarness
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -45,6 +47,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.UI.Console_Modules.agent import apply_console_agent_status_state
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchAction,
     WorkbenchStatus,
@@ -586,3 +589,177 @@ async def test_no_rule_styles_a_descendant_from_a_height_utility_class():
     assert keyed
     assert not offenders, f"rules key a descendant on an h-* class: {offenders}"
     assert not inherited, f"h-* rules set an ancestor-read property: {inherited}"
+
+
+class _AwayScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Static("away")
+
+
+class _SwitchHarness(ConsolidatedCSSApp):
+    """The ready Console, installed: a switch away suspends it, a switch back resumes it."""
+
+    CSS_PATH = ConsoleHarness.CSS_PATH  # The app's own sheets, as the gate harness loads them.
+
+    def __init__(self, app_instance):
+        super().__init__()
+        self.app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        self.app_instance._ui_ready = True
+        self.install_screen(ChatScreen(self.app_instance), "console")
+        self.install_screen(_AwayScreen(), "away")
+        await self.push_screen("console")
+
+
+def _switch_host() -> _SwitchHarness:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    return _SwitchHarness(app)
+
+
+async def _switched_host(pilot, host):
+    console = await _mounted(host, pilot, "#console-native-composer")
+    console = console.screen
+    await pilot.pause(1.0)
+    return console
+
+
+async def _return_to(host, pilot, console, away=None) -> tuple[list, int]:
+    """Switch away (running ``away`` there), then back; the Console nodes restyled."""
+    await host.switch_screen("away")
+    await pilot.pause()
+    if away is not None:
+        await away()
+    applied = []
+    original = host.stylesheet.apply
+
+    def apply(node, *args, **kwargs):
+        applied.append(node)
+        return original(node, *args, **kwargs)
+
+    host.stylesheet.apply = apply
+    try:
+        stack_updates = console.stack_updates
+        await host.switch_screen("console")
+        await pilot.pause()
+    finally:
+        del host.stylesheet.apply
+    nodes = {id(node) for node in console.walk_children(with_self=True)}
+    return [node for node in applied if id(node) in nodes], stack_updates
+
+
+@pytest.mark.asyncio
+async def test_a_return_restyles_the_console_only_when_a_style_input_moved():
+    """TASK-38950: a return keeps the Console's styles unless something restyles them.
+
+    Textual's ``Screen._on_screen_resume`` restyles every node whenever its
+    ``ScreenResume`` asks, and ``switch_screen`` always asks. On the base each
+    return restyled all 555 of this harness's Console nodes (546 in the send
+    harness). With no rule, App class or App pseudo-class changed while it was
+    away, the Console now clears that flag before Textual's handler runs. That
+    handler still does the rest of its work: the stack update count moves, and
+    a size change made while away lays the Console out at the new size. A theme
+    change made while away reparses the rules, so that return restyles in full
+    and shows the new theme (red under a variant that always skips).
+    """
+    host = _switch_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = await _switched_host(pilot, host)
+        # A widget type first mounted after the Console's first resume adds its
+        # DEFAULT_CSS, and the reparse makes a new rules list, so the first
+        # return may restyle in full (under load it did, 2 runs in 3). The
+        # second return is the steady state.
+        await _return_to(host, pilot, console)
+        restyled, stack_updates = await _return_to(host, pilot, console)
+        assert host.screen is console
+        assert console.stack_updates > stack_updates, "the resume handler did not run"
+        total = sum(1 for _ in console.walk_children(with_self=True))
+        assert len(restyled) * 10 < total, (
+            f"a return with no style change restyled {len(restyled)} of {total} nodes"
+        )
+        styles = _styles(console)
+        host.update_styles(console)
+        assert _styles(console) == styles, "the skipped restyle left a stale style"
+
+        async def resize():
+            await pilot.resize_terminal(150, 40)
+            await pilot.pause()
+
+        await _return_to(host, pilot, console, resize)
+        await pilot.pause()
+        assert console.size == host.size == (150, 40), "the return kept the old layout"
+
+        before = _styles(console)
+        theme = "textual-light" if host.theme != "textual-light" else "textual-dark"
+
+        async def change_theme():
+            host.theme = theme
+            await pilot.pause()
+
+        restyled, _ = await _return_to(host, pilot, console, change_theme)
+        shown = _styles(console)
+        host.update_styles(console)
+        assert _styles(console) != before, "the theme change styles nothing in the Console"
+        assert shown == _styles(console), (
+            "the Console came back with styles from before the theme change"
+        )
+        assert restyled, "the return after a theme change restyled nothing"
+
+
+def _breakpoint_styled(console) -> set[int]:
+    """Ids of the Console nodes a rule naming a header breakpoint class can style."""
+    names: set[str] = set()
+    for rule in console.app.stylesheet.rules:
+        if ".shell-header-" in rule.selectors:
+            names |= rule.selector_names
+    return {
+        id(node)
+        for target in console.walk_children(with_self=True)
+        if target._selector_names & names
+        for node in target.walk_children(with_self=True)
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_header_breakpoint_flip_restyles_only_what_its_rules_style(monkeypatch):
+    """TASK-38950: a shell-header breakpoint flip restyles the nodes its rules style.
+
+    Textual's ``Screen._on_resize`` flips ``shell-header-compact`` /
+    ``shell-header-normal`` with ``update_classes``, a whole-screen restyle:
+    all 555 Console nodes on the base, on the first layout and at every height
+    change across 24/25 rows. Only the header and its subtitle have rules keyed
+    on those classes. The Resize is dispatched straight to the screen, so the
+    count holds only what its handlers restyle; both heights are under 34 rows,
+    so the shell's own ``-console-compact`` class does not flip with it.
+    """
+    from textual import events
+    from textual.geometry import Size
+
+    host = _ready_host()
+    async with host.run_test(size=(160, 30)) as pilot:
+        await _mounted(host, pilot, "#console-workbench-header")
+        console = host.screen
+        await pilot.pause(0.5)
+        assert console.has_class("shell-header-normal")
+        assert console.query_one("#console-shell").has_class("-console-compact")
+        styled = _breakpoint_styled(console)
+        total = sum(1 for _ in console.walk_children(with_self=True))
+        assert styled and len(styled) * 4 < total, (len(styled), total)
+        applied = _spy_restyles(host, monkeypatch)
+        await console._on_message(events.Resize(Size(160, 24), Size(160, 24)))
+        assert console.has_class("shell-header-compact")
+        assert not console.has_class("shell-header-normal")
+        nodes = {id(node) for node in console.walk_children(with_self=True)}
+        restyled = {id(node) for node in applied if id(node) in nodes}
+        assert restyled == styled, (
+            f"the flip restyled {len(restyled)} of {total} nodes; its rules style {len(styled)}"
+        )
+        flipped = _styles(console)
+        host.update_styles(console)
+        assert _styles(console) == flipped, "the scoped restyle left a stale style"
+
+        await pilot.resize_terminal(160, 30)  # A real resize back across 24/25 rows.
+        await pilot.pause()
+        assert console.has_class("shell-header-normal")
+        assert not console.has_class("shell-header-compact")

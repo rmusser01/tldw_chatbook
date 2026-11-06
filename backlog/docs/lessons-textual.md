@@ -2535,3 +2535,19 @@ The first overflow probe reported no overflow at all. `Strip.cell_length` gave t
 **What to do.**
 - To know about a click before its focus lands, override the public `Screen.get_focusable_widget_at`. Textual 8.2.8 calls it only in that MouseDown branch, synchronously, just before `set_focus`. Mark the input there and return `super()`'s result. Do not override `_forward_event`.
 - Pin any "the user moved focus" rule with `pilot.click`, not with a mark plus `.focus()`. `pilot.click` calls `screen._forward_event` directly, so it takes the same path.
+
+## A resumed screen restyles every node unless its own `ScreenResume` handler clears `refresh_styles` first (TASK-38950, 2026-11-06)
+
+**Incident.** Every return to the Console restyled all of its nodes: 546 of 546 in the send harness, 94-162 ms of CPU per return at load 33-36. `switch_screen` and `push_screen` post `ScreenResume()`, whose `refresh_styles` defaults to True, and `Screen._on_screen_resume` restyles the whole screen while that flag is set. A height change across 24/25 rows then restyled all 555 nodes again: `Screen._on_resize` flips the `VERTICAL_BREAKPOINTS` class with `update_classes`.
+
+The fix patches nothing of Textual's.
+- **Resume.** The dispatcher walks the MRO most-derived first, so a subclass's own `ScreenResume` handler runs before Textual's private one and can clear `event.refresh_styles`. Textual's handler still does everything else: the suspended class, `stack_updates`, notifications, auto-focus, and the relayout after a size change.
+- **Breakpoints.** A screen whose `VERTICAL_BREAKPOINTS` is `[]` makes Textual skip its own breakpoint code. Its `on_resize` then sets the class itself, with `update=False`, and restyles only the nodes in the matching rules' `selector_names`, the key `rules_map` matches nodes by, plus their subtrees.
+
+**What to do.**
+- **What can go stale.** A class or pseudo-class change on any node restyles it at once, even on a suspended screen, because `App.update_styles` handles non-App nodes immediately. So a screen that is off the stack misses only two things:
+  - a reparse of the rules (a theme change, or a sheet another screen loaded). `stylesheet.rules` is a new list after every parse, so compare it by identity;
+  - a change to the App node's classes or pseudo-classes. `_watch_app_focus` restyles only `app.screen`, and `App.update_styles(app)` restyles only the screens on top.
+- **Keep the inputs conservatively.** Record the rules at each full restyle, and the App's classes and pseudo-classes at both the restyle and the suspend. A modal's pop posts `refresh_styles=False`, and Textual then restyles nothing, so learn nothing from it either.
+- **Pin it with fidelity tests.** Compare every node's `_css_styles.get_rules()` with a forced `app.update_styles(screen)`, and have a theme-change-while-away test go red under an always-skip variant (`Tests/UI/test_console_projection_restyles.py`).
+- **The same shape elsewhere.** `#console-shell`'s `-console-compact` class still restyles 517 nodes when the height crosses 34 rows.
