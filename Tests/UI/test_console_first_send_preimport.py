@@ -45,6 +45,10 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Chat.console_configuration_preparation",
     "UI.Console_Modules.turn_admission",
     "MCP.console_snapshot",
+    # TASK-33620.15.53, live on origin/dev e8eeae7db9 after the warm-up: the
+    # capacity check's tool-surface preview (or run start's managed-skill
+    # gate) imported it on the UI loop, 3-8 ms.
+    "Agents.agent_lesson_promotion",
     "Chat.console_send_diagnostics",
     "Chat.console_plugin_context",  # current native invocation projection
     "Chat.console_hook_preparation",
