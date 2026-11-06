@@ -312,7 +312,12 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-05, same owner rule, PR #3427 review fix round 1: fixed failure
     # toasts with category-only logs (TASK-38228) and the full-page title
     # guard (TASK-33910.37): +9 (16,864 -> 16,873).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16873,
+    # 2026-11-06 owner decision (expand limits, never contort code; B2b
+    # follow-up burn-down PR 4, stacked on #3427): TASK-33910.41's
+    # `_switch_mode` and `_apply_mode`'s `await_read` (a user's kind switch
+    # reads in the list's worker, off the caller's pump) and TASK-33910.39's
+    # prevented Input.Changed on the search clear: +46 (16,873 -> 16,919).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16919,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
