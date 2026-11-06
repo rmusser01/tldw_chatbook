@@ -1531,10 +1531,19 @@ class _Work:
     def reset(self) -> None:
         self.windows: list[tuple[int, int]] = []
         self.set_options = 0
+        # Each ``set_options`` by its row count: a kind switch's blanking
+        # ``set_options([])`` (spec 1.5.4 "Loading") is told from a paint of
+        # rows (TASK-33910.39).
+        self.set_options_sizes: list[int] = []
         self.add_options = 0
         self.prompts = 0
         self.mounts = 0
         self.recomposes = 0
+
+    @property
+    def paints(self) -> int:
+        """``set_options`` calls that painted rows (the blanking ones left out)."""
+        return sum(1 for size in self.set_options_sizes if size)
 
 
 @pytest.fixture
@@ -1555,6 +1564,8 @@ def work(monkeypatch) -> _Work:
 
     def counted_set_options(self, options):
         tally.set_options += tally.armed
+        if tally.armed:
+            tally.set_options_sizes.append(len(options))
         self._counting_set_options = True  # its own add_options is not an append
         try:
             return set_options(self, options)
@@ -4441,9 +4452,9 @@ async def test_loading_shows_only_after_250_ms_and_never_the_previous_kinds_rows
     """Spec 1.5.4 "Loading" (owner decision D5): a kind switch blanks the old
     kind's rows at once and paints "Loading lore books…" only from a 250 ms
     timer armed while it was still hidden. On dev the Characters rows and
-    title stayed up until the lore read landed. The switch is the ``l`` key:
-    a mode chip's click runs the switch inside the screen's own handler, so
-    the screen paints nothing until the read ends (on dev too; not fixed)."""
+    title stayed up until the lore read landed. The switch is the ``l`` key;
+    a mode chip's click painted nothing until the read ended on dev, which
+    TASK-33910.41 fixes (the chip and ``Also in:`` tests below)."""
     from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 
     WorldBookManager(volume_348).create_world_book("Kepler Atlas")
@@ -4496,6 +4507,256 @@ async def test_loading_shows_only_after_250_ms_and_never_the_previous_kinds_rows
         await settle(pilot)
         assert [item.name for item in list_state(screen).items] == ["Kepler Atlas"]
         assert list_state(screen).state == "rows"
+
+
+# ---- A kind switch: one read, one paint, and the screen's pump stays free ----
+# (TASK-33910.39, TASK-33910.41)
+
+
+async def _switch_kind(pilot, screen, mode: str, *, route: str) -> None:
+    """Switch to ``mode`` as a user does: its key, its chip, or ``Also in:``."""
+    if route == "key":
+        await pilot.press(mode[0])
+    elif route == "chip":
+        assert await pilot.click(f"#personas-mode-{mode}")
+    else:
+        kind = frame_state.KIND_FOR_MODE[mode]
+        assert await pilot.click(f"#personas-library-also-in-{kind}")
+
+
+async def _bounded(awaitable, what: str, timeout: float = 3.0):
+    """Await what a free screen pump answers at once; name what held it."""
+    try:
+        return await asyncio.wait_for(awaitable, timeout)
+    except TimeoutError:
+        raise AssertionError(
+            f"{what} waited {timeout}s: the screen's message pump is held"
+        ) from None
+
+
+def _hold_the_characters_read(monkeypatch) -> tuple[threading.Event, threading.Event]:
+    """Hold every characters window read in its thread until the gate opens."""
+    gate, reading = threading.Event(), threading.Event()
+    page = personas_screen_module.get_character_page_for_ui
+
+    def held(db, **kwargs):
+        reading.set()
+        gate.wait(30)
+        return page(db, **kwargs)
+
+    monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", held)
+    return gate, reading
+
+
+def _hold_the_lore_read(monkeypatch) -> tuple[threading.Event, threading.Event]:
+    """Hold every lore list read in its thread until the gate opens."""
+    gate, reading = threading.Event(), threading.Event()
+    real_read = PersonasScreen._list_world_books_with_counts
+
+    def held(manager):
+        reading.set()
+        gate.wait(30)
+        return real_read(manager)
+
+    monkeypatch.setattr(
+        PersonasScreen, "_list_world_books_with_counts", staticmethod(held)
+    )
+    return gate, reading
+
+
+@pytest.mark.parametrize(
+    ("route", "box"),
+    [
+        ("key", "empty"),
+        ("key", "searched"),
+        ("chip", "empty"),
+        ("chip", "searched"),
+        ("also_in", "searched"),
+    ],
+    ids=["key-empty", "key-searched", "chip-empty", "chip-searched", "also-in"],
+)
+async def test_a_kind_switch_reads_and_paints_the_new_kinds_list_once(
+    mock_app_instance, volume_348, work, route, box
+):
+    """TASK-33910.39: a switch into Characters reads one window and paints
+    its rows once, with the search box empty or holding the old kind's
+    search. On dev a switch from a searched box read and painted the new
+    kind twice: ``_apply_mode`` cleared the box without preventing
+    ``Input.Changed``, whose handler armed the debounce and read the new
+    kind again (a switch from an empty box read once on dev); fixed here.
+    The one blanking ``set_options([])`` (spec 1.5.4 "Loading") is counted
+    apart from the paint. ``Also in:`` carries the query, so the box is not
+    cleared: one read on dev too."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _show_kind(pilot, screen, "lore")
+        if route == "also_in":
+            # No lore book matches, so the characters count is offered.
+            await _search_settled(pilot, screen, "Character 01")
+            await wait_until(
+                pilot,
+                lambda: any(t.startswith("Characters") for t in also_in_targets(screen)),
+                what="the characters target",
+            )
+            expected_rows, expected_query = 100, "Character 01"
+        elif box == "searched":
+            await _search_settled(pilot, screen, "kepler")
+            assert len(visible_item_ids(screen)) == 1
+            expected_rows, expected_query = 200, ""
+        else:
+            expected_rows, expected_query = 200, ""
+        work.armed = True
+        await _switch_kind(pilot, screen, "characters", route=route)
+        await wait_until(
+            pilot,
+            lambda: (
+                screen.state.active_mode == "characters"
+                and len(visible_item_ids(screen)) == expected_rows
+            ),
+            what="the characters rows",
+        )
+        await settle(pilot)
+        # A second, debounced read would start after the debounce.
+        await pilot.pause(personas_screen_module.PERSONAS_SEARCH_DEBOUNCE_SECONDS + 0.1)
+        await settle(pilot)
+        work.armed = False
+        search = screen.query_one("#personas-library-search", Input)
+        assert (screen.state.search_query, search.value) == (expected_query,) * 2
+        assert len(work.windows) == 1, f"reads: {work.windows}"
+        assert (work.paints, work.set_options_sizes) == (1, [0, expected_rows])
+
+
+@pytest.mark.parametrize(
+    ("route", "held"),
+    [("chip", "characters"), ("chip", "lore"), ("also_in", "characters")],
+    ids=["chip-characters", "chip-lore", "also-in-characters"],
+)
+async def test_a_chip_or_also_in_switch_leaves_the_screen_pump_free_during_the_read(
+    mock_app_instance, volume_348, monkeypatch, route, held
+):
+    """TASK-33910.41: a mode chip's click and an ``Also in:`` switch start
+    the new kind's read in its worker and return. While the read is held in
+    its thread, the screen's pump answers a callback, Ctrl+F is handled (the
+    search box takes focus), and "Loading <kind>…" paints from the 250 ms
+    timer (spec 1.5.4, owner decision D5). On dev both handlers awaited the
+    read on the screen's own pump, so nothing painted and no key was handled
+    until the read ended (B2b's probe P9-1); fixed here. The ``c/p/d/l`` keys
+    run through the App, so they painted on dev while holding the App's own
+    pump, which the same fix ends."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    target = "characters" if held == "characters" else "lore"
+    kind = frame_state.KIND_FOR_MODE[target]
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        search = screen.query_one("#personas-library-search", Input)
+        if held == "characters":
+            await _show_kind(pilot, screen, "lore")
+        if route == "also_in":
+            await _search_settled(pilot, screen, "Character 01")
+            await wait_until(
+                pilot,
+                lambda: any(t.startswith("Characters") for t in also_in_targets(screen)),
+                what="the characters target",
+            )
+        hold = _hold_the_characters_read if held == "characters" else _hold_the_lore_read
+        gate, reading = hold(monkeypatch)
+        click = asyncio.create_task(_switch_kind(pilot, screen, target, route=route))
+        try:
+            await _poll(reading.is_set, f"the held {kind} read")
+            assert visible_item_ids(screen) == ()
+            answered = asyncio.Event()
+            assert screen.call_later(answered.set)
+            await _bounded(answered.wait(), "a callback posted to the screen")
+            await _bounded(pilot.press("ctrl+f"), "Ctrl+F")
+            assert app.focused is search
+            loading = frame_state.loading_text(kind)
+            await _poll(
+                lambda: loading in "\n".join(painted_rows(screen)),
+                "the painted loading line",
+            )
+            assert list_state(screen).state == "loading"
+        finally:
+            gate.set()
+            await click
+        await wait_until(
+            pilot, lambda: bool(visible_item_ids(screen)), what=f"the {kind} rows"
+        )
+        await settle(pilot)
+        assert screen.state.active_mode == target
+        assert list_state(screen).state == "rows"
+        assert all(i.startswith(f"{kind}:") for i in visible_item_ids(screen))
+        if route == "also_in":
+            assert screen.state.search_query == "Character 01"
+            assert len(visible_item_ids(screen)) == 100
+            assert highlighted_item_id(screen) == visible_item_ids(screen)[0]
+
+
+@pytest.mark.parametrize("second", ["lore", "personas"])
+async def test_a_second_switch_during_a_held_read_runs_at_once_and_the_older_read_lands_nowhere(
+    mock_app_instance, volume_348, monkeypatch, second
+):
+    """TASK-33910.41: with the Characters read held in its thread, a click on
+    another chip runs now (on dev it waited in the screen's queue behind the
+    held handler; fixed here), and the older read lands nowhere. A Lore
+    switch reads through the same exclusive search worker, which stops the
+    characters window worker at once; a Personas switch reads through its
+    own worker, so the characters window arrives late and the list fence
+    drops it (spec 1.5.6 "Window fence", as on dev). Either way the new
+    kind's rows and title stay, and the screen's character rows are what
+    they were before the switch."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    mock_app_instance.character_persona_scope_service, _calls = _persona_service(
+        _personas(1)
+    )
+    mock_app_instance.chat_dictionary_scope_service = _dictionary_service(
+        ("Plain Rules", 3)
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        await _show_kind(pilot, screen, second)
+        rows = [item.name for item in list_state(screen).items]
+        title = str(pane.border_title)
+        assert (rows, title) == (
+            (["Kepler Atlas"], "Lore books 1 · 1 on")
+            if second == "lore"
+            else (["Default Narrator"], "Personas 1")
+        )
+        await _show_kind(pilot, screen, "dictionaries")
+        kept = (list(screen._characters), screen._character_total)
+        assert kept[1] == 349
+        gate, reading = _hold_the_characters_read(monkeypatch)
+        first = asyncio.create_task(pilot.click("#personas-mode-characters"))
+        try:
+            await _poll(reading.is_set, "the held characters read")
+            assert _window_workers(pilot.app)
+            await _bounded(pilot.click(f"#personas-mode-{second}"), "the second click")
+            assert screen.state.active_mode == second
+            if second == "lore":
+                # Stopped with the search worker it ran under.
+                assert not _window_workers(pilot.app)
+            await _poll(
+                lambda: [item.name for item in list_state(screen).items] == rows,
+                f"the {second} rows while the characters read is held",
+            )
+        finally:
+            gate.set()
+            await first
+        await settle(pilot)
+        assert not _window_workers(pilot.app)
+        assert screen.state.active_mode == second
+        assert [item.name for item in list_state(screen).items] == rows
+        assert str(pane.border_title) == title
+        assert (list(screen._characters), screen._character_total) == kept
+        assert "Character 0" not in "\n".join(painted_rows(screen))
 
 
 async def test_a_failed_character_read_shows_the_recovery_row_and_retry_reloads(

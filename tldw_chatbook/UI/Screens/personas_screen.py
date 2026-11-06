@@ -3591,9 +3591,9 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         mode = frame_state.MODE_FOR_KIND.get(message.kind)
         query = self.state.search_query
-        if mode is None or not query or mode == self.state.active_mode:
+        if mode is None or not query:
             return
-        await self._run_guarded(lambda: self._apply_mode(mode, carry_query=query))
+        await self._switch_mode(mode, carry_query=query)
 
     async def _list_window(self, request: frame_state.ListWindowRequest) -> None:
         """One window run: fetch until the request is met, fence, apply once."""
@@ -4490,9 +4490,27 @@ class PersonasScreen(BaseAppScreen):
     async def _handle_mode_chip(self, event: Button.Pressed) -> None:
         event.stop()
         mode = str(event.button.id or "").removeprefix("personas-mode-")
+        await self._switch_mode(mode)
+
+    async def _switch_mode(self, mode: str, *, carry_query: str | None = None) -> None:
+        """A user's kind switch (a chip, a key, ``Also in:``): guarded, its read off the pump.
+
+        The switch runs on the caller's pump up to the new kind's read, which
+        runs in the list's worker (TASK-33910.41). On dev a chip's and ``Also
+        in:``'s handlers awaited the read on the screen's own pump, so the
+        blanked list, the loading line and the next key waited for it (B2b's
+        probe P9-1); a key's handler held the App's pump the same way. Fixed
+        here for all three.
+
+        Args:
+            mode: The workbench mode; an unknown or the active one is a no-op.
+            carry_query: ``Also in:``'s query, kept in the box and searched.
+        """
         if mode not in MODE_CHIP_ORDER or mode == self.state.active_mode:
             return
-        await self._run_guarded(lambda: self._apply_mode(mode))
+        await self._run_guarded(
+            lambda: self._apply_mode(mode, carry_query=carry_query, await_read=False)
+        )
 
     @on(Button.Pressed, "#personas-library-rail-collapse")
     def _handle_library_rail_collapse(self, event: Button.Pressed) -> None:
@@ -4526,7 +4544,13 @@ class PersonasScreen(BaseAppScreen):
             self._compact_active_pane = "inspector"
         self._sync_personas_rails()
 
-    async def _apply_mode(self, mode: str, *, carry_query: str | None = None) -> None:
+    async def _apply_mode(
+        self,
+        mode: str,
+        *,
+        carry_query: str | None = None,
+        await_read: bool = True,
+    ) -> None:
         """Switch the workbench to ``mode`` (its list unfiltered, or searched).
 
         Args:
@@ -4534,6 +4558,16 @@ class PersonasScreen(BaseAppScreen):
             carry_query: ``Also in:``'s switch (spec 1.5.4): the new kind's
                 list is searched for this, and the cursor lands on its first
                 match. A plain switch clears the search (on dev, always).
+            await_read: Whether to wait for the new kind's list read. The
+                user's own switches (a chip, a key, ``Also in:``) pass False
+                (TASK-33910.41): the read runs in the list's worker behind
+                its fence and this returns, so the pump that called (the
+                screen's for a chip or ``Also in:``, the App's for a key) is
+                free to paint the blanked list and the 250 ms loading line
+                and to handle the next key. On dev a chip click and ``Also
+                in:`` painted nothing until the read ended. Callers that go
+                on to land on a row (an import's landing, a buddy conversion,
+                a saved-mode restore) keep the default and wait.
         """
         self._bump_import_intent()
         self._advance_persona_buddy_session()
@@ -4557,9 +4591,16 @@ class PersonasScreen(BaseAppScreen):
         self._count_cache_key = None
         if carry_query is None:
             try:
-                self.query_one("#personas-library-search", Input).value = ""
+                search = self.query_one("#personas-library-search", Input)
             except Exception:
                 pass
+            else:
+                # No Input.Changed: its handler would arm the debounce and
+                # read and paint the new kind a second time (TASK-33910.39;
+                # on dev a switch from a searched box did). The state above
+                # is already cleared, so the handler bumped no import intent.
+                with search.prevent(Input.Changed):
+                    search.value = ""
         self._edit_mode = "view"
         for chip_mode in MODE_CHIP_ORDER:
             self.query_one(f"#personas-mode-{chip_mode}", Button).set_class(
@@ -4604,18 +4645,25 @@ class PersonasScreen(BaseAppScreen):
         # character's name (task-437). A character selection re-sets them.
         self.query_one(PersonasPreviewPane).reset_speakers()
         await self.query_one(PersonasInspectorPane).clear_selection()
-        if mode == "characters":
-            await self._render_library_rows()
-            self._show_center(None)
-        elif mode == "personas":
+        if mode == "personas":
             self._profile_lookup_recovery_state = None
             self._show_center(None)
             self._refresh_profile_rows_worker()
-        elif mode == "dictionaries":
-            await self._render_dictionary_rows(self.state.search_query)
-            self._show_center(None)
-        elif mode == "lore":
-            await self._render_lore_rows(self.state.search_query)
+        elif mode in MODE_CHIP_ORDER:
+            if not await_read:
+                # The read starts at once in the search worker (the step the
+                # debounce timer reaches; Escape's rung 8 starts its clear's
+                # read the same way) and lands behind the list fence, so a
+                # late window of an older switch is dropped (TASK-33910.41).
+                self._start_debounced_search_render(
+                    query=self.state.search_query, mode=mode
+                )
+            elif mode == "characters":
+                await self._render_library_rows()
+            elif mode == "dictionaries":
+                await self._render_dictionary_rows(self.state.search_query)
+            else:
+                await self._render_lore_rows(self.state.search_query)
             self._show_center(None)
         else:
             async with self._render_lock:
@@ -16691,9 +16739,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def action_personas_mode(self, mode: str) -> None:
         """Single-letter mode keys (c/p/d/l): same guarded path as the mode chips."""
-        if mode not in MODE_CHIP_ORDER or mode == self.state.active_mode:
-            return
-        await self._run_guarded(lambda: self._apply_mode(mode))
+        await self._switch_mode(mode)
 
     async def action_personas_mode_cycle(self, delta: int) -> None:
         """[ / ]: cycle the mode strip relative to the active mode."""

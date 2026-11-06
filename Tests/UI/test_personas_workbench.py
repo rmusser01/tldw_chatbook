@@ -9489,6 +9489,109 @@ class TestServerCharacterSourceIsolation:
             assert screen._count_cache_key is None
 
     @pytest.mark.parametrize(
+        ("new_mode", "new_kind", "new_name", "new_meta", "new_count"),
+        _SHARED_MODE_OWNER_CASES,
+    )
+    async def test_a_stale_character_read_that_lands_after_the_newer_mode_publishes_nothing(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        new_mode,
+        new_kind,
+        new_name,
+        new_meta,
+        new_count,
+    ):
+        """The ordering where the stale character render lands last (TASK-33910.43).
+
+        The three tests above hold the stale character render inside its row
+        publication, under the render lock, so the newer mode's render can
+        only run after it: the owner's sort and tag stamp always lands last,
+        and the ``sort`` and ``tag`` legs could not see a stale publication
+        (B2b's finding M7-H; on dev too). Here the stale READ is held in its
+        thread instead: the newer mode publishes its rows and stamps its sort
+        and tag while the read waits, and the stale window then arrives last.
+        The list fence drops it before it publishes rows, sort or tag (spec
+        1.5.6 "Window fence", as on dev), so every leg of the publication
+        discriminates: a mutation that lets the stale window stamp its sort
+        and tag ahead of the fence turns exactly those two legs red.
+        """
+        import asyncio
+
+        _configure_shared_mode_sources(mock_app_instance, monkeypatch)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            stale_read_entered = asyncio.Event()
+            release_stale_read = asyncio.Event()
+            mode_render_started = asyncio.Event()
+            owner_sort, owner_tag = _observe_shared_mode_render(
+                monkeypatch,
+                screen,
+                new_mode,
+                mode_render_started,
+            )
+
+            async def interleaved_to_thread(function, *args, **kwargs):
+                if function is personas_screen_module.count_character_page:
+                    return 1
+                if function is personas_screen_module.get_character_page_for_ui:
+                    stale_read_entered.set()
+                    await release_stale_read.wait()
+                    return [{"id": 7, "name": "Older Character Publication"}]
+                if function is PersonasScreen._list_world_books_with_counts:
+                    return [
+                        {
+                            "id": 91,
+                            "name": "New Lore Owner",
+                            "entry_count": 3,
+                            "enabled": True,
+                        }
+                    ]
+                raise AssertionError(f"Unexpected to_thread function: {function!r}")
+
+            monkeypatch.setattr(
+                personas_screen_module.asyncio,
+                "to_thread",
+                interleaved_to_thread,
+            )
+            screen._character_db = lambda: object()
+            screen._count_cache_key = None
+            screen.state.sort_key = "modified_desc"
+            screen.state.tag_filter = "older-tag"
+            # The arrival's character rows: a mode switch keeps them, and the
+            # stale window would replace them with "Older Character Publication".
+            kept = (list(screen._characters), screen._character_total)
+            assert kept[1] == len(kept[0]) > 0
+
+            stale = asyncio.create_task(screen._reload_character_page())
+            await wait_for_background_signal(
+                stale_read_entered, stale, what="the stale character read"
+            )
+
+            await screen._apply_mode(new_mode)
+            await pilot.pause()
+            assert mode_render_started.is_set()
+            owner = {
+                "mode": new_mode,
+                "rows": ((f"{new_kind}:91", (new_name, "on", new_meta)),),
+                "count": new_count,
+                "sort": owner_sort,
+                "tag": owner_tag,
+            }
+            assert _shared_pane_publication(screen) == owner
+
+            release_stale_read.set()
+            await stale
+            await pilot.pause()
+
+            # The stale window landed last and published nothing.
+            assert _shared_pane_publication(screen) == owner
+            assert (list(screen._characters), screen._character_total) == kept
+
+    @pytest.mark.parametrize(
         ("source_mode", "owner_change"),
         (
             pytest.param("dictionaries", "query", id="dictionaries-query"),
