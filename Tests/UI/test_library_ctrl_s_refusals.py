@@ -1,6 +1,6 @@
 """Ctrl+S's refusals and exclusions, boot-free (TASK-34000.40 N-33, review M-5).
 
-ADR-031 rule (c): where an editor's Save is held, Ctrl+S says why AT the
+ADR-299 rule (c): where an editor's Save is held, Ctrl+S says why AT the
 editor and moves no focus. The Pilot files (``test_library_ctrl_s_saves_in_
 every_editor*.py``) drive the common paths on the real app; these pin the
 branches a real boot reaches only slowly or by racing -- the prompt and skill

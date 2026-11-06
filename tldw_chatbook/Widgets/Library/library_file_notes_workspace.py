@@ -293,7 +293,7 @@ def resolve_file_note_status_channels(
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
 #: TASK-34000.40 (N-33): what Ctrl+S says on the action line when it cannot
-#: write (ADR-031 rule (c): at the editor, no focus moved).
+#: write (ADR-299 rule (c): at the editor, no focus moved).
 FILE_NOTES_KEY_SAVE_CONFLICT_COPY = "Save refused — resolve the conflict below."
 FILE_NOTES_KEY_SAVE_ERROR_COPY = "Save refused — the last save failed; your draft is kept."
 FILE_NOTES_KEY_SAVE_TRANSITION_COPY = (
@@ -7180,7 +7180,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def report_key_save(self, before: SaveState, ok: bool) -> None:
         """Say what a Ctrl+S flush did, on this pane's own action line.
 
-        TASK-34000.40 (N-33), ADR-031 rules (b)/(c): the key flushes the
+        TASK-34000.40 (N-33), ADR-299 rules (b)/(c): the key flushes the
         pending autosave now (``flush_pending_work``); this names the
         outcome where the pane already reports actions, and moves no focus.
         A refusal ``flush_pending_work`` already explained (a Git mutation
