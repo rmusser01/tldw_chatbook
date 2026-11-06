@@ -60,10 +60,11 @@ def census(source: str) -> Counter:
 
     tree = ast.parse(source)
     imported_candidates = {}
+    # `import os` and any `from <shim> import os` (Utils/platform_files) bind os.
     os_names = {
         alias.asname or alias.name
         for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
         for alias in node.names
         if alias.name == "os"
     }
@@ -293,6 +294,19 @@ filesystem.replace(stage, destination)
 commit_record(stage, destination)
 """
     assert census(source)[("<module>", "os.replace")] == 2
+
+
+def test_census_tracks_os_bound_by_from_import_shim():
+    # TASK-39053: 60+ modules switched to `from ...platform_files import os`;
+    # their os.replace/os.unlink producers silently left the census.
+    source = """
+from tldw_chatbook.Utils.platform_files import os
+from tldw_chatbook.Utils.platform_files import os as native
+os.replace(stage, destination)
+native.unlink(stage)
+"""
+    assert census(source)[("<module>", "os.replace")] == 1
+    assert census(source)[("<module>", "os.unlink")] == 1
 
 
 def test_census_records_native_intent_removal_boundary():

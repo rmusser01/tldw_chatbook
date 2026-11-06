@@ -1,8 +1,11 @@
 ---
 id: TASK-39053
 title: "The backup owner inventory has not matched production since it landed: 644 added, 194 gone and 12 changed producer rows and 21 SQLite registry changes need an owner and cohort review"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 10:09
+updated_date: 2026-11-06 14:48
 labels:
 - follow-up
 - backup
@@ -61,3 +64,14 @@ Classifying rows into owners and backup cohorts is a product decision about what
 - [ ] #6 Negative control: a synthetic unreviewed producer turns the test red, and the failure message lists every added, gone and changed row
 - [ ] #7 The file runs on a PR lane (the Architecture guards job, or another the owner picks; never the fast PR contract), with three timings of that lane's command recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Recompute the drift at dev 2684e5453f with the test's own `census()` / `production_census()`; check whether any gone row is a scanner blind spot rather than removed code, and extend the scanner (test only) if so.
+2. Classify every added and changed producer row and every new SQLite member by the doc's existing rules and each owner's `SQLiteOwnerPolicy` flags; remove gone rows, recording the cause of the 8 doc-only SQLite rows.
+3. AC#2: implement the recommended option for `tests.store_kernel` as a small, reversible change; record the alternative.
+4. Make the failure message list every added, gone and changed row (AC#6); show it with a synthetic unreviewed producer.
+5. Lane the file on the `architecture-guards` job, pin it in `ARCHITECTURE_GUARD_TARGETS`, time the step three times.
+6. Write the cohort sign-off table in Implementation Notes; leave AC#1, #2 and #4 unticked and the task In Progress pending owner sign-off.
+<!-- SECTION:PLAN:END -->
