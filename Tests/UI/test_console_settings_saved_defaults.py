@@ -420,3 +420,61 @@ async def test_saving_a_koboldcpp_root_as_the_default_is_refused_with_its_copy()
         (committed,) = results
         assert committed.submission.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
         assert committed.submission.draft.endpoint_draft.value == other_native
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "reason", "fixed"),
+    [
+        (
+            "http://127.0.0.1:8000/v1?api_key=sk-secret123",
+            "Endpoint URL must not include a query.",
+            "http://127.0.0.1:8000/v1",
+        ),
+        (
+            "http://127.0.0.1:8000/v1/models/v1",
+            "Endpoint path has ambiguous API suffixes.",
+            "http://127.0.0.1:8001/v1",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_saving_an_endpoint_the_contract_refuses_shows_its_reason(
+    endpoint, reason, fixed
+) -> None:
+    """TASK-38964 review r10e-rev4: the modal passed an endpoint Settings'
+    **s** refuses, the writer refused it, and the only feedback was "Not
+    written to disk" with a Retry that refused again, while the guard kept
+    asking for Save endpoint. The contract's own reason now shows, nothing is
+    submitted, and the secret in the query is not repeated."""
+    app = CoreFirstHarness()
+    app.app_config["api_settings"]["vllm"] = {
+        "api_url": "http://127.0.0.1:8002/v1",
+        "model": "vllm-model",
+    }
+    results: list = []
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(
+            provider="vllm", model="vllm-model", base_url=endpoint
+        ),
+        app_config=app.app_config,
+        providers_models={"vllm": ["vllm-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal, results)
+        save = modal.query_one("#console-settings-save-default", Button)
+        assert str(save.label) == SAVE_ENDPOINT_ACTION_LABEL
+        await pilot.click(save)
+        await settle(pilot, app)
+        assert results == []
+        error = modal.query_one("#console-settings-error", Static)
+        assert str(error.content) == reason
+        assert "sk-secret123" not in str(error.content)
+
+        modal.query_one("#console-settings-base-url", Input).value = fixed
+        await settle(pilot, app)
+        await pilot.click(save)
+        await settle(pilot, app)
+        (committed,) = results
+        assert committed.submission.draft.endpoint_draft.value == fixed

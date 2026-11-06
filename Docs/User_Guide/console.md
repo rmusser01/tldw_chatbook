@@ -778,9 +778,10 @@ For KoboldCpp, **Save endpoint & use model** saves only its native
 `/api/v1/generate` address: a bare root or an OpenAI path such as `/v1` is
 refused with "KoboldCpp needs its native /api/v1/generate address. For an
 OpenAI-compatible server, choose Custom instead." and nothing is written.
-For every provider it writes only an address **s** in Settings would accept:
-a remote address typed without `http://` or `https://`, or a key pasted into
-the field, is not written.
+For every provider it writes only an address **s** in Settings would accept.
+For one **s** refuses, such as an address with a query (`?api_key=…`), a
+fragment or an ambiguous path, it shows the reason **s** gives, such as
+"Endpoint URL must not include a query.", and submits nothing.
 A Docker Compose service name, such as `http://kobold_cpp:5001` or
 `http://vllm/v1`, is an endpoint like any other: two different ones are
 different servers, so a chat on one that is not saved is blocked until you

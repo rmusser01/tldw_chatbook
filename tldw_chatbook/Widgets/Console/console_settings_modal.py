@@ -98,6 +98,7 @@ from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultRecoveryRequest,
     ConsoleDefaultSavePhase,
     build_console_default_readiness_preview,
+    console_default_endpoint_refusal,
     format_console_endpoint_preview,
 )
 from tldw_chatbook.Chat.local_server_discovery import (
@@ -111,7 +112,6 @@ from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     canonical_connection_identity,
     connection_probe_availability,
-    koboldcpp_route_refusal,
 )
 from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_BASE_URL_KEYS,
@@ -4143,13 +4143,13 @@ class ConsoleSettingsModal(
         if submission is None:
             return
         endpoint = submission.draft.endpoint_draft
-        # TASK-38964: the default would save an endpoint koboldcpp's native
-        # send cannot use.
+        # TASK-38964 (review r10e-rev4): the default would save an endpoint
+        # the contract refuses, or one off koboldcpp's native route.
         if (
             action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
             and endpoint is not None
             and (
-                refusal := koboldcpp_route_refusal(
+                refusal := console_default_endpoint_refusal(
                     endpoint.bound_provider_config_key, endpoint.value
                 )
             )

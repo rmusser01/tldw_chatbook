@@ -32,9 +32,9 @@ from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
-    canonical_endpoint_host,
-    is_exact_schemeless_host,
     koboldcpp_route_refusal,
+    normalize_provider_key_for_contract,
+    resolve_provider_endpoint,
     valid_dns_label,
 )
 
@@ -1112,32 +1112,31 @@ def _endpoint_patch_is_authorized(
         and provider_identity_key(patch.bound_provider_config_key)
         == canonical_provider
         and parse_console_endpoint_preview(patch.value) is not None
-        # TASK-38964 review r10e-rev3: the preview takes a pasted key for a
-        # remote authority; the write needs the contract's scheme and host.
-        and _contract_accepts_authority(patch.value)
-        # TASK-38964: a koboldcpp endpoint off its native route cannot send.
-        and not koboldcpp_route_refusal(canonical_provider, patch.value)
+        and not console_default_endpoint_refusal(canonical_provider, patch.value)
     )
 
 
-def _contract_accepts_authority(value: str) -> bool:
-    """Whether the endpoint contract's scheme and host rules accept ``value``.
+def console_default_endpoint_refusal(provider: str, endpoint: str) -> str:
+    """Why a Console default may not write ``endpoint`` for ``provider``.
 
-    A remote endpoint needs its http(s) scheme; only loopback may be typed
-    without one. The host must pass ``canonical_endpoint_host``.
+    The endpoint contract decides, as for Settings' **s**: its first error
+    (TASK-38964 review r10e-rev4: the writer took a query, a fragment, an
+    ambiguous path or a pasted key the contract refuses), then koboldcpp's
+    native-route rule (TASK-38964). Chat settings shows the same reason
+    before it submits. A registry entry's endpoint reads as Custom's.
+
+    Args:
+        provider: Provider config key, or a registry entry's id.
+        endpoint: The endpoint the default would write.
+
+    Returns:
+        The refusal copy, or "" when the endpoint may be written.
     """
-    candidate = value.strip()
-    has_scheme = "://" in candidate
-    try:
-        parsed = urlsplit(candidate if has_scheme else f"http://{candidate}")
-        hostname = parsed.hostname
-    except ValueError:
-        return False
-    return (
-        bool(hostname)
-        and canonical_endpoint_host(hostname) is not None
-        and (has_scheme or is_exact_schemeless_host(parsed.netloc))
-    )
+    key = provider if normalize_provider_key_for_contract(provider) else "custom"
+    errors = resolve_provider_endpoint(key, endpoint).errors
+    if errors:
+        return errors[0]
+    return koboldcpp_route_refusal(key, endpoint)
 
 
 def _build_locked_default_mutation(

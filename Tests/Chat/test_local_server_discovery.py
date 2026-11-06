@@ -1567,12 +1567,28 @@ _DEFAULT_WRITE_PROVIDERS = {
 }
 
 
+#: Review r10e-rev4 (the reviewer's probe16): shapes **s** refuses, with an
+#: authority the Console default writer took.
+_REFUSED_PATHS_AND_PORTS = (
+    "http://127.0.0.1:8000/v1/models/v1",
+    "http://127.0.0.1:8000/v1/api/v1/generate",
+    "http://127.0.0.1:8000/a//b",
+    "http://127.0.0.1:8000/v1/../x",
+    "http://127.0.0.1:8000/v1%2Fx",
+    "http://127.0.0.1:0/v1",
+    "http://127.0.0.1:8000/v1#frag",
+    "http://127.0.0.1:8000/v1?api_key=sk-secret123",
+    "http://127.0.0.1:8000/v1/chat/completions/v1",
+)
+
+
 @pytest.mark.parametrize("provider", sorted(_DEFAULT_WRITE_PROVIDERS))
 @pytest.mark.parametrize(
     ("endpoint", "written"),
     [
         *((key, False) for key in _KEY_SHAPED_ENDPOINTS),
         ("gpu-box.lan:8000/v1", False),
+        *((value, False) for value in _REFUSED_PATHS_AND_PORTS),
         ("http://127.0.0.1:8001/v1", True),
     ],
 )
@@ -1616,6 +1632,8 @@ def test_make_default_never_writes_an_endpoint_the_contract_refuses(
     else:
         assert outcome.file_replaced is False
         assert config_path.read_bytes() == before
+    # The writer and **s** decide alike (review r10e-rev4).
+    assert written is (_saved_endpoint(provider, endpoint) is not None)
 
 
 @pytest.mark.parametrize("key", [k for k in _KEY_SHAPED_ENDPOINTS if "." not in k])

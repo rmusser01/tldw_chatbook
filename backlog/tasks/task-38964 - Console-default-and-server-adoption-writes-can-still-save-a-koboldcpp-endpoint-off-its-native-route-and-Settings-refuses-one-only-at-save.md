@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: '2026-11-06 07:47'
+updated_date: '2026-11-06 08:31'
 labels:
 - follow-up
 - providers
@@ -94,6 +94,16 @@ KoboldCpp's native-route rule lives in `Provider_Contract`, and every path that 
   - `_endpoint_patch_is_authorized` now also needs `_contract_accepts_authority`: the contract's scheme rule (`is_exact_schemeless_host`) and host rule (`canonical_endpoint_host`).
   - The preview takes Console display's rule: a single label other than localhost needs a port, or a path after a typed scheme. So Chat settings' "Not written to disk" summary no longer names a bare key (`test_the_default_recovery_summary_never_names_a_pasted_key`, red for 7 shapes; the other two are over 63 characters and were already refused).
   - The preview pins in `test_console_settings_defaults.py` stay green, and so do the 6 Console settings UI files. Their 1 failure, `test_shared_evidence_change_refreshes_the_console_once`, fails at base too.
+- Review r10e-rev4:
+  - rev3's `_contract_accepts_authority` copied only the contract's scheme and host rules. The writer still took 9 shapes **s** refuses (the reviewer's probe16): a query, a fragment, `..`, `//`, `%2F`, port 0 and three ambiguous paths. Chat settings let them through, so Save endpoint & use model ended at "Not written to disk", and Retry refused again while the guard still asked for Save endpoint.
+  - The helper is replaced by `console_default_endpoint_refusal(provider, endpoint)`: the contract's first error (`resolve_provider_endpoint`; a registry id reads as Custom), then koboldcpp's route rule. `_endpoint_patch_is_authorized` and Chat settings' `_submit` both use it, so the modal shows the contract's own reason and submits nothing.
+  - The reviewer's llama.cpp shapes (`gpu-box.lan:8000/v1`, `192.168.1.20:8080`) never reach Save endpoint & use model. llama.cpp's direct path raises no `endpoint_not_saved` blocker, so its footer offers Save as model default, which carries no endpoint patch. The reachable loop is vllm or ollama with a refused path or query, which reads `endpoint_not_saved`.
+  - Tests:
+    - `test_make_default_never_writes_an_endpoint_the_contract_refuses` gained the 9 shapes and a check that the writer and **s** decide alike. 41 cases were red at 632197c702 (`file_replaced` True).
+    - New `test_saving_an_endpoint_the_contract_refuses_shows_its_reason` (`Tests/UI/test_console_settings_saved_defaults.py`; vllm with a query holding a key, and an ambiguous path) shows the reason, never the key, and submits once fixed. Red: the endpoint was submitted.
+    - probe16 now reports no mismatch for 17 shapes × 4 providers.
+    - `test_make_default_atomically_patches_profile_globals_and_checked_endpoint` wrote `https://new.example.test:8443/v1?ignored=yes`. It is rewritten on purpose without the query; the query case is pinned as refused.
+  - `Docs/User_Guide/console.md` now says the action shows the reason **s** gives.
 - Docs: `Docs/User_Guide/settings.md` (the row says the refusal as you type) and `Docs/User_Guide/console.md` (Save endpoint & use model refuses a KoboldCpp root; the Get started card saves KoboldCpp's native route).
 
 Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/Chat/console_settings_defaults.py`, `tldw_chatbook/Widgets/Console/console_settings_modal.py`, `tldw_chatbook/UI/Console_Modules/model_switcher.py`, `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/UI/Settings_Modules/providers_models_card.py`, `tldw_chatbook/UI/Wizards/first_run_setup_state.py`, `tldw_chatbook/UI/Wizards/first_run_provider_step.py`, `tldw_chatbook/UI/Wizards/first_run_provider_detection.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/UI/test_console_settings_saved_defaults.py`, `Tests/UI/test_settings_provider_save_scope.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Docs/User_Guide/settings.md`, `Docs/User_Guide/console.md`.
