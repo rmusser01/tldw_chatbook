@@ -211,12 +211,17 @@ def automatic_download_note(facts: EmbeddingModelFacts | None) -> str:
     Live (TASK-34100.13): on a fresh profile the first automatic search built
     the RAG service and downloaded all-MiniLM-L6-v2 (87 MB) from Hugging
     Face in the background; that first send paused while it happened.
+    Review G13-R1-02: Console's start-up budget is 60 s
+    (``LIBRARY_INITIALIZATION_TIMEOUT_SECONDS``), so a slower download still
+    pauses the send at "Library search timed out", with Retry.
     """
     if facts is None or facts.cloud or facts.local_server or not facts.name:
         return ""
     return (
         f"If {facts.name} isn't on this computer yet, your first automatic "
-        "search downloads it, and that first message may wait for it."
+        "search downloads it: that first message may wait for it, or on a "
+        'slow connection stop at "Library search timed out" until you choose '
+        "Retry."
     )
 
 
