@@ -1,7 +1,7 @@
 """TASK-34100.2 review round 1 (C10, F9): the live model-id smoke, offline.
 
 ``Helper_Scripts/smoke_shipped_model_ids.py`` (AC#6) is run by hand against
-real providers. Its own logic -- parsing the template out of config.py,
+real providers. Its own logic -- parsing the shipped template file,
 mapping a 404 to 'retired' and failing the run, stopping a provider on a
 refused key, telling a transient 5xx from a rejected id -- broke silently
 until someone ran it live. ``urlopen`` is replaced here; nothing touches a
