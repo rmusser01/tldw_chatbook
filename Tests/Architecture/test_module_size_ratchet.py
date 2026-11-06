@@ -1109,7 +1109,10 @@ _BUDGETS: dict[str, int] = {
     # allowlist entry; dev pinned this row while the branch was in flight.
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
     # TASK-36947.6: the config-getter default DB is gone (-15).
-    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4760,
+    # 2026-11-05, TASK-38226: the Markdown card regexes moved to
+    # Character_Chat/card_markdown_scan.py as linear scans; 4,760 -> 4,758
+    # (set to the measurement, rebased 2026-11-12).
+    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4758,
     # 2026-11-04, TASK-38686 (owner size waiver 2026-10-31): +1, the comment
     # on update_prompt_by_id's IMMEDIATE transaction.
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated

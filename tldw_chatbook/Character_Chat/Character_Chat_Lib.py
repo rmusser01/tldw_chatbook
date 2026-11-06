@@ -2589,17 +2589,19 @@ def load_character_card_from_string_content(
         logger.debug("Attempting to load character card string content.")
 
         json_card_data_str: Optional[str] = None
+        # Both Markdown forms are found by linear scans (TASK-38226). They
+        # replace dev's two regexes, which backtracked: cubic on a crafted
+        # frontmatter, quadratic on repeated fences. Imported here, not at
+        # module level, so the screen pre-import's module set is unchanged.
+        from tldw_chatbook.Character_Chat import card_markdown_scan
 
         if content.startswith("{"):  # Likely direct JSON
             json_card_data_str = content
         elif content.startswith("---"):  # Likely Markdown with YAML frontmatter
             try:
-                # Regex to match YAML front matter strictly at the start, allowing for optional whitespace before ---
-                yaml_match = re.match(
-                    r"^\s*---\s*\n(.*?)\n\s*---\s*", content, re.DOTALL
-                )
-                if yaml_match:
-                    yaml_content = yaml_match.group(1).strip()
+                yaml_body = card_markdown_scan.frontmatter_body(content)
+                if yaml_body is not None:
+                    yaml_content = yaml_body.strip()
                     # Convert YAML to JSON string for consistent parsing by import_character_card_from_json_string
                     card_dict_from_yaml = yaml.safe_load(yaml_content)
                     if isinstance(card_dict_from_yaml, dict):
@@ -2624,14 +2626,10 @@ def load_character_card_from_string_content(
         if (
             not json_card_data_str
         ):  # If not direct JSON or YAML processed, look for JSON code block
-            # Regex to find a JSON code block (```json ... ``` or ``` ... ```)
-            # DOTALL allows . to match newlines, IGNORECASE for 'json' tag
-            pattern = re.compile(
-                r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE
-            )
-            match = pattern.search(content)
-            if match:
-                json_card_data_str = match.group(1).strip()
+            # A JSON code block (```json ... ``` or ``` ... ```)
+            json_block = card_markdown_scan.fenced_json_object(content)
+            if json_block is not None:
+                json_card_data_str = json_block.strip()
                 logger.debug("Extracted JSON from code block.")
             else:
                 if not content.startswith(
