@@ -148,7 +148,18 @@ class RagStep(SetupStep):
                     markup=False,
                 )
 
-    def on_mount(self) -> None:
+    def on_show(self) -> None:
+        """Resolve the embedding model the first time the step is shown.
+
+        Review TE-2 (TASK-34100.13): resolving at mount imported the RAG
+        config chain (~0.5 s cold) on an executor thread during every
+        wizard's first render, the Quick track's included; that GIL-bound
+        import starved the loop until a reflexive double Escape outlasted
+        the confirm dialog's grace (TASK-2314).
+        """
+        super().on_show()
+        if self._model_worker is not None:
+            return
         self._model_worker = run_wizard_worker(
             self,
             self._show_resolved_model(),
