@@ -59,9 +59,9 @@ def parse_persona_policy_from_rules(
     cleaned: list[dict[str, object]] = []
     for entry in rules or ():
         if not isinstance(entry, Mapping):
-            logger.warning(
-                "Dropping non-mapping persona policy rule; entry_type={}",
-                type(entry).__name__,
+            # TASK-39060: constant message; the forwarder appends the class.
+            logger.bind(exception_type=type(entry).__name__).warning(
+                "Dropping non-mapping persona policy rule"
             )
             continue
         try:
@@ -73,9 +73,8 @@ def parse_persona_policy_from_rules(
                 PersonaPolicyRule.model_validate(dict(entry)).model_dump(mode="json")
             )
         except Exception as exc:
-            logger.warning(
-                "Dropping malformed persona policy rule; error_type={}",
-                type(exc).__name__,
+            logger.bind(exception_type=type(exc).__name__).warning(
+                "Dropping malformed persona policy rule"
             )
     return PersonaToolPolicy(
         rules=tuple(cleaned), kinds=frozenset(str(r["rule_kind"]) for r in cleaned)

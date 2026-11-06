@@ -632,6 +632,11 @@ async def test_policy_rule_save_failure_logs_metadata_only(
 
     rendered = "".join(str(record) for record in records)
     assert "Error saving persona policy rules" in rendered
-    assert "rule_count=1" in rendered
+    # TASK-39060 (owner decision, 2026-11-06): the rule count is no longer
+    # logged; the class is bound for the forwarder to render.
     assert "mode=local" in rendered
+    assert any(
+        record.record["extra"].get("exception_type") == "RuntimeError"
+        for record in records
+    )
     assert "PRIVATE_POLICY_SAVE_FAILURE" not in rendered

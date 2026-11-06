@@ -1246,6 +1246,7 @@ jobs:
             Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type \
             Tests/Architecture/test_backup_owner_inventory.py \
             Tests/test_persistent_diagnostic_boundary.py::test_persona_policy_failure_forwards_only_its_error_class \
+            Tests/test_persistent_diagnostic_boundary.py \
             Tests/Utils/test_log_sanitizer.py \
             Tests/Architecture/test_no_undefined_module_globals.py \
             Tests/Architecture/test_console_realtime_controller_boundary.py \
