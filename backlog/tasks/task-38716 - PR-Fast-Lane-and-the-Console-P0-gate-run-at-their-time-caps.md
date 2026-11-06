@@ -41,3 +41,21 @@ Both jobs are back where TASK-34916 and TASK-34986 started. Those tasks fixed it
 - [ ] #3 No test leaves the required check to achieve it
 - [ ] #4 Both jobs' timing comments in the workflow state the measured median and maximum and the window they came from, and the contract tests that pin the lanes reflect the new layout
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-05 CI evidence, added during round-8 filing. No remedy is decided here; AC#1 still needs the owner's decision.
+
+**PR Fast Lane, as read by the reviewer.** On 2026-11-05 the reviewer read 54 `PR Fast Lane` jobs that started between 2026-11-04 04:49Z and 2026-11-05 20:34Z.
+- Successful runs had a median of 32.0 min and a maximum of 34.8 min, against the 35-minute cap.
+- 8 jobs were cancelled at the cap.
+
+**Filer's cross-check, first attempts only.** The filer read the first attempt of each `derived-artifacts.yml` pull-request run with `gh api`, giving 41 `PR Fast Lane` jobs in the same window:
+- 13 successful: median 32.0 min, maximum 34.8 min.
+- 10 failed.
+- 17 cancelled: 7 at 35.3 min (the cap), 8 before reaching it, and 2 at 54.2 and 60.2 min.
+- 1 skipped.
+
+**Console P0 regression gate.** It was cancelled at its 20-minute cap on #3412: job 127602265822 in run 42127370254, branch fu/r8-endpoint, started 23:32:24Z, cancelled 23:52:42Z (20.3 min).
+<!-- SECTION:NOTES:END -->
