@@ -122,7 +122,9 @@ goes.)
 - **Narrow terminals (under 80 columns)** — Folder files switches between
   the navigator and the file work area. Opening a file switches to the work
   area, which takes the whole width, and its **‹ Files** returns to the
-  navigator with focus in the **Files** tree. From 60 columns the navigator keeps a narrow work area beside
+  navigator with focus in the **Files** tree. A click or key press right after
+  a resize keeps the control you chose; the resize's focus restore never takes
+  it back. From 60 columns the navigator keeps a narrow work area beside
   the **Files** pane. Below 60 the **Files** pane takes the whole width and
   the work area stays hidden until you open or select a file, so **Tab**
   never lands on a control you cannot see. Reopening Folder files with its

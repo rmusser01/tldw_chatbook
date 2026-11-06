@@ -8560,6 +8560,18 @@ class LibraryScreen(BaseAppScreen):
     def _mark_library_notes_user_interaction(self) -> None:
         return self._notes_controller._mark_library_notes_user_interaction()
 
+    def get_focusable_widget_at(self, x: int, y: int) -> Widget | None:
+        """TASK-39050: a click is real input before Textual focuses its target.
+
+        Textual calls this only while forwarding a MouseDown, just before
+        ``set_focus``. The click's ``DescendantFocus`` reaches this screen
+        before the MouseDown does, so ``on_mouse_down``'s mark came too late:
+        after a resize the first click read ``resize_settling`` as
+        programmatic, and a compact transition's settled restore took it back.
+        """
+        self._mark_library_notes_user_interaction()
+        return super().get_focusable_widget_at(x, y)
+
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Let click-driven focus changes supersede resize memory."""
         try:

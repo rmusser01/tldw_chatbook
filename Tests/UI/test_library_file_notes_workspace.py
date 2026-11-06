@@ -87,6 +87,7 @@ from Tests.UI.test_library_shell import (  # noqa: E402
     _two_conversations,
     _two_notes,
     _wait_for_condition,
+    _open_note_editor,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -992,6 +993,148 @@ async def test_folder_files_user_focus_between_compact_restores_is_kept(
             await pilot.press("tab")
             await pilot.pause()
         assert editor.has_focus, screen.focused
+        controller, args, kwargs = held.pop(0)
+        settled_restore(controller, *args, **kwargs)
+        for _ in range(3):
+            await pilot.pause()
+        assert editor.has_focus, screen.focused
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_database_notes_click_between_compact_restores_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-39050: Textual focuses a clicked control before the screen hears
+    the click's MouseDown, and only real input ends a resize's settling. So
+    after a resize across the compact breakpoint the first click's focus read
+    as programmatic: the focus generation stayed put, and the transition's
+    held settled restore took focus back to the body. The click on the title
+    must advance the generation and keep the title."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    screen = LibraryScreen(app)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(170, 48)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+
+        held: list[tuple[object, tuple, dict]] = []
+        controller_type = type(screen._notes_controller)
+        settled_restore = controller_type._restore_library_notes_settled_focus
+
+        def hold(controller, *args, **kwargs):
+            held.append((controller, args, kwargs))
+
+        monkeypatch.setattr(
+            controller_type, "_restore_library_notes_settled_focus", hold
+        )
+        await pilot.resize_terminal(100, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._notes_state.compact and bool(held) and screen.focused is body
+            ),
+            message="the compact transition did not queue its settled restore",
+        )
+        # No input since the resize: the click below is the first.
+        assert screen._notes_state.resize_settling
+        title = screen.query_one("#library-note-title", Input)
+        generation = screen._notes_state.focus_intent_generation
+        await pilot.click(title)  # the user's own choice, between the restores
+        assert title.has_focus, screen.focused
+        assert screen._notes_state.focus_intent_generation > generation
+        controller, args, kwargs = held.pop(0)
+        settled_restore(controller, *args, **kwargs)
+        for _ in range(3):
+            await pilot.pause()
+        assert title.has_focus, screen.focused
+
+
+@pytest.mark.asyncio
+async def test_folder_files_click_between_compact_restores_is_kept(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-39050: TASK-38957's case with a click instead of Tab. Textual
+    focuses the clicked control before the screen hears the click's MouseDown,
+    and only real input ends a resize's settling, so after a resize the first
+    click's focus read as programmatic: the focus generation stayed put and the
+    held settled restore took focus back to the Items grip. The click must
+    advance the generation and keep the editor."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "draft.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source chooser did not mount",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "Folder Files did not mount",
+        )
+        assert await workspace.open_path("draft.md")
+        shell = workspace.query_one(
+            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        screen.set_focus(workspace.query_one("#file-notes-tree", Tree))
+        await pilot.pause()
+        shell.items_grip.press()
+        await _wait_until(
+            pilot,
+            lambda: not shell.effective_layout.items_open,
+            "Manual Items close did not settle",
+        )
+
+        held: list[tuple[object, tuple, dict]] = []
+        controller_type = type(screen._notes_controller)
+        settled_restore = controller_type._restore_library_notes_settled_focus
+
+        def hold(controller, *args, **kwargs):
+            held.append((controller, args, kwargs))
+
+        monkeypatch.setattr(
+            controller_type, "_restore_library_notes_settled_focus", hold
+        )
+        await pilot.resize_terminal(79, 30)
+        await _wait_until(
+            pilot,
+            lambda: workspace.narrow and bool(held) and editor.region.width > 0,
+            "the compact transition did not queue its settled restore",
+        )
+        # No input since the resize: the click below is the first.
+        assert screen._notes_state.resize_settling
+        assert not editor.has_focus, screen.focused
+        generation = screen._notes_state.focus_intent_generation
+        await pilot.click(editor)  # the user's own choice, between the restores
+        assert editor.has_focus, screen.focused
+        assert screen._notes_state.focus_intent_generation > generation
         controller, args, kwargs = held.pop(0)
         settled_restore(controller, *args, **kwargs)
         for _ in range(3):

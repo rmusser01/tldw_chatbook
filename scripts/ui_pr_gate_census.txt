@@ -2526,3 +2526,8 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items
 # PR lane until now. Whole file, 10 nodes, 15.6-20.5 s serially. Appended at
 # the tail.
 Tests/UI/test_library_notes_w5_session_git_layout.py
+# TASK-39050 (2026-11-06): after a resize, a click between the compact
+# transition's two focus restores keeps the clicked control, in Database
+# Notes and in Folder files (about 5-10 s each). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_database_notes_click_between_compact_restores_is_kept
+Tests/UI/test_library_file_notes_workspace.py::test_folder_files_click_between_compact_restores_is_kept
