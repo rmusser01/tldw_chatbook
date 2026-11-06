@@ -1317,7 +1317,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: lines, 1373 methods (measured with ``_measure``).
     #: 2026-10-31, PR #3259: user size waiver; New focus role, exact current measurement.
     #: 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38177, 1373),
+    #: 2026-11-06, TASK-38957 (owner size waiver): a user's focus change in
+    #: Folder files supersedes a compact transition's deferred restore:
+    #: 38177 -> 38180 lines, 1373 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38180, 1373),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

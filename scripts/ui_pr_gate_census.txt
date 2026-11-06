@@ -2479,3 +2479,7 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destina
 Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_list_destination_keeps_the_list_at_60x24[collections]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_list_destination_keeps_the_list_at_60x24[skills]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_prompts_list_takes_the_narrow_stage_and_an_open_prompt_takes_it_back
+# TASK-38957 (2026-11-06): in Folder files a user's focus change between the
+# compact transition's two restores keeps the user's focus (11-12 s; 20 of 20
+# at -n 4, load 21-25). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_folder_files_user_focus_between_compact_restores_is_kept

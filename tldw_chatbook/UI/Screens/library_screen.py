@@ -11239,6 +11239,9 @@ class LibraryScreen(BaseAppScreen):
             stage = self._library_notes_focus_stage(focused)
             relevant = bool(
                 self._library_notes_workflow_active()
+                # TASK-38957: and Folder files, so a user's move there vetoes
+                # a compact transition's deferred focus restore too.
+                or self._file_notes_active()
                 or stage == "rail"
                 or (
                     self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA

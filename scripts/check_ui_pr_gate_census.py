@@ -837,6 +837,9 @@ MINIMUM_FILES = 1708
 # TASK-38981 (2026-11-06): append the fifteen list-beside-item, Prompts and
 # empty-list nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1723
+# TASK-38957 (2026-11-06): append the Folder files focus-supersede node at
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1724
 
 
 def read_census(path: Path) -> list[str]:
