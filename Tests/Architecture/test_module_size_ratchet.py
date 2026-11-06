@@ -788,6 +788,7 @@ _BUDGETS: dict[str, int] = {
     # close_connection forgets a handle quiescence already retired.
     # TASK-38955 review fix, same waiver: 25861 -> 25870 (+9) --
     # close_idle_connections for the quit close.
+    # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     # 2026-11-05, rebased onto dev 29592ecc9b: 25854 -> 26086 (polish-1b's
     # own +232; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,
