@@ -17,12 +17,14 @@ from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    BriefingSelected,
     ExportBriefingRequested,
     ExportFeedRequested,
     InspectArtifactRecoveryRequested,
     KeepBriefingRequested,
     KeptBriefingsRequested,
     RefreshBriefingsRequested,
+    ScriptSelected,
     ServeFeedRequested,
     StopFeedServerRequested,
 )
@@ -131,6 +133,50 @@ async def _settle_briefings_load(host, pilot) -> None:
         except WorkerCancelled:
             pass
     await pilot.pause()
+
+
+#: Pane messages whose screen handler stops them and queues an Artifacts load.
+_LOAD_REQUESTS = (RefreshBriefingsRequested, BriefingSelected, ScriptSelected)
+
+
+def _track_load_requests(pane) -> list:
+    """Record each load-requesting message the pane posts (TASK-39058)."""
+    posted: list = []
+    post = pane.post_message
+
+    def record(message):
+        if isinstance(message, _LOAD_REQUESTS):
+            posted.append(message)
+        return post(message)
+
+    pane.post_message = record
+    return posted
+
+
+async def _drain_briefings_loads(host, pilot, posted, *, after=None) -> None:
+    """Wait for every Artifacts load the tracked messages queued (TASK-39058).
+
+    A load that moves the selection posts ``BriefingSelected``, and the
+    screen's handler stops it and queues one more load. So this waits until
+    each tracked message was handled (``stop()`` is the handler's first line)
+    and no loader worker is left. ``after`` names a message that must have
+    been posted first, such as the one a button press sends.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 30  # a backstop for a hang, not a settle
+    while True:
+        await _settle_briefings_load(host, pilot)
+        loading = any(
+            worker.group == "wl-briefings-load" and not worker.is_finished
+            for worker in host.workers
+        )
+        if (
+            not loading
+            and (after is None or any(isinstance(m, after) for m in posted))
+            and all(message._stop_propagation for message in posted)
+        ):
+            return
+        assert loop.time() < deadline, "Artifacts loads did not settle"
 
 
 def _seed_complete_briefing(app) -> tuple[int, int]:
@@ -559,9 +605,11 @@ async def test_accepted_missing_receipt_retries_its_exact_id(
         )
 
         hidden_db.visible = True
+        posted = _track_load_requests(pane)
         pane.query_one("#artifacts-retry-button", Button).press()
-        await host.workers.wait_for_complete()
-        await pilot.pause()
+        await _drain_briefings_loads(
+            host, pilot, posted, after=RefreshBriefingsRequested
+        )
 
         assert pane.view_state == "idle"
         assert pane.selected_briefing["id"] == accepted_id
@@ -749,6 +797,9 @@ async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope
             )
 
         await entered.wait()
+        posted = _track_load_requests(
+            screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        )
         screen._request_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=second_watchlist_id)
         )
@@ -762,7 +813,8 @@ async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope
         else:
             release.set()
         await task
-        await pilot.pause()
+        # The scope change queued its own load (TASK-39058); wait for it.
+        await _drain_briefings_loads(host, pilot, posted)
 
         assert screen.tree_scope.watchlist_id == second_watchlist_id
         assert screen._selected_briefing["id"] == second_briefing_id

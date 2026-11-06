@@ -1,8 +1,11 @@
 ---
 id: TASK-39058
 title: "Two Watchlists Artifacts tests assert idle before the reload that a retry press or a scope change queued has finished, so they read 'refreshing'"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 10:09
+updated_date: 2026-11-06 16:38
 labels:
 - follow-up
 - tests
@@ -47,3 +50,10 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - [ ] #1 Both assertions wait for the reload they depend on (the worker the press or the scope change queued), not for a fixed pause; no assertion is weakened
 - [ ] #2 10 runs at `-n 4` of both tests give 0 red, with `uptime` recorded; before the fix, 6 of 10 runs are red after TASK-38990
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reproduce: 10 runs at `-n 4` of both tests, under a temporary `bootstrap_profile` mark (the filer's method; without it every node fails locally with RecoveryRequired, TASK-38111).
+2. Trace what each assertion waits on. The press reaches the loader through two posted messages, and a load that moves the selection posts `BriefingSelected`, whose handler queues one more load. So both tests must wait for every load their action queued, follow-ups included.
+3. Add a drain helper: record the pane's load-requesting messages, then wait until each was handled (its handler calls `stop()` first) and no `wl-briefings-load` worker is left. Use it after the press and after the scope change. No assertion changes.
+4. Prove it: a temporary 0.5 s delay at the start of the queued load makes the old waits red and the new ones green; then 10 runs at `-n 4` with `uptime`.
