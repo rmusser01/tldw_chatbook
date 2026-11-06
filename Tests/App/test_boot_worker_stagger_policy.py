@@ -85,7 +85,8 @@ def test_staggered_order_runs_prefetches_before_the_resumable_backfills():
     """
     assert STAGGERED_BOOT_WORKER_KEYS == (
         # TASK-34100.5.3.2: a one-time check the first plain chat send of an
-        # upgraded profile reads; milliseconds once per profile, so first.
+        # upgraded profile reads -- the tier's one member with a waiter --
+        # bounded by its own time budget, recorded once per profile; first.
         "full_agent_tools_upgrade",
         "actor_pack_recovery",
         "actor_pack_staging_sweep",
