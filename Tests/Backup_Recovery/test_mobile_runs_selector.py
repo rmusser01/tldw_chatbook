@@ -1,6 +1,8 @@
 """R104 fixed native selector and predecode TOML materialization boundary."""
 
 import stat
+import tomllib
+from types import SimpleNamespace
 
 import pytest
 
@@ -45,7 +47,20 @@ def test_native_toml_expansion_refuses_before_decoder(raw, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("TOML decoder reached before expansion admission")
 
-    monkeypatch.setattr(inventory.tomllib, "loads", forbidden)
+    native_decoder = tomllib.loads
+    monkeypatch.setattr(
+        inventory,
+        "tomllib",
+        SimpleNamespace(**{**vars(inventory.tomllib), "loads": forbidden}),
+    )
+    assert tomllib.loads is native_decoder
+    assert tomllib.loads("unrelated = 1") == {"unrelated": 1}
+    assert inventory.tomllib.load is tomllib.load
+    assert inventory.tomllib.TOMLDecodeError is tomllib.TOMLDecodeError
+    with pytest.raises(
+        AssertionError, match="TOML decoder reached before expansion admission"
+    ):
+        inventory._parse_profile_config(b"unrelated = 1")
     with pytest.raises(_TraceReadLimit):
         inventory._parse_profile_config(raw, _read_budget=_TraceReadBudget())
 
@@ -207,7 +222,23 @@ def test_actual_history_selector_parses_once_with_native_ordinary_mode(
                 if fault in {"short", "cancel"}:
                     patch.setattr(mobile_runs_selector.os, "read", read)
                 if fault == "expansion":
-                    patch.setattr(inventory.tomllib, "loads", forbidden)
+                    native_decoder = tomllib.loads
+                    patch.setattr(
+                        inventory,
+                        "tomllib",
+                        SimpleNamespace(
+                            **{**vars(inventory.tomllib), "loads": forbidden}
+                        ),
+                    )
+                    assert tomllib.loads is native_decoder
+                    assert tomllib.loads("unrelated = 1") == {"unrelated": 1}
+                    assert inventory.tomllib.load is tomllib.load
+                    assert inventory.tomllib.TOMLDecodeError is tomllib.TOMLDecodeError
+                    with pytest.raises(
+                        AssertionError,
+                        match="pure history must not reread config unbounded",
+                    ):
+                        inventory._parse_profile_config(b"unrelated = 1")
                 result = original(*args, **kwargs)
                 assert seen == [kwargs["_read_budget"]]
                 assert name_budgets == seen
@@ -273,7 +304,20 @@ def test_repeated_native_header_prefix_is_charged_before_decoder(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("repeated native header/key tuples were not admitted")
 
-    monkeypatch.setattr(inventory.tomllib, "loads", forbidden)
+    native_decoder = tomllib.loads
+    monkeypatch.setattr(
+        inventory,
+        "tomllib",
+        SimpleNamespace(**{**vars(inventory.tomllib), "loads": forbidden}),
+    )
+    assert tomllib.loads is native_decoder
+    assert tomllib.loads("unrelated = 1") == {"unrelated": 1}
+    assert inventory.tomllib.load is tomllib.load
+    assert inventory.tomllib.TOMLDecodeError is tomllib.TOMLDecodeError
+    with pytest.raises(
+        AssertionError, match="repeated native header/key tuples were not admitted"
+    ):
+        inventory._parse_profile_config(b"unrelated = 1")
     with pytest.raises(_TraceReadLimit):
         inventory._parse_profile_config(raw, _read_budget=_TraceReadBudget())
 
