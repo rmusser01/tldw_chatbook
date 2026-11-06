@@ -1683,9 +1683,9 @@ def test_llamacpp_readiness_refuses_a_remote_endpoint_typed_without_a_scheme(
     ``http://`` first, so readiness read Ready for a remote host the save
     refuses ("Remote endpoint URLs must include an HTTP or HTTPS scheme.")."""
     from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
         build_console_settings_readiness,
         build_console_settings_summary_state,
-        ConsoleSettingsContextEstimate,
     )
 
     settings = ConsoleSessionSettings(

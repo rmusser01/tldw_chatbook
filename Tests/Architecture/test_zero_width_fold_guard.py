@@ -112,7 +112,7 @@ def test_a_wrapped_line_never_paints_past_its_box(overflow):
     """TASK-38952: an unbreakable word was cut to the full width and then
     padded, so it painted 2 cells past its box (``<---`` in 4 cells)."""
     for label in ("<---", "Refresh", "Back to session", "a  b"):
-        for width in range(0, 12):
+        for width in range(12):
             lines = Content(label)._wrap_and_format(
                 width, overflow=overflow, line_pad=1
             )
