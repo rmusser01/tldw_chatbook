@@ -24810,3 +24810,29 @@ its base is from before the work started.
 - Run `Tests/Architecture` whole on both arms rather than "the ratchets you
   know". It has at least three size-ratchet files: screen, Library modules,
   and module size.
+
+## Splitting a long write into per-item transactions does not let a waiting SQLite writer in (PR #3423 re-review N-1, 2026-11-06)
+
+**Incident.** The Library's bulk Add/Remove keyword held one `BEGIN IMMEDIATE`
+Notes transaction across every checked note, and on a ready Sync v2 profile
+each note paid about 0.12 s of `SyncStateRepository` reads inside it. The
+re-review measured a concurrent `add_conversation` waiting out the whole run
+and failing past about 15 s. The fix gave each note its own transaction, and a
+pin that started the writers at a gate between two notes went green at once.
+A scratch probe that started the writer at an arbitrary note found almost
+nothing had changed. `add_conversation` still got in only when the bulk
+ended: 3.0-3.2 s when started halfway through 50 notes, 7.8 s halfway through
+120, and "database is locked" after 15.6 s from the first of 120 under load.
+`add_note` still failed at once. The bulk retakes the write lock
+microseconds after each commit, while the waiter sleeps in SQLite's busy
+handler (its sleeps grow to 100 ms), so the waiter keeps missing the gaps. A
+deferred writer that must upgrade gets SQLITE_BUSY without the handler at
+all.
+
+**Rule.**
+- Per-item transactions help other writers only if the gaps between them are
+  real. The slow part of each item (here, reads of another store) has to run
+  outside the write transaction.
+- A gate at a commit boundary proves the lock is released there, not that
+  anyone can get it. Also time a writer that arrives inside an item, and
+  report both.
