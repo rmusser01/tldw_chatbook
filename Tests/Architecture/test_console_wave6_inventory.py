@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Architecture.test_screen_size_ratchet import _BUDGETS as _SCREEN_SIZE_BUDGETS
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCREEN_PATH = _REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py"
 IMPLEMENTATION_BASE = "bed39af6b004e4db86218fad01d2ea515b332135"
@@ -24,13 +26,15 @@ TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
-#: 2026-11-06, TASK-38988 (owner size waiver: re-pin at the measured value):
-#: chat_screen.py grew under the screen-size ratchet's own dated waivers (its
-#: ChatScreen row is 24,616 / 741) while no lane ran this file. Measured at dev
-#: e8eeae7db9: 24,604 lines, 741 methods. Only the live-screen comparisons use
-#: these; every wave-6 constant still pins its own frozen revision.
-LIVE_SCREEN_LINE_CEILING = 24_604
-LIVE_SCREEN_METHOD_CEILING = 741
+#: 2026-11-06, TASK-38988 (owner size waiver): the live ChatScreen ceiling is
+#: the screen-size ratchet's own ChatScreen row (24,616 / 741 on that day),
+#: read from that file rather than re-pinned here. A pin at the measured
+#: 24,604 would go red unseen whenever the row is raised by a dated waiver
+#: (review r10a-rev1). Only the live-screen comparisons use it; every
+#: wave-6 constant still pins its own frozen revision.
+_, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+]
 FLEET_TASK0_IMPLEMENTATION_BASE = "d4f3f97763ddf3fa46eeb35ae9473827e72695bc"
 FLEET_TASK0_BASE_SCREEN_LINES = 20_428
 FLEET_TASK0_BASE_METHODS = 653

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Architecture.test_screen_size_ratchet import _BUDGETS as _SCREEN_SIZE_BUDGETS
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_SCREEN_PATH = REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py"
@@ -27,12 +29,15 @@ MINIMUM_LINE_REDUCTION = 409
 MINIMUM_METHOD_REDUCTION = 7
 PROJECTED_LINE_CEILING = 17_215
 PROJECTED_METHOD_CEILING = 532
-#: 2026-11-06, TASK-38988 (owner size waiver: re-pin at the measured
-#: value): chat_screen.py grew under the screen-size ratchet's own dated
-#: waivers (its ChatScreen row is 24,616 / 741) while no lane ran this file.
-#: Measured at dev e8eeae7db9: (24,604 lines, 709 unique direct methods).
-#: The projection above is the historical target.
-LIVE_SCREEN_COUNTS = (24_604, 709)
+#: 2026-11-06, TASK-38988 (owner size waiver): the live ChatScreen ceiling is
+#: the screen-size ratchet's own ChatScreen row (24,616 / 741 on that day),
+#: read from that file rather than re-pinned here. A pin at the measured
+#: 24,604 would go red unseen whenever the row is raised by a dated waiver
+#: (review r10a-rev1). The projection above is the historical target.
+_, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+]
+LIVE_SCREEN_COUNTS = (LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING)
 #: The screen-size ratchet row this file holds unraised, re-pinned the same day.
 LIVE_RATCHET_ROW = ("ChatScreen", 24_616, 741)
 MAX_DELEGATE_LINES = 5

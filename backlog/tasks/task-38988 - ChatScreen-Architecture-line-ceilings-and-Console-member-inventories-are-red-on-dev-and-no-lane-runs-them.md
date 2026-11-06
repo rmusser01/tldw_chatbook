@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 06:19
+updated_date: 2026-11-06 08:53
 labels:
 - follow-up
 - tests
@@ -105,4 +105,9 @@ One PR can fix all 11. TASK-35306's node closes with it, so TASK-35306 should be
 - **Covering tests, -n 4.** 11 fixture and character files gave 15 failed on mine against 16 at base. The only failure seen only on mine is `test_character_shapes_and_controls_settle_inside_current_budget[source_size0-pixels]`, a timing-budget node that also flaked alone (2 of 4 failed); this task does not touch the character avatar.
 
 TASK-35306's node, review-selection `…without_ratchet_raise`, closes with this task; TASK-35306 is set Done.
+
+**Review r10a-rev1 fix: live ceilings follow the ratchet row.**
+- The measured pin of 24,604 sat below the screen-size ratchet's ChatScreen row (24,616 / 741). A waived growth inside the row would have turned these four laneless files red where nobody sees them.
+- All four now read their live ceiling from `Tests/Architecture/test_screen_size_ratchet.py::_BUDGETS`. The review-selection and closeout row pins, `("ChatScreen", 24_616, 741)` and `<= (24_616, 741)`, still fail on any raise of the row.
+- Negative control: 13 temporary lines take chat_screen.py to 24,617, one past the row, and all six ceiling nodes go red (6 failed, 53 passed). Reverted.
 
