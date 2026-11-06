@@ -7091,7 +7091,7 @@ class ConsoleWorkspaceController:
             self._console_tick_builds = None
 
     #: TASK-36571.1: run ticks opened so far, and the last run tick's own build
-    #: as ``(tick serial, monotonic time, fingerprint, state)`` -- or ``None``
+    #: as ``(tick serial, monotonic time, carry key, state)`` -- or ``None``
     #: once it was reused or anything built outside a run tick. CLASS
     #: defaults, like ``_console_tick_builds``, for hand-built fixtures.
     _console_run_tick_serial: int = 0
