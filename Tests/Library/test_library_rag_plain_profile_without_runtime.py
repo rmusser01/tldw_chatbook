@@ -182,6 +182,66 @@ async def test_an_embedding_profile_without_the_extras_is_still_unavailable(
 
 
 @pytest.mark.asyncio
+async def test_an_embedding_profile_searched_cold_builds_the_runtime_at_search_time(
+    monkeypatch, active_profile
+):
+    """Control: no prewarm and no cached runtime -- `search` itself builds it.
+
+    The control above goes through `prewarm`, which caches the runtime before
+    the search runs, so the search never consults the profile route. This one
+    reaches the route read inside `_search_rag`: a Hybrid read must still
+    lead to one build and the engine's search, never the keyword seams.
+    """
+    active_profile("hybrid_basic")
+    monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: True)
+    runtime = _BuiltRuntime("hybrid", "Hybrid Basic")
+    builds = _recording_factory(monkeypatch, runtime)
+    service, notes = _service_with_one_note()
+
+    result = await service.search("Fresnel lens", ("notes",), "rag", top_k=5)
+
+    assert builds == ["build"]
+    assert runtime.searches == ["Fresnel lens"]
+    assert not notes.calls, "a hybrid profile runs the engine, not the four seams"
+    assert not any("BM25" in note for note in _route_notes(result))
+
+
+@pytest.mark.asyncio
+async def test_a_switch_from_bm25_to_hybrid_rereads_the_profile(
+    monkeypatch, active_profile
+):
+    """The route read is per shared-service generation, not per service.
+
+    A profile switch resets the shared RAG service, which bumps its
+    generation. A read kept across that would go on answering "plain" for a
+    user who has switched to Hybrid: a keyword search under a stale
+    "Profile 'BM25 Only'" disclosure, with no runtime ever built.
+    """
+    from tldw_chatbook.RAG_Search.ingestion_indexing import reset_shared_rag_service
+
+    active_profile("bm25_only")
+    monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: True)
+    runtime = _BuiltRuntime("hybrid", "Hybrid Basic")
+    builds = _recording_factory(monkeypatch, runtime)
+    service, notes = _service_with_one_note()
+
+    first = await service.search("Fresnel lens", ("notes",), "rag", top_k=5)
+    assert builds == []
+    assert _BM25_NOTE in _route_notes(first)
+
+    # What `active_config.set_active_profile()` does on a switch.
+    active_profile("hybrid_basic")
+    reset_shared_rag_service()
+    notes.calls.clear()
+    second = await service.search("Fresnel lens", ("notes",), "rag", top_k=5)
+
+    assert builds == ["build"], "the switch to Hybrid kept the stale BM25 route"
+    assert runtime.searches == ["Fresnel lens"]
+    assert not notes.calls
+    assert not any("BM25" in note for note in _route_notes(second))
+
+
+@pytest.mark.asyncio
 async def test_an_unreadable_profile_falls_back_to_the_runtime(
     monkeypatch, active_profile
 ):
@@ -201,6 +261,50 @@ async def test_an_unreadable_profile_falls_back_to_the_runtime(
     assert builds == ["build"]
     assert notes.calls
     assert _BM25_NOTE in _route_notes(result)
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_profile_warns_once_per_generation(
+    monkeypatch, active_profile
+):
+    """Each search retries the read, but the warning is not repeated per search.
+
+    A profile that stays unreadable (in the per-test sandbox, every search)
+    used to log one warning per search. The read is still retried each time,
+    so a profile that becomes readable is picked up; the warning comes back
+    after a profile switch or save, which is a new generation.
+    """
+    import tldw_chatbook.RAG_Search.simplified.active_config as active_config
+    from tldw_chatbook.RAG_Search.ingestion_indexing import reset_shared_rag_service
+
+    reads: list[str] = []
+
+    def broken():
+        reads.append("read")
+        raise OSError("profiles dir unreadable")
+
+    monkeypatch.setattr(active_config, "_active_profile_id", broken)
+    monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: False)
+    _recording_factory(monkeypatch, _BuiltRuntime("plain", "BM25 Only"))
+    service, _notes = _service_with_one_note()
+    warnings: list[str] = []
+    sink = service_module.logger.add(
+        lambda message: warnings.append(str(message)),
+        level="WARNING",
+        filter=lambda record: "route unreadable" in record["message"],
+    )
+    try:
+        for _ in range(3):
+            await service.search("Fresnel lens", ("notes",), "rag", top_k=5)
+        assert len(reads) == 3, "every search must retry the profile read"
+        assert len(warnings) == 1, warnings
+
+        reset_shared_rag_service()
+        await service.search("Fresnel lens", ("notes",), "rag", top_k=5)
+        assert len(reads) == 4
+        assert len(warnings) == 2, "a new generation warns again"
+    finally:
+        service_module.logger.remove(sink)
 
 
 _PLAIN_ROUTE_IMPORTS_SNIPPET = """
