@@ -1028,14 +1028,19 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   llama.cpp, koboldcpp, Oobabooga, llamafile) is checked too: when it is
   running, it lists the models it serves, and when it refuses, it is named
   here. Change a provider's settings or use it, and its refusal is a NEEDS
-  SETUP row again. For a sample, saving the provider in Settings
-  or setup writes `template_sample = false`, and pointing it at your own
-  address or model by hand (in `api_url`, or in `api_base_url`, `api_base`
-  or `base_url`, which a send uses first) makes it yours too. A provider
-  section your `config.toml` already had before this marker existed counts
-  as a sample only while the address a send would use and the model are
-  still the ones the old template shipped; once you changed either, it is
-  yours. Nothing in your file is rewritten. MLX-LM is a server too, but no model listing can check it, so
+  SETUP row again. A sample counts as one only while it carries the marker
+  and still holds the shipped address and model. Saving the provider in
+  Settings or setup writes `template_sample = false`. Pointing it at your
+  own address or model makes it yours as well, whether you edit
+  `config.toml` by hand (`api_url`, or `api_base_url`, `api_base` or
+  `base_url`, which a send uses first) or use Chat settings' **Save endpoint
+  & use model**. From then on it is listed like any provider you set up,
+  never here, whether its server answered, refused or (a keyed server, or
+  MLX-LM) was never checked. A provider section your `config.toml` already
+  had before this marker existed counts as a sample only while the address
+  a send would use and the model are still the ones the old template
+  shipped; once you changed either, it is yours. Nothing in your file is
+  rewritten. MLX-LM is a server too, but no model listing can check it, so
   while it is still at its shipped settings, unused and listing no models,
   it is named here as "MLX-LM (Apple silicon) (not checked)" rather than
   under READY PROVIDERS: nothing knows whether it is running, and opening

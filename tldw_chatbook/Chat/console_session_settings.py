@@ -2751,13 +2751,18 @@ def provider_left_at_shipped_default(
 def provider_is_template_sample(
     app_config: Mapping[str, object], provider_key: str
 ) -> bool:
-    """Whether this provider still carries the template's sample values.
+    """Whether this provider's table carries the template-sample marker.
 
     TASK-34100.2 AC#9 (entry-exit-handoff-23): the shipped template marks its
     placeholder local sections (TabbyAPI's ``tabby-model``, vLLM's
     ``vllm-model-x``, MLX-LM, the Custom slots...) ``template_sample = true``,
-    and saving the provider writes it ``false``. An explicit marker, never a
-    comparison with the template's values.
+    and saving the provider writes it ``false``. In an already-merged mapping
+    this reads the marker only; the loader infers it for a table written
+    before the marker existed, from its endpoint and model against the frozen
+    ``PRE_MARKER_TEMPLATE_SAMPLES`` (``settle_pre_marker_template_samples``).
+    Owner ruling 2026-11-05 ("Values decide"): a marked table counts as a
+    sample only while ``provider_holds_template_sample_values`` holds too, so
+    callers ask both.
 
     Args:
         app_config: The live configuration snapshot.
@@ -2780,11 +2785,13 @@ def provider_holds_template_sample_values(
     and model (TASK-34100.2 pass 3).
 
     The switcher asks this of a provider ``provider_is_template_sample``
-    already marks, to tell a sample the user edited by hand (its own endpoint
-    or model, whose refusal stays a NEEDS SETUP row) from one whose other keys
-    merely drifted with the template (a profile written before the marker
-    still holds Custom's old ``streaming = false``). It never decides the
-    marker itself. The endpoint is the one a send would use, so a marked
+    already marks (owner ruling 2026-11-05, "Values decide"): a marked table
+    is a sample only while this holds, so one the user pointed at their own
+    endpoint or model by hand is theirs and keeps its own row, reached,
+    refused or never contacted, while one whose other keys merely drifted
+    with the template (a profile written before the marker still holds
+    Custom's old ``streaming = false``) is a sample still. It never decides
+    the marker itself. The endpoint is the one a send would use, so a marked
     table sent to the user's own ``api_base_url`` is theirs (review round 1,
     R1-2), and a sample from an older template still matches its frozen
     values (R1-3).

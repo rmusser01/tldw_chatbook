@@ -2019,11 +2019,7 @@ async def test_a_settings_round_trip_keeps_the_chats_endpoint_for_its_provider(
         _persisted_console_app,
     )
 
-    # TASK-34100.2 AC#9 (rewritten on purpose): the template marks vLLM a
-    # sample, which Chat settings' pick list keeps out of Ready until the
-    # user saves it (Save writes the marker false). Picking it means it is
-    # set up.
-    app = _persisted_console_app(template_sample=False)
+    app = _persisted_console_app()
     app.providers_models = {
         "llama_cpp": ["model-a", "model-b"],
         "vllm": ["vendor/model:b"],

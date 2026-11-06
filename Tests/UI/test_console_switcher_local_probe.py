@@ -558,10 +558,6 @@ async def test_an_untouched_mlx_lm_is_not_running_not_ready(servers, owned):
     config = _with_shipped("local_mlx_lm")
     if owned:
         config["api_settings"]["local_mlx_lm"]["model"] = "my-mlx-model"
-        # TASK-34100.2 AC#9 (rewritten on purpose): the template marks MLX-LM
-        # a sample, and a marked sample stays out of Ready until the user
-        # saves it, which writes the marker false.
-        config["api_settings"]["local_mlx_lm"]["template_sample"] = False
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(

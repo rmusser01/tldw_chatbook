@@ -6,12 +6,17 @@ because something answered on their shipped ports without listing models
 (a Next.js dev server on :8080 in the review). The template now marks those
 sections ``template_sample = true``; a marked provider the user never saved,
 used or reached is listed under the existing NOT RUNNING group until the user
-saves it or a probe lists its models. In an already-loaded configuration the
-marker alone decides whether a provider is a sample (the loader infers it for
-a table written before the marker existed:
-``Tests/Chat/test_template_sample_upgrade.py``); for a refused sample, only the
-endpoint a send would use and its model (not the whole table) decide whether
-the user edited it by hand.
+saves it or a probe lists its models.
+
+Owner ruling 2026-11-05 ("Values decide"): a section counts as a sample only
+while it carries the marker AND still holds the shipped endpoint and model
+(the endpoint a send would use, not the whole table). A table written before
+the marker existed counts as one while it holds the frozen shipped endpoint
+and model (the loader infers its marker:
+``Tests/Chat/test_template_sample_upgrade.py``). Once the endpoint or model
+differs -- a hand edit, a Settings save, Chat settings' 'Save endpoint & use
+model' -- it is the user's and is listed normally, never under NOT RUNNING,
+whether its server was reached, refused or never contacted.
 """
 
 from __future__ import annotations
@@ -57,7 +62,9 @@ def test_the_shipped_placeholders_carry_an_explicit_marker() -> None:
     assert "template_sample" not in api["openai"]
 
 
-def test_the_marker_not_the_values_decides() -> None:
+def test_the_marker_reader_sees_a_saved_or_unmarked_table_as_no_sample() -> None:
+    """``provider_is_template_sample`` reads the marker only; the switcher
+    asks ``provider_holds_template_sample_values`` as well (Values decide)."""
     marked = _with_tabby()
     saved = _with_tabby(template_sample=False)  # what Save writes
 
@@ -89,28 +96,134 @@ async def test_a_sample_whose_port_answers_without_models_is_not_ready(servers):
 
 
 @pytest.mark.asyncio
-async def test_a_marked_sample_whose_values_drifted_is_still_not_ready(servers):
-    """The marker, not a value comparison, keeps a sample out of Ready: a
-    marked table hand-edited without Save no longer equals the template, and
-    still never reads Ready. (A table written before the marker existed has
-    no marker in the user's file; the loader infers one while it still holds
-    the sample endpoint and model, and writes ``false`` otherwise --
-    ``Tests/Chat/test_template_sample_upgrade.py``.)"""
+async def test_a_marked_sample_whose_model_the_user_edited_is_theirs(servers):
+    """Owner ruling 2026-11-05 ("Values decide", G2C-R2-1): a marked table
+    whose model the user edited by hand, with no Save, is the user's. Its
+    shipped port answers without listing models (here a 404), which kept it
+    under NOT RUNNING while only a refusal consulted the values; it is now
+    listed as the user's own row, in whichever group its readiness says."""
     servers.status[TABBY] = 404
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(
             app,
-            config=_with_tabby(model="tabby-model-from-an-older-template"),
-            providers_models=MODELS,
+            config=_with_tabby(model="my-own-tabby-model"),
+            providers_models={**MODELS, "tabbyapi": ["my-own-tabby-model"]},
         )
         await app.push_screen(switcher)
         await _settle(app, pilot)
         quiet = _group(switcher, "NOT RUNNING")
-        ready = _group(switcher, "READY PROVIDERS")
+        listed = {
+            row.provider
+            for header in ("READY PROVIDERS", "NEEDS SETUP")
+            for row in _group(switcher, header)
+        }
 
-    assert any("TabbyAPI" in row.text for row in quiet), quiet
-    assert not any(row.provider == "tabbyapi" for row in ready), ready
+    assert not any("TabbyAPI" in row.text for row in quiet), quiet
+    assert "tabbyapi" in listed, listed
+
+
+def _with_template(section: str, **overrides) -> dict:
+    """CONFIG plus the shipped template's ``section`` table, marker and all,
+    with the user's own hand edits on top (no Save: the marker stays true)."""
+    config = deepcopy(CONFIG)
+    table = deepcopy(DEFAULT_CONFIG_FROM_TOML["api_settings"][section])
+    table.update(overrides)
+    assert table["template_sample"] is True  # a hand edit, never a Save
+    config["api_settings"][section] = table
+    return config
+
+
+@pytest.mark.asyncio
+async def test_a_hand_edited_marked_mlx_lm_is_ready_and_pickable(servers):
+    """G2C-R2-1: MLX-LM has no models route, so no listing can ever answer
+    for it. A marked MLX-LM whose model the user set by hand in config.toml
+    was hidden under NOT RUNNING for good. Values decide: it is the user's,
+    a READY row that Find reaches and Enter picks."""
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            config=_with_template("local_mlx_lm", model="my-mlx-model"),
+            providers_models={**MODELS, "local_mlx_lm": ["my-mlx-model"]},
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
+        ready = [
+            (row.provider, row.model) for row in _group(switcher, "READY PROVIDERS")
+        ]
+        await pilot.press(*"my-mlx")
+        await _settle(app, pilot)
+        highlighted = switcher.highlighted_row()
+
+    assert "MLX-LM" not in quiet, quiet
+    assert ("local_mlx_lm", "my-mlx-model") in ready, ready
+    assert highlighted is not None
+    assert (highlighted.provider, highlighted.model) == ("local_mlx_lm", "my-mlx-model")
+    assert 5678 not in servers.ports  # its shipped port is never contacted
+
+
+@pytest.mark.asyncio
+async def test_a_keyed_marked_vllm_pointed_at_the_users_server_is_ready(servers):
+    """G2C-R2-1: a keyed vLLM is never contacted by the switcher (AC#4), so
+    while only a refusal consulted the values, a marked vLLM the user pointed
+    at their own running server and model by hand read NOT RUNNING. Values
+    decide: its endpoint and model are the user's, so it is a READY row
+    that Find reaches and Enter picks."""
+    own = 9098
+    servers.up.add(own)
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            config=_with_template(
+                "vllm",
+                api_url=f"http://127.0.0.1:{own}/v1/chat/completions",
+                model="my-own-model",
+                api_key="sk-local",
+            ),
+            providers_models={**MODELS, "vllm": ["my-own-model"]},
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
+        ready = [
+            (row.provider, row.model) for row in _group(switcher, "READY PROVIDERS")
+        ]
+        await pilot.press(*"my-own")
+        await _settle(app, pilot)
+        highlighted = switcher.highlighted_row()
+
+    assert "vLLM" not in quiet, quiet
+    assert ("vllm", "my-own-model") in ready, ready
+    assert highlighted is not None
+    assert (highlighted.provider, highlighted.model) == ("vllm", "my-own-model")
+    assert own not in servers.ports  # keyed: listed, never contacted (AC#4)
+
+
+@pytest.mark.asyncio
+async def test_a_marked_sample_at_its_shipped_values_stays_not_running(servers):
+    """The counterpart: the same marked vLLM and MLX-LM tables still at the
+    shipped endpoint and model are samples, under NOT RUNNING, never READY."""
+    config = _with_template("vllm")
+    config["api_settings"]["local_mlx_lm"] = deepcopy(
+        DEFAULT_CONFIG_FROM_TOML["api_settings"]["local_mlx_lm"]
+    )
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            config=config,
+            providers_models={**MODELS, "vllm": [], "local_mlx_lm": []},
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
+        ready = {row.provider for row in _group(switcher, "READY PROVIDERS")}
+
+    assert "vLLM" in quiet and "MLX-LM" in quiet, quiet
+    assert not {"vllm", "local_mlx_lm"} & ready, ready
 
 
 @pytest.mark.asyncio

@@ -1612,22 +1612,21 @@ class ConsoleModelPopover(
         ) or (
             # TASK-34100.2 AC#9: a template sample (placeholder endpoint
             # and models) the user never saved, used or reached is not
-            # set up, whatever answered on its shipped port. The marker
-            # alone keeps it out of Ready; a marked table whose endpoint
-            # or model the user edited by hand keeps its own not-ready row
-            # (TASK-33005.6 AC#3), so the value check below only ever
-            # picks a not-ready group. Pass 3: it compares the sample's
-            # endpoint and model, not the whole table, so a pre-marker
-            # profile's sample (Custom's old streaming = false) refused on
-            # its shipped port is not running either.
+            # set up, whatever answered on its shipped port. Owner ruling
+            # 2026-11-05 ("Values decide"): a table is a sample only while
+            # it carries the marker AND still holds the shipped endpoint
+            # and model, the same rule whether its server was reached,
+            # refused or never contacted. Once its endpoint or model differs
+            # (a hand edit, a Settings save, Chat settings' 'Save endpoint &
+            # use model') it is the user's and keeps its own row. Only the
+            # endpoint and model are compared, so a pre-marker sample whose
+            # other keys drifted (Custom's old streaming = false) is a
+            # sample still.
             provider_is_template_sample(self._app_config, key)
+            and provider_holds_template_sample_values(self._app_config, key)
             and readiness.endpoint != "reachable"
             and key not in used
             and key != provider_key(self._current[0])
-            and (
-                _is_ready(readiness)
-                or provider_holds_template_sample_values(self._app_config, key)
-            )
         )
 
     def _packed(self, names: list[str]) -> list[str]:
