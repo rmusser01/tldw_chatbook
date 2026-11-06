@@ -128,6 +128,8 @@ def _skill_fake(**state):
         conflict=state.get("conflict", False),
         confirming_delete=state.get("confirming_delete", False),
         mutation_in_flight=state.get("mutation_in_flight", False),
+        # ``LibrarySkillsState.editor_state``: the open skill's editor state.
+        editor_state=state.get("editor_state"),
     )
     fake = SimpleNamespace(
         _skills_state=skills_state,
@@ -158,6 +160,12 @@ def test_the_skill_keys_answers_at_the_editor():
     assert _skill_fake(mutation_in_flight=True) == ([], [BUSY], [])
     assert _skill_fake(dirty=False) == ([], [NO_CHANGES], [])
     assert _skill_fake() == ([], [], [True])
+    # PR #3423 review m-6: a plugin-owned skill is read-only package
+    # content -- the key says so, never "no changes" (mounted in
+    # ``test_library_ctrl_s_plugin_owned_skill.py``).
+    assert _skill_fake(
+        dirty=False, editor_state=SimpleNamespace(plugin_owned=True)
+    ) == ([], ["Save unavailable — this skill is read-only plugin content."], [])
 
 
 def _report(state: str, *, before: str, ok: bool, transitioning: bool = False) -> list:

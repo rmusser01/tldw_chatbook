@@ -187,6 +187,11 @@ LIBRARY_PROMPT_SAVE_NOT_LOADED_COPY = (
 LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY = (
     "Save unavailable — finish or cancel the delete first."
 )
+#: PR #3423 review m-6: a plugin-owned skill is read-only package content
+#: (no Save; Plugins owns it), so its Ctrl+S says so -- never "no changes".
+LIBRARY_SKILL_SAVE_PLUGIN_OWNED_COPY = (
+    "Save unavailable — this skill is read-only plugin content."
+)
 #: The Media forms' answers (painted on the form's own status line): the
 #: shared write interlock's existing wording, and the analysis save's own
 #: in-flight guard (review I-3: a double or held Ctrl+S wrote two versions).
