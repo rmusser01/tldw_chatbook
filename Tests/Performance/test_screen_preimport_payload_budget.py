@@ -154,7 +154,11 @@ MAX_PASS_ADDED_MODULES = 558
 #: before this change; `library_screen` then drops 44 lines
 #: (the timer landing becomes a one-shot pending landing). Modules unchanged
 #: (556), pinned at the measurement.
-MAX_PASS_ADDED_LOC = 426_388
+#: 426,388 -> 426,429 (2026-11-06 owner decision ("Re-pin per PR (Rec.)", B2b
+#: follow-up burn-down): TASK-38228/.46/.37 add +41 LOC in the ccp route
+#: (personas_screen +35, roleplay_list_window_state +6); no new module), pinned
+#: at the measurement, LOC only, modules unchanged (556); ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 426_429
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
