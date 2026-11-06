@@ -46,7 +46,9 @@ def captured():
 
 
 def _rendered(records) -> str:
-    """Message plus bound fields: the class rides in ``extra`` (TASK-38989)."""
+    """Message plus bound fields: the class rides in ``extra``, which this
+    capture reads but ``_forward_loguru_to_standard`` does not render
+    (TASK-38989)."""
     return "".join(
         f"{record.record['message']} {record.record['extra']}" for record in records
     )
@@ -68,7 +70,10 @@ def test_graph_read_failure_is_recorded(captured):
 
     assert controller._read_graph("persona-1") is None
     rendered = _rendered(captured)
-    # Diagnosable: the site and the failure class both land in the message.
+    # Diagnosable: the site is the message; the failure class is bound into
+    # the record's ``extra``, not the message. The standard-logging forwarder
+    # renders only the message, so forwarded log lines do not show the class
+    # (TASK-38989 review r10a-rev1; the forwarder rendering is a follow-up).
     assert "persona_buddy_visual_graph_unreadable" in rendered
     assert "RuntimeError" in rendered
     # Bounded: the exception's own text and traceback do not.
