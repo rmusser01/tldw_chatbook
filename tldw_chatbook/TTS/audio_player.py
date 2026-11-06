@@ -135,6 +135,22 @@ class PlaybackState(Enum):
     PAUSED = "paused"
     FINISHED = "finished"
     ERROR = "error"
+    #: TASK-39040: the clip went to the default app through `os.startfile`.
+    #: There is no process, so nothing ever moves it to FINISHED; it stays
+    #: current until `stop()` or the next `play()` releases the slot. A
+    #: distinct state (fix round 2), so a caller can tell it from a clip it
+    #: can watch and stop polling for an end it will never see.
+    HANDED_OFF = "handed_off"
+
+
+#: Ruling (TASK-39040, fix round 2): how long a surface keeps a handed-off
+#: clip's FILE after it has released the in-app slot. ShellExecute returns no
+#: handle, so no surface can see the default app finish, and deleting on
+#: Stop pulled the file from under the app still reading it. One bound for
+#: the Console's clip cache and the Speech playground's WAV copy, equal to
+#: the Console's owned-playback poll bound; a screen's own exit still
+#: releases at once.
+HAND_OFF_RETENTION_SECONDS = 300.0
 
 
 @dataclass
@@ -149,7 +165,6 @@ class AudioPlayerInfo:
     total_pause_duration: float = 0.0  # Total time spent paused
     duration: Optional[float] = None  # Total duration of the file
     position: float = 0.0  # Current playback position in seconds
-    handed_off: bool = False  # TASK-39040: os.startfile has it; no process
 
 
 def _kill_player_process_group(process: "subprocess.Popen | None") -> None:
@@ -365,7 +380,9 @@ class SimpleAudioPlayer:
                         return False
                     with self._lock:
                         self._current = AudioPlayerInfo(
-                            file_path, PlaybackState.PLAYING, handed_off=True
+                            file_path,
+                            PlaybackState.HANDED_OFF,
+                            start_time=time.time(),
                         )
                     return True
             else:
@@ -574,6 +591,7 @@ class SimpleAudioPlayer:
                 PlaybackState.PLAYING,
                 PlaybackState.PAUSED,
                 PlaybackState.FINISHED,
+                PlaybackState.HANDED_OFF,
             ]:
                 # Only try to terminate if process exists
                 if self._current.process:
@@ -614,8 +632,10 @@ class SimpleAudioPlayer:
                         pass
 
                 # Always reset all state when cleaning up. A handed-off clip
-                # plays on in the default app, so it is released, not stopped.
-                handed_off = self._current.handed_off
+                # plays on in the default app, so it is released, not stopped;
+                # whether its file may go is the caller's call, bounded by
+                # HAND_OFF_RETENTION_SECONDS.
+                handed_off = self._current.state is PlaybackState.HANDED_OFF
                 self._current = AudioPlayerInfo()
                 logger.info("Playback stopped/cleaned up - all state reset")
                 return not handed_off

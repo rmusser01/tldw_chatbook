@@ -23,7 +23,7 @@ from __future__ import annotations
 import ast
 import os
 import threading
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -280,9 +280,12 @@ def test_windows_media_player_argv_is_unchanged_when_it_is_installed(
 def test_windows_hand_off_claims_no_control_it_does_not_have(tmp_path, monkeypatch):
     """Ruling (TASK-39040): `os.startfile` returns no process handle, so the
     player can neither pause, resume, stop nor watch a handed-off clip. It
-    keeps the clip current (the app cannot see it end, and freeing the file
-    early would pull it from under the default app), and it never reports a
-    pause, resume or stop it did not perform."""
+    keeps the clip current in its own state, HANDED_OFF (fix round 2: a
+    distinct state, so a caller can tell it from a clip with a process and
+    stop polling for an end the app will never see), and it never reports a
+    pause, resume or stop it did not perform. `stop()` releases the slot
+    (returning False); deleting the file is the caller's decision, bounded
+    by `HAND_OFF_RETENTION_SECONDS`."""
     _windows_host(monkeypatch)
     clip = tmp_path / "clip.wav"
     clip.write_bytes(b"fixture")
@@ -291,23 +294,47 @@ def test_windows_hand_off_claims_no_control_it_does_not_have(tmp_path, monkeypat
     assert player.play(clip) is True
 
     assert player.get_current_file() == clip
-    assert player.get_state() is PlaybackState.PLAYING
+    assert player.get_state() is PlaybackState.HANDED_OFF
+    assert player.is_playing() is False, "no process: nothing the app can watch"
     assert player.pause() is False
-    assert player.get_state() is PlaybackState.PLAYING
+    assert player.get_state() is PlaybackState.HANDED_OFF
     assert player.resume() is False
     assert player.stop() is False, "stop() must not claim it stopped the default app"
     assert player.get_current_file() is None
     assert player.get_state() is PlaybackState.IDLE
+    assert audio_player.HAND_OFF_RETENTION_SECONDS == 300.0
 
 
 class _NoticeRecordingApp:
-    """Stands in for the running Textual app: records `notify` calls."""
+    """Stands in for the running Textual app.
+
+    `_thread_id` and `call_from_thread` mirror Textual 8.2.8 (`textual/app.py`:
+    `_thread_init` records the constructing thread's ident, and
+    `call_from_thread` refuses to run on that same thread). The fake runs the
+    callback inline and records that it was routed, plus, per notice, whether
+    `notify` ran on the app's thread.
+    """
 
     def __init__(self) -> None:
-        self.notices: list[tuple[str, dict]] = []
+        self.notices: list[tuple[str, dict, bool]] = []
+        self.thread_calls: list[tuple[str, tuple, dict]] = []
+        self._thread_id = threading.get_ident()
 
     def notify(self, message: str, **kwargs) -> None:
-        self.notices.append((message, kwargs))
+        on_app_thread = threading.get_ident() == self._thread_id
+        self.notices.append((message, kwargs, on_app_thread))
+
+    def call_from_thread(self, callback, *args, **kwargs):
+        if self._thread_id == threading.get_ident():
+            raise RuntimeError(
+                "The `call_from_thread` method must run in a different thread "
+                "from the app"
+            )
+        self.thread_calls.append((callback.__name__, args, kwargs))
+        return callback(*args, **kwargs)
+
+
+_NOTICE = "Playing in your default audio app. Pause or stop it there."
 
 
 def _active_app_var() -> ContextVar:
@@ -319,7 +346,9 @@ def _active_app_var() -> ContextVar:
 def test_windows_hand_off_tells_the_running_app_once_per_clip(tmp_path, monkeypatch):
     """Ruling (TASK-39040): the UI says so. Each hand-off raises one literal
     toast in the running app naming where playback went and that in-app pause
-    and stop cannot reach it."""
+    and stop cannot reach it. From the app's own thread (a handler on the
+    event loop) it is a direct `notify`; nothing is routed through
+    `call_from_thread`, which would refuse its own thread."""
     _windows_host(monkeypatch)
     clip = tmp_path / "a&calc&.mp3"
     clip.write_bytes(b"fixture")
@@ -330,17 +359,15 @@ def test_windows_hand_off_tells_the_running_app_once_per_clip(tmp_path, monkeypa
     finally:
         _active_app_var().reset(token)
 
-    assert app.notices == [
-        (
-            "Playing in your default audio app. Pause or stop it there.",
-            {"markup": False},
-        )
-    ]
+    assert app.notices == [(_NOTICE, {"markup": False}, True)]
+    assert app.thread_calls == []
 
 
 def test_windows_hand_off_notice_crosses_the_async_player_thread(tmp_path, monkeypatch):
     """`AsyncAudioPlayer` (Speech playground, setup wizard) plays on its own
-    executor thread; the notice must still reach the app that asked."""
+    executor thread. Qodo (fix round 2): the notice is routed through
+    `app.call_from_thread(app.notify, ...)` from that thread, never a direct
+    `notify` off the app's thread (on `854e00b9e3` it was direct)."""
     import asyncio
 
     _windows_host(monkeypatch)
@@ -358,15 +385,48 @@ def test_windows_hand_off_notice_crosses_the_async_player_thread(tmp_path, monke
             await player.cleanup()
 
     assert asyncio.run(scenario()) is True
-    assert [message for message, _ in app.notices] == [
-        "Playing in your default audio app. Pause or stop it there."
-    ]
+    assert app.thread_calls == [("notify", (_NOTICE,), {"markup": False})]
+    assert app.notices == [(_NOTICE, {"markup": False}, False)]
+
+
+def test_windows_hand_off_from_a_stopped_app_logs_instead_of_raising(
+    tmp_path, monkeypatch
+):
+    """`call_from_thread` raises `RuntimeError("App is not running")` when the
+    app has no loop (Textual 8.2.8 `app.py`, the first guard in
+    `call_from_thread`). The hand-off still succeeds and nothing is toasted
+    off the app's thread; the notice goes to the log."""
+
+    class _StoppedApp(_NoticeRecordingApp):
+        def call_from_thread(self, callback, *args, **kwargs):
+            raise RuntimeError("App is not running")
+
+    _windows_host(monkeypatch)
+    clip = tmp_path / "clip.mp3"
+    clip.write_bytes(b"fixture")
+    app = _StoppedApp()
+    token = _active_app_var().set(app)
+    try:
+        context = copy_context()
+    finally:
+        _active_app_var().reset(token)
+    outcome: list[bool] = []
+    worker = threading.Thread(
+        target=lambda: outcome.append(context.run(audio_player.play_audio_file, clip))
+    )
+    worker.start()
+    worker.join(5)
+
+    assert outcome == [True]
+    assert app.notices == []
 
 
 async def test_windows_hand_off_toast_reaches_a_real_textual_app(tmp_path, monkeypatch):
     """The same notice through a real running Textual app, from the two
     contexts the app's play paths use: a handler on the event loop
-    (Watchlists, Artifacts, Library) and `asyncio.to_thread` (Console)."""
+    (Watchlists, Artifacts, Library) and `asyncio.to_thread` (Console). Qodo
+    (fix round 2): both notices run `notify` on the app's thread; only the
+    `to_thread` one is routed through `call_from_thread`."""
     import asyncio
 
     from textual.app import App
@@ -374,11 +434,17 @@ async def test_windows_hand_off_toast_reaches_a_real_textual_app(tmp_path, monke
     class _Host(App[None]):
         def __init__(self) -> None:
             super().__init__()
-            self.seen: list[tuple[str, dict]] = []
+            self.seen: list[tuple[str, dict, bool]] = []
+            self.routed: list[str] = []
 
         def notify(self, message, **kwargs):  # type: ignore[override]
-            self.seen.append((str(message), kwargs))
+            on_app_thread = threading.get_ident() == self._thread_id
+            self.seen.append((str(message), kwargs, on_app_thread))
             return super().notify(message, **kwargs)
+
+        def call_from_thread(self, callback, *args, **kwargs):  # type: ignore[override]
+            self.routed.append(getattr(callback, "__name__", repr(callback)))
+            return super().call_from_thread(callback, *args, **kwargs)
 
     _windows_host(monkeypatch)
     clip = tmp_path / "a&calc&.mp3"
@@ -389,36 +455,68 @@ async def test_windows_hand_off_toast_reaches_a_real_textual_app(tmp_path, monke
         assert await asyncio.to_thread(audio_player.play_audio_file, clip) is True
         await pilot.pause()
 
-    notice = (
-        "Playing in your default audio app. Pause or stop it there.",
-        {"markup": False},
-    )
+    notice = (_NOTICE, {"markup": False}, True)
     assert host.seen == [notice, notice]
+    assert host.routed == ["notify"]
+
+
+def _speech_host():
+    """A `SpeechPlaybackMixin` host over the real `AsyncAudioPlayer`, with the
+    DOM and transport-button sync faked."""
+    from tldw_chatbook.UI.Speech.speech_playback_mixin import SpeechPlaybackMixin
+
+    host = SpeechPlaybackMixin.__new__(SpeechPlaybackMixin)
+    host.app = MagicMock()
+    # The app's thread identity and cross-thread routing, as the real App
+    # has them (the player's executor thread reaches `notify` through
+    # `call_from_thread`).
+    host.app._thread_id = threading.get_ident()
+    host.app.call_from_thread = lambda callback, *args, **kwargs: callback(
+        *args, **kwargs
+    )
+    host.app.audio_player = audio_player.AsyncAudioPlayer()
+    host.init_playback_state()
+    host.query_one = MagicMock(return_value=MagicMock())
+    host._sync_idle_transport_actions = MagicMock()
+    host._sync_active_transport_actions = MagicMock()
+    host._current_result_status_copy = MagicMock(return_value="Ready")
+    return host
+
+
+async def _settle_speech_host(host) -> None:
+    await host._retire_progress_timer()
+    retire_retention = getattr(host, "_retire_hand_off_retention", None)
+    if retire_retention is not None:
+        await retire_retention()
+    await host.app.audio_player.cleanup()
+
+
+def _speech_messages(host) -> list[str]:
+    return [str(call.args[0]) for call in host.app.notify.call_args_list]
+
+
+def _deleting_release(clip: Path, released: list[bool]):
+    """The playground's real release securely deletes its WAV copy; this one
+    records whether the copy still existed when it was asked to."""
+
+    def release() -> None:
+        released.append(clip.exists())
+        clip.unlink(missing_ok=True)
+
+    return release
 
 
 async def test_speech_playground_reports_no_pause_or_stop_after_a_hand_off(
     tmp_path, monkeypatch
 ):
     """Ruling (TASK-39040), at the surface with Pause and Stop buttons. After a
-    hand-off the playground shows the notice, says Pause failed (true), and
-    does not say "Playback stopped" (on dev it did: stopping the cmd.exe
-    wrapper left the default app playing)."""
-    from tldw_chatbook.UI.Speech.speech_playback_mixin import SpeechPlaybackMixin
-
+    hand-off the playground shows the notice, answers Pause with where to
+    pause (it performed none), and does not say "Playback stopped" (on dev it
+    did: stopping the cmd.exe wrapper left the default app playing)."""
     _windows_host(monkeypatch)
     clip = tmp_path / "speech.wav"
     clip.write_bytes(b"RIFF....WAVE")
-    host = SpeechPlaybackMixin.__new__(SpeechPlaybackMixin)
-    host.app = MagicMock()
-    host.app.audio_player = audio_player.AsyncAudioPlayer()
-    host._progress_timer_task = None
-    host._active_playback_release = None
-    host._play_worker_task = None
-    host._result_transition_operation_id = None
-    host.query_one = MagicMock(return_value=MagicMock())
-    host._sync_idle_transport_actions = MagicMock()
-    host._sync_active_transport_actions = MagicMock()
-    host._current_result_status_copy = MagicMock(return_value="Ready")
+    host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
         await host._play_audio_async(clip, lambda: None)
@@ -426,13 +524,128 @@ async def test_speech_playground_reports_no_pause_or_stop_after_a_hand_off(
         assert await host._stop_audio_async() is True
     finally:
         _active_app_var().reset(token)
-        await host.app.audio_player.cleanup()
+        await _settle_speech_host(host)
 
-    messages = [str(call.args[0]) for call in host.app.notify.call_args_list]
-    assert messages == [
-        "Playing in your default audio app. Pause or stop it there.",
-        "Failed to pause playback",
-    ]
+    assert _speech_messages(host) == [_NOTICE, _NOTICE]
+    assert host.app.notify.call_args_list[-1].kwargs == {
+        "severity": "warning",
+        "markup": False,
+    }
+
+
+async def test_speech_playground_stop_after_a_hand_off_keeps_the_copy_for_the_bound(
+    tmp_path, monkeypatch
+):
+    """Qodo (fix round 2): on `854e00b9e3`, Stop after a hand-off released the
+    playground's WAV copy at once (`secure_delete_file`) while the default app
+    was still opening it. Now Stop releases the in-app slot but keeps the copy
+    for `HAND_OFF_RETENTION_SECONDS` (Ruling), then releases it; and it still
+    never says "Playback stopped". This drives the Stop handler itself, with
+    the copy leased the way `_play_audio_async` leases it."""
+    import asyncio
+
+    _windows_host(monkeypatch)
+    monkeypatch.setattr(audio_player, "HAND_OFF_RETENTION_SECONDS", 0.2)
+    clip = tmp_path / "speech.wav"
+    clip.write_bytes(b"RIFF....WAVE")
+    released: list[bool] = []
+    host = _speech_host()
+    token = _active_app_var().set(host.app)
+    try:
+        assert await host.app.audio_player.play(clip) is True
+        host._active_playback_release = _deleting_release(clip, released)
+
+        assert await host._stop_audio_async() is True
+
+        assert released == [] and clip.exists(), "Stop deleted a playing clip"
+        assert host._active_playback_release is None, "the in-app slot is free"
+        assert "Playback stopped" not in _speech_messages(host)
+        assert await host.app.audio_player.get_state() is PlaybackState.IDLE
+        await asyncio.sleep(0.5)
+        assert released == [True] and not clip.exists(), "not released at the bound"
+        assert host._hand_off_releases == {}
+    finally:
+        _active_app_var().reset(token)
+        await _settle_speech_host(host)
+
+
+async def test_speech_playground_progress_polling_ends_on_a_hand_off(
+    tmp_path, monkeypatch
+):
+    """Qodo (fix round 2): on `854e00b9e3` a handed-off clip stayed PLAYING
+    with no process to end it, so the Speech progress task polled every
+    100 ms for as long as the pane lived and kept its WAV copy. Now the task
+    ends on the hand-off: the progress bar and transport are hidden, the
+    status says where the clip plays, and the copy gets the same bounded
+    retention as Stop."""
+    import asyncio
+
+    _windows_host(monkeypatch)
+    monkeypatch.setattr(audio_player, "HAND_OFF_RETENTION_SECONDS", 0.2)
+    clip = tmp_path / "speech.wav"
+    clip.write_bytes(b"RIFF....WAVE")
+    released: list[bool] = []
+    host = _speech_host()
+    token = _active_app_var().set(host.app)
+    try:
+        await host._play_audio_async(clip, _deleting_release(clip, released))
+        timer = host._progress_timer_task
+        assert timer is not None
+        await asyncio.wait_for(timer, timeout=1.0)
+
+        widget = host.query_one.return_value
+        assert widget.update.call_args_list[-1].args == (_NOTICE,)
+        class_calls = [
+            (name, call.args)
+            for name, call in (
+                (c[0], c)
+                for c in widget.method_calls
+                if c[0] in {"add_class", "remove_class"}
+            )
+        ]
+        assert class_calls[-1] == ("add_class", ("hidden",)), class_calls
+        assert released == [] and clip.exists(), (
+            "the copy was freed under the default app"
+        )
+        assert host._active_playback_release is None
+        assert "Playback complete" not in _speech_messages(host)
+        await asyncio.sleep(0.5)
+        assert released == [True] and not clip.exists()
+    finally:
+        _active_app_var().reset(token)
+        await _settle_speech_host(host)
+
+
+async def test_speech_playground_exit_releases_a_retained_hand_off_copy_at_once(
+    tmp_path, monkeypatch
+):
+    """The pane's unmount is the existing release point for its copy; a copy
+    retained for a hand-off is released there without waiting out the bound
+    (`on_unmount` calls `_retire_hand_off_retention`; the pane-level case in
+    `Tests/UI/test_speech_playground_pane_lifecycle.py` drives the real
+    unmount)."""
+    _windows_host(monkeypatch)
+    monkeypatch.setattr(audio_player, "HAND_OFF_RETENTION_SECONDS", 60.0)
+    clip = tmp_path / "speech.wav"
+    clip.write_bytes(b"RIFF....WAVE")
+    released: list[bool] = []
+    host = _speech_host()
+    token = _active_app_var().set(host.app)
+    try:
+        assert await host.app.audio_player.play(clip) is True
+        host._active_playback_release = _deleting_release(clip, released)
+        assert await host._stop_audio_async() is True
+        assert released == [] and len(host._hand_off_releases) == 1
+
+        await host._retire_hand_off_retention()
+
+        assert released == [True] and not clip.exists()
+        assert host._hand_off_releases == {}
+        await host._retire_hand_off_retention()
+        assert released == [True], "a retained release must run once"
+    finally:
+        _active_app_var().reset(token)
+        await _settle_speech_host(host)
 
 
 # Fix round 1 (TASK-39040 review, Important 2 and Minor 3). The first commit

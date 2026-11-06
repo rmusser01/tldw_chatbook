@@ -3697,8 +3697,10 @@ def _use_fake_audio_service(monkeypatch, fake) -> None:
 
 
 class _FakePlayer:
-    """A stand-in for `SimpleAudioPlayer`, the two methods `handle_play_
-    audio_requested`/`handle_stop_audio_requested` actually call.
+    """A stand-in for `SimpleAudioPlayer`, the three methods `handle_play_
+    audio_requested`/`handle_stop_audio_requested` reach through
+    `stop_audio_playback_if_current` (TASK-39040: it reads the state to
+    refuse a clip handed to the default app, and returns `stop()`'s result).
     """
 
     def __init__(self) -> None:
@@ -3708,12 +3710,18 @@ class _FakePlayer:
     def get_current_file(self) -> Path | None:
         return self._current
 
+    def get_state(self):
+        from tldw_chatbook.TTS.audio_player import PlaybackState
+
+        return PlaybackState.PLAYING if self._current else PlaybackState.IDLE
+
     def set_current(self, path: Path) -> None:
         self._current = path
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
         self.stopped = True
         self._current = None
+        return True
 
 
 def _patch_audio_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

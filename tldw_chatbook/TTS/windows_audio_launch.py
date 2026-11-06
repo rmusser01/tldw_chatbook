@@ -22,6 +22,7 @@ resident on macOS or Linux.
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path, PureWindowsPath
 
 from loguru import logger
@@ -122,10 +123,20 @@ def _tell_running_app(message: str) -> None:
     """Show `message` as a literal toast in the Textual app that asked to play.
 
     Every caller reaches `play()` inside that app's context: a handler on the
-    event loop, `asyncio.to_thread` (which copies the context), or
-    `AsyncAudioPlayer.play` (which runs the call in a copy of it). `App.notify`
-    is safe to call from any thread. With no active app (a script or a test),
-    the notice goes to the log instead.
+    event loop, `asyncio.to_thread` (the Console; it copies the context), or
+    `AsyncAudioPlayer.play` (the Speech playground; it runs the call in a copy
+    of it). The app is found through Textual's `active_app` context variable.
+    On the app's own thread this is a direct `App.notify`. From any other
+    thread it goes through `App.call_from_thread`, which runs `notify` on the
+    app's loop and waits for it: `notify` itself only posts a message, but
+    the routing makes the thread crossing explicit (Qodo, fix round 2). The
+    thread test is the one `call_from_thread` uses to refuse its own thread
+    in Textual 8.2.8 (`textual/app.py`: `App._thread_id`, set by
+    `_thread_init` and `run_async` from `threading.get_ident()`, and compared
+    against it in `call_from_thread`); that attribute is private API, as
+    `active_app` is. With no active app (a script or a test), or an app that
+    is not running (`call_from_thread` raises `RuntimeError`), the notice
+    goes to the log instead.
 
     Args:
         message: Literal toast text; never interpolated into markup.
@@ -137,4 +148,10 @@ def _tell_running_app(message: str) -> None:
     except (ImportError, LookupError):
         logger.info("Windows audio handed off to the default app; no app to notify")
         return
-    app.notify(message, markup=False)
+    if app._thread_id == threading.get_ident():
+        app.notify(message, markup=False)
+        return
+    try:
+        app.call_from_thread(app.notify, message, markup=False)
+    except RuntimeError:
+        logger.info("Windows audio handed off to the default app; app not running")

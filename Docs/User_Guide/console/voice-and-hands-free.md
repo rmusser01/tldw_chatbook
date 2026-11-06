@@ -181,10 +181,14 @@ each fully-silent reply says so.
   handed to your default audio app, and a toast says so: "Playing in your
   default audio app. Pause or stop it there." The app cannot pause or stop
   that player; use its own controls, or add Windows Media Player Legacy from
-  Windows' optional features so the app can stop playback itself. Only a
-  local audio file is handed over: a clip on a network share (including a
-  mapped network drive) or behind a link to another file type does not play
-  this way.
+  Windows' optional features so the app can stop playback itself. Pressing
+  ⏹ in the app for such a clip is refused rather than reported as a stop,
+  and the clip's file is kept for five minutes so the other app can finish
+  reading it (closing the app releases it at once). In the Speech
+  playground the progress bar hides and the status says where the clip is
+  playing. Only a local audio file is handed over: a clip on a network
+  share (including a mapped network drive) or behind a link to another file
+  type does not play this way.
 - **"No audio was captured from the microphone."** — check the OS
   microphone permission for your terminal.
 - **"Dictation failed: The '…' speech model could not be downloaded or
