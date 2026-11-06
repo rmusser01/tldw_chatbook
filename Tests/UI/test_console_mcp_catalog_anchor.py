@@ -144,6 +144,36 @@ async def test_a_store_write_during_the_anchored_composition_is_refused(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_the_kill_switch_turned_on_after_the_anchored_composition_drops_mcp(
+    monkeypatch,
+):
+    """The switch turned on between the two run starts refuses the pending catalog.
+
+    Every file reads as settled, so only the anchored stamp can tell. Had the
+    next fingerprint proven the pending composition by the permission store's
+    new bytes, that fingerprint would have become the kept identity and the
+    next run would have reused the pending catalog, MCP tools included, with
+    the switch on.
+    """
+    _every_file_settled(monkeypatch)
+
+    async def check(c: _Console) -> None:
+        fingerprints = Fingerprints(c.service, monkeypatch)
+        first = await _cold_run_start(c, fingerprints)
+        assert _ids(first), "the harness offers built-in MCP tools"
+        assert _pending(), "precondition: the composition was kept pending"
+        c.service.set_kill_switch(True)
+        c.reads.reset()
+        off, _gate, local, _hook = await _run_start(c.console)
+        assert c.reads.total() > 0, "reused the pending catalog with the switch on"
+        assert off is None and local is None, "MCP or local tools offered, switch on"
+        assert fingerprints.calls == 1, "the next run start did not fingerprint"
+        assert not _pending(), "the refused pending catalog was kept"
+
+    await _with_console(check)
+
+
+@pytest.mark.asyncio
 async def test_an_mcp_server_added_after_the_anchored_composition_is_offered(
     monkeypatch,
 ):
