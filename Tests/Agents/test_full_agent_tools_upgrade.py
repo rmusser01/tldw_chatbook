@@ -445,6 +445,119 @@ def test_a_profile_without_agent_use_stays_light_and_its_config_is_untouched(
     assert light_surface_configured() is True
 
 
+def _blocked_result(name: str, call_id: str) -> dict:
+    """What the agent loop records when it refuses a call (light surface:
+    ``ERROR: Tool not permitted``), seen on a real light-surface send."""
+    return {
+        "kind": "tool_result",
+        "tool_name": name,
+        "call_id": call_id,
+        "tool_outcome": "blocked",
+        "result": f"ERROR: Tool not permitted: {name}",
+    }
+
+
+def test_a_refused_tool_call_is_not_agent_use(profile) -> None:
+    """Review round 1 (F3-11): on the light surface a small model can name a
+    tool it was never offered; the loop refuses it, but the step log still
+    records the call. A refused call was never dispatched, so it is not use."""
+    _record_run(
+        profile,
+        {"kind": "model", "summary": "hi"},
+        {**_tool_call("web_search"), "call_id": "turn-1-call-0"},
+        _blocked_result("web_search", "turn-1-call-0"),
+        {**_tool_call("spawn_subagent"), "call_id": "turn-2-call-0"},
+        _blocked_result("spawn_subagent", "turn-2-call-0"),
+    )
+    before = profile.config_path.read_bytes()
+
+    result = _run(profile)
+
+    assert (result.outcome, result.signal) == (UpgradeOutcome.LIGHT, None)
+    assert profile.config_path.read_bytes() == before
+
+
+def test_a_dispatched_call_beside_a_refused_one_still_counts(profile) -> None:
+    """The refusal is matched to its own call, not to every call of the run
+    (or of the same tool)."""
+    _record_run(
+        profile,
+        {**_tool_call("web_search"), "call_id": "turn-1-call-0"},
+        _blocked_result("web_search", "turn-1-call-0"),
+        {**_tool_call("web_search"), "call_id": "turn-2-call-0"},
+        {
+            "kind": "tool_result",
+            "tool_name": "web_search",
+            "call_id": "turn-2-call-0",
+            "tool_outcome": "failed",
+            "result": "ERROR: timed out",
+        },
+    )
+
+    result = _run(profile)
+
+    assert (result.outcome, result.signal) == (UpgradeOutcome.KEPT_ON, SIGNAL_TOOL_CALL)
+
+
+def test_a_refused_call_in_a_pre_v13_json_blob_is_not_agent_use(profile) -> None:
+    run_id = _record_run(profile)
+    runs = _runs_db(profile)
+    try:
+        with runs.transaction() as connection:
+            connection.execute(
+                "UPDATE agent_runs SET steps = ? WHERE id = ?",
+                (
+                    json.dumps(
+                        [
+                            {"index": 0, **_tool_call("fs_list"), "call_id": "c-1"},
+                            {"index": 1, **_blocked_result("fs_list", "c-1")},
+                        ]
+                    ),
+                    run_id,
+                ),
+            )
+    finally:
+        runs.close()
+
+    assert _run(profile).outcome is UpgradeOutcome.LIGHT
+
+
+def test_the_served_companions_runs_database_counts_too(profile) -> None:
+    """Review round 1 (F5-6): phone sends run on their own runs database,
+    ``<user_data>/mobile/runs.db``, and got the full agent surface before
+    the light surface -- so a companion user's tool use lives only there."""
+    companion = profile.data / "mobile" / "runs.db"
+    companion.parent.mkdir(mode=0o700)
+    runs = AgentRunsDB(companion, client_id="mobile-service")
+    try:
+        run_id = runs.create_run(conversation_id="phone-1", agent_kind="primary")
+        runs.insert_steps_at_indices(run_id, [(0, {"index": 0, **_tool_call("web_fetch")})])
+    finally:
+        runs.close()
+    assert not profile.runs_path.exists()
+
+    result = run_full_agent_tools_upgrade(
+        workspace_db=profile.workspace_db,
+        agent_runs_path=profile.runs_path,
+        companion_runs_path=companion,
+    )
+
+    assert (result.outcome, result.signal) == (UpgradeOutcome.KEPT_ON, SIGNAL_TOOL_CALL)
+    # Neither database was created by the read.
+    assert not profile.runs_path.exists()
+
+
+def test_an_absent_companion_runs_database_is_no_signal(profile) -> None:
+    result = run_full_agent_tools_upgrade(
+        workspace_db=profile.workspace_db,
+        agent_runs_path=profile.runs_path,
+        companion_runs_path=profile.data / "mobile" / "runs.db",
+    )
+
+    assert result.outcome is UpgradeOutcome.LIGHT
+    assert not (profile.data / "mobile").exists()
+
+
 def test_a_fresh_profile_with_no_runs_database_is_not_given_one(profile) -> None:
     """The runs database is read only if it exists; never created."""
     assert not profile.runs_path.exists()
@@ -514,6 +627,34 @@ def test_turning_full_agent_tools_off_after_the_upgrade_stays_off(profile) -> No
     assert result.outcome is UpgradeOutcome.EXPLICIT
     assert _raw(profile)["tools"]["full_agent_tools_enabled"] is False
     assert light_surface_configured() is True
+
+
+def test_a_lost_marker_reruns_safely(profile) -> None:
+    """Review round 1 (F4-5), recorded decision: the marker lives in the
+    workspaces database, so replacing that database makes the next launch
+    run the upgrade again. That is safe by construction -- it writes only
+    when the raw config has no key at all, only ``true``, and only when the
+    profile shows agent use at that moment; an explicit ``false`` (the user
+    turned it off) is never touched (the test above). The one profile a
+    rerun turns on is a light one that has since gained agent use, which is
+    the owner's own "uses agent features" test."""
+    assert _run(profile).outcome is UpgradeOutcome.LIGHT
+    _define_subagent(profile)
+
+    replaced = WorkspaceDB(profile.data / "replaced.db", client_id="upgrade-test")
+    try:
+        result = run_full_agent_tools_upgrade(
+            workspace_db=replaced, agent_runs_path=profile.runs_path
+        )
+        assert replaced.is_agent_backfill_complete(FULL_AGENT_TOOLS_UPGRADE_MARKER)
+    finally:
+        replaced.close()
+
+    assert (result.outcome, result.signal) == (
+        UpgradeOutcome.KEPT_ON,
+        SIGNAL_AGENT_DEFINITION,
+    )
+    assert _raw(profile)["tools"]["full_agent_tools_enabled"] is True
 
 
 # --------------------------------------------------------------------------
@@ -674,29 +815,124 @@ def test_logs_name_the_outcome_and_signal_but_no_path_or_tool(
 # --------------------------------------------------------------------------
 
 
-def test_the_boot_worker_body_mirrors_the_written_key_into_app_config(
-    profile,
-) -> None:
-    _bind_folder(profile)
-    calls: list[str] = []
-
+def _mirroring_call_from_thread(calls: list[str]):
     def call_from_thread(function, *args):
         calls.append(function.__name__)
         return function(*args)
 
+    return call_from_thread
+
+
+@pytest.mark.parametrize(
+    ("seed", "signal"),
+    [
+        (_bind_folder, SIGNAL_WORKSPACE_BINDING),
+        # Review round 1 (F2-2): the other three signals reach production only
+        # through the runs database the app finds beside its ChaChaNotes file.
+        (_define_subagent, SIGNAL_AGENT_DEFINITION),
+        (lambda profile: _record_run(profile, _tool_call("fs_list")), SIGNAL_TOOL_CALL),
+        (lambda profile: _record_run(profile, agent_kind="subagent"), SIGNAL_SUBAGENT_RUN),
+    ],
+    ids=["folder-binding", "subagent-definition", "tool-call-run", "subagent-run"],
+)
+def test_the_boot_worker_body_finds_the_runs_database_beside_chachanotes(
+    profile, seed, signal
+) -> None:
+    seed(profile)
+    calls: list[str] = []
     app_config = {"tools": {"read_file_enabled": True}}
 
     result = run_for_profile(
         workspace_db=profile.workspace_db,
-        # The runs database sits beside ChaChaNotes.
+        # Production's own derivation: agent_runs.db beside ChaChaNotes.
         chachanotes_db=SimpleNamespace(db_path=profile.data / "ChaChaNotes.db"),
         app_config=app_config,
-        call_from_thread=call_from_thread,
+        call_from_thread=_mirroring_call_from_thread(calls),
     )
 
-    assert result.outcome is UpgradeOutcome.KEPT_ON
+    assert (result.outcome, result.signal) == (UpgradeOutcome.KEPT_ON, signal)
     assert calls == ["_mirror_into_app_config"]
     assert app_config["tools"] == {
         "read_file_enabled": True,
         "full_agent_tools_enabled": True,
     }
+
+
+@pytest.mark.parametrize(
+    "chachanotes_db",
+    [None, SimpleNamespace(db_path=":memory:"), SimpleNamespace(db_path=None)],
+    ids=["no-chachanotes", "in-memory", "no-path"],
+)
+def test_an_unknown_runs_database_location_fails_closed_and_retries(
+    profile, chachanotes_db, captured_logs
+) -> None:
+    """Review round 1 (F3-4): with ChaChaNotes unavailable (the app sets it to
+    None when it fails to open) the runs database cannot be found. That was
+    read as "no signal" and the profile was marked done for good; a profile
+    whose only signal is a sub-agent definition lost its tools for ever."""
+    _define_subagent(profile)
+    before = profile.config_path.read_bytes()
+
+    result = run_for_profile(
+        workspace_db=profile.workspace_db,
+        chachanotes_db=chachanotes_db,
+        app_config={},
+        call_from_thread=_mirroring_call_from_thread([]),
+    )
+
+    assert result.outcome is UpgradeOutcome.FAILED
+    assert profile.config_path.read_bytes() == before
+    assert not _marker_recorded(profile)
+    assert "upgrade check failed" in "\n".join(captured_logs)
+    # The next launch, with ChaChaNotes back, finds the definition.
+    retried = run_for_profile(
+        workspace_db=profile.workspace_db,
+        chachanotes_db=SimpleNamespace(db_path=profile.data / "ChaChaNotes.db"),
+        app_config={},
+        call_from_thread=_mirroring_call_from_thread([]),
+    )
+    assert (retried.outcome, retried.signal) == (
+        UpgradeOutcome.KEPT_ON,
+        SIGNAL_AGENT_DEFINITION,
+    )
+
+
+def test_an_unknown_runs_database_does_not_matter_once_recorded(profile) -> None:
+    assert _run(profile).outcome is UpgradeOutcome.LIGHT
+
+    result = run_for_profile(
+        workspace_db=profile.workspace_db,
+        chachanotes_db=None,
+        app_config={},
+        call_from_thread=_mirroring_call_from_thread([]),
+    )
+
+    assert result.outcome is UpgradeOutcome.ALREADY_RECORDED
+
+
+def test_the_boot_worker_body_reads_the_companion_runs_database(profile) -> None:
+    """The served companion keeps its runs in ``get_user_data_dir()/mobile``
+    (``Web_Server/serve.py``); the boot worker looks there too. This
+    profile's user data directory is the per-test sandbox's."""
+    from tldw_chatbook.config import get_user_data_dir
+
+    companion = Path(get_user_data_dir()) / "mobile" / "runs.db"
+    assert profile.tmp_path in companion.parents  # never the real profile
+    companion.parent.mkdir(mode=0o700)
+    runs = AgentRunsDB(companion, client_id="mobile-service")
+    try:
+        runs.create_run(conversation_id="phone-1", agent_kind="subagent")
+    finally:
+        runs.close()
+
+    result = run_for_profile(
+        workspace_db=profile.workspace_db,
+        chachanotes_db=SimpleNamespace(db_path=profile.data / "ChaChaNotes.db"),
+        app_config={},
+        call_from_thread=_mirroring_call_from_thread([]),
+    )
+
+    assert (result.outcome, result.signal) == (
+        UpgradeOutcome.KEPT_ON,
+        SIGNAL_SUBAGENT_RUN,
+    )
