@@ -1,5 +1,23 @@
 # Lessons: what counts as evidence a change works
 
+## A local parser import needs passive observation instead of a shared-module double (PR3345, 2026-11-06)
+
+**Incident.** The incoming TOML hygiene guard rejected four PR3345 test patches
+of shared `tomllib.loads`. Three consumers have a module-owned name and use a
+complete `SimpleNamespace` copy. The native preview helper imports locally, so
+hoisting its import just for a double would change production. A local-code
+observer, filtered by caller and thread, proved one ordinary decode, ignored an
+unrelated parse and retained zero decoding under the original exhausted budget.
+Direct RED600 had five identity failures; final focused602 passed37 and both
+complete affected native files passed42 in603, with all52 original assertions.
+
+**What to do.** Preserve the actual production body and original decoder.
+Prove a passive observer is live before trusting zero calls, and retire every
+local event/callback/tool in finally without masking a primary error. Separate
+extra-check failures before expanding scope:603 also found six config-fixture
+refusals; fresh604 reproduced all six without importing either changed module.
+They remain red and unchanged rather than being folded into this parser repair.
+
 ## An installed-wheel source guard also excludes a virtualenv inside the checkout (PR3345, 2026-11-06)
 
 **Incident.** Packaging reproduction595 stopped before importing the installed
