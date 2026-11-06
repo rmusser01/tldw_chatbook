@@ -967,6 +967,206 @@ async def test_an_untouched_step_over_keyless_openai_whisper_shows_it_and_writes
     wizard.commit_config.assert_not_awaited()
 
 
+def _summary(config, environ) -> dict:
+    return {
+        row.label: row
+        for row in wizard_state.build_summary_rows(
+            config, environ, rag_deps_installed=True
+        )
+    }
+
+
+def _pressed(step) -> list[str]:
+    return [b.id for b in step.query("#setup-speech-engine RadioButton") if b.value]
+
+
+async def _until_pressed(pilot, step, button_id: str) -> None:
+    for _ in range(40):
+        await pilot.pause(0.05)
+        if _pressed(step) == [button_id]:
+            return
+
+
+_LV1_F1_TOML = """\
+[api_settings.openai]
+credential_source = "stored"
+
+[transcription]
+default_provider = "remote-whisper"
+default_model = "whisper-1"
+
+[transcription.remote_whisper]
+enabled = true
+api_endpoint = "https://api.openai.com/v1/audio/transcriptions"
+api_key_env_var = ""
+"""
+
+
+class _LiveWizard:
+    """The app's own wizard reads the config file as it is now (review F8)."""
+
+    reads_live_config = True
+
+    def __init__(self, app_config) -> None:
+        self.app_instance = SimpleNamespace(app_config=app_config)
+        self.commit_config = AsyncMock(return_value=True)
+        self.rerun = True
+
+
+@pytest.mark.asyncio
+async def test_a_real_keyless_openai_whisper_config_reads_as_kept_on_the_step(
+    tmp_path, monkeypatch
+) -> None:
+    """Review TEF-3 (TASK-34100.13): the only mounted LV1-F1 test injected its
+    facts, and injected facts skip detection. This one builds the step the way
+    the wizard does -- no facts -- over the live LV1-F1 state read by the real
+    loader: ``credential_source = "stored"`` with nothing stored, the key only
+    in OPENAI_API_KEY, and remote-whisper saved at OpenAI's endpoint.
+
+    Both detections are on the path: the constructor's, and the one ``on_show``
+    runs (``refresh_engine_facts``). The test waits for the show's detection
+    to have run, then rebuilds the step from what it left, so a blind
+    on-show detection cannot hide behind a correct constructor one."""
+    monkeypatch.delenv("REMOTE_WHISPER_API_KEY", raising=False)
+    settings = _real_config(tmp_path, monkeypatch, _LV1_F1_TOML, _ENV_ONLY)
+    shown = []
+    real_refresh = engines.refresh_engine_facts
+
+    def spy(target) -> None:
+        real_refresh(target)
+        shown.append(target._engine_facts)
+
+    monkeypatch.setattr(engines, "refresh_engine_facts", spy)
+    wizard = _LiveWizard(settings)
+    step = SpeechSetupStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="speech", title="Speech", step_number=6),
+        service_factory=_FakeService,
+        runtime_installed=lambda: True,
+    )
+    assert step._facts_injected is False
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # A step mounted on its own stays visibility-hidden (the wizard's
+        # .wizard-step rule), so no Show arrives: show it as the wizard does.
+        step.on_show()
+        assert shown, "on_show did not run the engine re-detection"
+        await step.recompose()
+        await _until_pressed(pilot, step, "setup-speech-engine-none")
+        pressed = _pressed(step)
+        labels = _labels(step)
+        detail = str(step.query_one("#setup-speech-engine-detail", Static).render())
+        ok, _ = await step.commit()
+    assert pressed == ["setup-speech-engine-none"]
+    assert not any(label.startswith("Cloud") for label in labels)
+    assert detail == engines.KEPT_OPENAI_NO_KEY_DETAIL
+    assert ok
+    wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_key_saved_later_in_the_run_preselects_the_saved_cloud_choice(
+    monkeypatch,
+) -> None:
+    """Review G13-R2-02 (TASK-34100.13): the step derived its engine once, at
+    wizard construction. A key saved on Provider later in the run re-detected
+    ``openai_key=True`` on show, but the engine stayed "No dictation for now"
+    ("Nothing is changed. Set dictation up later…") with Cloud unpressed,
+    while the Summary ticked "OpenAI Whisper" over the same config. An
+    untouched step now re-derives the saved choice when it is shown."""
+    import os
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("REMOTE_WHISPER_API_KEY", raising=False)
+    app_config = {"transcription": _SAVED_OPENAI, "api_settings": {"openai": {}}}
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config=app_config),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = SpeechSetupStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="speech", title="Speech", step_number=6),
+        service_factory=_FakeService,
+        runtime_installed=lambda: True,
+    )
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await _until_pressed(pilot, step, "setup-speech-engine-none")
+        assert _pressed(step) == ["setup-speech-engine-none"]
+        # Provider saves the key and mirrors it into app_config.
+        app_config["api_settings"] = {"openai": {"api_key": "sk-saved-on-provider"}}
+        step.on_show()
+        await _until_pressed(pilot, step, "setup-speech-engine-cloud")
+        pressed = _pressed(step)
+        detail = str(step.query_one("#setup-speech-engine-detail", Static).render())
+        ok, _ = await step.commit()
+    summary = _summary(app_config, dict(os.environ))["Speech transcription"]
+    assert summary.state == wizard_state.ROW_CONFIGURED
+    assert summary.detail == "OpenAI Whisper (cloud; for audio and video files)"
+    assert pressed == ["setup-speech-engine-cloud"]  # the step agrees
+    assert detail == engines.CLOUD_DETAIL
+    assert ok
+    wizard.commit_config.assert_not_awaited()  # still nothing chosen this run
+
+
+def test_re_detection_never_overrides_a_choice_made_this_run() -> None:
+    """The control: only an untouched step follows the saved config."""
+    wizard, step = _step(engine=engines.ENGINE_PARAKEET, app_config={})
+    step._facts_injected = False
+    step.wizard.app_instance.app_config = {
+        "transcription": _SAVED_OPENAI,
+        "api_settings": {"openai": {"api_key": "sk-saved-on-provider"}},
+    }
+    step.refresh = lambda **_: None
+    engines.refresh_engine_facts(step)
+    assert step._engine == engines.ENGINE_PARAKEET
+
+
+@pytest.mark.parametrize(
+    ("openai_table", "environ", "agree_on"),
+    [
+        # Review RR1-01: the live LV1-F1 state. The template names
+        # api_key_env_var; credential_source = "stored" excludes it.
+        (
+            {"credential_source": "stored", "api_key_env_var": "OPENAI_API_KEY"},
+            _ENV_ONLY,
+            False,
+        ),
+        ({"credential_source": "none", "api_key": "sk-table-key"}, {}, False),
+        (
+            {"credential_source": "environment", "api_key": "sk-table-key"},
+            {},
+            False,
+        ),
+        # Controls: a key the provider resolves ticks both rows.
+        ({"api_key_env_var": "OPENAI_API_KEY"}, _ENV_ONLY, True),
+        ({"credential_source": "stored", "api_key": "sk-table-key"}, {}, True),
+        (
+            {"credential_source": "environment", "api_key_env_var": "OPENAI_API_KEY"},
+            _ENV_ONLY,
+            True,
+        ),
+    ],
+)
+def test_the_summary_provider_and_speech_rows_read_one_key_state(
+    openai_table, environ, agree_on
+) -> None:
+    """Review RR1-01 (TASK-34100.13): in the LV1-F1 state the Summary showed
+    "✓ Provider — OpenAI" (and Start chatting) directly above "✗ Speech
+    transcription — … no OpenAI key is available". Readiness, the Provider
+    step and Console all said no key: the Provider row counted an environment
+    key the provider's ``credential_source`` excludes."""
+    config = {
+        "transcription": _SAVED_OPENAI,
+        "api_settings": {"openai": openai_table},
+        "chat_defaults": {"provider": "openai", "model": "gpt-4o-mini"},
+    }
+    rows = _summary(config, environ)
+    provider_ticked = rows["Provider"].state == wizard_state.ROW_CONFIGURED
+    speech_ticked = rows["Speech transcription"].state == wizard_state.ROW_CONFIGURED
+    assert (provider_ticked, speech_ticked) == (agree_on, agree_on)
+
+
 # -- review v5r2 LV1-F2: the Language Select survives a recompose mid-mount ------
 
 

@@ -297,23 +297,35 @@ def refresh_engine_facts(step: Any) -> None:
     Connect saves a key, so an OpenAI key typed in this run never offered the
     Cloud row. Facts a caller injected are left alone.
 
+    Review G13-R2-02: an untouched step also re-derives its choice from the
+    saved ``[transcription]`` against the fresh facts. It was derived once,
+    at construction, so a saved OpenAI Whisper whose key was saved later in
+    the run stayed on "No dictation for now" while the Summary ticked it.
+
     Args:
         step: The ``SpeechSetupStep``.
     """
     if getattr(step, "_facts_injected", False):
         return
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import wizard_config_sections
+
     app_config = getattr(getattr(step.wizard, "app_instance", None), "app_config", {})
     fresh = detect_engine_facts(
         app_config if isinstance(app_config, Mapping) else {},
         parakeet_bytes=step._parakeet_bytes(),
     )
-    if fresh == step._engine_facts:
+    engine = step._engine
+    if not step._engine_chosen:
+        saved = wizard_config_sections(step.wizard, "transcription")["transcription"]
+        engine = saved_engine(saved, fresh)
+    elif (engine == ENGINE_CLOUD and not fresh.openai_key) or (
+        engine == ENGINE_INSTALLED and not fresh.installed_engine
+    ):
+        engine = ENGINE_NONE
+    if fresh == step._engine_facts and engine == step._engine:
         return
     step._engine_facts = fresh
-    if (step._engine == ENGINE_CLOUD and not fresh.openai_key) or (
-        step._engine == ENGINE_INSTALLED and not fresh.installed_engine
-    ):
-        step._engine = ENGINE_NONE
+    step._engine = engine
     step.refresh(recompose=True)
 
 

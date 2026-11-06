@@ -976,6 +976,34 @@ def _api_settings_entry_for_provider(
     return {}
 
 
+def _summary_key_counts(
+    settings: Mapping[str, object], environ: Mapping[str, str]
+) -> bool:
+    """``any_provider_configured``'s per-provider test, under ``credential_source``.
+
+    ``"none"`` counts nothing, ``"stored"`` only the table's key,
+    ``"environment"`` only the variable it names; unset, either (the offer
+    gate's rule, with no default variable added).
+    """
+    from tldw_chatbook.Chat.provider_readiness import (
+        configured_provider_credential_source,
+    )
+
+    source = configured_provider_credential_source(settings)
+    if source == "none":
+        return False
+    if source != "environment" and _is_real_provider_api_key(settings.get("api_key")):
+        return True
+    if source == "stored":
+        return False
+    env_var = settings.get("api_key_env_var")
+    return (
+        isinstance(env_var, str)
+        and bool(env_var.strip())
+        and _is_real_provider_api_key(environ.get(env_var.strip()))
+    )
+
+
 def provider_summary_configured(
     app_config: Mapping[str, object], environ: Mapping[str, str]
 ) -> bool:
@@ -1036,8 +1064,18 @@ def provider_summary_configured(
     Provider without touching it this time, will still see this row read
     off whatever endpoint survives from that earlier run for whatever
     provider is currently named in ``chat_defaults.provider``.
+
+    Review RR1-01 (TASK-34100.13): unlike the offer gate, a key counts here
+    only where the provider's own ``credential_source`` allows it, as
+    readiness and the Speech row resolve it. ``credential_source = "stored"``
+    with nothing stored read "✓ Provider" off an environment key the send
+    never uses, directly above the Speech row's "no OpenAI key is available".
     """
-    if any_provider_configured(app_config, environ):
+    api_settings = app_config.get("api_settings")
+    if isinstance(api_settings, Mapping) and any(
+        isinstance(settings, Mapping) and _summary_key_counts(settings, environ)
+        for settings in api_settings.values()
+    ):
         return True
     if not (
         _wizard_flag(app_config, SETUP_STARTED_KEY)
