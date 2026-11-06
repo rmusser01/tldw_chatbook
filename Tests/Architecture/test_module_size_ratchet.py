@@ -88,7 +88,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
     # 2026-11-05, rebased onto dev 29592ecc9b: 1314 -> 1330 (polish-1b's
     # own +16; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
+    # 2026-11-06, rebased onto dev 2684e5453f: 1314 -> 1330 (polish-1b's
+    # own +16; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1330,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
     "tldw_chatbook/Widgets/Console/console_selection_geometry.py": 52,
@@ -176,7 +178,9 @@ _BUDGETS: dict[str, int] = {
     # re-runs; found by the finishing pass's full Tests/Architecture pair.
     # 2026-11-05, rebased onto dev 29592ecc9b: 3693 -> 3711 (polish-1b's
     # own +18; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/app_service_wiring.py": 3693,
+    # 2026-11-06, rebased onto dev 2684e5453f: 3693 -> 3711 (polish-1b's
+    # own +18; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/app_service_wiring.py": 3711,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -791,7 +795,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     # 2026-11-05, rebased onto dev 29592ecc9b: 25854 -> 26086 (polish-1b's
     # own +232; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,
+    # 2026-11-06, rebased onto dev 2684e5453f: 25870 -> 26102 (polish-1b's
+    # own +232; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 26102,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -847,7 +853,9 @@ _BUDGETS: dict[str, int] = {
     # on the authority line.
     # 2026-11-05, rebased onto dev 29592ecc9b: 9674 -> 9714 (polish-1b's
     # own +40; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
+    # 2026-11-06, rebased onto dev 2684e5453f: 9873 -> 9913 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9913,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
@@ -966,7 +974,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
     # 2026-11-05, rebased onto dev 29592ecc9b: 5167 -> 5220 (polish-1b's
     # own +53; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
+    # 2026-11-06, rebased onto dev 2684e5453f: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/Notes/notes_sync_runtime.py": 5220,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 4968,
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +43 -- the
@@ -988,7 +998,9 @@ _BUDGETS: dict[str, int] = {
     # (+4). The list's resize reshape keeps the user's focused control.
     # 2026-11-05, rebased onto dev 29592ecc9b: 4738 -> 5313 (polish-1b's
     # own +575; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
+    # 2026-11-06, rebased onto dev 2684e5453f: 4742 -> 5317 (polish-1b's
+    # own +575; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 5317,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4516,
