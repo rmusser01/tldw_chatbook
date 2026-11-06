@@ -174,23 +174,14 @@ class SummaryStep(SetupStep):
     def _show_quick_defaults_note(self, config: Any) -> None:
         """TASK-34100.13: the Quick note is derived from the re-read config.
 
-        It said "tools off, RAG off" as a literal while three tool groups
-        were on; it now comes from ``all_tool_gates()`` and the auto-retrieve
-        flag, the same sources as the Tools and Search rows.
+        It said "tools off, RAG off" as a literal; it now comes from
+        ``quick_track_defaults_note`` -- TASK-34100.5.3's tool-surface
+        reading plus the auto-retrieve flag and the theme, the same sources
+        as the Tools, Search and Theme rows.
         """
-        from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
-        from tldw_chatbook.UI.Wizards import first_run_tools_posture as posture_mod
-        from tldw_chatbook.UI.Wizards.first_run_rag_state import read_auto_retrieve
-
-        note = posture_mod.quick_defaults_note(
-            posture_mod.tools_posture(all_tool_gates(config=config)),
-            auto_retrieve=read_auto_retrieve(config),
-            default_theme=not wizard_state.theme_is_custom(
-                wizard_state.read_wizard_prefill(config).default_theme
-            ),
-        )
-        # TASK-34100.5.3 (kept in the rebase): called after an await, so
-        # query() -- a removed subtree is a no-op, not a NoMatches.
+        note = wizard_state.quick_track_defaults_note(config)
+        # TASK-34100.5.3: called after an await, so query() -- a removed
+        # subtree is a no-op, not a NoMatches.
         for widget in self.query("#setup-summary-defaults-note").results(Static):
             widget.update(note)
 
