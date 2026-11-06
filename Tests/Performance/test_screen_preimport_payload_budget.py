@@ -149,8 +149,9 @@ MAX_PASS_ADDED_MODULES = 558
 #: `library_media_reader_state` +2. `Utils.adaptive_reader_state` is not in
 #: the route. Modules unchanged, pinned at the measurement.
 #: 426,703 -> 426,388 (2026-11-06, TASK-38981 re-review 4; owner size
-#: waiver): re-measured on the tree stacked on the arch tip b7c8e809b3, which
-#: measured 426,432 before this change; `library_screen` then drops 44 lines
+#: waiver): re-measured after stacking this branch on the arch tip b7c8e809b3
+#: (the arch tip alone measures 426,268). The stacked tree measured 426,432
+#: before this change; `library_screen` then drops 44 lines
 #: (the timer landing becomes a one-shot pending landing). Modules unchanged
 #: (556), pinned at the measurement.
 MAX_PASS_ADDED_LOC = 426_388
