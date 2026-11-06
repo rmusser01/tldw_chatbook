@@ -167,7 +167,10 @@ message shows; while the search lists matches, it moves to the list.
 
 A kind switch blanks the old kind's rows at once; a slow list says
 "Loading lore books…" after a quarter second. A list that could not load
-says so ("Lore books could not be loaded.") with a **Retry** button.
+says so ("Lore books could not be loaded.") with a **Retry** button. A
+database error while reading characters counts as a list that could not
+load, never as an empty library, and with nothing open the centre pane says
+"Characters could not be loaded — use Retry to read the list again."
 
 #### The list
 
@@ -205,7 +208,12 @@ The list's top border names the kind and its count: "Characters 349",
 reads "Characters 48 of 349", adding "· tag fantasy" for a tag. While a
 kind's list loads, its name is followed by "(…)" ("Lore books (…)"); on a
 server, Characters reads "Characters (…)" until the server first answers,
-then "100+" until the total is known. "(?)" means the list could not load.
+then "100+" until the total is known. A server search reads "Characters
+12 of 340" against the full list's last count, or "12 of 100+" while that
+count still read "100+"; a search that fills its page reads "100+ of 340".
+Neither costs another server call. With no full-list count from this server
+yet (its full list could not load, say), a search reads just "Characters
+12". "(?)" means the list could not load.
 
 The bottom border gives the open item's place in the list, "#4 of 28". It
 is blank while nothing is open, or while a search hides the open item.

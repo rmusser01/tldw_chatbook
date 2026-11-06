@@ -2496,6 +2496,109 @@ async def test_a_server_list_without_a_total_counts_its_windows(mock_app_instanc
         assert str(pane.border_subtitle) == "#150 of 150"
 
 
+def _counted_server(records: list[dict], *, total: bool, found: int):
+    """A server whose list reports ``total`` (or a bare list) and whose search
+    answers ``found`` rows with no total, counting every call it gets."""
+    calls = {"list": 0, "search": 0}
+
+    async def list_characters(*, mode, limit, offset):
+        calls["list"] += 1
+        window = [dict(record) for record in records[offset : offset + limit]]
+        return {"items": window, "total": len(records)} if total else window
+
+    async def search_characters(query, *, mode, limit):
+        calls["search"] += 1
+        return [dict(record) for record in records[:found]][:limit]
+
+    service = SimpleNamespace(
+        list_characters=list_characters,
+        search_characters=search_characters,
+        get_character=AsyncMock(side_effect=lambda *a, **k: dict(records[0])),
+    )
+    return service, calls
+
+
+@pytest.mark.parametrize(
+    ("total", "found", "unfiltered", "searched"),
+    [
+        (True, 12, "Characters 340", "Characters 12 of 340"),
+        (False, 12, "Characters 100+", "Characters 12 of 100+"),
+        (True, 100, "Characters 340", "Characters 100+ of 340"),
+    ],
+    ids=["known-total", "full-page-no-total", "capped-search"],
+)
+async def test_a_server_search_title_reads_n_of_the_last_unfiltered_total(
+    mock_app_instance, total, found, unfiltered, searched
+):
+    """TASK-33910.37 (owner decision 2026-11-05: "12 of 340" / "12 of 100+"):
+    a search on server characters reads N of the last unfiltered total, or of
+    ``100+`` when that page was full with no total; a search page full with no
+    total reads ``100+`` too. The M costs no server call. On dev the title
+    said a bare "Characters 12"; fixed here."""
+    records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 341)]
+    service, calls = _counted_server(records, total=total, found=found)
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.character_persona_scope_service = service
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) == 100,
+            what="the first server window",
+        )
+        await settle(pilot)
+        pane = screen.query_one("#personas-library-pane")
+        assert str(pane.border_title) == unfiltered
+        before = dict(calls)
+        await _search_settled(pilot, screen, "Remote")
+        assert len(visible_item_ids(screen)) == found
+        assert str(pane.border_title) == searched
+        assert calls == {"list": before["list"], "search": before["search"] + 1}
+
+
+@pytest.mark.parametrize(
+    "unknown", ["unfiltered-read-failed", "another-server", "source-change"]
+)
+async def test_a_server_search_with_no_unfiltered_total_keeps_its_bare_count(
+    mock_app_instance, unknown
+):
+    """TASK-33910.37: with no unfiltered total known for this server (its
+    unfiltered read failed, the total came from another server, or from
+    before a source change whose own read failed), the title keeps dev's
+    bare count ("Characters 12"), never a stale or made-up M. Unchanged
+    from dev."""
+    records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 341)]
+    service, calls = _counted_server(records, total=True, found=12)
+    if unknown == "unfiltered-read-failed":
+        service.list_characters = AsyncMock(side_effect=RuntimeError("unreachable"))
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.character_persona_scope_service = service
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        await wait_until(
+            pilot,
+            lambda: str(pane.border_title) in ("Characters 340", "Characters (?)"),
+            what="the unfiltered server read",
+        )
+        await settle(pilot)
+        if unknown == "another-server":
+            assert str(pane.border_title) == "Characters 340"
+            mock_app_instance.active_server_id = "server-b"
+        elif unknown == "source-change":
+            assert str(pane.border_title) == "Characters 340"
+            service.list_characters = AsyncMock(side_effect=RuntimeError("gone"))
+            await screen.handle_runtime_backend_changed("server")
+            await settle(pilot)
+            assert str(pane.border_title) == "Characters (?)"
+        await _search_settled(pilot, screen, "Remote")
+        assert len(visible_item_ids(screen)) == 12
+        assert str(pane.border_title) == "Characters 12"
+        assert calls["search"] == 1
+
+
 # ---- The window state's one owner and its edge cases (TASK-33910.34) ----
 #
 # Each case below is new with B2a (dev's paged list had no windows) and is
@@ -4579,6 +4682,141 @@ async def test_a_failed_server_retry_leaves_focus_the_user_moved_to_the_search_b
         await settle(pilot)
         assert list_state(screen).state == "recovery"
         assert screen.focused is search
+
+
+# ---- A failed list read reads as a failure (TASK-38228, TASK-33910.46) ----
+
+#: The centre's copy over a failed Characters read, painted (markup off).
+_CENTRE_LOAD_FAILED = (
+    "Characters could not be loaded — use Retry to read the list again."
+)
+_CENTRE_EMPTY_LIBRARY = "No characters yet — use New or Import to add one."
+
+
+def _fault_character_table(db, *, on: bool) -> None:
+    """Rename ``character_cards`` away (``on``) or back, through ``db`` itself.
+
+    Every read of the table, from any thread's connection, then fails inside
+    SQLite ("no such table: character_cards"): a real database fault, not a
+    patched seam. The volume DB is a per-test copy, so nothing else sees it.
+    """
+    old, new = (
+        ("character_cards", "character_cards_faulted")
+        if on
+        else ("character_cards_faulted", "character_cards")
+    )
+    connection = db.get_connection()
+    connection.execute(f"ALTER TABLE {old} RENAME TO {new}")
+    connection.commit()
+
+
+async def test_a_database_fault_shows_the_recovery_row_and_the_centre_says_so_until_retry(
+    mock_app_instance, volume_348
+):
+    """TASK-38228 AC#2 and TASK-33910.46 on a real ChaChaNotes whose character
+    table is gone. On dev the window-read wrappers answered ``[]`` and ``0``,
+    so the list said "No characters yet - use New or Import to add one."
+    under "Characters 0" with Retry hidden, and the centre said "No
+    characters yet"; this PR fixes both. Retry, once the table is back,
+    reads the list again and the centre asks for a pick."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        retry = screen.query_one("#personas-library-retry", Button)
+        centre = screen.query_one("#personas-characters-empty", Static)
+        await screen._apply_mode("lore")
+        await settle(pilot)
+        _fault_character_table(volume_348, on=True)
+        try:
+            await screen._apply_mode("characters")
+            await settle(pilot)
+            assert (list_state(screen).state, list_state(screen).text) == (
+                "recovery",
+                "Characters could not be loaded.",
+            )
+            assert str(pane.border_title) == "Characters (?)" and retry.display
+            assert screen.state.selected_entity_id is None and centre.display
+            assert str(centre.render()) == _CENTRE_LOAD_FAILED
+        finally:
+            _fault_character_table(volume_348, on=False)
+        assert await pilot.click("#personas-library-retry")
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) == 200,
+            what="the reloaded rows",
+        )
+        await settle(pilot)
+        assert list_state(screen).state == "rows" and not retry.display
+        assert str(pane.border_title) == "Characters 349"
+        assert str(centre.render()) == "Pick a character from the list to see it here."
+
+
+async def test_a_failed_server_read_says_so_in_the_centre_and_an_empty_one_does_not(
+    mock_app_instance,
+):
+    """TASK-33910.46 where the failure row already showed on dev (the server
+    read raises): dev's centre still said "No characters yet — use New or
+    Import to add one." over it; fixed here. A read that then succeeds with
+    no rows is an empty library, and says so."""
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    service = SimpleNamespace(
+        list_characters=AsyncMock(side_effect=RuntimeError("server unreachable")),
+        search_characters=AsyncMock(return_value=[]),
+        get_character=AsyncMock(return_value={}),
+    )
+    mock_app_instance.character_persona_scope_service = service
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        retry = screen.query_one("#personas-library-retry", Button)
+        centre = screen.query_one("#personas-characters-empty", Static)
+        await wait_until(pilot, lambda: retry.display, what="the Retry button")
+        await settle(pilot)
+        assert list_state(screen).state == "recovery"
+        assert centre.display and str(centre.render()) == _CENTRE_LOAD_FAILED
+        service.list_characters = AsyncMock(return_value=[])
+        assert await pilot.click("#personas-library-retry")
+        await wait_until(
+            pilot,
+            lambda: list_state(screen).state == "empty",
+            what="the empty server list",
+        )
+        await settle(pilot)
+        assert not retry.display
+        assert centre.display and str(centre.render()) == _CENTRE_EMPTY_LIBRARY
+
+
+async def test_a_successful_empty_read_still_says_no_characters_yet(
+    mock_app_instance, tmp_path
+):
+    """TASK-33910.46's other half: a local read that succeeds with no rows (a
+    fresh database whose built-in card was deleted) keeps the empty-library
+    copy in the list and the centre, with no Retry; as on dev."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "empty-library.db", "b2b-empty-library")
+    built_in = db.get_character_card_by_id(1)
+    db.soft_delete_character_card(1, expected_version=built_in["version"])
+    try:
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=db
+        ) as pilot:
+            screen = pilot.app.screen
+            retry = screen.query_one("#personas-library-retry", Button)
+            centre = screen.query_one("#personas-characters-empty", Static)
+            assert (list_state(screen).state, list_state(screen).text) == (
+                "empty",
+                "No characters yet - use New or Import to add one.",
+            )
+            assert not retry.display
+            assert str(screen.query_one("#personas-library-pane").border_title) == (
+                "Characters 0"
+            )
+            assert centre.display and str(centre.render()) == _CENTRE_EMPTY_LIBRARY
+    finally:
+        db.close_connection()
 
 
 # ---- Also in: the other kinds' counts (frame slice B2b, spec 1.5.4) ----
