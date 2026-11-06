@@ -875,6 +875,14 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         "_ask_library_notes_bulk_keyword",
         LibraryNoteKeywordDialog,
     ),
+    # TASK-34000.29 (N-29, part 8b): Delete forever's confirm in Recently
+    # deleted. Undeclared until TASK-38985's walk stopped aborting before it.
+    _edge(
+        _NOTES_CONTROLLER_FILE,
+        "LibraryNotesController",
+        "handle_library_notes_trash_delete",
+        ConfirmationDialog,
+    ),
     _edge(
         _COLLECTIONS_FILE,
         "LibraryPromptCollectionsController",
@@ -1807,8 +1815,10 @@ def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> Non
 
     _assert_exact_library_modal_inventory(discovered, declared)
     # 38 -> 40 (TASK-34000.29 N-14, 2026-10-26; rebased 2026-11-06 onto
-    # TASK-38985's 38): bulk Move and bulk keyword.
-    assert len(discovered) == len(declared) == 40
+    # TASK-38985's 38): bulk Move and bulk keyword. 40 -> 41 (2026-11-06):
+    # Delete forever's confirm (TASK-34000.29 part 8b), which the walk now
+    # reaches.
+    assert len(discovered) == len(declared) == 41
 
 
 @pytest.mark.parametrize(
