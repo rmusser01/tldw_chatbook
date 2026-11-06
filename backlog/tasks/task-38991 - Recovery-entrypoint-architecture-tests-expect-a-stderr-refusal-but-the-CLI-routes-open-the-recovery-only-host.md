@@ -76,18 +76,18 @@ Test-only change in `Tests/Architecture/test_recovery_entrypoints.py`; the produ
   - Package-main routes. Rows removed because the route is gone: `Utils/paths.py` (76b49e4fcd), `TTS/backends/higgs_voice_manager.py` (demo CLI dropped, f5212dd57e) and `Chunking/templates/example_usage.py` (deleted, 224e331af5). The higgs runpy refusal route still passes and stays.
   - New rows:
     - `recovery_host`: `Backup_Recovery/__main__.py`, which runs `recovery_main`, the same recovery CLI as `tldw-cli recovery`.
-    - `app_spawned_pipe_worker`: a child that an admitted app or recovery process spawns. Its inputs are argv, pipes or staged paths; it loads no config and does not enroll (grep confirmed no config import in any of them). Members and their spawners:
+    - `app_spawned_pipe_worker`: a child that an admitted app or recovery process spawns. Its inputs are argv, pipes or staged paths; it loads no config and does not enroll. Checked by importing each module, and the modules its `main` imports lazily, in a fresh scratch HOME: none loads `tldw_chatbook.config`, and none writes `config.toml`. (The first cut checked direct imports with grep only, which missed lab_runner; review r10a-rev1.) Members and their spawners:
       - `Audio/diarizer_worker.py`
       - `Audio/voice_process_entry.py` (`Chat/console_voice_process.py`)
       - `Backup_Recovery/age_worker.py` (`python -I`)
       - `Backup_Recovery/detached_worker.py` (`portable_relocation`)
       - `Backup_Recovery/rag_projection_validation.py`
       - `Chat/console_trace_regex_worker.py`
-      - `Chunking/lab_runner.py`
       - `DB/private_sqlite_helper_entry.py` (`private_sqlite_process`)
       - `Terminal/posix_launcher.py` (`posix_backend`)
       - `Tools/workspace_tool_worker.py`
       - `Web_Server/artifact_share_server.py` (`artifact_share`)
+    - `config_fenced_worker`: `Chunking/lab_runner.py`. The app spawns it, but its import chain (`Chunking/__init__` -> `Chunk_Lib`) loads `tldw_chatbook.config`, which writes `config.toml` under a fresh HOME and puts the child behind config's import-time recovery fence.
     - `external_read_only_worker`: `Tools/project_index_scan_worker.py`, a stdlib-only scanner like `_grep_worker`.
     - `development_tool`: `Tools/build_remote_worker_bundle.py`.
     - `remote_host_worker`: `Tools/remote_worker_bundle.py`, the generated bundle, which runs on the SSH host.

@@ -271,6 +271,10 @@ ROUTE_CLASSIFICATIONS = {
     # (`tldw-cli recovery`'s recovery_main). app_spawned_pipe_worker: a child
     # an admitted app or recovery process spawns; its inputs are argv, pipes
     # or paths the parent staged, and it neither loads config nor enrolls.
+    # config_fenced_worker: an app-spawned child whose imports load
+    # tldw_chatbook.config (lab_runner: Chunking/__init__ -> Chunk_Lib ->
+    # config, which writes config.toml under a fresh HOME), so it reaches
+    # config's import-time recovery fence (review r10a-rev1).
     # remote_host_worker: the generated bundle runs on the SSH host, not here.
     "Backup_Recovery/__main__.py": "recovery_host",
     "Audio/diarizer_worker.py": "app_spawned_pipe_worker",
@@ -279,7 +283,7 @@ ROUTE_CLASSIFICATIONS = {
     "Backup_Recovery/detached_worker.py": "app_spawned_pipe_worker",
     "Backup_Recovery/rag_projection_validation.py": "app_spawned_pipe_worker",
     "Chat/console_trace_regex_worker.py": "app_spawned_pipe_worker",
-    "Chunking/lab_runner.py": "app_spawned_pipe_worker",
+    "Chunking/lab_runner.py": "config_fenced_worker",
     "DB/private_sqlite_helper_entry.py": "app_spawned_pipe_worker",
     "Terminal/posix_launcher.py": "app_spawned_pipe_worker",
     "Tools/workspace_tool_worker.py": "app_spawned_pipe_worker",
