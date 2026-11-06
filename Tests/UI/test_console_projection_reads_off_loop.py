@@ -1942,7 +1942,9 @@ def test_a_closing_console_arms_no_replay_and_counts_no_refusal():
 
 
 @pytest.mark.asyncio
-async def test_a_control_bar_sync_builds_the_workspace_context_once(monkeypatch):
+async def test_a_control_bar_sync_reads_the_label_and_builds_no_workspace_context(
+    monkeypatch,
+):
     """TASK-36511.2: a control-bar sync shares one workspace-context build.
 
     Outside a run tick, the sync's Inspector leg and its rail-state leg each
@@ -1953,7 +1955,8 @@ async def test_a_control_bar_sync_builds_the_workspace_context_once(monkeypatch)
     afresh: the scope ends with the sync.
 
     TASK-36571.1: both legs read only the workspace label now, so a sync
-    builds no workspace context at all.
+    builds no workspace context at all (renamed from
+    ``test_a_control_bar_sync_builds_the_workspace_context_once``).
     """
     from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
     from tldw_chatbook.UI.Console_Modules import workspace
