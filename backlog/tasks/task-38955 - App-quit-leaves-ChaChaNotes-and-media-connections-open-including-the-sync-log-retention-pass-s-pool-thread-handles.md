@@ -88,4 +88,6 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 - No failure appears only here.
 
 **Size.** `app_lifecycle.py` went from 2147 to 2189 lines, raised under the owner waiver.
+
+**Diagnostic inventory (reviewed before `--write`).** Two error calls were added at quit. Each interpolates only `type(exc).__name__`.
 <!-- SECTION:NOTES:END -->

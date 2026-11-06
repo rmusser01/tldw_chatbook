@@ -75,5 +75,7 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 **Size.** `app_ingest_queue.py` went from 5021 to 5057 lines, raised under the owner waiver with a dated row comment.
 
 **Checks.** The covering files (`test_startup_init_hygiene.py`, `test_library_ingest_jobs_restore.py`, `test_submit_library_ingest_job.py`, `test_merged_startup_worker_retirement.py`, `test_worker_failure_event.py`, `test_library_ingest_runner.py`) were run with `-n 4` against the base worktree. They fail 122 locally on base and 120 here; the only difference is the two moved tests, and there are no new failures. The census and stagger policy passed 21, and the size ratchet passed 201.
+
+**Diagnostic inventory (reviewed before `--write`).** One debug call was added: the fixed text "Research source startup work could not be queued; the app stopped." It has no interpolation.
 <!-- SECTION:NOTES:END -->
 

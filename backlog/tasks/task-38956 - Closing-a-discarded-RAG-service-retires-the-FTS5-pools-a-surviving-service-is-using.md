@@ -70,5 +70,7 @@ The cost is churn and a rare empty keyword leg, not a leak.
 - Base: 346 failed, 1115 passed. Here: 347 failed, 1115 passed.
 - The one extra failure is the new test, which fails without the marker for the same RecoveryRequired reason as every plain test in its file. Those plain tests fail on both trees.
 - No other failure differs.
+
+**Diagnostic inventory (reviewed before `--write`).** The legacy `db_path` debug statement in `close_all_pools` moved unchanged into `_retire_pool`. The call count is still 2, the text and arguments are the same, and the statement-level check shows no statement changed. Its path candidate stays `legacy_unreviewed`, as before.
 <!-- SECTION:NOTES:END -->
 
