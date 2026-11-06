@@ -443,8 +443,8 @@ def _is_allowed_endpoint_host(hostname: str, *, port: int | None, path: str) -> 
     TASK-38963: a host the contract accepts displays as itself. A single
     label other than localhost also needs a port, or a path after a typed
     scheme (review r10e-rev2: a key such as ``sk-abc/def`` has a "path"), so
-    a key pasted into the endpoint field is never echoed. An IPv6 zone id,
-    which the contract refuses, still compares as itself.
+    a key pasted into the endpoint field is never echoed. TASK-39041: an IPv6
+    zone id, which the contract refuses, no longer compares as itself.
 
     Args:
         hostname: The lower-cased host.
@@ -452,13 +452,15 @@ def _is_allowed_endpoint_host(hostname: str, *, port: int | None, path: str) -> 
         path: The typed path without its trailing "/"; "" when no scheme
             was typed.
     """
+    host = canonical_endpoint_host(hostname)
+    if host is None:
+        return False
     try:
-        ip_address(hostname)
+        ip_address(host)
         return True
     except ValueError:
         pass
-    host = canonical_endpoint_host(hostname)
-    return host is not None and (
+    return (
         "." in host or host == "localhost" or port is not None or bool(path)
     )
 

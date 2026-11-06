@@ -8,7 +8,6 @@ import math
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from ipaddress import IPv6Address
 from typing import Any
 from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
@@ -67,7 +66,6 @@ _GENERIC_ENDPOINT_TAILS = (("models",), ("responses",), ("chat", "completions"))
 _GENERIC_REQUEST_ENDPOINT_TAILS = _GENERIC_ENDPOINT_TAILS[1:]
 _PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
 _ENCODED_PATH_SEPARATOR_RE = re.compile(r"%(?:2[fF]|5[cC])")
-_ZONE_ID_RE = re.compile(r"[A-Za-z0-9._~-]+")
 _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -259,11 +257,23 @@ def _host_follows_contract(parsed: ParseResult) -> bool:
     """Whether the endpoint contract's host rule accepts the URL's host.
 
     TASK-38963: Discover models listed from hosts the save refuses, such as
-    ``-kobold`` or ``1.2.3``. A bracketed IPv6 zone id ("%25") is left to
-    ``_is_safe_generic_authority``, which discovery has always allowed.
+    ``-kobold`` or ``1.2.3``. TASK-39041: a bracketed IPv6 zone id ("%25"),
+    which PR #1562 had allowed, is refused too, as the save and TTS refuse it.
     """
-    host = parsed.hostname or ""
-    return "%" in host or canonical_endpoint_host(host) is not None
+    return canonical_endpoint_host(parsed.hostname or "") is not None
+
+
+def _qwencloud_base_url(endpoint: str | None) -> str:
+    """QwenCloud's base URL, reading a loopback endpoint typed without a
+    scheme as ``http://``, as the save does (TASK-39041).
+
+    Raises:
+        QwenCloudBaseURLValidationError: If the URL is malformed or unsafe.
+    """
+    raw = (endpoint or "").strip()
+    if raw and "://" not in raw and is_exact_schemeless_host(raw.split("/", 1)[0]):
+        endpoint = f"http://{raw}"
+    return normalize_qwencloud_base_url(endpoint)
 
 
 def _is_structurally_safe_generic_endpoint(parsed: ParseResult) -> bool:
@@ -279,28 +289,15 @@ def _is_structurally_safe_generic_endpoint(parsed: ParseResult) -> bool:
 
 
 def _is_safe_generic_authority(netloc: str) -> bool:
-    """Allow percent only for an RFC 6874 bracketed IPv6 zone identifier."""
-    if any(character in netloc for character in '\\|^{}<>"`') or netloc.endswith(":"):
-        return False
-    if "%" not in netloc:
-        return True
+    """Refuse parser-ambiguous authority characters, "%" included.
 
-    host_port = netloc.rsplit("@", 1)[-1]
-    closing_bracket = host_port.find("]")
-    if not host_port.startswith("[") or closing_bracket < 0:
-        return False
-    bracketed_host = host_port[1:closing_bracket]
-    remainder = host_port[closing_bracket + 1 :]
-    if bracketed_host.count("%25") != 1 or (
-        remainder and not re.fullmatch(r":\d+", remainder)
-    ):
-        return False
-    address, zone_id = bracketed_host.split("%25", 1)
-    try:
-        IPv6Address(address)
-    except ValueError:
-        return False
-    return _ZONE_ID_RE.fullmatch(zone_id) is not None
+    TASK-39041: "%" was allowed for an RFC 6874 IPv6 zone id; the endpoint
+    contract refuses zone ids, so discovery does too.
+    """
+    return not (
+        any(character in netloc for character in '\\|^{}<>"`%')
+        or netloc.endswith(":")
+    )
 
 
 def _is_safe_generic_path(path: str) -> bool:
@@ -507,7 +504,7 @@ def supports_openai_compatible_model_discovery(
         return False
     if provider_key == _QWENCLOUD_PROVIDER_KEY:
         try:
-            base_url = normalize_qwencloud_base_url(normalized_endpoint)
+            base_url = _qwencloud_base_url(normalized_endpoint)
         except QwenCloudBaseURLValidationError:
             return False
         return _host_follows_contract(urlparse(base_url))
@@ -537,7 +534,7 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
     """Return the OpenAI-compatible models endpoint for a configured URL."""
     if _normalized_provider_identity(provider_identity) == _QWENCLOUD_PROVIDER_KEY:
         try:
-            base_url = normalize_qwencloud_base_url(endpoint)
+            base_url = _qwencloud_base_url(endpoint)
         except QwenCloudBaseURLValidationError:
             return fingerprint_endpoint(endpoint)
         return f"{base_url}/models"

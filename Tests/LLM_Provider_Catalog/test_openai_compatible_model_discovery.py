@@ -264,11 +264,13 @@ def test_qwencloud_discovery_preserves_valid_ipv6_port():
     )
 
 
-def test_non_qwen_discovery_preserves_scoped_ipv6_zone_id_support():
+def test_non_qwen_discovery_refuses_a_scoped_ipv6_zone_id_as_the_save_does():
+    """TASK-39041 rewrote PR #1562's pin, which kept this endpoint listing.
+    Owner decision (2026-11-06): refuse it everywhere, as the save and TTS do;
+    zone ids are link-local only."""
     endpoint = "http://[fe80::1%25eth0]:8000/v1"
 
-    assert supports_openai_compatible_model_discovery("vllm", endpoint) is True
-    assert build_models_url(endpoint, "vllm") == f"{endpoint}/models"
+    assert supports_openai_compatible_model_discovery("vllm", endpoint) is False
 
 
 @pytest.mark.parametrize(

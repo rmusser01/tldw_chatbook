@@ -1069,6 +1069,10 @@ def test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label(
 
 #: TASK-38963: single-label hosts, the Docker Compose service-name shape.
 _SINGLE_LABEL_HOSTS = ("kobold", "kobold_cpp")
+#: TASK-39041: the spellings the save reads as ``http://`` without a scheme.
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+#: TASK-39041: a link-local IPv6 address with a zone id (refused everywhere).
+_ZONE_ID_HOST = "[fe80::1%25en0]"
 
 
 @pytest.mark.parametrize("scheme", ["http://", ""], ids=["scheme", "no-scheme"])
@@ -1079,18 +1083,87 @@ _SINGLE_LABEL_HOSTS = ("kobold", "kobold_cpp")
         "kobold_cpp",
         *_HOSTS_REFUSED_FOR_ANOTHER_REASON,
         *_SINGLE_LABEL_HOSTS,
+        *_LOOPBACK_HOSTS,
+        _ZONE_ID_HOST,
     ],
 )
 def test_discover_models_accepts_exactly_the_hosts_the_save_accepts(host, scheme):
     """TASK-38963 AC#1: Discover models parsed the URL itself, so it listed
     from hosts such as ``-kobold`` or ``1.2.3`` and from a schemeless remote
-    host, all of which the save refuses. Both now decide by the contract."""
+    host, all of which the save refuses. Both now decide by the contract.
+    TASK-39041: QwenCloud refused a loopback endpoint typed without a scheme,
+    and the others listed from a zone id; both followed the save since."""
     for provider in _CONTRACT_PROVIDERS:
         endpoint = _endpoint_for(provider, host, scheme)
         saves = _saved_endpoint(provider, endpoint) is not None
         assert supports_openai_compatible_model_discovery(provider, endpoint) is (
             saves
         ), (provider, endpoint, saves)
+        if host in _LOOPBACK_HOSTS:
+            assert saves, (provider, endpoint)
+
+
+def test_an_ipv6_zone_id_is_refused_by_discover_the_save_and_console():
+    """TASK-39041 AC#4. Owner decision (2026-11-06): refuse everywhere. Zone
+    ids are link-local only, the save and TTS refused them, and Discover
+    listed from them while Console compared one as itself."""
+    for provider in _CONTRACT_PROVIDERS:
+        endpoint = _endpoint_for(provider, _ZONE_ID_HOST)
+        assert _saved_endpoint(provider, endpoint) is None, provider
+        assert supports_openai_compatible_model_discovery(provider, endpoint) is (
+            False
+        ), provider
+        assert safe_endpoint_display(endpoint) == "invalid endpoint", provider
+        assert normalize_generic_endpoint_for_compare(endpoint) == (
+            "invalid endpoint"
+        ), provider
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", _LOOPBACK_HOSTS)
+async def test_qwencloud_discover_reads_a_schemeless_loopback_endpoint_as_http(host):
+    """TASK-39041 AC#1: Settings hands the typed Endpoint field to Discover.
+    For QwenCloud, ``localhost:5001/v1`` read as the scheme ``localhost``, so
+    Discover reported "unsupported" and never asked the server, although **s**
+    saves ``http://localhost:5001/v1``."""
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        discover_openai_compatible_models,
+    )
+
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json={"data": [{"id": "qwen-local"}]})
+
+    async def discovery_client(**kwargs):
+        async with _client(handler) as http_client:
+            return await discover_openai_compatible_models(**kwargs, client=http_client)
+
+    statuses = []
+    for endpoint in (f"{host}:5001/v1", f"http://{host}:5001/v1"):
+        service = LocalLLMProviderCatalogService(
+            provider_catalog_loader=lambda: {"QwenCloud": []},
+            settings_loader=lambda: {"providers": {"QwenCloud": []}},
+            discovery_client=discovery_client,
+            environ={},
+        )
+        result = await service.discover_models(
+            provider="QwenCloud",
+            staged_settings={
+                "api_settings": {
+                    "qwencloud": {"api_base_url": endpoint, "api_key": "k"}
+                }
+            },
+            use_shared_cache=False,
+        )
+        statuses.append(result.status)
+
+    assert statuses == ["success", "success"]
+    assert requested == [f"http://{host}:5001/v1/models"] * 2
 
 
 def test_a_single_label_host_displays_and_compares_as_itself():
