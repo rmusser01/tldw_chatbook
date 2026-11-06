@@ -353,7 +353,12 @@ class PortraitCompositionReview(SafeModalDismissMixin, ModalScreen[None]):
         """Explicitly remove displayed stale artwork as well as fencing future jobs."""
         self._retired = True
         self._raster = None
-        if self.is_mounted:
+        if not self.is_mounted:
+            # Pushed but not mounted yet: close once it is, or the opener's
+            # push_screen_wait (and the controller's close) never returns
+            # (TASK-38979). The queued call runs after mount.
+            self.call_later(self.retire)
+        else:
             self.query_one("#portrait-pairs-canvas", Static).update("Review retired.")
             self.dismiss_safe_once_when_on_top(None)
 
