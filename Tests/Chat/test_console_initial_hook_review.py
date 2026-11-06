@@ -92,7 +92,7 @@ def _present(state, review_id="review", generation=1):
         review_id, generation, attachment
     )
     assert projection is not None
-    state.app.screen = SimpleNamespace(_console_hook_review_projection=projection)
+    state.app.screen = SimpleNamespace(hook_review_projection=projection)
     # A real modal suspends its Console after the initial claim.
     state.runtime._reconciled_view = None
     return view, attachment, projection
@@ -595,7 +595,7 @@ async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime
     pending = state.controller.pending_decision_projection(state.session.id)
     assert project_runtime_hook_review(state.runtime, pending)
     old_modal = state.app.screen
-    old = old_modal._console_hook_review_projection
+    old = old_modal.hook_review_projection
 
     # Textual posts ScreenResume before the popped modal's Unmount finishes.
     state.app.screen_stack.remove(old_modal)
@@ -603,7 +603,7 @@ async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime
     state.runtime._reconciled_view = view
     assert project_runtime_hook_review(state.runtime, pending)
     new_modal = state.app.screen
-    current = new_modal._console_hook_review_projection
+    current = new_modal.hook_review_projection
     assert new_modal is not old_modal
     assert current.presentation_token is not old.presentation_token
     old_modal.on_unmount()
@@ -612,3 +612,30 @@ async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime
     assert new_modal._runtime_result(HookReviewResult("cancel"))
     assert (await waiter).kind == "cancel"
     assert state.controller.pending_decision_projection(state.session.id) is None
+
+
+def test_console_runtime_reads_no_private_screen_attribute():
+    """ConsoleRuntime must use public screen state, never ``screen._x``."""
+    import ast
+    from pathlib import Path
+
+    import tldw_chatbook.Chat.console_runtime as module
+
+    tree = ast.parse(Path(module.__file__).read_text())
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+            base = node.value
+            if isinstance(base, ast.Attribute) and base.attr == "screen":
+                offenders.append(node.lineno)
+        if (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and node.args[1].value.startswith("_")
+            and "screen" in ast.unparse(node.args[0])
+        ):
+            offenders.append(node.lineno)
+    assert not offenders, f"private screen attribute read at lines {offenders}"

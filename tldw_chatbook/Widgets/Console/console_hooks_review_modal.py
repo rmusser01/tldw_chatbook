@@ -77,7 +77,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         self._runtime_ready_pending = False
         self._runtime_result = on_result
         self._runtime_detach = on_detach
-        self._console_hook_review_projection = runtime_projection
+        self.hook_review_projection = runtime_projection
         self._generation = 0
         self._answer: asyncio.Future[HookReviewResult] | None = None
 
@@ -85,8 +85,8 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         self, projection: ConsoleHookReviewProjection
     ) -> None:
         """Refresh disposable rows from the same resident review, including busy."""
-        previous = self._console_hook_review_projection
-        self._console_hook_review_projection = projection
+        previous = self.hook_review_projection
+        self.hook_review_projection = projection
         if not projection.busy:
             self._runtime_ready_pending = False
         if (
@@ -509,7 +509,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                         "Hooks or permissions changed, or the save failed. Review current state and retry."
                     )
         finally:
-            projection = self._console_hook_review_projection
+            projection = self.hook_review_projection
             self._busy = (
                 self._runtime_ready_pending or projection.busy
                 if projection is not None
@@ -602,11 +602,11 @@ def project_runtime_hook_review(runtime: ConsoleRuntime, pending) -> bool | None
     presented = [
         screen
         for screen in getattr(app, "screen_stack", (current,))
-        if getattr(screen, "_console_hook_review_projection", None) is not None
+        if getattr(screen, "hook_review_projection", None) is not None
     ]
     matching = None
     for screen in presented:
-        prior = screen._console_hook_review_projection
+        prior = screen.hook_review_projection
         if (
             selected
             and prior.review_id == pending.decision_id
@@ -638,7 +638,7 @@ def project_runtime_hook_review(runtime: ConsoleRuntime, pending) -> bool | None
         return False
     if matching is not None:
         if (
-            matching._console_hook_review_projection.presentation_token
+            matching.hook_review_projection.presentation_token
             is projection.presentation_token
         ):
             matching.update_runtime_projection(projection)

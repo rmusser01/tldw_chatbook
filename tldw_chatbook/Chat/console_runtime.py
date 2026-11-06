@@ -5338,7 +5338,7 @@ class ConsoleRuntime:
         # The owning modal suspends the Console and clears reconciliation.
         # Its current token and attachment still identify an answerable review.
         try:
-            projection = view.app.screen._console_hook_review_projection
+            projection = view.app.screen.hook_review_projection
         except (AttributeError, RuntimeError):
             return False
         return bool(
@@ -5653,7 +5653,7 @@ class ConsoleRuntime:
         try:
             app = self.view.app
             visible_hook_review = any(
-                getattr(screen, "_console_hook_review_projection", None) is not None
+                getattr(screen, "hook_review_projection", None) is not None
                 for screen in getattr(app, "screen_stack", (app.screen,))
             )
         except (AttributeError, RuntimeError):
