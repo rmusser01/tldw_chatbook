@@ -1,8 +1,11 @@
 ---
 id: TASK-39056
 title: "ConsoleCharacterController still gives its radio and speech-presentation hooks no-op defaults, so a construction that forgets them never updates the radio display"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 10:09
+updated_date: 2026-11-06 15:21
 labels:
 - follow-up
 - console
@@ -45,3 +48,10 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - [ ] #2 With the allowance removed and the defaults still in place, the wave6 dependency node is red (shown before the source change)
 - [ ] #3 Every test constructor passes both hooks, and the covering files pass, with counts recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Pass both hooks (`speech_presentation`, `render_radio`) in every test constructor: the two in `test_console_persona_visual_identity.py`, the one in `test_console_character_avatar.py`, and the dependency builders in `test_console_character_avatar_copy_budget.py` and `test_console_character_controller.py`.
+2. Remove the `optional` allowance from `test_character_controller_has_only_named_non_dom_dependencies` and show the node red while the defaults are still in place.
+3. Make both hooks required keyword arguments (drop the defaults in `ConsoleCharacterController.__init__`); production wiring already passes both.
+4. Run the covering files and record the counts.

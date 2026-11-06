@@ -165,6 +165,8 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
         console_image_default_mode=lambda: None,
         is_mounted=lambda: False,
         render_character_avatar=AsyncMock(),
+        speech_presentation=lambda: None,
+        render_radio=lambda *_args, **_kwargs: None,
     )
     return screen
 

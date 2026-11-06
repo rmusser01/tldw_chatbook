@@ -1705,13 +1705,8 @@ def test_character_controller_has_only_named_non_dom_dependencies() -> None:
         "speech_presentation",
         "render_radio",
     }
-    # b333cebdfe gave its two presentation hooks no-op defaults; every other
-    # dependency must be wired. Proposed follow-up: make them required too.
-    optional = {"speech_presentation", "render_radio"}
-    assert all(
-        (default is None) is (argument.arg not in optional)
-        for argument, default in zip(init.args.kwonlyargs, init.args.kw_defaults)
-    )
+    # Every dependency must be wired, the presentation hooks too (TASK-39056).
+    assert all(default is None for default in init.args.kw_defaults)
     assert init.args.vararg is None
     assert init.args.kwarg is None
     assert "_screen" not in _self_assignments(controller)

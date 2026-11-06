@@ -148,6 +148,8 @@ def _avatar_controller(
         "console_image_default_mode": lambda: "pixels",
         "is_mounted": is_mounted,
         "render_character_avatar": render,
+        "speech_presentation": lambda: None,
+        "render_radio": lambda *_args, **_kwargs: None,
     }
     return ConsoleCharacterController(**dependencies)
 
