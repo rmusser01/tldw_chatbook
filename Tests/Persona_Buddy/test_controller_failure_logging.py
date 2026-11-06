@@ -61,8 +61,12 @@ def captured():
     """
     handler = _ForwardedRecords()
     root = logging.getLogger()
-    old_level = root.level
+    # An earlier TldwCli() in the same process sets the package logger to INFO
+    # (app.py), which would drop these DEBUG records (review r10a-rev4).
+    package = logging.getLogger("tldw_chatbook")
+    old_levels = (root.level, package.level)
     root.setLevel(logging.DEBUG)
+    package.setLevel(logging.DEBUG)
     root.addHandler(handler)
     sink_id = logger.add(_forward_loguru_to_standard, level="DEBUG")
     try:
@@ -70,7 +74,8 @@ def captured():
     finally:
         logger.remove(sink_id)
         root.removeHandler(handler)
-        root.setLevel(old_level)
+        root.setLevel(old_levels[0])
+        package.setLevel(old_levels[1])
 
 
 def _rendered(records) -> str:
@@ -173,3 +178,144 @@ def test_every_blanket_handler_in_the_module_records_something():
             silent.append(node.lineno)
 
     assert silent == []
+
+
+#: TASK-38989 review r10a-rev4: every site that binds ``exception_type``, which
+#: the production forwarder appends to the line for every logger. A new site
+#: must be reviewed here: the value must be a class name, never data.
+EXCEPTION_TYPE_BIND_SITES = frozenset(
+    {
+        ("tldw_chatbook/Persona_Buddy/controller.py", "load_local_persona_portrait"),
+        (
+            "tldw_chatbook/Persona_Buddy/controller.py",
+            "PersonaBuddyController._current_reduced_motion",
+        ),
+        (
+            "tldw_chatbook/Persona_Buddy/controller.py",
+            "PersonaBuddyController._read_local_buddy",
+        ),
+        (
+            "tldw_chatbook/Persona_Buddy/controller.py",
+            "PersonaBuddyController._read_local_persona",
+        ),
+        ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_graph"),
+        (
+            "tldw_chatbook/Persona_Buddy/controller.py",
+            "PersonaBuddyController._resolve_runtime",
+        ),
+        (
+            "tldw_chatbook/Persona_Buddy/preferences.py",
+            "persist_persona_buddy_preferences",
+        ),
+    }
+)
+_PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
+
+
+def _is_type_name(node: ast.AST) -> bool:
+    """``type(<x>).__name__``."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "__name__"
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "type"
+    )
+
+
+def _is_class_name_value(node: ast.AST) -> bool:
+    """A class name: ``type(x).__name__``, the bounded helper, or a literal."""
+    return (
+        _is_type_name(node)
+        or (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_bounded_exception_type"
+        )
+        or (isinstance(node, ast.Constant) and node.value == "Exception")
+    )
+
+
+def _bind_problems(keyword: ast.keyword, stack: list[ast.AST]) -> list[str]:
+    """Why one ``exception_type`` keyword might bind something other than a class."""
+    if keyword.arg is None:
+        return ["**spread can carry exception_type"]
+    if _is_type_name(keyword.value):
+        return []
+    if not isinstance(keyword.value, ast.Name):
+        return [f"binds {ast.unparse(keyword.value)}"]
+    function = next(
+        (
+            item
+            for item in reversed(stack)
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ),
+        None,
+    )
+    values = [
+        assign.value
+        for assign in (ast.walk(function) if function is not None else ())
+        if isinstance(assign, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == keyword.value.id
+            for target in assign.targets
+        )
+    ]
+    if values and all(_is_class_name_value(value) for value in values):
+        return []
+    return [f"{keyword.value.id} is not only a class name"]
+
+
+def _visit_bind_sites(
+    node: ast.AST,
+    stack: list[ast.AST],
+    relative: str,
+    sites: dict[tuple[str, str], list[str]],
+) -> None:
+    scoped = isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    if scoped:
+        stack.append(node)
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"bind", "contextualize"}
+    ):
+        for keyword in node.keywords:
+            if keyword.arg in ("exception_type", None):
+                owner = ".".join(getattr(item, "name", "") for item in stack)
+                sites.setdefault((relative, owner), []).extend(
+                    _bind_problems(keyword, stack)
+                )
+    for child in ast.iter_child_nodes(node):
+        _visit_bind_sites(child, stack, relative, sites)
+    if scoped:
+        stack.pop()
+
+
+def _exception_type_bind_sites(package: Path) -> dict[tuple[str, str], list[str]]:
+    """Map each ``bind``/``contextualize`` carrying ``exception_type`` to its problems."""
+    sites: dict[tuple[str, str], list[str]] = {}
+    for path in sorted(package.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "exception_type" in source:
+            relative = path.relative_to(package.parent).as_posix()
+            _visit_bind_sites(ast.parse(source), [], relative, sites)
+    return sites
+
+
+def test_exception_type_is_bound_only_at_reviewed_class_name_sites():
+    """The forwarder renders ``exception_type`` on every logger's line, so the
+    sites that bind it are pinned, and each must bind only a class name."""
+    sites = _exception_type_bind_sites(_PACKAGE)
+    assert set(sites) == EXCEPTION_TYPE_BIND_SITES
+    assert {site: problems for site, problems in sites.items() if problems} == {}
+
+
+def test_bounded_exception_type_returns_only_a_class_name():
+    """The helper the controller's sites bind through."""
+    from tldw_chatbook.Persona_Buddy.controller import _bounded_exception_type
+
+    assert _bounded_exception_type(ValueError("private detail")) == "ValueError"
+    odd = type("not a / class name", (Exception,), {})
+    assert _bounded_exception_type(odd()) == "Exception"
+

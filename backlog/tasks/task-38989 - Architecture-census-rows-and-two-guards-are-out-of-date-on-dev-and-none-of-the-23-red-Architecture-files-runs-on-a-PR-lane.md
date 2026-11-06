@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 10:17
+updated_date: 2026-11-06 10:37
 labels:
 - follow-up
 - tests
@@ -104,7 +104,9 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b on 2026-
     - `redact_log_line`, through `RedactingFileFormatter`, still masks a credential in a forwarded line that carries a class.
 
     It was red with the forwarder change reverted.
-  - **Lanes.** Neither test file runs on a PR lane; no laned test file imports the forwarder.
+  - **Lanes (review r10a-rev4).** `test_controller_failure_logging.py` (whole) and the node `test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type` are appended to the architecture-guards job, and `ARCHITECTURE_GUARD_TARGETS` and its argv pin are updated. The boundary file is not laned whole: `test_persona_workspace_diagnostics_do_not_interpolate_private_values` has been red since e8eeae7db9, and the coordinator is filing that. It needs no completeness pin, because it runs one chosen node rather than an "all but" list.
+  - **Fixture order (r10a-rev4).** `captured` now also sets the `tldw_chatbook` package logger to DEBUG and restores it. An earlier `TldwCli()` sets that logger to INFO (app.py), which dropped these records. A temporary plugin that forces the package logger to INFO before each test turned 3 of 4 red with the old fixture; with the fix, 4 passed.
+  - **Bind-site census (r10a-rev4).** The forwarder renders a regex-matching `exception_type` on every logger's line, and a 40-character `sk_live_…` value would pass the regex without `redact_log_line` masking it. `test_exception_type_is_bound_only_at_reviewed_class_name_sites` therefore pins the AST set of `bind`/`contextualize` sites carrying `exception_type`: exactly the 7 reviewed ones (6 in the controller, 1 in preferences). Each must bind `type(x).__name__`, the bounded helper, or the literal "Exception". `test_bounded_exception_type_returns_only_a_class_name` checks the helper. Red with a planted `log.bind(exception_type=api_key)` in `Utils/text.py` (a new site), and with a reviewed site temporarily binding `str(exc)`.
   - **Regression check.** Buddy, forwarder and sanitizer tests: 20 failed and 394 passed, the same 20 as at HEAD 47dc0fcb94 (RecoveryRequired / environment). The only new node is the forwarder test.
   - **Diagnostic inventory.** It flagged the forwarder's two `std_logger.log` calls, which now pass `text`. Reviewed with `--statements`, then regenerated.
 - **Legacy downloader.** `Backup_Recovery/config_adapter.py`, `detached_layout.py` and `inventory.py` name `model_download_dir` only to classify it as an inert external location. None of them reads or writes the directory.

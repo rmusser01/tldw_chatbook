@@ -1241,6 +1241,8 @@ jobs:
             Tests/Architecture/test_recovery_entrypoints.py \
             Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py \
             Tests/Architecture/test_worker_exclusive_group_inventory.py \
+            Tests/Persona_Buddy/test_controller_failure_logging.py \
+            Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type \
             --timeout=180 \
             --tb=short
 

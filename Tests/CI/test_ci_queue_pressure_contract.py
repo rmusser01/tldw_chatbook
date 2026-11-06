@@ -421,6 +421,11 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_recovery_entrypoints.py",
     "Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py",
     "Tests/Architecture/test_worker_exclusive_group_inventory.py",
+    # TASK-38989 review r10a-rev4: the forwarder's exception_type pins. The
+    # boundary file runs one chosen node, not "all but" a list, so it needs no
+    # completeness pin: its other tests stay off while one is red on dev.
+    "Tests/Persona_Buddy/test_controller_failure_logging.py",
+    "Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
