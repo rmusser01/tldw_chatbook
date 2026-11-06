@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-05 16:20'
+updated_date: '2026-11-06 18:31'
 labels:
   - console
   - performance
@@ -29,6 +30,14 @@ Reusing an unchanged build for longer is exact only if every input the build rea
 - [ ] #3 What the rails show is never staler than one poll interval behind dev for every inventoried input, with a deterministic test per input class
 - [ ] #4 A send reaches the provider no later than on dev (Enter to the provider request, live, paired and interleaved, at least 30 sends per arm including first sends)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-06, from TASK-36571.1's review (for the inventory, AC#1 and AC#3):
+- The attention rows (`_conversation_attention_rows`) also read `activity_receipts.unseen_snapshot()` and the manual-unread marks, which the carry key leaves out. Today a receipt is published in the same step as its run's marker change, and a manual-unread landing pushes on its own. Adding the receipts' `projection_generation` (a cheap int) to the key would make that input exact.
+- 'At most one tick later' assumes a later tick. The poll's final paint can itself be a reuse (key unchanged since an end-of-run sync), and then nothing rebuilds. No live case was found: every uncovered input traced (unread acknowledgement, sub-agent counts, folder availability on change, persisted-rows landing) pushes on its own. The inventory test should cover this case.
+<!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
 
