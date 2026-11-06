@@ -162,7 +162,11 @@ MAX_PASS_ADDED_MODULES = 558
 #: The growth is in `settings_screen`, a module the route already pre-imports
 #: (one pane at a time at 70 columns and below, and the stale-echo checks).
 #: Modules unchanged, pinned at the measurement.
-MAX_PASS_ADDED_LOC = 426_467
+#: 426,467 -> 426,470: 2026-11-06 owner decision ("Re-pin per PR (Rec.)",
+#: B2b follow-up burn-down): TASK-33910.50 adds +3 LOC in the ccp route
+#: (load_character hides and empties the concept row); no new module.
+#: Re-measured on dev 8b762b52fa, pinned at the measurement; ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 426_470
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
