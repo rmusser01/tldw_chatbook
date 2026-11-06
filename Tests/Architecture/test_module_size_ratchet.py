@@ -51,6 +51,7 @@ row — `backlog/docs/library-decomposition-recipe.md` governs any split.
 
 from __future__ import annotations
 
+import ast
 from functools import lru_cache
 from pathlib import Path
 
@@ -536,7 +537,9 @@ _BUDGETS: dict[str, int] = {
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
     # 2026-11-06, TASK-38964: 35,669 -> 35,654; the koboldcpp route refusal
     # wrapper is gone, the save reads Provider_Contract's rule directly.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35654,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
+    # 2026-11-06, TASK-1378.1: 35,654 -> 35,523; Network moved to its
+    # registered panel (UI/Settings_Modules/category_panels.py).
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35523,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -1071,4 +1074,40 @@ def test_every_module_of_the_guard_size_has_a_row() -> None:
         f"row: {unbudgeted}. Add a row to _BUDGETS in "
         f"Tests/Architecture/test_module_size_ratchet.py pinned at the "
         f"measured size, or split the module below the line."
+    )
+
+
+#: TASK-1378.1: SettingsCategoryId references inside comparisons in
+#: SettingsScreen (the if/elif chains the panel registry replaces). A category
+#: moved onto `Settings_Modules/category_panels.py::CATEGORY_PANELS` removes
+#: its arms; lower this when one moves, never raise it -- new category
+#: behaviour goes in a registered panel. Base (dev 5ca7ec6a03): 245.
+_SETTINGS_CATEGORY_COMPARISON_CEILING = 240
+
+
+def _settings_category_comparisons() -> int:
+    tree = ast.parse(
+        (_REPO_ROOT / "tldw_chatbook/UI/Screens/settings_screen.py").read_text()
+    )
+    return sum(
+        1
+        for compare in ast.walk(tree)
+        if isinstance(compare, ast.Compare)
+        for node in ast.walk(compare)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "SettingsCategoryId"
+    )
+
+
+def test_settings_screen_category_comparisons_do_not_rise() -> None:
+    count = _settings_category_comparisons()
+    assert count <= _SETTINGS_CATEGORY_COMPARISON_CEILING, (
+        f"settings_screen.py compares SettingsCategoryId {count} times "
+        f"(ceiling {_SETTINGS_CATEGORY_COMPARISON_CEILING}). Serve the category "
+        "from a registered panel in UI/Settings_Modules/category_panels.py "
+        "instead of adding an arm; do not raise the ceiling."
+    )
+    assert _SETTINGS_CATEGORY_COMPARISON_CEILING - count <= 0, (
+        f"Only {count} comparisons remain: lower the ceiling to {count}."
     )
