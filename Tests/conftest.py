@@ -1152,7 +1152,7 @@ class _StorageLeaseGuard:
             thread = getattr(lease.resource_thread, "name", None)
             return f"SQLite {lease.resource_path} on thread {thread}"
         key = lease._key
-        root = key[1] if key else "a retired key"
+        root = key[1] if key else "no admission root (unqualified lease)"
         return f"storage lease without a SQLite handle, admission root {root}"
 
     @pytest.fixture(autouse=True)
