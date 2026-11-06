@@ -7439,7 +7439,23 @@ class LibraryNotesController:
     async def _run_library_notes_bulk_keyword(
         self, note_ids: tuple[str, ...], keyword: str, remove: bool
     ) -> None:
-        service = getattr(self.app_instance, "notes_service", None)
+        """Change one keyword on every checked note (N-14), then the receipt.
+
+        PR #3423 review I-2: each note goes through
+        ``NotesScopeService.change_local_note_keyword`` -- the editor's own
+        keyword path -- not plain database link writes, so the scope
+        service's policy gate applies and a ready Sync v2 profile records
+        the organization intents another device syncs from. A note the gate
+        (or a sync group that is not ready) refuses is counted as not
+        changed: the receipt names it and it stays checked.
+        """
+        app = self.app_instance
+        try:
+            scope_service = app.notes_scope_service
+        except AttributeError:
+            scope_service = None
+        service = getattr(scope_service, "local_notes_service", None)
+        change_keyword = getattr(scope_service, "change_local_note_keyword", None)
         user_id = self._library_notes_user_id()
         snapshot = self._library_note_session.snapshot
         open_id = snapshot.note_id if snapshot is not None else ""
@@ -7448,16 +7464,20 @@ class LibraryNotesController:
         )
 
         def write() -> tuple[str, list[str], list[str], list[str]]:
+            if service is None or not callable(change_keyword):
+                raise RuntimeError("bulk keyword changes are unavailable")
             # One ``BEGIN IMMEDIATE`` Notes transaction (the save path's own,
-            # ``note_transaction``) around the get-or-create and every link:
-            # a deferred read-then-write upgrade loses to any concurrent
-            # writer with SQLITE_BUSY_SNAPSHOT -- measured here as an
-            # OperationalError on the first run that raced the tree reload
-            # (TASK-34000.28 N-24's trap). The calls below join it.
-            with service.note_transaction(user_id):
-                return write_in_transaction()
+            # ``note_transaction``) around every note's change: a deferred
+            # read-then-write upgrade loses to any concurrent writer with
+            # SQLITE_BUSY_SNAPSHOT -- measured here as an OperationalError on
+            # the first run that raced the tree reload (TASK-34000.28 N-24's
+            # trap). Each change joins it through its cursor.
+            with service.note_transaction(user_id) as cursor:
+                return write_in_transaction(cursor)
 
-        def write_in_transaction() -> tuple[str, list[str], list[str], list[str]]:
+        def write_in_transaction(
+            cursor: Any,
+        ) -> tuple[str, list[str], list[str], list[str]]:
             changed: list[str] = []
             unchanged: list[str] = []
             failed: list[str] = []
@@ -7465,20 +7485,17 @@ class LibraryNotesController:
             keyword_id = row.get("id") if isinstance(row, dict) else None
             # The receipt names the keyword as stored (matching ignores case).
             label = str(row.get("keyword") or keyword) if keyword_id else keyword
-            if keyword_id is None and not remove:
-                keyword_id = service.add_keyword(user_id, keyword)
             for note_id in note_ids:
                 if note_id == open_id and open_busy:
                     failed.append(note_id)
                     continue
-                if keyword_id is None:
-                    unchanged.append(note_id)
-                    continue
                 try:
-                    linked = (
-                        service.unlink_note_from_keyword(user_id, note_id, keyword_id)
-                        if remove
-                        else service.link_note_to_keyword(user_id, note_id, keyword_id)
+                    linked = change_keyword(
+                        user_id=user_id,
+                        note_id=note_id,
+                        keyword=label,
+                        remove=remove,
+                        cursor=cursor,
                     )
                 except Exception as exc:  # noqa: BLE001 - counted, never raised
                     logger.warning(
