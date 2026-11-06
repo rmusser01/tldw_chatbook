@@ -615,6 +615,7 @@ from ...Notes.notes_scope_service import (
     PURGE_REFUSED_SYNC_UNKNOWN,
     NotePurgeRefusedError,
 )
+from ...runtime_policy.types import PolicyDeniedError
 from ...Notes.note_import_plan_models import (
     note_link_entries,
     stored_note_link,
@@ -674,6 +675,33 @@ _NOTES_SYNC_START_SETTLE_SECONDS = 0.5
 def _notes_noun(count: int) -> str:
     """``note`` or ``notes`` for a bulk receipt's count (TASK-34000.29 N-14)."""
     return "note" if count == 1 else "notes"
+
+
+#: PR #3423 re-review N-3: why a bulk keyword change left a note as it was,
+#: said after the receipt's count (the runtime policy's refusal says its own
+#: sentence, ``PolicyDeniedError.user_message``).
+BULK_KEYWORD_OPEN_NOTE_BUSY = "The open note has unsaved changes."
+BULK_KEYWORD_SYNC_NOT_READY = (
+    "Sync v2 is not ready to carry note keywords yet — see Manual Sync in "
+    "Settings."
+)
+
+
+def _bulk_keyword_refusal_reason(error: BaseException) -> str:
+    """The sentence a bulk keyword receipt names for ``error``, or ``""``.
+
+    A policy refusal carries its own sentence. A Sync v2 profile whose Notes
+    organization group is not ready raises a plain ``ValueError`` from
+    ``NotesOrganizationSyncService._require_ready``, recognised by its text.
+    Anything else stays a bare count.
+    """
+    if isinstance(error, PolicyDeniedError):
+        return str(error.user_message or "").strip()
+    if isinstance(error, ValueError) and "organization group is not ready" in str(
+        error
+    ):
+        return BULK_KEYWORD_SYNC_NOT_READY
+    return ""
 
 
 #: TASK-34000.29 8b (ruling T8b-e): how many refreshes a Trash landing's
@@ -7468,7 +7496,11 @@ class LibraryNotesController:
         service's policy gate applies and a ready Sync v2 profile records
         the organization intents another device syncs from. A note the gate
         (or a sync group that is not ready) refuses is counted as not
-        changed: the receipt names it and it stays checked.
+        changed: the receipt names it, and why, and it stays checked.
+
+        PR #3423 re-review N-1/N-2: each note commits on its own, so the
+        ChaChaNotes write lock is held for one note at a time and a note
+        whose change raises rolls back whole.
         """
         app = self.app_instance
         try:
@@ -7484,60 +7516,73 @@ class LibraryNotesController:
             snapshot.dirty or snapshot.saving or snapshot.in_conflict
         )
 
-        def write() -> tuple[str, list[str], list[str], list[str]]:
+        def write() -> tuple[str, list[str], list[str], list[str], list[str]]:
             if service is None or not callable(change_keyword):
                 raise RuntimeError("bulk keyword changes are unavailable")
-            # One ``BEGIN IMMEDIATE`` Notes transaction (the save path's own,
-            # ``note_transaction``) around every note's change: a deferred
-            # read-then-write upgrade loses to any concurrent writer with
-            # SQLITE_BUSY_SNAPSHOT -- measured here as an OperationalError on
-            # the first run that raced the tree reload (TASK-34000.28 N-24's
-            # trap). Each change joins it through its cursor.
-            with service.note_transaction(user_id) as cursor:
-                return write_in_transaction(cursor)
-
-        def write_in_transaction(
-            cursor: Any,
-        ) -> tuple[str, list[str], list[str], list[str]]:
             changed: list[str] = []
             unchanged: list[str] = []
             failed: list[str] = []
+            reasons: list[str] = []
+
+            def note_failed(note_id: str, reason: str) -> None:
+                failed.append(note_id)
+                if reason and reason not in reasons:
+                    reasons.append(reason)
+
             row = service.get_keyword_by_text(user_id, keyword)
             keyword_id = row.get("id") if isinstance(row, dict) else None
             # The receipt names the keyword as stored (matching ignores case).
             label = str(row.get("keyword") or keyword) if keyword_id else keyword
             for note_id in note_ids:
                 if note_id == open_id and open_busy:
-                    failed.append(note_id)
+                    note_failed(note_id, BULK_KEYWORD_OPEN_NOTE_BUSY)
                     continue
                 try:
-                    linked = change_keyword(
-                        user_id=user_id,
-                        note_id=note_id,
-                        keyword=label,
-                        remove=remove,
-                        cursor=cursor,
-                    )
+                    # One ``BEGIN IMMEDIATE`` Notes transaction (the save
+                    # path's own, ``note_transaction``) PER NOTE. Immediate: a
+                    # deferred read-then-write upgrade loses to any concurrent
+                    # writer with SQLITE_BUSY_SNAPSHOT -- measured here as an
+                    # OperationalError on the first run that raced the tree
+                    # reload (TASK-34000.28 N-24's trap). Per note (PR #3423
+                    # re-review N-1/N-2): a ready Sync v2 profile pays about
+                    # 0.2 s of profile reads inside each change, and one
+                    # transaction around the whole run write-locked every
+                    # ChaChaNotes table for its length (a concurrent
+                    # ``add_note`` failed at once); and a note whose change
+                    # raised after a write was committed half-done.
+                    with service.note_transaction(user_id) as cursor:
+                        linked = change_keyword(
+                            user_id=user_id,
+                            note_id=note_id,
+                            keyword=label,
+                            remove=remove,
+                            cursor=cursor,
+                        )
                 except Exception as exc:  # noqa: BLE001 - counted, never raised
                     logger.warning(
                         "Bulk keyword change skipped one note; error_type={}",
                         type(exc).__name__,
                     )
-                    failed.append(note_id)
+                    note_failed(note_id, _bulk_keyword_refusal_reason(exc))
                     continue
                 (changed if linked else unchanged).append(note_id)
-            return label, changed, unchanged, failed
+            return label, changed, unchanged, failed, reasons
 
         try:
-            label, changed, unchanged, failed = await self._run_library_service_call(
-                write, isolate_in_worker=True
-            )
+            (
+                label,
+                changed,
+                unchanged,
+                failed,
+                reasons,
+            ) = await self._run_library_service_call(write, isolate_in_worker=True)
         except Exception as exc:  # noqa: BLE001 - one normalized boundary
             logger.warning(
                 "Bulk keyword change failed before any note; error_type={}",
                 type(exc).__name__,
             )
             label, changed, unchanged, failed = keyword, [], [], list(note_ids)
+            reasons = []
         finally:
             # Final review I-3: the one release; the in-place refresh below is
             # the owed reload (see ``_run_library_notes_bulk_move``).
@@ -7565,24 +7610,34 @@ class LibraryNotesController:
                 group="library_note_detail",
             )
         await self._finish_library_notes_bulk(
-            receipt, tuple(failed), failed_verb="could not be changed"
+            receipt,
+            tuple(failed),
+            failed_verb="could not be changed",
+            failed_reasons=tuple(reasons),
         )
     async def _finish_library_notes_bulk(
-        self, receipt: str, failed: tuple[str, ...], *, failed_verb: str
+        self,
+        receipt: str,
+        failed: tuple[str, ...],
+        *,
+        failed_verb: str,
+        failed_reasons: tuple[str, ...] = (),
     ) -> None:
         """Name the outcome, refresh the tree, and leave select mode on success.
 
         A partial failure keeps select mode with exactly the notes that did
         not change still checked, so the same action retries only those, and
         says so: in select mode the status line is hidden, so the count is
-        also a warning toast.
+        also a warning toast. ``failed_reasons`` (PR #3423 re-review N-3)
+        are the sentences saying why, in the order first met, after it.
         """
         state = self._notes_state
         state.select_actions_visible = False
+        why = f". {' '.join(failed_reasons)}" if failed and failed_reasons else ""
         if failed and not state.select_mode:
             # The user left select mode (Escape) while the worker ran: name
             # what did not change, but check nothing behind a closed mode.
-            receipt += f" · {len(failed)} {failed_verb}"
+            receipt += f" · {len(failed)} {failed_verb}{why}"
             state.row_selection.clear()
             app = self.app_instance
             try:
@@ -7594,6 +7649,7 @@ class LibraryNotesController:
         elif failed:
             receipt += (
                 f" · {len(failed)} {failed_verb} — still checked, so you can try again"
+                f"{why}"
             )
             state.row_selection.clear()
             state.row_selection.select_all(failed)
