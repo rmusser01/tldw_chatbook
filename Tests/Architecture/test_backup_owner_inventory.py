@@ -67,6 +67,9 @@ PRODUCER_CALLS = frozenset(
 )
 
 
+# Calls whose arguments are inspected, never run (TASK-39053 review r11b-rev2).
+INTROSPECTION_CALLS = frozenset({"signature", "isinstance", "issubclass", "callable"})
+
 # os-module publication seams counted as `os.<name>` (rename/link: TASK-39053 review).
 NATIVE_OS_CALLS = frozenset({"replace", "unlink", "rename", "link"})
 
@@ -195,7 +198,19 @@ def census(source: str) -> Counter:
             # `x.open` / `x.connect` values are not counted here: in this tree they
             # are widget state (`header.open`) or `webbrowser.open`, and a call
             # through them is still counted where it happens.
-            for argument in (*node.args, *(keyword.value for keyword in node.keywords)):
+            # Introspection runs nothing: inspect.signature(os.replace),
+            # isinstance(x, zipfile.ZipFile), callable(stream.write).
+            callee = (
+                node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else getattr(node.func, "id", "")
+            )
+            arguments = (
+                ()
+                if callee in INTROSPECTION_CALLS
+                else (*node.args, *(keyword.value for keyword in node.keywords))
+            )
+            for argument in arguments:
                 if isinstance(argument, (ast.Attribute, ast.Name)):
                     for candidate in self.candidates_for(argument, argument=True):
                         if candidate not in {"open", "connect"}:
@@ -434,6 +449,19 @@ async def export(path, data, archive):
     assert result[("export", "write_bytes")] == 2
     assert result[("export", "atomic_write_text")] == 1
     assert result[("export", "write_text")] == 1
+
+
+def test_census_ignores_arguments_to_introspection_calls():
+    # TASK-39053 review r11b-rev2: a signature probe or type check runs nothing.
+    source = """
+import inspect, os, zipfile
+inspect.signature(os.replace)
+inspect.signature(os.link)
+isinstance(archive, zipfile.ZipFile)
+issubclass(kind, zipfile.ZipFile)
+callable(stream.write)
+"""
+    assert census(source) == Counter()
 
 
 def test_census_counts_yaml_safe_dump_serializers():

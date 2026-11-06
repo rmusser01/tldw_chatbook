@@ -200,7 +200,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The census contains 1609 rows (TASK-39053 reconciliation). Its qualified symbol is the locator-consumer
+The census contains 1607 rows (TASK-39053 reconciliation). Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -2872,8 +2872,8 @@ This inventory had not matched production since it landed. Recomputed at dev
 changed producer rows, 13 new SQLite members and 8 SQLite rows with no registry
 member. Scanner blind spots hid live producers; these forms are now counted:
 
-- `from <module> import os` (69 modules import `os` from `Utils/platform_files`)
-  bound `os` without `import os`, so their `os.replace` / `os.unlink` calls left
+- `from <module> import os` (74 files import `os` from `Utils/platform_files`, 68
+  of them at module scope) bound `os` without `import os`, so their `os.replace` / `os.unlink` calls left
   the census (24 of the 194 "gone" rows).
 - `fn, flags = libc.renameatx_np, 0x4` (tuple assignment) hid the native
   no-replace publication in `Backup_Recovery/native_platform.rename_noreplace`.
@@ -2892,12 +2892,14 @@ member. Scanner blind spots hid live producers; these forms are now counted:
 - `os.rename` and `os.link`, publication seams like `os.replace`.
 
 Known limits: a `x.open` / `x.connect` value passed as an argument is not counted
-(here it is widget state such as `header.open`, or `webbrowser.open`). `tempfile`
+(here it is widget state such as `header.open`, or `webbrowser.open`), nor are
+arguments to `inspect.signature`, `isinstance`, `issubclass` and `callable`, which
+run nothing. `tempfile`
 creation (86 rows if counted), third-party writers such as pydub `AudioSegment.export`,
 subprocess outputs and dynamic bindings such as `Tools/local_tool_impls`'
 `file_os` are outside the vocabulary.
 
-With these forms counted, the drift is 716 added, 166 gone and 13 changed
+With these forms counted, the drift is 714 added, 166 gone and 13 changed
 producer rows. The classifications below are proposals pending owner sign-off of
 the cohort table in TASK-39053. They apply the rules this document already uses,
 in order:
@@ -3358,7 +3360,6 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Tool_Packs/importer.py | _read_regular_archive | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | _digest_descriptor_relative | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | _digest_path | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Tool_Packs/publication.py | _link_supports_directory_descriptors | os.link | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | _open_parent | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | _remove_owned_temporary | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | publish_tool_pack | open | 1 | unsupported | miscellaneous |
@@ -3387,7 +3388,6 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/UI/Console_Modules/markdown_export.py | _validate_and_write | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/markdown_export.py | _validate_and_write | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.link | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._require_external_video_pinned_capabilities | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Evals/snippet_editor.py | read_bounded_import_text | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py | LlamaCppSetupView._render_diagnostics | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/LLM_Management/vllm_profiles.py | VllmProfileRepository._commit | atomic_write_json | 1 | unsupported | miscellaneous |
@@ -3568,7 +3568,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Skills_Interop/builtin_skills.py | snapshot_builtin_skill | write_bytes | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService.run_skill_script._run_in_scratch_dir | mkdir | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/skill_package_inspection.py | inspect_skill_zip | ZipFile | 1 | unsupported | skills |
-| tldw_chatbook/Subscriptions/briefing_audio.py | generate_script_audio | atomic_private_write_bytes | 1 | unsupported | subscriptions.assets |
+| tldw_chatbook/Subscriptions/briefing_audio.py | generate_script_audio | atomic_private_write_bytes | 1 | qualified | subscriptions.assets |
 | tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._validate_same_identity_conversation | mkdir | 1 | disposable | tempfile.TemporaryDirectory compare scratch; context cleanup |
 | tldw_chatbook/Audio/meeting_session.py | LocalMeetingSink._rewrite_transcript | to_json | 1 | memory | to_json value serialization; no-independent-file |
 | tldw_chatbook/Audio/meeting_session.py | MeetingResult.to_json | to_json | 1 | memory | to_json value serialization; no-independent-file |
