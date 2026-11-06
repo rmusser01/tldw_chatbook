@@ -21,6 +21,9 @@ def test_full_track_has_no_notes_step() -> None:
 
 
 def test_the_full_track_is_the_same_whatever_happens_mid_run() -> None:
+    """A non-regression pin, not RED evidence (review TE-4): the Full track
+    was already constant on the base; this keeps a mid-run key from ever
+    reshaping it now that Notes is gone."""
     assert wizard_state.active_step_ids(
         wizard_state.TRACK_FULL, key_entered=False
     ) == wizard_state.active_step_ids(wizard_state.TRACK_FULL, key_entered=True)
