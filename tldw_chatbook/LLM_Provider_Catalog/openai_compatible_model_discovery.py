@@ -163,11 +163,14 @@ _ANTHROPIC_VERSION_HEADER = "2023-06-01"
 _GOOGLE_PROVIDER_KEY = "google"
 _GOOGLE_API_PATHS = frozenset({"/v1beta", "/v1"})
 _GOOGLE_PAGE_SIZE = 1000
-#: A generateContent model whose id names one of these is not a chat model
-#: (speech, image, embedding, music, research agents) or is a preview build.
+#: A generateContent model whose id or display name names one of these is
+#: not a chat model (speech, image, embedding, music, research agents) or is a
+#: preview build. "banana" is Google's image-model brand ("Nano Banana 2.1",
+#: ``gemini-nano-banana-2.1``: no image token in its id; review IV-3).
 _GOOGLE_NON_CHAT_ID_TOKENS = (
     "tts",
     "image",
+    "banana",
     "embed",
     "preview",
     "transcribe",
@@ -935,8 +938,10 @@ def _is_google_chat_model(model: Mapping[str, Any]) -> bool:
     if type(methods) is not list or "generateContent" not in methods:
         return False
     model_id = str(model.get("name") or "").removeprefix("models/").lower()
+    display_name = model.get("displayName")
+    names = (model_id, display_name.lower() if isinstance(display_name, str) else "")
     return bool(model_id) and not any(
-        token in model_id for token in _GOOGLE_NON_CHAT_ID_TOKENS
+        token in name for name in names for token in _GOOGLE_NON_CHAT_ID_TOKENS
     )
 
 
