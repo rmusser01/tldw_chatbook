@@ -702,6 +702,10 @@ class TTSEventHandler:
         # AWAITING one (even boundedly) only wastes shutdown time for zero
         # benefit -- it is CANCELLED there instead, never drained.
         self._pending_legacy_cleanup_timers: set[asyncio.Task] = set()
+        # TASK-39040: files handed to the default app, with the monotonic time
+        # their retention ends. A replaced (regenerated) artifact inside its
+        # retention is deleted at the bound, not at once.
+        self._hand_off_retained_until: dict[Path, float] = {}
         self._retained_tts_cleanup_paths: set[Path] = set()
         self._retained_tts_cleanup_requeue: dict[Path, str] = {}
         # task-559 fix round 1: which file the player last loaded, tracked
@@ -3932,9 +3936,34 @@ class TTSEventHandler:
                 self._audio_file_owners.pop(message_id, None)
             self._artifact_cleanup_retry.add(artifact_path)
 
+        # TASK-39040 fix round 3: a regenerated clip replaces one the default
+        # app may still be reading; it goes at its hand-off bound, not now.
+        # Shutdown sweeps `_artifact_cleanup_retry` whatever the timer did.
+        remaining = self._hand_off_retained_until.get(artifact_path, 0.0)
+        remaining -= time.monotonic()
+        if remaining > 0:
+            self._schedule_retained_artifact_delete(artifact_path, remaining)
+            return
         if await self._try_secure_delete_tts_artifact(artifact_path):
             async with self._audio_files_lock:
                 self._artifact_cleanup_retry.discard(artifact_path)
+                self._hand_off_retained_until.pop(artifact_path, None)
+
+    def _schedule_retained_artifact_delete(
+        self, artifact_path: Path, delay: float
+    ) -> None:
+        """Delete a replaced, handed-off artifact once its retention ends."""
+
+        async def delete_later() -> None:
+            await asyncio.sleep(delay)
+            if await self._try_secure_delete_tts_artifact(artifact_path):
+                async with self._audio_files_lock:
+                    self._artifact_cleanup_retry.discard(artifact_path)
+                    self._hand_off_retained_until.pop(artifact_path, None)
+
+        timer = asyncio.create_task(delete_later())
+        self._pending_legacy_cleanup_timers.add(timer)
+        timer.add_done_callback(self._pending_legacy_cleanup_timers.discard)
 
     @_maintenance_entry("release")
     async def discard_stale_console_completion(
@@ -4111,7 +4140,6 @@ class TTSEventHandler:
         """Start and monitor one Console clip from the real player state."""
         from tldw_chatbook.TTS.audio_player import (
             HAND_OFF_RETENTION_SECONDS,
-            PlaybackState,
             get_audio_player,
         )
 
@@ -4120,15 +4148,25 @@ class TTSEventHandler:
         player = get_audio_player()
         handed_off_at: list[float] = []
 
+        def record_hand_off() -> None:
+            # TASK-39040 fix rounds 2 and 3: a clip the Windows fallback
+            # handed to the default app has no process. The worker reports
+            # it here right after `play()`, BEFORE its stop window (round 3:
+            # a Stop that landed during `os.startfile` used to reach that
+            # window first, and the file was deleted at once). The file is
+            # then kept for the Ruling's bound from this moment, whatever
+            # ends the poll (its bound, a Stop, a displacing clip, a cancel)
+            # or replaces the cache entry (a regenerated clip).
+            now = time.monotonic()
+            handed_off_at.append(now)
+            loop.call_soon_threadsafe(
+                self._hand_off_retained_until.__setitem__,
+                audio_file,
+                now + HAND_OFF_RETENTION_SECONDS,
+            )
+
         def report_started() -> None:
             playback_started.set()
-            # TASK-39040 fix round 2: a clip the Windows fallback handed to
-            # the default app has no process. It is seen here, on the worker
-            # thread right after `play()`, and its file is then kept for the
-            # Ruling's bound from this moment, whatever ends the poll below
-            # (its bound, a displacing clip, or a cancel).
-            if player.get_state() is PlaybackState.HANDED_OFF:
-                handed_off_at.append(time.monotonic())
             loop.call_soon_threadsafe(
                 lifecycle.report, "playing", context=playback_context
             )
@@ -4142,6 +4180,7 @@ class TTSEventHandler:
                     timeout_seconds=_LEGACY_PLAYBACK_POLL_MAX_SECONDS,
                     stop_requested=stop_requested,
                     on_started=report_started,
+                    on_handed_off=record_hand_off,
                     on_transport=(
                         lifecycle.presentation.set_transport
                         if lifecycle.presentation is not None
@@ -4242,6 +4281,7 @@ class TTSEventHandler:
                 )
                 handoff = self._active_file_playback_stop
                 playback_started = self._active_file_playback_started
+                pending_start = False
                 if file_owner_matches and file_owner is not None:
                     matching_handoff = bool(
                         handoff is not None and handoff[0] == file_owner.message_id
@@ -4403,6 +4443,13 @@ class TTSEventHandler:
                         self._active_file_playback_stop = None
                     if self._active_file_playback_started is playback_started:
                         self._active_file_playback_started = None
+                # No runner was started, so no `play()` is in flight: the
+                # Stop branch left this artifact for the runner's `finally`
+                # (TASK-39040 fix round 3), and here that is this path.
+                await self._cleanup_audio_file(
+                    event.message_id,
+                    artifact_owner=lifecycle,
+                )
                 event.report_outcome(False)
                 return
             if audio_file is None or not audio_file.exists():
@@ -4550,7 +4597,14 @@ class TTSEventHandler:
                     "nothing was playing"
                 )
             # Clean up the (likely already-gone) cached file entry too.
-            if file_stop_accepted and file_owner is not None:
+            if pending_start:
+                # TASK-39040 fix round 3: the clip's `play()` is still in
+                # flight, so nothing here may delete its file: the runner's
+                # own `finally` cleans up once `play()` has returned and it
+                # knows whether the clip was handed to the default app,
+                # which this branch cannot know.
+                pass
+            elif file_stop_accepted and file_owner is not None:
                 await self._cleanup_audio_file(
                     event.message_id,
                     artifact_owner=file_owner,
@@ -4614,6 +4668,9 @@ class TTSEventHandler:
         if hand_off_retention is None:
             hand_off_retention = await self._hand_off_retention_for(audio_file)
         if hand_off_retention is not None and hand_off_retention > 0:
+            self._hand_off_retained_until[audio_file] = (
+                time.monotonic() + hand_off_retention
+            )
             self._schedule_legacy_playback_cleanup(
                 message_id,
                 delay=hand_off_retention,
@@ -4858,11 +4915,20 @@ def _play_legacy_clip_and_await_completion(
     stop_requested: threading.Event | None = None,
     poll_interval_seconds: float = _LEGACY_PLAYBACK_POLL_INTERVAL_SECONDS,
     on_started: Callable[[], None] | None = None,
+    on_handed_off: Callable[[], None] | None = None,
     on_transport: Callable[[Literal["playing", "paused"]], None] | None = None,
 ) -> bool:
     """Blocking: start playback on `player` and wait (bounded) for this clip
     to stop being the player's current one (task-4 review F2, the
     headline finding).
+
+    TASK-39040: `play()` may instead have handed the clip to the default app
+    (`PlaybackState.HANDED_OFF`, no process). That is known only once
+    `play()` returns and is reported through `on_handed_off` BEFORE the stop
+    window below, so a Stop that landed during `play()` (ShellExecute can
+    take seconds while the default app cold-starts) stops nothing and the
+    caller retains the file for the hand-off bound. At the poll bound such a
+    clip counts as played through, like a still-PLAYING one.
 
     `SimpleAudioPlayer.play()` (`TTS/audio_player.py`) launches a
     background player process and returns as soon as it has started --
@@ -4940,8 +5006,15 @@ def _play_legacy_clip_and_await_completion(
         # unrelated caller of the same process-global singleton); this
         # utterance still completes as stopped/interrupted (`return
         # False`) either way, but must not reach out and kill audio that
-        # is no longer ours to stop.
-        if player.get_current_file() in (None, audio_file):
+        # is no longer ours to stop. TASK-39040 fix round 3: a clip `play()`
+        # handed to the default app has nothing to stop; it is reported so
+        # the caller retains its file, and its slot is left to the next
+        # `play()`. The state is read here only (the window is rare).
+        current = player.get_current_file()
+        if current == audio_file and player.get_state() is PlaybackState.HANDED_OFF:
+            if on_handed_off is not None:
+                on_handed_off()
+        elif current in (None, audio_file):
             player.stop()
         return False
     if player.get_current_file() != audio_file:
@@ -4957,6 +5030,10 @@ def _play_legacy_clip_and_await_completion(
         if player.get_current_file() != audio_file:
             return False
         state = player.get_state()
+        if state is PlaybackState.HANDED_OFF and on_handed_off is not None:
+            # The poll's own first read sees the hand-off; no extra read.
+            on_handed_off()
+            on_handed_off = None
         if on_transport is not None and state in (
             PlaybackState.PLAYING,
             PlaybackState.PAUSED,

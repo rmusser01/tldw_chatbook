@@ -957,11 +957,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
-    # fix round 2, 4968 -> 5061 (+93) -- a clip handed to the default app is
-    # kept for the hand-off bound instead of deleted on Stop (the retention
-    # path in `_cleanup_audio_file`, its live check, the owned runner's
-    # hand-off capture) and the stop helper reports the player's real result.
-    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 5061,
+    # fix rounds 2 and 3, 4968 -> 5138 (+170) -- a clip handed to the default
+    # app is kept for the hand-off bound instead of deleted on Stop (the
+    # retention path in `_cleanup_audio_file`, its live check, the owned
+    # runner's hand-off capture), the stop helper reports the player's real
+    # result, a Stop during the ShellExecute window leaves the file to the
+    # runner, and a regenerated clip waits out the replaced clip's retention.
+    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 5138,
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +43 -- the
     # cancelled download's stage discard (_discard_download_stage_for, run
     # while the session lease is still held) and its provision-continuation
