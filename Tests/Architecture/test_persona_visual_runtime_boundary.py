@@ -25,22 +25,10 @@ FORBIDDEN_IMPORT_PARTS = frozenset(
     }
 )
 SAFE_EXTERNAL_IMPORT_ROOTS = frozenset({"PIL"})
-#: TASK-38990 reviewed exceptions, keyed by (module, imported name). The
-#: create-only built-in Buddy installer (f4c1ad1a7a) writes a Character_Chat
-#: persona and its Persona Visual pack in one coordinated step, so it reads
-#: the character store by design. No other Persona_Visual module may.
-#: Production has not called it since 11150b849d (Persona_Buddy.library seeds
-#: the built-in Buddy); moving or deleting it is an owner decision.
-REVIEWED_BOUNDARY_EXCEPTIONS = {
-    (
-        "builtin_pixel_migu.py",
-        "tldw_chatbook.Character_Chat.local_character_persona_service",
-    ): "installer writes the persona record it binds a visual pack to",
-    (
-        "builtin_pixel_migu.py",
-        "tldw_chatbook.Character_Chat.builtin_pixel_migu",
-    ): "installer finds or creates the bundled character it binds to",
-}
+#: Reviewed exceptions, keyed by (module, imported name). Empty since
+#: TASK-39057 deleted the dead built-in Buddy installer (owner decision,
+#: 2026-11-06); Persona_Buddy.library seeds the built-in Buddy.
+REVIEWED_BOUNDARY_EXCEPTIONS: dict[tuple[str, str], str] = {}
 PRIVATE_FIELD_TOKENS = ("path", "relpath", "exception", "traceback")
 
 

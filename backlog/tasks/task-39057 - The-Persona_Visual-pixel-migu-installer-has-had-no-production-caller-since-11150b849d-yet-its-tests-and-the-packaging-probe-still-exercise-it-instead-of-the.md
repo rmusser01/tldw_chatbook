@@ -1,8 +1,11 @@
 ---
 id: TASK-39057
 title: "The Persona_Visual pixel-migu installer has had no production caller since 11150b849d, yet its tests and the packaging probe still exercise it instead of the Buddy library's seeding"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 10:09
+updated_date: 2026-11-06 15:39
 labels:
 - follow-up
 - persona-visual
@@ -44,3 +47,13 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - [ ] #3 The boundary exception row is removed, or kept with its reason updated, and the liveness pin is green
 - [ ] #4 An untruncated grep shows no remaining caller of any removed symbol
 <!-- AC:END -->
+
+## Implementation Plan
+
+Owner decision (2026-11-06): delete the module and its reviewed boundary exception; retarget the packaging probe and the Buddy tests to the live `Persona_Buddy.library` seeding path.
+
+1. Delete `tldw_chatbook/Persona_Visual/builtin_pixel_migu.py`. `Character_Chat/builtin_pixel_migu.py` is a different, live module and stays.
+2. Drop both rows from `REVIEWED_BOUNDARY_EXCEPTIONS` in `Tests/Architecture/test_persona_visual_runtime_boundary.py`; keep the empty table and its liveness pin.
+3. Rewrite the installed-wheel probe in `Tests/Packaging/test_pixel_migu_distribution.py` to seed through `BuddyLibrary.ensure_builtin` (the call `app_service_wiring` makes) and resolve every Buddy state from both artifacts. Negative control: the probe fails against a wheel without one Buddy frame.
+4. Retarget `Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py` to `BuddyLibrary.ensure_builtin` and the app readiness path. Installer-only cases with no library equivalent go, and are listed in the notes.
+5. Untruncated `git grep` for every removed symbol.
