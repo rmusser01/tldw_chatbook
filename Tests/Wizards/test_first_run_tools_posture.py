@@ -1,10 +1,19 @@
 """TASK-34100.13: no setup surface claims the assistant's tools are "all off".
 
-fulltrack-02: the Tools step said "Everything is off by default" while
-``all_tool_gates()`` had three default-on groups the step never showed; the
-Summary and the Quick-track note repeated it. fulltrack-06: the file-tool
-blurbs implied any path. new-full-track-steps-02: with "Create note" off, the
-app's own MCP server still gave the agent ``create_note``.
+fulltrack-02: the Tools step said "Everything is off by default" while plain
+chat was handed the whole agent surface; the Summary and the Quick-track note
+repeated it. fulltrack-06: the file-tool blurbs implied any path.
+new-full-track-steps-02: with "Create note" off, the app's own MCP server still
+gave the agent ``create_note``.
+
+Rebased onto TASK-34100.5.3 (the light tool surface): the step's posture, the
+Summary's Tools row and the Quick note's tools part now come from ONE reading,
+``Agents.plain_chat_tool_surface`` -- the same one the send uses. The branch's
+own posture derivation (``tools_posture``/``also_available_line``) was retired
+in that rebase; these tests pin what this task still adds on top: the step
+reads the config as it is now (not ``load_settings()``'s copy), the Quick note
+names search and theme truthfully, the file-tool blurbs and Workspace hint,
+the untouched-step baseline, and the built-in MCP server's twins.
 """
 
 from __future__ import annotations
@@ -19,6 +28,11 @@ from textual.widgets import Static, Switch
 
 from tldw_chatbook.Agents import builtin_tool_gate
 from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+from tldw_chatbook.Agents.plain_chat_tool_surface import (
+    summarize_tool_surface,
+    tool_surface_detail,
+    tools_step_posture,
+)
 from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_tools_posture as posture_mod
@@ -52,6 +66,14 @@ def _text(step) -> str:
     return "\n".join(str(static.render()) for static in step.query(Static))
 
 
+def _posture(step) -> str:
+    return str(step.query_one("#setup-tools-posture", Static).render())
+
+
+def _expected_posture(config) -> str:
+    return tools_step_posture(summarize_tool_surface(config))
+
+
 FALSE_CLAIMS = ("Everything is off", "everything is off", "all off", "tools off")
 
 
@@ -59,131 +81,117 @@ FALSE_CLAIMS = ("Everything is off", "everything is off", "all off", "tools off"
 
 
 @pytest.mark.asyncio
-async def test_first_run_step_names_the_default_on_groups_and_claims_nothing_false() -> None:
+async def test_first_run_step_states_the_light_set_and_claims_nothing_false() -> None:
+    """The posture is the shared light-surface sentence; the retired
+    "Also available (asks first)" line (web, Watchlists, character cards) is
+    gone -- plain chat is not offered those until Full agent tools is on."""
     _wizard, step = _tools_step({})
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         text = _text(step)
-        also = str(step.query_one("#setup-tools-also-available", Static).render())
+        posture = _posture(step)
+        also_lines = list(step.query("#setup-tools-also-available"))
     for claim in FALSE_CLAIMS:
         assert claim not in text
-    assert also.startswith("Also available (asks first)")
-    for group in ("web search", "Watchlists", "character cards", "questions for you"):
-        assert group in also
+    assert posture == _expected_posture({})
+    assert posture.startswith("Chat starts with date and time, calculator and ask you a question;")
+    assert also_lines == []
 
 
 @pytest.mark.asyncio
 async def test_the_console_master_switch_is_not_offered_in_setup() -> None:
     """A non-regression pin, not RED evidence for AC#2: the base Tools step
-    never offered the ``[console]`` master switch either (review-tests F7)."""
+    never offered the ``[console]`` master switch either (review-tests F7).
+    The switches are Full agent tools (TASK-34100.5.3) plus one per
+    ``_GATEABLE_BUILTINS`` row."""
     _wizard, step = _tools_step({})
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         switches = list(step.query(Switch))
-    assert len(switches) == len(_GATEABLE_BUILTINS)
+    assert len(switches) == len(_GATEABLE_BUILTINS) + 1
     assert not step.query(f"#setup-tool-{builtin_tool_gate.LOCAL_TOOLS_MASTER_KEY}")
 
 
 @pytest.mark.asyncio
-async def test_rerun_posture_counts_the_switches_that_are_on_from_the_full_toml() -> None:
-    """load_settings() has no [tools] table: the gates ride in the raw TOML."""
-    raw = {"tools": {"read_file_enabled": True, "write_file_enabled": True}}
+async def test_rerun_switches_and_posture_come_from_the_full_toml() -> None:
+    """load_settings() has no [tools] table: the gates ride in the raw TOML.
+
+    The switches AND the posture read it -- a saved ``ask_user_enabled =
+    false`` takes "ask you a question" out of the light set the step names
+    (an ``app_config`` read showed the default light set instead)."""
+    raw = {
+        "tools": {
+            "read_file_enabled": True,
+            "write_file_enabled": True,
+            "ask_user_enabled": False,
+        }
+    }
     wizard, step = _tools_step({"COMPREHENSIVE_CONFIG_RAW": raw})
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        sentence = str(step.query_one("#setup-tools-posture", Static).render())
+        posture = _posture(step)
         assert step.query_one("#setup-tool-read_file", Switch).value is True
         ok, _ = await step.commit()
     assert ok
-    assert sentence.startswith(f"2 of {len(_GATEABLE_BUILTINS)} ")
+    assert posture == _expected_posture(raw)
+    assert "ask you a question" not in posture
     wizard.commit_config.assert_not_awaited()  # nothing changed
 
 
 @pytest.mark.asyncio
-async def test_master_switch_off_names_no_local_tool_as_available() -> None:
+async def test_a_saved_full_agent_tools_choice_is_part_of_the_baseline() -> None:
+    """Rebase onto TASK-34100.5.3: the Full agent tools switch sits on this
+    step, so an untouched re-run over a saved ``true`` writes nothing (the
+    baseline once held only the built-in rows, so Next wrote it again)."""
+    raw = {"tools": {"full_agent_tools_enabled": True}}
+    wizard, step = _tools_step({"COMPREHENSIVE_CONFIG_RAW": raw})
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        shown = step.query_one("#setup-tool-full_agent_tools", Switch).value
+        ok, _ = await step.commit()
+    assert shown is True
+    assert ok
+    wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_master_switch_off_names_no_local_tool() -> None:
     """Review F3 (TASK-34100.13): with ``[console] local_tools_enabled`` off the
-    Console composes no LocalToolProvider at all, so ask_user and the
-    character tools are gone with web search and Watchlists. The line used to
-    keep promising "character cards and questions for you" (and this test
-    pinned that)."""
+    Console composes no LocalToolProvider at all, so ask_user goes with web
+    search and Watchlists; the step names no local tool."""
     raw = {"console": {"local_tools_enabled": False}}
     _wizard, step = _tools_step({"COMPREHENSIVE_CONFIG_RAW": raw})
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        also = str(step.query_one("#setup-tools-also-available", Static).render())
-    assert not also.startswith("Also available")
-    assert "switched off" in also
-    assert also == posture_mod.also_available_line(
-        posture_mod.ToolsPosture(switch_total=8, switched_on=(), also_available=())
-    )
+        posture = _posture(step)
+    assert posture == _expected_posture(raw)
+    assert "ask you a question" not in posture
+    for name in ("web search", "Watchlists", "character"):
+        assert name not in posture
 
 
-def test_the_all_off_line_claims_only_what_the_request_drops() -> None:
-    """Live (TASK-34100.13 resume, g13v5-a120/25): with the master off the
-    real request still carried the app's own MCP server's
-    ``list_characters`` and ``chat_with_character`` (no native twin; whether
-    that server belongs in plain chat is TASK-34100.5's call). The line said
-    "character and question tools are switched off"; what goes is every tool
-    that edits a character card (character_save, and the MCP create/update
-    twins)."""
-    line = posture_mod.also_available_line(
-        posture_mod.ToolsPosture(switch_total=8, switched_on=(), also_available=())
+def test_master_switch_off_leaves_no_local_tool_in_the_quick_note() -> None:
+    note = wizard_state.quick_track_defaults_note(
+        {"tools": {}, "console": {"local_tools_enabled": False}}
     )
-    assert "character and question tools" not in line
-    assert line.startswith(
-        "Web search, Watchlists, questions for you and the tools that edit "
-        "character cards are switched off."
-    )
-
-
-def test_master_switch_off_leaves_no_local_group_in_the_posture() -> None:
-    gates = all_tool_gates(
-        config={"tools": {}, "console": {"local_tools_enabled": False}}
-    )
-    posture = posture_mod.tools_posture(gates)
-    assert posture.also_available == ()
-    note = posture_mod.quick_defaults_note(posture, auto_retrieve=False)
+    assert "ask you a question" not in note
     assert "character cards" not in note and "questions for you" not in note
 
 
-@pytest.mark.parametrize(("master", "names_todos"), [(True, True), (False, False)])
-def test_the_summary_names_to_dos_only_while_the_local_tools_are_on(
-    master, names_todos
+@pytest.mark.parametrize(("master", "names_local_groups"), [(True, True), (False, False)])
+def test_the_summary_names_the_local_groups_only_while_the_local_tools_are_on(
+    master, names_local_groups
 ) -> None:
-    """Review V3 (TASK-34100.13): the Summary's agent-tools note always named
-    to-dos, but the to-do tools live in the local tool provider, which the
-    ``[console]`` master switch drops (live master-off request: no todo_*)."""
-    gates = all_tool_gates(config={"tools": {}, "console": {"local_tools_enabled": master}})
-    detail = posture_mod.tools_summary_detail(posture_mod.tools_posture(gates))
-    assert ("to-dos" in detail) is names_todos
-    assert "sub-agents, skills" in detail
-
-
-@pytest.mark.asyncio
-async def test_the_posture_sentence_follows_the_switches() -> None:
-    """Review F4 (TASK-34100.13): the sentence was computed once at compose,
-    so after turning a switch on it still said "All 8 are off"."""
-    _wizard, step = _tools_step({})
-    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        step.query_one("#setup-tool-read_file", Switch).value = True
-        await pilot.pause()
-        on_one = str(step.query_one("#setup-tools-posture", Static).render())
-        step.query_one("#setup-tool-read_file", Switch).value = False
-        await pilot.pause()
-        off_again = str(step.query_one("#setup-tools-posture", Static).render())
-    assert on_one.startswith(f"1 of {len(_GATEABLE_BUILTINS)} ")
-    assert f"All {len(_GATEABLE_BUILTINS)} are off" in off_again
-
-
-def test_posture_is_derived_from_all_tool_gates() -> None:
-    gates = all_tool_gates(
-        config={"tools": {"ask_user_enabled": False}, "console": {}}
-    )
-    posture = posture_mod.tools_posture(gates)
-    assert posture.switch_total == len(_GATEABLE_BUILTINS)
-    assert "questions for you" not in posture.also_available
-    assert "web search and Watchlists" in posture.also_available
+    """Review V3 (TASK-34100.13), kept through the rebase: what the Summary
+    says the agent gets follows the ``[console]`` master -- the to-do, web,
+    Watchlists and workspace tools live in the local provider it drops."""
+    config = {
+        "tools": {"full_agent_tools_enabled": True},
+        "console": {"local_tools_enabled": master},
+    }
+    detail = _summary_rows(config)["Tools"].detail
+    assert ("Watchlists" in detail) is names_local_groups
+    assert detail.startswith("full agent tools (sub-agents, skills")
 
 
 # -- AC#2: the Summary row and the Quick note ---------------------------------
@@ -201,27 +209,24 @@ def test_summary_tools_row_is_derived_not_all_off() -> None:
     assert row.state == wizard_state.ROW_DEFAULT
     for claim in FALSE_CLAIMS:
         assert claim not in row.detail
-    assert (
-        "also available, asks first, when the context window has room: "
-        "web search and Watchlists"
-    ) in row.detail
+    assert row.detail == tool_surface_detail(summarize_tool_surface({}))
     assert builtin_tool_gate.TOOL_GATES_PANE_PATH in row.detail
 
 
 def test_summary_tools_row_names_the_switches_turned_on() -> None:
     row = _summary_rows({"tools": {"create_note_enabled": True}})["Tools"]
     assert row.state == wizard_state.ROW_CONFIGURED
-    assert row.detail.startswith("1 switched on (Create note)")
-
-
-def test_quick_note_is_derived_from_the_same_posture() -> None:
-    gates = all_tool_gates(config={"tools": {}, "console": {}})
-    note = posture_mod.quick_defaults_note(
-        posture_mod.tools_posture(gates), auto_retrieve=False
+    assert row.detail.startswith(
+        "on: date and time, calculator, ask you a question and Create note"
     )
-    for claim in ("tools off", "all off", "RAG off"):
+
+
+def test_quick_note_is_derived_from_the_same_reading() -> None:
+    note = wizard_state.quick_track_defaults_note({"tools": {}, "console": {}})
+    for claim in ("tools off", "all off", "RAG off", "notes sync off"):
         assert claim not in note
-    assert "web search and Watchlists" in note
+    assert "light tools only (date and time, calculator and ask you a question)" in note
+    assert "Library searched only when you ask" in note
 
 
 @pytest.mark.parametrize(
@@ -234,15 +239,10 @@ def test_the_quick_note_claims_only_what_it_can_see(general, claims_default_them
     notes sync roots added in Library (which config cannot see). The theme is
     named only while it is the default; notes sync is left to its own row."""
     config = {"tools": {}, "console": {}, "general": general}
-    note = posture_mod.quick_defaults_note(
-        posture_mod.tools_posture(all_tool_gates(config=config)),
-        auto_retrieve=False,
-        default_theme=not wizard_state.theme_is_custom(
-            wizard_state.read_wizard_prefill(config).default_theme
-        ),
-    )
+    note = wizard_state.quick_track_defaults_note(config)
     assert ("default theme" in note) is claims_default_theme
     assert "notes folder sync" not in note
+    assert "notes sync" not in note
 
 
 @pytest.mark.asyncio
@@ -285,13 +285,9 @@ async def test_the_summary_quick_note_is_derived_from_the_reread_config() -> Non
             note = str(step.query_one("#setup-summary-defaults-note", Static).render())
             if note:
                 break
-    expected = posture_mod.quick_defaults_note(
-        posture_mod.tools_posture(all_tool_gates(config=reread)),
-        auto_retrieve=True,
-        default_theme=False,
-    )
-    assert note == expected
-    assert "1 file, note and document switches on" in note
+    assert note == wizard_state.quick_track_defaults_note(reread)
+    assert note.startswith("Tools as you set them (")
+    assert "Read file" in note
     assert "Library searched on every message" in note
     assert "default theme" not in note  # a saved Nord theme (review R6)
     for claim in ("tools off", "RAG off"):
@@ -555,11 +551,12 @@ def test_the_apps_wizard_reads_live_config() -> None:
 async def test_a_rerun_shows_gates_changed_since_launch(monkeypatch) -> None:
     """Review F8 (TASK-34100.13): the step read COMPREHENSIVE_CONFIG_RAW, the
     TOML as it was at launch. After a gate was turned on in MCP ▸ Tool gates
-    the same session's re-run still showed it off and "All 8 are off"."""
+    the same session's re-run still showed it off and "All 8 are off". The
+    posture reads the same live config (here: ask_user switched off)."""
     import tldw_chatbook.config as config_module
 
     stale = {"COMPREHENSIVE_CONFIG_RAW": {"tools": {}, "console": {}}}
-    live = {"tools": {"read_file_enabled": True}, "console": {}}
+    live = {"tools": {"read_file_enabled": True, "ask_user_enabled": False}, "console": {}}
     monkeypatch.setattr(
         config_module, "load_cli_config_and_ensure_existence", lambda **_: live
     )
@@ -578,7 +575,8 @@ async def test_a_rerun_shows_gates_changed_since_launch(monkeypatch) -> None:
         sentence = str(step.query_one("#setup-tools-posture", Static).render())
         ok, _ = await step.commit()
     assert switch_on is True
-    assert sentence.startswith(f"1 of {len(_GATEABLE_BUILTINS)} ")
+    assert sentence == _expected_posture(live)
+    assert "ask you a question" not in sentence
     assert ok
     wizard.commit_config.assert_not_awaited()
 

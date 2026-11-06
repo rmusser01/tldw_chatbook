@@ -5,9 +5,11 @@ handlers and workers stay registered on the class and fixes to this step have
 room under the size ratchet. ``FirstRunSetupWizard`` still exports the class.
 Patch this module, not the wizard, to replace what the step calls.
 
-TASK-34100.13 (fulltrack-02, fulltrack-06): the copy is derived from
-``all_tool_gates()`` through ``first_run_tools_posture`` -- the step no
-longer says "Everything is off by default" while three groups are on.
+TASK-34100.13 (fulltrack-02, fulltrack-06): the step no longer says
+"Everything is off by default". Its posture sentence is TASK-34100.5.3's
+``tools_step_posture`` over the config as it is now (the one tool-surface
+reading the Summary and the send share); this step adds the Workspace hint
+under the file rows and an untouched-step-writes-nothing baseline.
 """
 
 from __future__ import annotations
@@ -19,7 +21,6 @@ from typing import (
 
 from dataclasses import replace
 
-from textual import on
 from textual.app import ComposeResult
 from textual.containers import (
     Horizontal,
@@ -42,11 +43,13 @@ FULL_AGENT_TOOLS_SWITCH = "full_agent_tools"
 class ToolsStep(SetupStep):
     """Turn on tools beyond plain chat's light set (all default OFF)."""
 
-    def _gates(self) -> list:
+    def _gates(self, view: Dict[str, Any] | None = None) -> list:
         """Every gate, read from the config snapshot this step edits."""
         from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
 
-        return all_tool_gates(config=posture_mod.gate_config_view(self.wizard))
+        if view is None:
+            view = posture_mod.gate_config_view(self.wizard)
+        return all_tool_gates(config=view)
 
     def _shown_gates(self) -> dict[str, bool]:
         """The gates the switches were built from (review V2: never a second
@@ -86,12 +89,14 @@ class ToolsStep(SetupStep):
             for (section, key), scope in gate_effect_scopes().items()
             if section == "tools"
         }
-        gates = self._composed_gates = self._gates()
+        # One read of the config as it is now: the switches, the posture and
+        # the commit baseline all come from it (review V2).
+        view = posture_mod.gate_config_view(self.wizard)
+        gates = self._composed_gates = self._gates(view)
         # Re-run prefill: resurface whatever gates are already on, read from
         # the full TOML -- load_settings() carries no [tools] table, so the
         # old read showed every switch off after a restart.
         gate_values = {gate.key: gate.enabled for gate in gates}
-        posture = posture_mod.tools_posture(gates)
         last_file_row = max(
             (
                 index
@@ -102,16 +107,15 @@ class ToolsStep(SetupStep):
         )
         with Vertical(classes="setup-tools"):
             yield Static("Tools", classes="setup-title")
+            # TASK-34100.5.3: plain chat is never "all off" -- it keeps the
+            # light set -- so the posture is derived, not asserted. The groups
+            # the old "Also available" line named (web, Watchlists, character
+            # cards) are no longer offered to plain chat by default; the Full
+            # agent tools row below says what adds them.
             yield Static(
-                posture_mod.posture_sentence(posture),
+                tools_step_posture(summarize_tool_surface(view)),
                 id="setup-tools-posture",
                 classes="setup-subtitle",
-                markup=False,
-            )
-            yield Static(
-                posture_mod.also_available_line(posture),
-                id="setup-tools-also-available",
-                classes="setup-step-note",
                 markup=False,
             )
             with Horizontal(classes="setup-tool-row"):
@@ -162,18 +166,6 @@ class ToolsStep(SetupStep):
                         classes="setup-step-note",
                         markup=False,
                     )
-
-    @on(Switch.Changed)
-    def _on_switch_changed(self, _event: Switch.Changed) -> None:
-        """Review F4: the posture sentence follows the switches as they move."""
-        on_screen = {self.gate_key_for(sw): bool(sw.value) for sw in self.query(Switch)}
-        gates = [
-            replace(gate, enabled=on_screen[gate.key]) if gate.key in on_screen else gate
-            for gate in getattr(self, "_composed_gates", ())
-        ]
-        sentence = posture_mod.posture_sentence(posture_mod.tools_posture(gates))
-        for widget in self.query("#setup-tools-posture").results(Static):
-            widget.update(sentence)
 
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")
