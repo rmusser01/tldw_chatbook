@@ -1,6 +1,6 @@
 ---
 id: TASK-38983
-title: "File Notes during a failed or conflicted save offers Choose folder but silently refuses it and only typing retries the save"
+title: "File Notes: during a failed or conflicted save, Choose folder is offered but silently refused, and only typing retries the save"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:
@@ -13,7 +13,8 @@ references:
 - tldw_chatbook/Widgets/Library/library_file_notes_workspace.py
 - Tests/UI/test_library_file_notes_workspace.py
 - Docs/User_Guide/library/file-notes.md
-dependencies: []
+dependencies:
+- TASK-38757
 ---
 
 ## Description

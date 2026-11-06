@@ -1,6 +1,6 @@
 ---
 id: TASK-38980
-title: "Response-rules Promote runs inside its confirmation dialog with the manager not busy so Ctrl+Q quits mid-write and a queued Escape closes the manager"
+title: "Response-rules Promote runs inside its confirmation dialog with the manager not busy, so Ctrl+Q quits mid-write and a queued Escape closes the manager"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

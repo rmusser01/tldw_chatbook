@@ -1,6 +1,6 @@
 ---
 id: TASK-38984
-title: "Library Notes trust-dialog path test is red on dev because the centered dialog message pads the folded path lines"
+title: "Library Notes trust-dialog path test is red on dev, because the centred dialog message pads the folded path lines"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

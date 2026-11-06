@@ -1,6 +1,6 @@
 ---
 id: TASK-38981
-title: "Library reader opening the list beside an open item leaves the work pane a sliver below 80 columns and Prompts keeps an empty work pane below 64"
+title: "Library reader: opening the list beside an open item leaves the work pane a sliver below 80 columns, and Prompts keeps an empty work pane below 64"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:
@@ -55,7 +55,7 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
 **The Prompts list keeps an empty work pane.**
 - `library_prompts_controller.py:800` sets `priority="items"` in list view, but `LIBRARY_PROMPTS_READER_PROFILE` has no `list_first_when_empty`.
 - Measured: an empty 8-cell work pane at 50 columns, 18 at 60 and 22 at 64, beside the 32-cell list.
-- This is the TASK-32389 case that Notes and Media already handle.
+- This is the TASK-32389 case that Notes and Media already handle. It needs the same `list_first_when_empty` fix as open TASK-34851 (a duplicate of TASK-32304), which covers Collections, Conversations and Skills. One PR can do Prompts together with them.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -63,6 +63,6 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
 - [ ] #1 With an item open in Notes, Media or any other shared-shell destination, opening the list at every width from 40 to 79 either gives the list the stage (work pane hidden, item kept) or leaves the work pane at least the destination's usable minimum; red before: the work-pane widths recorded above
 - [ ] #2 While the list is open at those widths, Tab never lands on a work-pane control outside the visible region
 - [ ] #3 Closing the list (or Back) returns to the open item with focus inside it
-- [ ] #4 The Prompts list below 64 columns gives the list the stage as Notes and Media do, and opening a prompt hands the width back
+- [ ] #4 The Prompts list below 64 columns gives the list the stage as Notes and Media do, and opening a prompt hands the width back (the same fix as TASK-34851 applies to Collections, Conversations and Skills)
 - [ ] #5 A 40-79 column sweep on the real Library screen for Notes and Media pins #1-#4 and is red on dev
 <!-- AC:END -->

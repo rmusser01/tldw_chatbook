@@ -1,6 +1,6 @@
 ---
 id: TASK-38966
-title: "QwenCloud api_mode forwarding test and the Settings discovery-row capability test are red on dev and no lane runs either"
+title: "QwenCloud's api_mode forwarding test and the Settings discovery-row capability test are red on dev, and no lane runs either"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:

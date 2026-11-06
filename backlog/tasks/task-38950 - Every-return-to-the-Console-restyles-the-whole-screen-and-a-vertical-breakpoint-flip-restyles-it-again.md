@@ -1,6 +1,6 @@
 ---
 id: TASK-38950
-title: "Every return to the Console restyles the whole screen and a vertical breakpoint flip restyles it again"
+title: "Every return to the Console restyles the whole screen, and a vertical breakpoint flip restyles it again"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

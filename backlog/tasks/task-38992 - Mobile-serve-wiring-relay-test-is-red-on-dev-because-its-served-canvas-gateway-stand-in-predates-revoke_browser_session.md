@@ -1,6 +1,6 @@
 ---
 id: TASK-38992
-title: "Mobile serve-wiring relay test is red on dev because its served-canvas gateway stand-in predates revoke_browser_session"
+title: "Mobile serve-wiring relay test is red on dev, because its served-canvas gateway stand-in predates revoke_browser_session"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

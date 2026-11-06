@@ -1,6 +1,6 @@
 ---
 id: TASK-38967
-title: "Console readiness warm-up hands back a display proof about to expire so the FULL sync it prepared refuses and replays 0.2 s later"
+title: "Console readiness warm-up hands back a display proof about to expire, so the FULL sync it prepared refuses and replays 0.2 s later"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:

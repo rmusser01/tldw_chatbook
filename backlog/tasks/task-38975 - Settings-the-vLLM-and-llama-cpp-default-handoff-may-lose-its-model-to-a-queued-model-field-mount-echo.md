@@ -1,6 +1,6 @@
 ---
 id: TASK-38975
-title: "Settings vLLM and llama.cpp default handoff may lose its model to a queued model-field mount echo"
+title: "Settings: the vLLM and llama.cpp default handoff may lose its model to a queued model-field mount echo"
 status: To Do
 created_date: 2026-11-06 01:21
 updated_date: 2026-11-06 01:37

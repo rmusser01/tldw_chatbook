@@ -1,6 +1,6 @@
 ---
 id: TASK-38968
-title: "Console send-admission off-pump tests which pin that only acceptance removes a sent draft's prefix run on no PR lane"
+title: "Console send-admission off-pump tests, which pin that only acceptance removes a sent draft's prefix, run on no PR lane"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:

@@ -1,6 +1,6 @@
 ---
 id: TASK-38974
-title: "Console Library controls docs contract is red on the media-and-conversations page and no dev lane runs Tests/Docs"
+title: "Console Library controls docs contract is red on the media-and-conversations page, and no dev lane runs Tests/Docs"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:

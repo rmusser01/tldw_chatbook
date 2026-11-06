@@ -1,6 +1,6 @@
 ---
 id: TASK-38964
-title: "Console default and server-adoption writes can still save a koboldcpp endpoint off its native route and Settings refuses one only at save"
+title: "Console default and server-adoption writes can still save a koboldcpp endpoint off its native route, and Settings refuses one only at save"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:
@@ -17,7 +17,8 @@ references:
 - tldw_chatbook/UI/Screens/settings_screen.py
 - tldw_chatbook/UI/Wizards/first_run_provider_detection.py
 - Tests/UI/test_settings_provider_save_scope.py
-dependencies: []
+dependencies:
+- TASK-36516
 ---
 
 ## Description

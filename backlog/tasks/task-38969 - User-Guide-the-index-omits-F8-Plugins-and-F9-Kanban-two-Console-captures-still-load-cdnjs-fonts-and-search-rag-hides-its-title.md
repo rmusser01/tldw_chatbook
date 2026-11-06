@@ -1,6 +1,6 @@
 ---
 id: TASK-38969
-title: "User Guide index omits F8 Plugins and F9 Kanban two console captures still load cdnjs fonts and search-rag hides its title"
+title: "User Guide: the index omits F8 Plugins and F9 Kanban, two Console captures still load cdnjs fonts, and search-rag hides its title"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:
@@ -17,7 +17,8 @@ references:
 - scripts/regen_approval_card_svg.py
 - Docs/User_Guide/images/library/search-rag.svg
 - Docs/User_Guide/_template.md
-dependencies: []
+dependencies:
+- TASK-36521
 ---
 
 ## Description

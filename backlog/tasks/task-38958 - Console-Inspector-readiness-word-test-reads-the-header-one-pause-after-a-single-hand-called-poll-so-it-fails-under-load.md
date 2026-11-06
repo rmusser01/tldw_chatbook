@@ -1,6 +1,6 @@
 ---
 id: TASK-38958
-title: "Console Inspector readiness-word test reads the header one pause after a single hand-called poll and fails under load"
+title: "Console Inspector readiness-word test reads the header one pause after a single hand-called poll, so it fails under load"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

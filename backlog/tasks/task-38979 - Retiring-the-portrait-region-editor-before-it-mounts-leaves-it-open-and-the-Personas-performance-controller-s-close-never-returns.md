@@ -1,6 +1,6 @@
 ---
 id: TASK-38979
-title: "Retiring the portrait region editor before it mounts leaves it open and the Personas performance controller's close never returns"
+title: "Retiring the portrait region editor before it mounts leaves it open, and the Personas performance controller's close never returns"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

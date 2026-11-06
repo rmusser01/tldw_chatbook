@@ -1,6 +1,6 @@
 ---
 id: TASK-38982
-title: "File Notes narrow navigator Back to Files leaves no focus and below 60 columns Session Git and background refresh failures are out of reach"
+title: "File Notes narrow navigator: ‹ Files leaves no focus, and below 60 columns Session Git and background refresh failures are out of reach"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

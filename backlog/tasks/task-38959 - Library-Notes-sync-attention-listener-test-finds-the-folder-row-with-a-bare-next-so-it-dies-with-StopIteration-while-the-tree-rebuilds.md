@@ -1,6 +1,6 @@
 ---
 id: TASK-38959
-title: "Library Notes sync-attention listener test finds the folder row with a bare next() and dies with StopIteration while the tree rebuilds"
+title: "Library Notes sync-attention listener test finds the folder row with a bare next(), so it dies with StopIteration while the tree rebuilds"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

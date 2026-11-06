@@ -1,6 +1,6 @@
 ---
 id: TASK-38955
-title: "App quit leaves ChaChaNotes and media connections open including the sync-log retention pass's pool-thread handles"
+title: "App quit leaves ChaChaNotes and media connections open, including the sync-log retention pass's pool-thread handles"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:
@@ -28,7 +28,7 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 - A probe through the scratch-profile wrapper: one pass raised the ChaChaNotes `registered_connection_count()` from 1 to 2, and `private_sqlite._ordinary_connections` from 2 to 4 leases, all held on the default-executor thread.
 
 **Quit.**
-- `on_unmount` (`app_lifecycle.py:1022-1306`) and `tldw_chatbook/app_shutdown.py` close only the ingest-jobs store, the writing service and the research service.
+- Of the DB owners, `on_unmount` (`app_lifecycle.py:1022-1306`), `_shutdown_app_owned_lifecycles` and `tldw_chatbook/app_shutdown.py` close only the ingest-jobs store, the writing service and the research service. They also close the chunking lab, workflow authoring, MCP saves and SSH masters, none of which is a ChaChaNotes or media DB.
 - Nothing calls `quiesce_connections` or `close_connection` on `chachanotes_db`, or `close_connection` on `media_db`. A grep outside `DB/` finds no caller at shutdown.
 - `Subscriptions_DB.py:266-295` records a measurement that a clean exit leaves no `-wal` file. So the criteria are about connections and leases being retired at a defined moment, not about WAL loss.
 <!-- SECTION:DESCRIPTION:END -->
@@ -54,5 +54,4 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 - It then retries `pause.drain` until its 30 s deadline and raises `RecoveryRequired("runtime_native_resources_not_settled")`.
 - So a retention pass that ran since startup could make the next backup fail to settle.
 
-The test-side leases of the same shape are filed separately as the dreams-boundary Guardian lease task.
 <!-- SECTION:NOTES:END -->

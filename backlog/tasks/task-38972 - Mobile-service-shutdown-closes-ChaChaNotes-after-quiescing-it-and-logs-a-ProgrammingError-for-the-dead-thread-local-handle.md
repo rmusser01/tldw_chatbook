@@ -1,6 +1,6 @@
 ---
 id: TASK-38972
-title: "Mobile service shutdown closes ChaChaNotes after quiescing it and logs a ProgrammingError for the dead thread-local handle"
+title: "Mobile service shutdown closes ChaChaNotes after quiescing it, and logs a ProgrammingError for the dead thread-local handle"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:
@@ -31,7 +31,7 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 - Quiescence's `close_registered` (`ChaChaNotes_DB.py:3308-3315`) closes every registered handle, including the calling thread's cached `_local.conn`, but does not clear that cache.
 - `close()` then works on the dead cached handle. Its exception path skips `registry.unregister` and the `local.conn = None` clear (`:3552-3560`), so the thread keeps a dead cached handle.
 
-mobile_service is the only site in the repo that quiesces and then closes. TASK-38714 (Done) audited where these closes run, not this order.
+mobile_service is the only site in the repo that quiesces and then closes. TASK-38714 (Done) audited where these closes run, not this order. TASK-38955 (app shutdown leaving these DBs open) meets the same trap: a close added after quiescence hits the dead cached handle.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

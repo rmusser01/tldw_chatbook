@@ -1,6 +1,6 @@
 ---
 id: TASK-38945
-title: "Console rebuilds the workspace context on every sync because its build fingerprint cannot prove the inputs unchanged"
+title: "Console rebuilds the workspace context on every sync, because its build fingerprint cannot prove the inputs unchanged"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

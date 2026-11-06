@@ -1,6 +1,6 @@
 ---
 id: TASK-38947
-title: "The shared Console FakePersistence predates prompt mix-in attempts and eight controller hook and library-preparation tests are red on dev"
+title: "The shared Console FakePersistence predates prompt mix-in attempts, so eight controller, hook and library-preparation tests are red on dev"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:
@@ -22,7 +22,7 @@ dependencies: []
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11-05 (load 35-60).
 
-`FakePersistence` (`Tests/Chat/test_console_chat_controller.py:520`) has no `save_conversation_mixin_attempt`, no `get_conversation_mixin_attempt` and no `db`. Since 7970fbcada (2026-11-01), `tldw_chatbook/Chat/console_prompt_mixin_service.py:563-571` refuses a persisted chat's turn with `mixin_persistence_unavailable` when either method is missing.
+`FakePersistence` (`Tests/Chat/test_console_chat_controller.py:520`) has no `save_conversation_mixin_attempt`, no `get_conversation_mixin_attempt` and no `db`. Since 7970fbcada (2026-11-01), `tldw_chatbook/Chat/console_prompt_mixin_service.py:563-571` refuses a persisted chat's turn with `mixin_persistence_unavailable` when `save_conversation_mixin_attempt` is not callable or `db` is missing. The missing getter matters later, in the retry path (see the probe below).
 
 **Users of the shared fake:**
 - `test_console_chat_controller.py`: 6 tests;

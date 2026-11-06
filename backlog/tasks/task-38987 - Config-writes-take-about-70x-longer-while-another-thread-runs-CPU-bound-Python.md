@@ -1,6 +1,6 @@
 ---
 id: TASK-38987
-title: "Config writes take 25-140x longer while another thread runs CPU-bound Python"
+title: "Config writes take about 70x longer while another thread runs CPU-bound Python"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

@@ -1,6 +1,6 @@
 ---
 id: TASK-38954
-title: "Research held-job reconciliation and restore suppression never take effect at startup because ingest restore is asynchronous"
+title: "Research held-job reconciliation and restore suppression never take effect at startup, because ingest restore is asynchronous"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

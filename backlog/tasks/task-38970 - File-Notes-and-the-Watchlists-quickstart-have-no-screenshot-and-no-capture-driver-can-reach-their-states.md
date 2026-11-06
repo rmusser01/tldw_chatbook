@@ -1,6 +1,6 @@
 ---
 id: TASK-38970
-title: "File Notes and the Watchlists quickstart have no screenshot and no capture driver can reach their states"
+title: "File Notes and the Watchlists quickstart have no screenshot, and no capture driver can reach their states"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:
@@ -13,7 +13,8 @@ references:
 - Docs/User_Guide/watchlists-quickstart.md
 - Docs/User_Guide/_template.md
 - scripts/regen_approval_card_svg.py
-dependencies: []
+dependencies:
+- TASK-36521
 ---
 
 ## Description

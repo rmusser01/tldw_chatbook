@@ -1,6 +1,6 @@
 ---
 id: TASK-38986
-title: "Five dreams-boundary Guardian tests leave a storage lease open so a later local-pause test in the same pytest process fails"
+title: "Five dreams-boundary Guardian tests leave a storage lease open, so a later local-pause test in the same pytest process fails"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:
@@ -9,7 +9,7 @@ labels:
 - test-infra
 - guardian
 - backup
-priority: high
+priority: medium
 references:
 - Tests/Guardian/test_live_discovery_consent.py
 - Tests/Guardian/test_daily_native_lifecycle.py
@@ -18,7 +18,8 @@ references:
 - tldw_chatbook/Backup_Recovery/storage_admission.py
 - tldw_chatbook/DB/store_kernel.py
 - backlog/docs/lessons-testing-evidence.md
-dependencies: []
+dependencies:
+- TASK-38759
 ---
 
 ## Description
@@ -42,9 +43,11 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 
 **Why closing does not help.** `SQLiteStoreKernel.close()` (`tldw_chatbook/DB/store_kernel.py:287-298`) reads only `self._thread_local.conn`, so it retires only the calling thread's connection. The `_on_connection_opened` hook (`:220-226`) could track connections across threads, but only `Dreams_DB` overrides it (`Dreams_DB.py:385`, with `close_all` at `:410`).
 
-**Red-before control (load 5.8).** `test_async_file_participant_lifetimes.py`, as it stands on the TASK-38759 branch:
-- alone: 26 passed in 9.7 s;
-- after the three Guardian files in one serial process: 3 failed and 43 passed. The three failures are exactly TASK-38759's nodes, each at `assert False` on the drain.
+**Red-before control.** `test_async_file_participant_lifetimes.py`, run after the three Guardian files in one serial process:
+- on dev (29592ecc9b): 4 failed and 42 passed. Three are TASK-38759's drain nodes; the fourth is TASK-38759's own lock-order red;
+- as it stands on the TASK-38759 branch (load 5.8): 3 failed and 43 passed. All three are TASK-38759's drain nodes, each at `assert False` on the drain. The same file alone passes 26 in 9.7 s.
+
+The leaks are test-only, and today's step order hides them. The production lease of the same shape, TASK-38955, is medium.
 
 **Production.** Dreams' own Guardian reads are covered:
 - `read_guardian_topics` uses `operation_owned_connection` (`Dreams/profile_sources.py:178`);
@@ -56,6 +59,6 @@ The production lease of this shape is the sync-log retention pass, which TASK-38
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Each of the five nodes leaves storage_admission._live_leases as it found it; a per-test count shows +1 for each on dev and 0 after the fix
-- [ ] #2 The three Guardian files followed by Tests/Backup_Recovery/test_async_file_participant_lifetimes.py in one serial pytest process pass 3 of 3 runs (dev: 3 failed, 43 passed)
+- [ ] #2 With TASK-38759 merged, the three Guardian files followed by Tests/Backup_Recovery/test_async_file_participant_lifetimes.py in one serial pytest process pass 3 of 3 runs (red before: 4 failed, 42 passed on dev 29592ecc9b, the 4th being TASK-38759's own red; 3 failed, 43 passed on the TASK-38759 branch)
 - [ ] #3 In the dreams-boundary step, a test that leaves a new live storage lease fails and names itself; negative control: reintroduce one of the five leaks
 <!-- AC:END -->

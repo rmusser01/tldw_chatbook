@@ -1,6 +1,6 @@
 ---
 id: TASK-38949
-title: "Console cold-config deferral entry outlives the config fix until another owner reads warm config"
+title: "Console: a cold-config deferral entry outlives the config fix until another owner reads warm config"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

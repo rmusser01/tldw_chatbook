@@ -1,6 +1,6 @@
 ---
 id: TASK-38946
-title: "Console widgets mounted into an already collapsed rail are not marked hidden and lay out the screen while it is closed"
+title: "Console: widgets mounted into an already collapsed rail are not marked hidden, so they lay out the screen while it is closed"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

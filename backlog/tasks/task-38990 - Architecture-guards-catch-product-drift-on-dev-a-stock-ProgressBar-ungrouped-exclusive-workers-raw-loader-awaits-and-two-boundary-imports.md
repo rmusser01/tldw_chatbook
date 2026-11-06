@@ -1,6 +1,6 @@
 ---
 id: TASK-38990
-title: "Architecture guards catch product drift on dev a stock ProgressBar ungrouped exclusive workers raw loader awaits and two boundary imports"
+title: "Architecture guards catch product drift on dev: a stock ProgressBar, ungrouped exclusive workers, raw loader awaits and two boundary imports"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

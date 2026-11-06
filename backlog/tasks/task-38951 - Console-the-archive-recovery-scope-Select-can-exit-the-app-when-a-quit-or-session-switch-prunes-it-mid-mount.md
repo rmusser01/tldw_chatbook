@@ -1,6 +1,6 @@
 ---
 id: TASK-38951
-title: "Console archive-recovery scope Select can exit the app when a quit or session switch prunes it mid-mount"
+title: "Console: the archive-recovery scope Select can exit the app when a quit or session switch prunes it mid-mount"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

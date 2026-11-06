@@ -1,6 +1,6 @@
 ---
 id: TASK-38957
-title: "In Folder files mode a user focus change does not supersede the compact transition's deferred focus restore"
+title: "Folder files: a user focus change does not supersede the compact transition's deferred focus restore"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

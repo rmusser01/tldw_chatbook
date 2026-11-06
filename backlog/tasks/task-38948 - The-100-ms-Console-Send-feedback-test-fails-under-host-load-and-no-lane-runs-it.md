@@ -1,6 +1,6 @@
 ---
 id: TASK-38948
-title: "The 100 ms Console Send-feedback test fails under host load and no lane runs it"
+title: "The 100 ms Console Send-feedback test fails under host load, and no lane runs it"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

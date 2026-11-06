@@ -1,6 +1,6 @@
 ---
 id: TASK-38952
-title: "Truncated Button labels paint two cells past their box at content width 1 and in the Settings Tools MCP rail rows"
+title: "Truncated Button labels paint two cells past their box: at content width 1, and in the Settings ▸ Tools MCP rail rows"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

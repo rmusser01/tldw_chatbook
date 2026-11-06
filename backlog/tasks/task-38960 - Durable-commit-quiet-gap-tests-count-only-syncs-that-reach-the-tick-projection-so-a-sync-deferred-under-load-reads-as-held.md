@@ -1,6 +1,6 @@
 ---
 id: TASK-38960
-title: "Durable-commit quiet-gap tests count only syncs that reach the tick projection so a sync deferred under load reads as held"
+title: "Durable-commit quiet-gap tests count only syncs that reach the tick projection, so a sync deferred under load reads as held"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:

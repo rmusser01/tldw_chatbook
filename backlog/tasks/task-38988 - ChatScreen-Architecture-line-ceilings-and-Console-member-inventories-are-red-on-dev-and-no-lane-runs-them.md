@@ -1,6 +1,6 @@
 ---
 id: TASK-38988
-title: "ChatScreen Architecture line ceilings and Console member inventories are red on dev and no lane runs them"
+title: "ChatScreen Architecture line ceilings and Console member inventories are red on dev, and no lane runs them"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:
@@ -44,7 +44,7 @@ TASK-18610 AC#6 records an older version of this drift (21,253 lines against 20,
 - wave6 character controller: extra `render_radio`, `speech_presentation` and `set_active_workspace_for_session`.
 - wave6 closeout margin: `on_console_selection_note_requested` lost `on(ConsoleTraceCopyRequested)`.
 
-One PR can fix all 11, including TASK-35306's node. Of the branches due to merge before this one, only the TASK-38747 branch touches `Tests/Architecture`, and it does not touch these files.
+One PR can fix all 11. TASK-35306's node closes with it, so TASK-35306 should be closed by the same PR rather than keep a second owner. Of the branches due to merge before this one, only the TASK-38747 branch touches `Tests/Architecture`, and it does not touch these files.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -1,6 +1,6 @@
 ---
 id: TASK-38985
-title: "Library modal inventory has six nodes red on dev because SkillRecoveryReviewModal has no contract row and the file runs on no PR lane"
+title: "Library modal inventory: six nodes are red on dev because SkillRecoveryReviewModal has no contract row, and the file runs on no PR lane"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:
@@ -28,7 +28,7 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 All six fail with the same message: "unresolved modal constructor in supported presenter: tldw_chatbook/UI/Screens/library_screen.py:LibraryScreen._review_restored_skill_trust (SkillRecoveryReviewModal(review, paths[1], current))".
 
 **Cause.**
-- b5251e9a6e (2026-09-16, TASK-32628) added the presenter `_review_restored_skill_trust` (`library_screen.py:27530-27553`). It imports `SkillRecoveryReviewModal` from `tldw_chatbook/UI/Library_Modules/skills_trust_modals.py` (`:546-548`).
+- b5251e9a6e (2026-09-16, TASK-32628) added the presenter `_review_restored_skill_trust` (`library_screen.py:27530-27553`). It imports `SkillRecoveryReviewModal` (`library_screen.py:546-548`) from `tldw_chatbook/UI/Library_Modules/skills_trust_modals.py`.
 - The modal has no row in `LIBRARY_MODAL_CONTRACTS` (`Tests/UI/test_library_modal_dismissal.py:280`), so `_MODAL_TYPES_BY_NAME` (`:825-828`) cannot resolve it.
 - The AST walk asserts on that (`:920-925`), which aborts the whole discovery.
 

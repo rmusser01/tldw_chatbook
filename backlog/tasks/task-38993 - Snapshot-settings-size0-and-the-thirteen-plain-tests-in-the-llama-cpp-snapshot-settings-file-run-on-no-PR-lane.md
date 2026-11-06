@@ -1,6 +1,6 @@
 ---
 id: TASK-38993
-title: "Snapshot settings size0 and the thirteen plain tests in the llama.cpp snapshot settings file run on no PR lane"
+title: "Snapshot settings [size0] and the thirteen plain tests in the llama.cpp snapshot settings file run on no PR lane"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

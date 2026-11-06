@@ -1,6 +1,6 @@
 ---
 id: TASK-38965
-title: "The provider TLS handshake-stall test waits out a 30 s handler sleep and makes the TLS failure suite take about 39 s"
+title: "The provider TLS handshake-stall test waits out a 30 s handler sleep, so the TLS failure suite takes about 39 s"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:
@@ -12,7 +12,8 @@ priority: low
 references:
 - Tests/Chat/test_provider_tls_failures.py
 - .github/workflows/derived-artifacts.yml
-dependencies: []
+dependencies:
+- TASK-38717
 ---
 
 ## Description

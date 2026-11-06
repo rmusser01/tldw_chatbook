@@ -1,6 +1,6 @@
 ---
 id: TASK-38989
-title: "Architecture census rows and two guards are out of date on dev and none of the 23 red Architecture files runs on a PR lane"
+title: "Architecture census rows and two guards are out of date on dev, and none of the 23 red Architecture files runs on a PR lane"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

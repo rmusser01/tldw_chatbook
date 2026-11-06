@@ -1,6 +1,6 @@
 ---
 id: TASK-38973
-title: "Twenty-six stub-screen tests in four Backup_Recovery and Console config files are red on dev because their screen doubles predate new attributes"
+title: "Twenty-six stub-screen tests in four Backup_Recovery and Console config files are red on dev, because their screen doubles predate new attributes"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:

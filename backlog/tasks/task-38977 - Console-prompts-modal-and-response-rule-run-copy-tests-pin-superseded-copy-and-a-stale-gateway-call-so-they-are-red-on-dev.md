@@ -1,6 +1,6 @@
 ---
 id: TASK-38977
-title: "Console prompts-modal and response-rule run-copy tests pin superseded copy and a stale gateway call and are red on dev"
+title: "Console prompts-modal and response-rule run-copy tests pin superseded copy and a stale gateway call, so they are red on dev"
 status: To Do
 created_date: 2026-11-06 01:42
 labels:

@@ -1,6 +1,6 @@
 ---
-id: TASK-38944
-title: "Four mounted Console send-acknowledgement tests are red on dev and a send refused during admission keeps Sending painted"
+id: TASK-38994
+title: "Four mounted Console send-acknowledgement tests are red on dev, and a send refused during admission keeps Sending… painted"
 status: To Do
 created_date: 2026-11-05 21:35
 labels:
@@ -39,6 +39,6 @@ TASK-38718 (Done) recorded these four as "Not mine": red on its base b8608e4cdb 
 <!-- AC:BEGIN -->
 - [ ] #1 test_refused_admission_rolls_the_sending_row_back_and_keeps_the_draft, test_turn_refused_before_its_echo_releases_the_row_and_offers_recovery, test_second_enter_during_admission_never_starts_a_second_provider_call and test_failed_durable_commit_releases_the_row_and_restores_send pass 10 of 10 runs alone on dev and in a whole-file -n 4 run
 - [ ] #2 The notes record, for each of the four, whether the cause was test drift (for example the draft commit moving in 077e5bfa09) or a product defect
-- [ ] #3 A send refused during admission (accept_turn raising, or a hook-admission refusal) leaves no Sending… in the transcript or the status line; if this was a product defect, a test shows it red before the fix
+- [ ] #3 A send refused during admission (accept_turn raising, or a hook-admission refusal) leaves no Sending… in the transcript or the status line; if this was a product defect, a test shows it red before the fix. Open TASK-38426 has the same symptom on a different path: a send-gate refusal at ui_dispatch, before admission, which 14cd6d2ff4 may already fix. The refusals here happen during admission and still leave Sending… on dev, which already contains 14cd6d2ff4; the notes say whether one fix closes both
 - [ ] #4 Each of the four still fails when the behaviour it pins is removed (the refused row is not released, the draft is not taken out, a second Enter starts a second provider call), shown under temporary source edits
 <!-- AC:END -->

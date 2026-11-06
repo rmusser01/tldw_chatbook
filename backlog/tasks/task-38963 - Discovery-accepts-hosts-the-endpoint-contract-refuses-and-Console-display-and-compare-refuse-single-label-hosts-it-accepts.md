@@ -1,6 +1,6 @@
 ---
 id: TASK-38963
-title: "Discovery accepts hosts the endpoint contract refuses and Console display and compare refuse single-label hosts it accepts"
+title: "Discovery accepts hosts the endpoint contract refuses, and Console display and compare refuse single-label hosts it accepts"
 status: To Do
 created_date: 2026-11-06 01:21
 labels:
@@ -16,7 +16,8 @@ references:
 - tldw_chatbook/Chat/console_provider_gateway.py
 - tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
 - Tests/Chat/test_local_server_discovery.py
-dependencies: []
+dependencies:
+- TASK-36517
 ---
 
 ## Description
