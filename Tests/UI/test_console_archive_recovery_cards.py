@@ -902,3 +902,39 @@ async def test_sync_whose_runtime_is_disposed_in_flight_stops_without_crashing()
         assert runtime._disposed and runtime.ensure_archive_recovery() is None
         assert not crashes, f"the sync crashed after the runtime was disposed: {crashes!r}"
         assert not app.query(ArchiveRecoveryConfirmCard)
+
+
+@pytest.mark.asyncio
+async def test_a_card_pruned_before_its_scope_control_composes_never_exits_the_app(
+    monkeypatch,
+):
+    """TASK-38951: a quit or session switch may prune the card mid-mount.
+
+    Every Console sync that renders a new chat mounts a fresh card, and the
+    next switch's ``remove_children`` (or a quit) can prune it before the
+    scope control has composed. Textual then skips that control's child
+    mounts, yet still runs its ``Select._on_mount``, which looks up
+    ``SelectOverlay``: on dev it raised ``NoMatches`` and exited the app.
+    The prune here lands where the real one does, as the control composes.
+    """
+    from textual.containers import Vertical
+
+    class HostApp(App):
+        def compose(self):
+            yield Vertical(id="console-archive-recovery")
+
+    real_compose = Select.compose
+
+    def compose_after_a_prune(select):
+        if select.id == "recovery-scope":
+            select.parent.remove()  # Sets ``_pruning`` on the card's subtree now.
+        return real_compose(select)
+
+    monkeypatch.setattr(Select, "compose", compose_after_a_prune)
+    app = HostApp()
+    async with app.run_test() as pilot:
+        surface = app.query_one("#console-archive-recovery")
+        await surface.mount(ArchiveRecoveryConfirmCard())
+        await pilot.pause()
+        assert not app.query(ArchiveRecoveryConfirmCard)
+        assert app.is_running
