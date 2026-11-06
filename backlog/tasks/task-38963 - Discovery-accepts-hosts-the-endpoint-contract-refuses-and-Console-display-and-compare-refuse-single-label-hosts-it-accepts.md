@@ -1,11 +1,11 @@
 ---
 id: TASK-38963
 title: "Discovery accepts hosts the endpoint contract refuses, and Console display and compare refuse single-label hosts it accepts"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: '2026-11-06 03:46'
+updated_date: '2026-11-06 04:50'
 labels:
 - follow-up
 - providers
@@ -77,7 +77,9 @@ Discover models, the provider save, and Console's endpoint display and compare n
   - `test_the_adoption_toast_names_a_saved_single_label_endpoint`: KoboldCpp and llama.cpp, through `adopt_detected_local_server` on a stand-in screen with the config writer patched.
 - Red at base source (the tests above with the four source files unchanged, run.sh, `-n 4`): 30 failed, 10 passed. Discovery failed for `-kobold`, `kob*old`, `1.2.3`, the 64-character label and every schemeless remote host, e.g. `('aphrodite', 'http://1.2.3:5001/v1', False)`, and qwencloud failed for `kob..old`. Display read `'invalid endpoint' == 'http://kobold:5001'`. The guard: `assert True is False` (ready). Both toasts read "invalid endpoint". Green after: 134 passed, the whole file.
 - AC#4: `test_hosts_refused_for_another_reason_are_still_refused` and `test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label` are in that green run.
-- Covering run (`-n 4`, load average 13-18): 28 Chat, LLM_Calls, LLM_Provider_Catalog, Backup_Recovery and Wizards files. Result: 2656 passed, 11 failed. The same 11 failed at base (`fu-base-r10`, 2616 passed). The 40 extra passes are the new tests.
+- Covering runs (`-n 4`, run.sh), each compared with the same command at `fu-base-r10`:
+  - 28 targets across Chat, LLM_Calls, LLM_Provider_Catalog, Backup_Recovery and Wizards (load 13-18): 2656 passed, 11 failed. The same 11 failed at base (2616 passed). The 40 extra passes are the new tests.
+  - 21 Console, Settings and wizard UI files (load 25-72; this run also held the TASK-38964..38966 changes): 1285 passed, 19 failed, against 1280 passed and 22 failed at base. One failure is new here, `test_providers_models_state_line_names_its_scope_in_one_row`. It then passed 3 of 3 alone at load 48 and in the whole-file run. Three base failures passed here. All four are load-timing failures.
 - Docs: `Docs/User_Guide/settings.md` (Discover models reads the host as **s** does) and `Docs/User_Guide/console.md` (the adoption notice names the address; single-label endpoints compare as distinct servers).
 - Proposed follow-ups, not changed here: Discover models still accepts a bracketed IPv6 zone id that the save refuses (pinned on purpose by discovery's test), and QwenCloud's Discover refuses a schemeless loopback endpoint (`localhost:5001/v1`) that the save accepts.
 
