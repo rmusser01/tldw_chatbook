@@ -489,7 +489,7 @@
       ]
     },
     "settings": {
-      "loc": 78630,
+      "loc": 78696,
       "modules": [
         "tldw_chatbook.Audio.voice_process_types",
         "tldw_chatbook.Backup_Recovery.rag_definition_participant",
