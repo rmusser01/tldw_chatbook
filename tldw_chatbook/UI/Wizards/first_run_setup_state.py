@@ -2500,28 +2500,42 @@ def quick_track_defaults_note(app_config: Mapping[str, object]) -> str:
     is the default one (review R6, ``theme_is_custom``); and nothing is said
     about notes folder sync, whose roots live in the Library's database where
     config cannot see them (the Summary's own row points there).
+
+    Review G13-R2-01: R6's rule holds for every part. A setting is listed
+    under "Left at recommended defaults" only while it is the default; a
+    saved automatic search is stated on its own, with where to change it.
     """
     from tldw_chatbook.Agents.plain_chat_tool_surface import (
         summarize_tool_surface,
         tool_surface_phrase,
     )
-    from tldw_chatbook.UI.Wizards.first_run_rag_state import read_auto_retrieve
+    from tldw_chatbook.UI.Wizards.first_run_rag_state import (
+        SEARCH_SETTINGS_PATH,
+        read_auto_retrieve,
+    )
 
     summary = summarize_tool_surface(app_config)
-    defaults = [
-        "Library searched on every message"
-        if read_auto_retrieve(app_config)
-        else "Library searched only when you ask"
-    ]
+    stated: list[str] = []
+    defaults: list[str] = []
+    if summary.user_turned_on:
+        stated.append(f"Tools as you set them ({tool_surface_phrase(summary)}).")
+    else:
+        defaults.append(tool_surface_phrase(summary))
+    if read_auto_retrieve(app_config):
+        stated.append(
+            "Library searched on every message "
+            f"(change it in {SEARCH_SETTINGS_PATH})."
+        )
+    else:
+        defaults.append("Library searched only when you ask")
     if not theme_is_custom(read_wizard_prefill(app_config).default_theme):
         defaults.append("default theme")
-    rest = f"{', '.join(defaults)} — each lives in Settings when you want it."
-    if summary.user_turned_on:
-        return (
-            f"Tools as you set them ({tool_surface_phrase(summary)}). "
-            f"Left at recommended defaults: {rest}"
+    if defaults:
+        stated.append(
+            f"Left at recommended defaults: {', '.join(defaults)} — "
+            "each lives in Settings when you want it."
         )
-    return f"Left at recommended defaults: {tool_surface_phrase(summary)}, {rest}"
+    return " ".join(stated)
 
 
 def rerun_model_prefill(

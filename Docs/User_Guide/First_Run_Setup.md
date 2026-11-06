@@ -264,8 +264,10 @@ the terminal before the app opens.
 - **Quick setup (recommended)** — connect one provider, pick a default model,
   optionally try a voice and protect your keys, done. Everything else stays at
   its default; the Summary lists what that means (light tools only — date and
-  time, calculator and ask-you-a-question — whether your Library is searched
-  only when you ask, and the default theme while it is still the default). The
+  time, calculator and ask-you-a-question — Library searched only when you
+  ask, and the default theme). Each is called a default only while it still
+  is one: a setting changed on an earlier run, such as Library search on every
+  message, is stated on its own with where to change it. The
   step count never changes mid-run — the key-protection step is always shown,
   and simply says so when there is nothing to protect (the progress tracker
   then marks it – instead of ✓).
