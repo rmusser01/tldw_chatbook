@@ -815,6 +815,50 @@ def test_a_refreeze_now_freezes_nothing_while_another_collection_runs() -> None:
     assert refreezer.actions[-1] == ("busy", "first_send_preimport")
 
 
+@pytest.mark.parametrize("frozen_by", ["refreeze_now", "boot_point"])
+def test_live_foreground_objects_a_refreeze_now_freezes_count_as_growth(
+    frozen_by: str,
+) -> None:
+    """With the real collector, nothing the warm-up's end freezes is exempt.
+
+    TASK-33620.15.50 removed the warm-up's boot freezes because they froze
+    foreground objects that overlapped the warm-up into the baseline, out of
+    the growth a compaction answers to. The warm-up's closing re-freeze
+    (TASK-33620.15.57) freezes whatever is alive then, foreground included,
+    so all of it must count as growth: 60,000 live cyclic objects make a
+    compaction due against a 50,000-object budget (the ratio set to 0 so
+    the test process's own heap size does not move it).
+
+    Negative control: the same objects frozen by a boot point join the
+    baseline and make nothing due.
+
+    Args:
+        frozen_by: Which freeze moves the foreground objects.
+    """
+    gc.unfreeze()
+    gc.collect()
+    try:
+        refreezer = IdleHeapRefreezer(
+            enabled=lambda: True, min_growth=50_000, growth_ratio=0.0
+        )
+        gc.freeze()  # the boot heap, frozen before the warm-up
+        foreground = [Cycle() for _ in range(60_000)]
+        for cycle in foreground:
+            cycle.self = cycle
+        if frozen_by == "refreeze_now":
+            assert refreezer.refreeze_now("first_send_preimport") == "refreeze"
+        else:
+            refreezer.freeze_at_boot_point(gc.freeze)
+        refreezer._look()
+        assert refreezer.compaction_due() is (frozen_by == "refreeze_now"), (
+            "foreground objects the warm-up's end froze were exempt from growth"
+        )
+        del foreground
+    finally:
+        gc.unfreeze()
+        gc.collect()
+
+
 def test_a_refreeze_now_is_off_under_pytest_unless_overridden(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
