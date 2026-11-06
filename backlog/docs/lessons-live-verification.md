@@ -71,6 +71,16 @@ Enter and the POST than dev: the profiles' history, not their code.
   so that each arm meets each profile equally often. Swapping pairs of profiles
   between halves is not enough.
 
+## Another session's load generator can start or stop in the middle of your round: count its children and bound each send by its own load1 (TASK-33620.15.38, 2026-11-05)
+
+**Incident.** TASK-33620.15.38's first baseline started its low-load block at load1 5. Within a minute another session's bounded generator (88 busy children) started, and that block's first launch ran at load1 39-81. Had the round gone on, its own generator would have started on top of the other one for the high-load block (about 176 busy children). Later, the paired probe round's low block waited for load1 under 12 while the other session restarted its generator for 25 minutes. Inside one high-load launch, load1 also fell from 106 to 68 between its first and third sends: the other session's generator stopped during that launch, and the round's own generator started only at the next launch's check.
+
+**What to do.**
+- Before each launch, count the busy children by the generator's own snippet in `ps` (here `signal.alarm(int(T)+5)`), split into yours and others'.
+- When another session already loads the host, stop yours rather than double the load.
+- When a low block cannot reach its bound, run the blocks you can (high first) instead of waiting.
+- Report each send by load1 at its Enter, not at the launch, and drop sends outside the band's bound, saying how many you dropped. The R38 kit2 orchestrator (`tools/evidence/bd5/R38/kit2/r38orch.py`, a session-local script) does all four.
+
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
 **Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:
