@@ -404,17 +404,25 @@ waited for 5 s of quiet, and the first send dropped the request. Those sends
 ran with the warm-up's modules unfrozen, and the first reply's maintenance
 compacted for 241-298 ms on the UI loop.
 
-The refreezer's accounting, recorded live at every budget check on dev
-e8eeae7db9 (@@ATTR@@), shows why a compaction was due. The Console requests a
-re-freeze when it first paints a conversation, about 0.5 s into the
-screen-route pre-import pass, and the request's timer fires 2 s later. When
-the pass is still importing then, that runtime re-freeze freezes the routes
-imported so far, and they count as growth; the pass's own boot freeze then
-credits only what is left. The warm-up's request is checked 2 s after the
-warm-up, so it met that growth. On 29592ecc9b, in all 4 compacting launches
-the paint re-freeze ran 0.03-0.25 s before the pass ended, and the pass's boot
-freeze then moved only 0.4-18.5K objects; in the 3 dev launches whose paint
-re-freeze ran 0.34-1.37 s before the end (24-66K left), none compacted.
+The refreezer's accounting, recorded live at every budget check (dev
+2684e5453f, 36 launches per arm, TASK-33620.15.57's round b1), shows why a
+compaction was due. The Console requests a re-freeze when it first paints a
+conversation, near the start of the screen-route pre-import pass, and the
+request's timer fires 2 s later. When the pass is still importing then, that
+runtime re-freeze freezes the routes imported so far, and they count as
+growth; the pass's own boot freeze then credits only what is left. The
+warm-up's request is checked 2 s after the warm-up, and books the warm-up's
+own objects (about 29K) as growth on top. The closer to the pass's end the
+paint re-freeze runs, the more it books. On 29592ecc9b, in all 4 compacting
+launches the paint re-freeze ran 0.03-0.25 s before the pass ended, and the
+pass's boot freeze then moved only 0.4-18.5K objects; in the 3 dev launches
+whose paint re-freeze ran 0.34-1.37 s before the end (24-66K left), none
+compacted. On 2684e5453f a runtime maintenance ran inside the pass in 16 of
+36 dev launches and 18 of 36 with #3336's runtime changes reverted. The dev
+launch whose re-freeze ran 0.86 s before the end booked 110K against a 144K
+budget; the reverted arm's two at 0.15-0.16 s came within 21-26K of theirs,
+less than the warm-up's 29K that dev adds. No dev launch ran in that band in
+this round, and none compacted.
 
 **Decision.**
 
@@ -458,7 +466,58 @@ cannot make a compaction due on their own;
 `Tests/UI/test_console_first_send_preimport.py` pins that with the real pass
 and collector.
 
-**Measured.** @@MEASURED@@
+**Measured 2026-11-06.** Live, real Anthropic claude-haiku-4-5, 160x45, one
+first send per launch 4.5 s after the warm-up ended, and a key sent the moment
+the first reply's maintenance started. Round b1 had 36 blocks of one launch
+per arm on one profile: dev 2684e5453f, the same commit with #3336's runtime
+changes reverted, and the fix. Arm order cycled through all six permutations
+over four seeded profiles. Launches were gated on other sessions' load
+generators only; the host's idle CPU at the send ranged 0-95% (20 blocks at
+15% or more in every arm).
+
+- Warm-up modules unfrozen at Enter: 0 of 36 in each arm. Compactions after
+  the provider POST: none in any arm. The first reply's maintenance was a
+  re-freeze in all 108 launches (medians 20.9-22.0 ms on the UI loop), and
+  the key sent into it paid 35-36 ms from injection to frame in every arm. So this
+  round could not time a compaction, or a key sent during one.
+- The fix never ran a runtime maintenance inside a pass (0 of 36, against
+  16 and 18), and the first budget check after the warm-up booked
+  29.2-29.4K of growth in all 36 launches (budgets 160-185K), so the warm-up
+  cannot make a compaction due. The closing re-freeze held the UI loop
+  3.1-11.3 ms (median 4.1).
+- Enter to POST, paired per block: fix minus dev a median -72 ms (bootstrap
+  95% CI -130 to +6); fix minus revert +10 ms (-130 to +38). Main-thread GC
+  in that span: -1.8 ms (-9.1 to +2.4) and -3.5 ms (-11.4 to +4.4).
+- Generation-2 passes on the UI loop in that span: two or more in 12 fix,
+  14 dev and 15 revert launches, and 553, 516 and 572 ms of CPU in all. With
+  the host at least 15% idle (20 launches per arm), the median total was
+  6.7 ms (fix), 15.4 (dev) and 13.9 (revert). Below it (16 per arm, 0-14%
+  idle at the send, mostly 0), the fix's four largest totals were 95-170 ms
+  of wall time and 36-50 ms of CPU, two passes each. In the same blocks dev
+  and the revert ran one pass, or two in one dev launch, for 9-28 ms of CPU.
+  The fix's Enter to POST in those 16 blocks was still a paired median
+  108 ms sooner than dev's (TASK-33620.15.60 follows it up). A likely cause, not
+  measured (the probe does not count unfrozen objects): the fix leaves what
+  the first 2 s after the warm-up allocate unfrozen until the first reply's
+  maintenance, where dev's timer froze it.
+
+#3336's input-latency wins during the warm-up, re-measured. Round m1 had 32
+blocks of one launch per arm, 8 per cell, and the host was below 15% idle for
+90 of its 96 inputs. Latency runs from injection to the frame.
+
+- A key typed as the warm-up's manifest parse ended, just before its
+  completion: medians of 31 ms (dev), 42 (fix) and 72 (revert). Paired,
+  dev minus revert was -41 ms (dev faster in 8 of 8), fix minus revert -29
+  (fix faster in 6 of 8), and fix minus dev +18 (fix slower in 6 of 8).
+- Follow-up round n1 (16 dev/fix pairs, 12 with both launches at least 15%
+  idle) put fix minus dev at +0.1 ms (fix slower in 8 of 16; medians 12.8 and
+  13.2 ms). In all 24 fix launches, the closing re-freeze ended 0.2-41 ms
+  before the key was injected.
+- A key 0.02-0.5 s into the warm-up: 24 ms (dev), 33 (fix), 38 (revert).
+  Fix minus revert was -12 ms (faster in 5 of 8) and fix minus dev +5.5
+  (slower in 4 of 8).
+- A Library click into the warm-up: 699, 627 and 696 ms. At its closing: 731,
+  716 and 849 ms. Fix minus dev was -48 and -4 ms.
 
 ## Python versions
 

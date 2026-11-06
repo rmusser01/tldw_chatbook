@@ -75,6 +75,55 @@ the mounted harness. A harness's extra syncs can repair a cache that live never 
 To see which syncs ran, log the build and push sites temporarily in the worktree, and
 remove the lines before you commit.
 
+## A race against a fixed timer moves with the host's load: record the race variable, not just the outcome (TASK-33620.15.57, 2026-11-06)
+
+**Incident.** On dev 29592ecc9b, TASK-33620.15.51 saw the first reply compact in 4 of
+36 launches, at a median load1 of 8-11 per round. The cause is a race. The Console's paint
+request re-freezes on a fixed 2 s timer, and the warm-up's growth tips a compaction
+only when that re-freeze lands inside the screen-route pass, 0-0.35 s before it ends.
+TASK-33620.15.57's 36-block round on 2684e5453f reproduced 0 of 36. On a quiet host
+the pass took 1.5-2.3 s and finished before the timer. At 0% idle it took about 3 s
+and the timer landed 1-3 s before the end. No dev launch landed in the band. The
+outcome alone said dev was fine. The probe's records still attributed it: when the
+re-freeze ran inside the pass (16 of 36 dev launches), the booked growth rose as the
+lead shrank, up to 110K against a 144K budget. Two launches of another arm, at
+0.15-0.16 s, came within 21-26K of the budget.
+
+**What to do.** When a live failure is a race against a timer, record the race
+variable per launch (here, how long before the pass's end the timer fired) and how
+close each launch came to the threshold. Then a round whose host load misses the
+band can still confirm or refute the mechanism. Do not report "0 of N" as "fixed"
+or "not reproducible" without that distribution, and say how the host's load
+differed from the round that found it.
+
+## A full collection that keeps almost nothing brings CPython's next generation-2 passes forward: compare the next send window, not just the new collection (TASK-33620.15.57, 2026-11-06)
+
+**Incident.** TASK-33620.15.57's first fix re-froze the heap at the first-send
+warm-up's end (a full collection, then a freeze) and, like dev, still asked the
+Console for idle maintenance. That maintenance ran 2 s later and re-froze again,
+over a heap with almost nothing unfrozen (a 0.2-0.9 ms collection). Its unit tests
+were green, and the new re-freeze itself cost only 4.9-5.2 ms. But in the first two
+live launches, the first send ran two generation-2 passes on the UI loop between
+Enter and the provider POST (18.7 + 17.9 ms and 38.0 + 63.4 ms; main-thread GC 94
+and 168 ms). Dev, in the same blocks, ran none or one (0 and 15.3 ms; 42 and 63
+ms). CPython starts an automatic full collection only once the objects promoted
+since the last one exceed a quarter of what that one kept (`long_lived_pending >
+long_lived_total / 4`). So a full collection that keeps almost nothing lifts that
+gate until the next one. ADR-198 had said each re-freeze "resets" CPython's habit
+of frequent full collections. That holds only when the re-freeze's collection keeps
+a sizeable heap. The fake collector in the unit tests cannot show any of this. The
+probe's per-pass `gc` records (generation, thread, duration) showed it. Two launches
+on a loaded host are thin evidence. In the later 36-block round, dev itself ran two
+such passes in 14 launches and the final fix in 12. The second request was dropped
+because of the mechanism, not the count.
+
+**What to do.** When a change adds, moves or repeats a full collection (a
+re-freeze, a compaction, an explicit `gc.collect()`), compare the main-thread
+generation-2 passes in the next send window between the arms. Do not stop at the
+new collection's own cost. Do not run a full collection just after another one
+"to be safe". The fix dropped the second request unless the first re-freeze could
+not run or a compaction was owed.
+
 ## A regression filed against a reviewed head can be gone from the merge: measure the merged code (TASK-33620.15.51, 2026-11-05)
 
 **Incident.** TASK-33620.15.51 was filed from TASK-33620.15.18's review. A first send's
@@ -189,31 +238,6 @@ Enter and the POST than dev: the profiles' history, not their code.
 **Incident.** TASK-33620.15.53's import probe wrapped `_find_and_load` to record each cold module load with its thread, then gained a caller stack (`sys._getframe(1)`) for loads on the main thread. The next launch died at once: an import made from C has no Python frame above the wrapper, and `ValueError: call stack is not deep enough` escaped into the app's own imports. The tmux pane closed with the app, the probe's output file stayed empty, and the orchestrator's driver waited its full 300 s for a first render before moving on. Relaunching with `remain-on-exit` on showed the traceback. An earlier launch of the same kit lost its whole record differently: the evidence directory was relative, and the app runs with its cwd in the profile directory, so the probe's writer thread could not open its file.
 
 **What to do.** In an import hook, walk frames from `sys._getframe(0).f_back` and stop at `None`. Pass the driver an absolute evidence path. When a probed launch never renders, relaunch it once by hand with `tmux -L <name> set-option -g remain-on-exit on` before rerunning the round.
-
-## A full collection that keeps almost nothing brings CPython's next generation-2 passes forward: compare the next send window, not just the new collection (TASK-33620.15.57, 2026-11-06)
-
-**Incident.** TASK-33620.15.57's first fix re-froze the heap at the first-send
-warm-up's end (a full collection, then a freeze) and, like dev, still asked the
-Console for idle maintenance. That maintenance ran 2 s later and re-froze again,
-over a heap with almost nothing unfrozen (a 0.2-0.9 ms collection). Its unit tests
-were green, and the new re-freeze itself cost only 4.9-5.2 ms. But in the first two
-live launches, the first send ran two generation-2 passes on the UI loop between
-Enter and the provider POST (18.7 + 17.9 ms and 38.0 + 63.4 ms; main-thread GC 94
-and 168 ms). Dev, in the same blocks, ran none or one (0 and 15.3 ms; 42 and 63
-ms). CPython starts an automatic full collection only once the objects promoted
-since the last one exceed a quarter of what that one kept (`long_lived_pending >
-long_lived_total / 4`). So a full collection that keeps almost nothing lifts that
-gate until the next one. ADR-198 had said each re-freeze "resets" CPython's habit
-of frequent full collections. That holds only when the re-freeze's collection keeps
-a sizeable heap. The fake collector in the unit tests cannot show any of this. The
-probe's per-pass `gc` records (generation, thread, duration) showed it.
-
-**What to do.** When a change adds, moves or repeats a full collection (a
-re-freeze, a compaction, an explicit `gc.collect()`), compare the main-thread
-generation-2 passes in the next send window between the arms. Do not stop at the
-new collection's own cost. Do not run a full collection just after another one
-"to be safe". The fix dropped the second request unless the first re-freeze could
-not run or a compaction was owed.
 
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
