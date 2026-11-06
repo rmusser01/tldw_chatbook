@@ -1,8 +1,11 @@
 ---
 id: TASK-39054
 title: "The undefined-private-helper guard runs one node per module, so in the Architecture job its 2,943 nodes cost about six minutes of periodic GC teardowns for about 30 s of AST work"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 10:09
+updated_date: 2026-11-06 14:56
 labels:
 - follow-up
 - tests
@@ -42,3 +45,9 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - [ ] #2 Negative control: a temporarily deleted private helper turns the guard red, and the message names its module
 - [ ] #3 The file runs on the Architecture guards PR job (never the fast PR contract); that job's command is timed three times with it, and the added time is recorded against 210.5 s without the file and 567.1 s with today's per-module file
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Replace the per-module parametrization with one node that walks every module and collects each offender as `<module>: [helpers]`, failing once with the whole list. Keep the exemption list, the stale-exemption test and the class-body test.
+2. Negative control: temporarily delete a private helper's definition in two modules; the one node fails and names both modules and helpers. Revert.
+3. Append the file to the Architecture guards step and to `ARCHITECTURE_GUARD_TARGETS`, then time the job command three times and record the added time against 210.5 s (without the file) and 567.1 s (with the per-module file).

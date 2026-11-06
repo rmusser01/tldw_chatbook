@@ -439,6 +439,8 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/test_persistent_diagnostic_boundary.py::test_persona_policy_failure_forwards_only_its_error_class",
     # TASK-39061: the shared log sanitizer.
     "Tests/Utils/test_log_sanitizer.py",
+    # TASK-39054: the undefined-private-helper guard, now one node.
+    "Tests/Architecture/test_no_undefined_module_globals.py",
 )
 
 # The 2026-10-25 architecture-review program's tests, in their own job

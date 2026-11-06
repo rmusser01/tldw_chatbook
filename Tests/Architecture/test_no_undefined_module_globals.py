@@ -27,8 +27,6 @@ import ast
 import builtins
 from pathlib import Path
 
-import pytest
-
 PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 SKIP_PARTS = {".venv", "Third_Party", "__pycache__", "node_modules"}
 _BUILTINS = set(dir(builtins))
@@ -173,27 +171,30 @@ def _unresolved_private_calls(tree: ast.Module) -> set[str]:
     return unresolved
 
 
-@pytest.mark.parametrize("path", _module_files(), ids=lambda p: str(p.name))
-def test_every_private_helper_called_in_a_module_is_defined_in_it(path: Path) -> None:
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-    except SyntaxError as exc:  # a syntax error is a different test's problem
-        pytest.skip(f"unparseable: {exc}")
-
+def test_every_private_helper_called_in_a_module_is_defined_in_it() -> None:
     """Every private helper a module calls must be defined or imported in it.
 
-    Args:
-        path: One production module, supplied by the parametrisation.
+    One node for the whole package (TASK-39054): one node per module (about
+    2,940) made the conftest's periodic ``gc.collect()`` cost about 6 minutes
+    of the Architecture job for about 30 s of AST work.
     """
-    rel = str(path.relative_to(PACKAGE.parent))
-    missing = _unresolved_private_calls(tree)
-    if rel in _EXEMPT:
-        pytest.skip(f"exempt: {_EXEMPT[rel]}")
-    assert not missing, (
-        f"{path.relative_to(PACKAGE.parent)} calls private helper(s) it does not "
-        f"define and does not import: {sorted(missing)}. A deletion took the "
-        f"definition and left the call site — the shape of TASK-32912, which cost "
-        f"four nights of CI."
+    offenders = []
+    for path in _module_files():
+        rel = str(path.relative_to(PACKAGE.parent))
+        if rel in _EXEMPT:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # a syntax error is a different test's problem
+            continue
+        missing = _unresolved_private_calls(tree)
+        if missing:
+            offenders.append(f"{rel}: {sorted(missing)}")
+    assert not offenders, (
+        "These modules call private helper(s) they do not define and do not "
+        "import:\n  " + "\n  ".join(offenders) + "\nA deletion took the "
+        "definition and left the call site — the shape of TASK-32912, which cost "
+        "four nights of CI."
     )
 
 
