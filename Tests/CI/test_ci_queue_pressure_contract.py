@@ -339,16 +339,6 @@ FAST_LANE_TARGETS = (
     "Tests/MCP/test_control_plane_permissions.py::test_remember_exact_inputs_writer_failure_preserves_error_and_stale_rule",
     "Tests/MCP/test_unified_control_plane_service.py::test_remember_exact_inputs_persistence_failure_keeps_current_call",
     "Tests/Canvas/test_canvas_kill_switch.py",
-    # TASK-34100.5.3.2 (carried #3295 review fix): every production
-    # ConsoleAgentBridge( passes a light-surface reader, so no new builder
-    # can hand plain chat the full agent surface again (pure AST, <1 s).
-    "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",
-    # TASK-34100.5.3.2: the one-time Full agent tools upgrade -- the decision
-    # over real tmp WorkspaceDB/AgentRunsDB files and a real config.toml
-    # (about 20 s), and the app's boot worker running it on a seeded
-    # private profile (two private-profile boots, about 50 s).
-    "Tests/Agents/test_full_agent_tools_upgrade.py",
-    "Tests/App/test_full_agent_tools_upgrade_boot.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -402,6 +392,17 @@ DREAMS_BOUNDARY_TARGETS = (
     # TASK-38966: the QwenCloud provider contract file, red on dev in no PR
     # lane. Pure, 7 tests; 2.7 s at -n 4 on dev, 1.8-2.1 s serial (load 36-38).
     "Tests/Chat/test_qwencloud_provider_contract.py",
+    # TASK-34100.5.3.2 (review round 1, F1-0): here, not in pr-fast-lane, for
+    # the same reason as TASK-36532 above, and before the bootstrap-profile
+    # suites below (TASK-32873). Every production
+    # ConsoleAgentBridge( passes a light-surface reader (carried #3295 review
+    # fix; pure AST, <1 s); the one-time Full agent tools upgrade's decision
+    # over real tmp WorkspaceDB/AgentRunsDB files and a real config.toml
+    # (~25 s); and the app's boot worker running it on three seeded private
+    # profiles (~40 s serial). All sandboxed.
+    "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",
+    "Tests/Agents/test_full_agent_tools_upgrade.py",
+    "Tests/App/test_full_agent_tools_upgrade_boot.py",
     # TASK-38985: the Library modal dismissal contracts and launch inventory,
     # red on dev in no PR lane. ~2 min serial (140.2, 114.6 and 101.6 s with
     # this step's command, load 20-34 on 18 CPUs), whole file: the UI census
