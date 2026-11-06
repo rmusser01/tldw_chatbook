@@ -1174,11 +1174,14 @@ def defer_cold_live_read(screen: Any, owner: str) -> bool:
     cold for good: deferring every cold read replayed an idle Console 5 times a
     second. Each owner defers once per cold episode; its next call reads live,
     as before. Any warm read ends the episode for every owner, so a rarely
-    called owner keeps no stale entry.
+    called owner keeps no stale entry. TASK-38949: so does any successful
+    config load, whoever made it; a failed load installs nothing.
     """
     deferred = getattr(screen, "_console_cold_read_deferrals", None)
-    if deferred is None:
+    installs = _tldw_config._CONFIG_CACHE_INSTALLS
+    if deferred is None or getattr(screen, "_console_cold_read_installs", None) != installs:
         deferred = screen._console_cold_read_deferrals = set()
+        screen._console_cold_read_installs = installs
     if not live_config_read_is_cold(screen):
         deferred.clear()
         return False

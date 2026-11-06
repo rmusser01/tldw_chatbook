@@ -491,6 +491,54 @@ def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monke
     assert not screen._console_cold_read_deferrals, "a stale cold-episode entry"
 
 
+def test_a_warm_load_no_owner_saw_still_ends_the_cold_episode(monkeypatch):
+    """TASK-38949: the episode ends when config loads warm, whoever loads it.
+
+    The deferral set was cleared only when some owner was called while config
+    was warm. The credential poll returns before its locked section unless its
+    pre-gate changed, so after a broken config was fixed an owner's entry could
+    outlive the fix, and that owner's first read in the next cold episode ran
+    live on the UI loop (147-222 ms for the poll, about 80 ms for the identity
+    refresh). A successful cache install now ends the episode for every owner.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config
+
+    warm = {"settings": None}
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: warm["settings"])
+    monkeypatch.setattr(config, "_warm_config_cache_hit", dict)
+    installs = getattr(config, "_CONFIG_CACHE_INSTALLS", 0)
+    monkeypatch.setattr(config, "_CONFIG_CACHE_INSTALLS", installs, raising=False)
+
+    class Screen:
+        app_instance = SimpleNamespace(app_config={"disk-loaded": True})
+
+        def _console_config_snapshot_is_disk_loaded(self, value):
+            return bool(value)
+
+    screen = Screen()
+    owners = (
+        "_poll_console_credential_readiness",
+        "sync_console_core_state",
+        "_sync_console_identity_surfaces",
+    )
+    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [True] * 3
+    # An unparseable config.toml installs nothing, so the episode holds.
+    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [False] * 3
+
+    # The file is fixed and another path (the readiness projection's off-loop
+    # read, a Settings save) loads it warm; no owner runs meanwhile.
+    warm["settings"] = {}
+    monkeypatch.setattr(config, "_CONFIG_CACHE_INSTALLS", installs + 1, raising=False)
+    warm["settings"] = None  # Cold again: a new episode.
+    deferred = [spend.defer_cold_live_read(screen, owner) for owner in owners]
+    assert deferred == [True] * 3, (
+        f"an owner read cold config live on its first call of a new episode: {deferred}"
+    )
+    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [False] * 3
+
+
 def test_the_credential_poll_defers_a_cold_read_once_and_then_stays_idle(monkeypatch):
     """TASK-36511.4: the 0.25 s credential poll warms cold config off the loop.
 
