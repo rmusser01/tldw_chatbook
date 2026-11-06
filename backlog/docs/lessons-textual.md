@@ -2508,7 +2508,7 @@ The first overflow probe reported no overflow at all. `Strip.cell_length` gave t
 **What to do.**
 - When you queue the screen's tick ahead of a change, also make sure a screen layout is pending (`screen.refresh(layout=True)`), unless the code under test sets one itself. Check that the unfixed build goes red before you trust a green result.
 - Judge each recorded frame against what the widget holds when it paints (`section.rows`, `browser.state`), not against the settled end state.
-- `CONSOLE_RAIL_PRIOR_DISPLAY` exists only on descendants that were present when the collapse cascade ran. A widget that mounts later inside a collapsed rail is not "hidden by the rail". Do not let a fix depend on that mark, and stress the test under parallel load before you call it fixed.
+- `CONSOLE_RAIL_PRIOR_DISPLAY` exists only on descendants that were present when the collapse cascade ran. A widget that mounts later inside a collapsed rail is not "hidden by the rail". Do not let a fix depend on that mark, and stress the test under parallel load before you call it fixed. (TASK-38946, 2026-11-06: `hidden_by_console_rail` now marks such a widget on its first ask, by finding the rail's `CONSOLE_RAIL_COLLAPSED` flag among its ancestors. Code that reads the raw attribute instead of asking the helper still sees no mark on a late mount.)
 
 ## A Static with no width takes its whole row, and a button pushed past the row's clip still takes Tab (TASK-38757, 2026-11-05)
 

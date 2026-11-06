@@ -80,6 +80,9 @@ VIEW_ALL_BUSY_LABEL = "Refreshing…"
 #: descendant of a collapsed Console rail: the display it had before the
 #: collapse. The rail's opening restores that display and removes the mark.
 CONSOLE_RAIL_PRIOR_DISPLAY = "_console_rail_prior_display"
+#: What the same cascade sets on the rail itself while it is collapsed
+#: (TASK-38946), so a widget mounted later can tell which rail hides it.
+CONSOLE_RAIL_COLLAPSED = "_console_rail_collapsed"
 
 
 def hidden_by_console_rail(widget: Widget) -> bool:
@@ -90,13 +93,26 @@ def hidden_by_console_rail(widget: Widget) -> bool:
     leaves the DOM work that needs a layout to the rail's opening, which lays
     the rail out anyway.
 
+    TASK-38946: the cascade marks only the widgets present when it runs. A
+    widget mounted into the rail afterwards is marked here, on its first ask,
+    with the display it has, so the rail's opening restores it and runs its
+    held rebuild like any other.
+
     Args:
         widget: A widget that may sit inside a Console rail.
 
     Returns:
         True while the rail's collapse cascade holds the widget's display.
     """
-    return getattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, None) is not None
+    if getattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, None) is not None:
+        return True
+    node = widget.parent
+    while node is not None:
+        if getattr(node, CONSOLE_RAIL_COLLAPSED, False):
+            setattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, bool(widget.display))
+            return True
+        node = node.parent
+    return False
 
 
 def set_display_under_console_rail(widget: Widget, visible: bool) -> None:

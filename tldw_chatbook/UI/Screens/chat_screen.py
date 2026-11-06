@@ -586,6 +586,7 @@ from ...Widgets.Console.console_agent_steering_bar import (
     ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_inspector_section import (
+    CONSOLE_RAIL_COLLAPSED,
     CONSOLE_RAIL_PRIOR_DISPLAY,
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
@@ -12632,6 +12633,7 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:
         """Cascade rail display state while preserving child display preferences."""
+        setattr(widget, CONSOLE_RAIL_COLLAPSED, not visible)  # TASK-38946: late mounts.
         for child in widget.query("*"):
             if visible:
                 prior_display = getattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, None)
