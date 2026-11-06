@@ -667,9 +667,8 @@ class CompactModelBar(Horizontal):
         # Blank now means "nothing chosen" and the screen handler already
         # ignores empty values.
         provider_options = [(p, p) for p in available_providers]
-        # TASK-38951: a runtime identity flip removes the cached ChatScreen
-        # and a quit can land while a new one composes; both can prune these
-        # mid-mount.
+        # TASK-38951: a runtime identity flip builds a new ChatScreen, and a
+        # quit landing while it composes can prune these mid-mount.
         yield PruneSafeSelect(
             options=provider_options,
             prompt="Provider",
