@@ -2261,23 +2261,17 @@ def build_summary_rows(
     # docstring for why the two deliberately disagree on a bare, wizard-
     # committed endpoint (the one-click "Use this server" path).
     provider_ok = provider_summary_configured(app_config, environ)
-    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
-    from tldw_chatbook.UI.Wizards.first_run_tools_posture import (
-        tools_posture,
-        tools_summary_detail,
+    from tldw_chatbook.Agents.plain_chat_tool_surface import (
+        summarize_tool_surface,
+        tool_surface_detail,
     )
 
-    # The two gate sections only, read like every other row's (``_section``):
-    # this mapping is the re-read TOML, never ``load_settings()``'s copy,
-    # which carries no [tools] table.
-    posture = tools_posture(
-        all_tool_gates(
-            config={
-                "tools": _section(app_config, "tools"),
-                "console": _section(app_config, "console"),
-            }
-        )
-    )
+    # TASK-34100.5.3: the row names exactly the tools plain Console chat is
+    # offered -- the light set, each tool switched on, or the full agent
+    # surface -- read from the same config the send reads. TASK-34100.13's
+    # fulltrack-02 derivation from all_tool_gates() was folded into this one
+    # reading in the rebase onto it (one posture, never two).
+    tool_surface = summarize_tool_surface(app_config)
     encryption_on = coerce_wizard_flag(
         _section(app_config, "encryption").get("enabled")
     )
@@ -2448,15 +2442,14 @@ def build_summary_rows(
         rag_row,
         speech_row,
         _voice_summary_row(app_config),
-        # TASK-34100.13 (fulltrack-02): derived from all_tool_gates() over
-        # the re-read config, like the Tools step and the Quick note --
-        # never a count of truthy [tools] keys (that missed the default-on
-        # local group) and never "all off". task-32289/32284: the row still
-        # ends on TOOL_GATES_PANE_PATH, the one place every gate lives.
+        # TASK-34100.13 (fulltrack-02): never a count of truthy [tools] keys
+        # and never "all off" -- the same reading as the Tools step's posture
+        # and the Quick note. task-32289/32284: the detail still names
+        # TOOL_GATES_PANE_PATH, the one place every gate lives.
         SummaryRow(
             "Tools",
-            ROW_CONFIGURED if posture.switched_on else ROW_DEFAULT,
-            tools_summary_detail(posture),
+            ROW_CONFIGURED if tool_surface.user_turned_on else ROW_DEFAULT,
+            tool_surface_detail(tool_surface),
         ),
         # TASK-34100.13 (fulltrack-05): text only -- Library has no deep
         # link to Add from files; "Write your first note" lands in Notes.
@@ -2494,14 +2487,29 @@ def quick_track_defaults_note(app_config: Mapping[str, object]) -> str:
     TASK-34100.5.3 (TASK-34100.5 owner question 2): it said "tools off" while
     plain chat offered the agent surface. The tools part now comes from the
     same reading as the Tools row.
+
+    TASK-34100.13: the rest is derived too. Search names what Console does
+    with the Library (``[chat_defaults] rag_auto_retrieve_on_send``, the
+    Search row's flag) instead of "RAG off"; the theme is named only while it
+    is the default one (review R6, ``theme_is_custom``); and nothing is said
+    about notes folder sync, whose roots live in the Library's database where
+    config cannot see them (the Summary's own row points there).
     """
     from tldw_chatbook.Agents.plain_chat_tool_surface import (
         summarize_tool_surface,
         tool_surface_phrase,
     )
+    from tldw_chatbook.UI.Wizards.first_run_rag_state import read_auto_retrieve
 
     summary = summarize_tool_surface(app_config)
-    rest = "RAG off, default theme, notes sync off — each lives in Settings when you want it."
+    defaults = [
+        "Library searched on every message"
+        if read_auto_retrieve(app_config)
+        else "Library searched only when you ask"
+    ]
+    if not theme_is_custom(read_wizard_prefill(app_config).default_theme):
+        defaults.append("default theme")
+    rest = f"{', '.join(defaults)} — each lives in Settings when you want it."
     if summary.user_turned_on:
         return (
             f"Tools as you set them ({tool_surface_phrase(summary)}). "
