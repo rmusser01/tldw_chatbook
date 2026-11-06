@@ -34,9 +34,11 @@ A run start with nothing to reuse (no kept composition, or a run that
 freezes its definition ceiling at composition and so never reuses) takes no
 fingerprint before it composes (TASK-33620.15.38): there it decides nothing
 for the run, and a live Console send always composed after it. Such a run
+over stock sources (the installed stores and the default manifest provider)
 takes an anchor instead -- the store files' stamps, the admission epoch and
 the selected sources, before the composition reads -- and keeps the
-composition as pending. The next run start's own fingerprint proves it: the
+composition as pending; a run over custom readers or a custom manifest
+provider still takes the fingerprint before it composes. The next run start's own fingerprint proves it: the
 same sources, every file still at its anchored stamp and settled before the
 anchor, the epoch unmoved. Only then does that fingerprint's identity become
 the kept identity; anything else refuses the pending composition and the run
