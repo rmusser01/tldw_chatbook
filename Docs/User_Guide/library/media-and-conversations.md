@@ -90,7 +90,9 @@ rewriting your settings. Explicitly reopening a pane takes effect immediately.
   behind the list, and the same grip closes the list again and returns to the
   item with focus inside it. Opening another item from that list (Enter, a
   click, or **]** / **[** for the next or previous item) shows it across the
-  whole width; moving through the list with the arrow keys keeps the list.
+  whole width, and Enter or a click puts focus in it; moving through the list
+  with the arrow keys keeps the list. Widening the terminal ends the list's stage and keeps focus
+  where it was in the list.
   Conversations, Collections, Prompts and Skills do the same. In Artifacts
   the list takes the stage too, and **F6**, or **Tab** onto the artifact's
   controls, returns to the open artifact. Below 64 columns with nothing open, each of these

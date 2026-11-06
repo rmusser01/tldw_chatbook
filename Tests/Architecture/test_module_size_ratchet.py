@@ -966,7 +966,9 @@ _BUDGETS: dict[str, int] = {
     # one-hop link-back on the Notes canvas). Owner rule "expand limits,
     # don't contort code".
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
+    # TASK-38981 re-review 3, 2026-11-06 (owner size waiver): 4738 -> 4742
+    # (+4). The list's resize reshape keeps the user's focused control.
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4516,

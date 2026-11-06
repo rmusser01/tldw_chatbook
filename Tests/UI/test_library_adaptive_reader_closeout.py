@@ -2197,6 +2197,9 @@ async def test_an_item_picked_from_the_stage_list_takes_the_stage_back(
                     and _work_cells(current_work()) >= _WORK_FLOORS[destination]
                     and screen.focused is not None
                     and _work_cells(screen.focused) > 0
+                    # TASK-38981 re-review 3: Prompts and Media land in the
+                    # opened item, as the others already did.
+                    and current_work() in screen.focused.ancestors_with_self
                 ),
                 message=(
                     f"{destination}: picking {picked!r} left "
@@ -2385,5 +2388,62 @@ async def test_notes_reader_focus_survives_a_wide_step_after_the_list_stage(
                 and shell.work in focused.ancestors
                 and _work_cells(focused) > 0
             ), (reading.id, focused, layout())
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wide", [(160, 30), (211, 44), (235, 52)])
+async def test_notes_list_focus_survives_a_widen_that_ends_the_stage(
+    wide: tuple[int, int],
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 re-review 3: with the list holding the stage at 60 columns
+    and focus in it, a widen ends the stage. Focus moved to the Library grip
+    (base kept it in the list's filter); it stays where the user had it."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT["notes"][1]
+
+    def layout():
+        return screen._notes_state.reader_layout
+
+    async def settle() -> None:
+        for _ in range(12):
+            await pilot.pause(0.03)
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, "notes")
+            await pilot.resize_terminal(60, 30)
+            await settle()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await settle()
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open note",
+            )
+            await settle()
+            listing = screen.focused
+            assert listing is not None and shell.items in listing.ancestors, listing
+            await pilot.resize_terminal(*wide)
+            await settle()
+            assert shell.work.display and layout().reader_width > 0, layout()
+            # The list may rebuild its toolbar for the wider pane, so the
+            # control is matched by id, not by object.
+            focused = screen.focused
+            assert focused is not None and focused.id == listing.id, (
+                listing.id,
+                focused,
+            )
+            assert shell.items in focused.ancestors and _work_cells(focused) > 0
     finally:
         prompt_db.close()

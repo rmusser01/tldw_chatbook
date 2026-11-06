@@ -2509,3 +2509,9 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_retry_after_the_f
 Tests/UI/test_library_adaptive_reader_closeout.py::test_media_adjacent_item_keys_open_the_next_item_on_the_stage[right_square_bracket]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_media_adjacent_item_keys_open_the_next_item_on_the_stage[left_square_bracket]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_reader_focus_survives_a_wide_step_after_the_list_stage
+# TASK-38981 re-review 3 (2026-11-06): a widen that ends the Notes list's
+# narrow stage keeps focus in the list (160, 211 and 235 columns; 6-8 s each).
+# Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide0]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide1]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide2]

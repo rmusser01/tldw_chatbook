@@ -110,6 +110,7 @@ from ...Utils.adaptive_reader_state import (
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
     PaneName,
+    list_holds_the_stage,
     normalize_adaptive_reader_preferences,
     resolve_adaptive_reader_layout,
 )
@@ -23969,7 +23970,14 @@ class LibraryScreen(BaseAppScreen):
             return
         # task-31273: an explicit row open wins over a pending auto-resume.
         self._cancel_pending_review_set_resume()
+        picked_from_stage = list_holds_the_stage(self._media_state.reader_layout)
         self._open_library_media_viewer(media_id)
+        if picked_from_stage:
+            self._focus_opened_item_once_shown(
+                ".library-media-route",
+                event.button,
+                lambda: self._media_state.reader_session.loaded_id == media_id,
+            )
 
     @on(Button.Pressed, "#library-media-select-toggle")
     def handle_library_media_select_toggle(self, event: Button.Pressed) -> None:
@@ -27956,6 +27964,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if type(prompt_id) is not int or prompt_id < 1:
             return
+        picked_from_stage = list_holds_the_stage(self._prompts_state.reader_layout)
         if not await self._flush_library_prompt_save():
             # task-32461: the row press was refused in silence, which reads
             # as a dead row. Same copy as Back/Escape and the rail-row
@@ -27985,6 +27994,89 @@ class LibraryScreen(BaseAppScreen):
             group="library_prompt_detail",
         )
         _sync_library_canvas(self, "prompts")
+        if picked_from_stage:
+            self._focus_opened_item_once_shown(
+                "#library-prompts-reader-shell",
+                event.button,
+                lambda: self._prompts_state.loaded_id == prompt_id
+                and self._prompts_state.detail is not None
+                and not self._prompts_state.detail_loading
+                and bool(self.query("#library-prompt-name")),
+            )
+
+    def _focus_opened_item_once_shown(
+        self,
+        shell_selector: str,
+        opener: Widget,
+        ready: Callable[[], bool],
+        attempts: int = 100,
+        settle: int = 0,
+    ) -> None:
+        """Land in an item picked from the list holding the stage (TASK-38981).
+
+        The pick replaces the list's rows, so Textual's own reset drops focus
+        on a grip. Once the opened item is ready, focus moves to its first
+        control, unless the user (or the destination) has placed it since.
+        For ``settle`` ticks after landing, a late rebuild of the item that
+        resets focus to a grip again is followed once more.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            shell = self.query_one(shell_selector, LibraryAdaptiveReaderShell)
+        except (NoMatches, QueryError):
+            return
+        focused = self.focused
+        grips = (shell.items_grip, shell.library_grip)
+        in_work = (
+            focused is not None
+            and focused.is_attached
+            and shell.work in focused.ancestors_with_self
+        )
+        if settle:
+            if focused is None or focused in grips:
+                self._land_in_work_pane(shell)
+            elif not in_work:
+                return
+        else:
+            if not (
+                focused is None
+                or focused is opener
+                or not focused.is_attached
+                or focused in grips
+                # The previous item's controls, until the picked one replaces them.
+                or in_work
+            ):
+                return
+            if shell.work.display and ready():
+                if not in_work:
+                    self._land_in_work_pane(shell)
+                settle = 10
+                attempts = 10
+        if attempts > 0:
+            self.set_timer(
+                0.05,
+                partial(
+                    self._focus_opened_item_once_shown,
+                    shell_selector,
+                    opener,
+                    ready,
+                    attempts - 1,
+                    settle,
+                ),
+            )
+
+    def _land_in_work_pane(self, shell: LibraryAdaptiveReaderShell) -> None:
+        target = next(
+            (
+                candidate
+                for candidate in self.focus_chain
+                if shell.work in candidate.ancestors_with_self
+            ),
+            None,
+        )
+        if target is not None:
+            self.set_focus(target)
 
     def _invalidate_library_prompt_detail_generation(self) -> None:
         return self._prompts_controller._invalidate_library_prompt_detail_generation()

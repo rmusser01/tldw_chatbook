@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 10:14
+updated_date: 2026-11-06 12:17
 labels:
 - follow-up
 - library
@@ -139,7 +139,19 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
   - Red before this change (focus on `library-browse-items-grip`). Green after.
 - **Covering.** The 38981 Library-screen tests and the shell's tests: 52 passed (`-n 4`, load 17-23).
 - **New nodes** at the census tail (the two keys and the wide step). Floor 1740.
-- **Follow-ups.**
-  - After a pick from the stage list, Media leaves focus on its Items grip and Prompts on its Library grip, both visible.
-  - Pre-existing on base: Artifacts' empty narrow stage (nothing selected) still has invisible reader Tab stops, because there is no artifact to reveal; Back, Preview and Details sit at negative cells there.
+- **Follow-up** (the coordinator files it). Pre-existing on base: Artifacts' empty narrow stage (nothing selected) still has invisible reader Tab stops, because there is no artifact to reveal; Back, Preview and Details sit at negative cells there.
+
+
+
+### Re-review fixes (r10l-rev3)
+
+- **Notes: widening from the list stage moved focus to the Library grip.** At 160, 211 and 235 columns the list pane grows, and `LibraryNotesCanvas.on_resize` recomposes it for its wider toolbar. That recompose pruned the focused filter, Textual reset focus onto the grip, and Notes' identity restore had already run against the old filter. Base never hit this: its narrow list was 32 cells, not 50, so the toolbar shape did not flip. The fix keeps the focused control across that recompose with the canvas's existing `preserve_same_id_focus_after_recompose()`, as its template disclosure already does.
+  - Test: `test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide0|wide1|wide2]` (160x30, 211x44, 235x52). Focus is matched by id, since the filter is rebuilt.
+  - Red with HEAD's canvas: `('library-notes-filter', …library-browse-library-grip…)` at all three sizes. Green after.
+- **Prompts and Media: a pick from the stage list now lands in the opened item.** `LibraryScreen._focus_opened_item_once_shown` polls briefly (every 50 ms, up to 5 s). Once the picked item has loaded and its pane shows, it focuses the pane's first control, but only if focus is still None, on the opener, detached, on a grip, or on the previous item's controls. It is armed from the Prompts and Media row handlers only when the list held the stage. Prompts waits for `loaded_id == prompt_id` and `#library-prompt-name`; Media waits for `reader_session.loaded_id`.
+  - It then watches 10 more ticks (0.5 s) and re-lands if a late rebuild of the item has reset focus to a grip. Without that window, the Prompts pick failed 4 of 5 stress runs at `-n 6` with the load at 22-52, because the editor rebuilt after the landing. With it, 12 of 12 passed: 6 single runs at load 12-32, and 3 double concurrent runs.
+  - Media is the same few lines, so it is fixed too.
+  - `…takes_the_stage_back` now requires focus inside the work pane for all six destinations. Notes, Conversations, Collections and Skills already passed.
+  - Red with HEAD's `library_screen.py`: media and prompts fail, the other 4 pass. Green after, 3 of 3 runs for prompts and media.
+- The three widen nodes are appended at the census tail, floor 1743. Size rows and the pre-import record are re-pinned under the waiver (see the commit).
 

@@ -1320,7 +1320,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-06, TASK-38957 (owner size waiver): a user's focus change in
     #: Folder files supersedes a compact transition's deferred restore:
     #: 38177 -> 38180 lines, 1373 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38180, 1373),
+    #: 2026-11-06, TASK-38981 re-review 3 (same waiver): a pick from the list
+    #: holding the stage lands focus in the opened Prompts or Media item
+    #: (``_focus_opened_item_once_shown``, with a short settle window, and
+    #: ``_land_in_work_pane``): 38180 -> 38272 lines, 1375 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38272, 1375),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
