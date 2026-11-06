@@ -3,9 +3,10 @@ id: TASK-38111
 title: >-
   Tests: several UI and Chat test files error at setup with RecoveryRequired
   raw_source_selection_changed when run on their own
-status: To Do
-assignee: []
-updated_date: '2026-11-06 06:56'
+status: In Progress
+assignee:
+  - '@claude'
+updated_date: '2026-11-06 17:52'
 created_date: '2026-10-30 05:56'
 labels:
   - tests
@@ -35,3 +36,12 @@ For test_trace_export_ui.py the traceback is: Tests/UI/conftest.py _disable_mode
 - [ ] #2 The fix does not bind config to the developer's real profile (the conftest's documented trap)
 - [ ] #3 The cause of each listed file is confirmed from its own traceback, not assumed from test_trace_export_ui.py
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Run every listed file alone through the scratch-profile wrapper on the base (dev 2684e5453f), plus the files the round-11 brief adds (Tests/RAG_Search/test_keyword_leg_*.py, Tests/Library/test_library_ingest_runner.py); read each file's own tracebacks (AC#3). Files green on the base: run them at the filing commit ff815f8559 too, and find the commit that greened them.
+2. Fix each red file with the repo's existing profile seams, in test code only (no production change, no change to `RecoveryRequired` admission):
+   - tests that read config but select no profile of their own: the `bootstrap_profile` marker (the shared, per-test-restored collection-time sandbox profile);
+   - fixtures that redirect `TLDW_CONFIG_PATH` and force a reload: `Tests/Backup_Recovery/config_test_support.select_config_source`, binding the module namespaces that hold config imports.
+3. Re-run each file alone (red-before / green-after table), a broad `-n 4` regression set on head and on fu-base-r11 (Tests/UI, Tests/Chat, Tests/Wizards, Tests/Prompt_Management, Tests/RAG_Search, Tests/Library, as practical), Tests/CI, preflight and bootbudget.
+4. Prove AC#2 with a wrapper run of the fixed files whose scratch HOME stays empty of profile paths and whose real-profile guard records no refusal.

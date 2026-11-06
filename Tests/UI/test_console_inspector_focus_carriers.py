@@ -56,6 +56,12 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 )
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
+# TASK-38111: every case boots `_build_test_app()`, whose `load_settings()`
+# the per-test TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed); keep the collection-time sandbox profile,
+# as app_factory's docstring asks of its callers.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 #: The two terminal sizes the rail's critique was measured at.
 SUPPORTED_SIZES = ((80, 24), (200, 50))

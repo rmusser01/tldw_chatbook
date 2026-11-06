@@ -110,6 +110,13 @@ from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+# TASK-38111: a send reaches hook admission (read_hooks_config_snapshot) and
+# the controller reads config elsewhere too, which the per-test
+# TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed; hook admission reports it as "Hooks
+# unavailable"). Keep the collection-time sandbox profile for the whole file.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class ConsoleChatStore(_ConsoleChatStore):
     """Ephemeral test store with a permissive frozen policy ceiling."""

@@ -39,6 +39,12 @@ from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
 from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
 
+# TASK-38111: RAGConfig() resolves its default Chroma directory through the
+# guarded get_user_data_dir, which the per-test TLDW_CONFIG_PATH redirect
+# refuses (RecoveryRequired raw_source_selection_changed). Keep the
+# collection-time sandbox profile, like the other RAG_Search suites.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _make_service(media_db_path=None, chachanotes_db_path=None):
     """A RAGService with the in-memory vector store and mock embeddings.

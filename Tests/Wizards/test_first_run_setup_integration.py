@@ -18,14 +18,27 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
 
 @pytest.fixture()
 def temp_config(tmp_path, monkeypatch):
-    config_path = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    from tldw_chatbook import config as config_module
+    """Select a fresh profile whose config file is ``tmp_path/config.toml``.
 
-    config_module.load_cli_config_and_ensure_existence(force_reload=True)
-    yield config_path
-    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    TASK-38111: redirecting ``TLDW_CONFIG_PATH`` and forcing a reload is
+    refused (``RecoveryRequired: raw_source_selection_changed``), because
+    config stays bound to the profile it first read. Select a fresh config
+    source instead, and bind the config imports of this module and of
+    provider_setup_persistence, the commit owner the tests drive (without
+    that binding its writer refuses the new profile); monkeypatch undoes it.
+    """
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.Chat import provider_setup_persistence
+
+    config_path = tmp_path / "config.toml"
+    module = select_config_source(
+        monkeypatch,
+        config_path,
+        globals(),
+        vars(provider_setup_persistence),
+    )
+    module.load_cli_config_and_ensure_existence(force_reload=True)
+    return config_path
 
 
 def _reload():

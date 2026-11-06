@@ -101,6 +101,12 @@ from tldw_chatbook.STT.executor import (
 )
 from tldw_chatbook.STT.parakeet_dispatch import ParakeetDispatch
 
+# TASK-38111: the ingest backend resolution, the parse-pool sizing and the
+# Parakeet source service read config (get_cli_setting), which the per-test
+# TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed). Keep the collection-time sandbox profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Bounded polling: never wait unboundedly for a background worker.
