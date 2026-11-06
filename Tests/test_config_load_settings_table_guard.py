@@ -697,7 +697,10 @@ def test_propagation_follows_imports_not_names():
 # not, must update this pin on purpose.
 # TASK-36943.3 (2026-11-03): three comment-only ADR renumberings (146->343,
 # 147->344, 090->332) re-pinned on purpose.
-_TEMPLATE_SHA256 = "99615838d4a17b194c8e2e4988b6ed08d251b79a6aacaee25dfb773c02a3d38e"
+# TASK-34100.13 (2026-11-05, rebase onto 29592ecc9b): the [embedding_config.models]
+# table made well-formed (AC#6: quoted bge keys, the two sample rows commented
+# out, 3-small 1536 / 3-large 3072, no api_key placeholder) -- re-pinned on purpose.
+_TEMPLATE_SHA256 = "c3c7cf422f189980a17d6d77f61d81ed8f59f67c2e67d44143567182cf88b94f"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 

@@ -25,6 +25,88 @@ from ..UI.Splash_Screens.card_definitions import get_all_card_definitions
 from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 
+# ---------------------------------------------------------------------------
+# TASK-34100.13 (E7, entry-exit-handoff-17): whether, and how, the startup
+# splash plays. A profile's first launch showed 10-16 s of a random card -- the
+# JULES intro, a high-score table with URMOM on it -- with no skip hint before
+# the setup wizard could appear. Now a first launch plays no splash, joke and
+# persona cards never play at random, and TLDW_REDUCE_MOTION / NO_MOTION reduce
+# motion from the first frame. Kept in this boot-resident module so the policy
+# adds nothing to the ui-ready census (ADR-097).
+# ---------------------------------------------------------------------------
+
+#: Cards with jokes or invented people in them. They stay selectable by name
+#: in Settings ▸ Splash Screen, but never play at random (PRODUCT.md:
+#: "professional, calm").
+OPT_IN_ONLY_CARDS = frozenset(
+    {
+        "retro_gaming_intro",  # "A JULES PRODUCTION / PRESENTING"
+        "character_select",  # a JULES player card
+        "arcade_high_score",  # a high-score table with URMOM on it
+        "old_film",  # "TLDW PRESENTS... Starring YOU!"
+    }
+)
+
+#: The ``[splash_screen]`` keys the app reads, with the defaults it uses.
+SPLASH_SETTING_DEFAULTS = (
+    ("enabled", True),
+    ("duration", DEFAULT_SPLASH_DURATION_SECONDS),
+    ("skip_on_keypress", True),
+    ("show_progress", True),
+    ("card_selection", "random"),
+)
+
+def random_pool(active_cards: Any, known_cards: Any) -> list:
+    """The cards a random pick may choose from (never an opt-in-only card)."""
+    cards = active_cards if isinstance(active_cards, (list, tuple)) else ["default"]
+    pool = [
+        card for card in cards if card in known_cards and card not in OPT_IN_ONLY_CARDS
+    ]
+    return pool or ["default"]
+
+
+def splash_options(
+    config: Any, environ: Any = None, *, first_launch: bool = False
+) -> Optional[Dict[str, Any]]:
+    """``SplashScreen`` keyword arguments, or None when no splash should play.
+
+    Args:
+        config: A mapping with ``splash_screen`` and ``appearance`` sections
+            (the app passes what it read).
+        environ: The process environment (defaults to ``os.environ``).
+        first_launch: Whether this launch created the profile's config file
+            (``config.first_profile_created_this_session()``). Review F1: a
+            missing ``[first_run]`` flag is not a first launch -- a
+            hand-written or pre-wizard profile never records one, and lost
+            its configured splash on every launch.
+
+    Returns:
+        None on a first launch or when ``[splash_screen] enabled`` is false;
+        otherwise the card, duration, skip, progress and motion settings.
+    """
+    from ..Utils.startup_logging import with_motion_environment
+    from ..config import coerce_bool_setting
+
+    splash = config.get("splash_screen") if hasattr(config, "get") else None
+    splash = splash if hasattr(splash, "get") else {}
+    if first_launch or not coerce_bool_setting(splash.get("enabled", True), True):
+        return None
+    appearance = config.get("appearance") if hasattr(config, "get") else None
+    appearance = with_motion_environment(appearance or {}, environ)
+    card = str(splash.get("card_selection", "random") or "random")
+    return {
+        "card_name": None if card in {"random", "sequential"} else card,
+        "duration": splash.get("duration", DEFAULT_SPLASH_DURATION_SECONDS),
+        "skip_on_keypress": coerce_bool_setting(
+            splash.get("skip_on_keypress", True), True
+        ),
+        "show_progress": coerce_bool_setting(splash.get("show_progress", True), True),
+        "reduced_motion": coerce_bool_setting(
+            appearance.get("reduce_motion", False), False
+        ),
+    }
+
+
 class SplashScreen(Container):
     """Customizable splash screen widget with animation support."""
 
@@ -237,13 +319,12 @@ class SplashScreen(Container):
         # Always use random selection unless a specific card is set
         if card_selection == "random" or card_selection == "sequential":
             # Pick random from active cards that have registered definitions.
-            active_cards = self.config.get("active_cards", ["default"])
-            predefined_cards = self._get_predefined_cards()
-            selectable_cards = [
-                card for card in active_cards if card in predefined_cards
-            ]
-            if not selectable_cards:
-                selectable_cards = ["default"]
+            # TASK-34100.13: joke and persona cards (the JULES intro, the
+            # URMOM high-score table) only play when chosen by name.
+            selectable_cards = random_pool(
+                self.config.get("active_cards", ["default"]),
+                self._get_predefined_cards(),
+            )
             selected_card = random.choice(selectable_cards)
             logger.info(f"Randomly selected splash card: {selected_card}")
             return selected_card
@@ -306,6 +387,15 @@ class SplashScreen(Container):
                 self.progress_text,
                 id="splash-progress-text",
                 classes="splash-progress-text",
+            )
+
+        # TASK-34100.13 (new-coverage-power-01): any key skips the splash,
+        # and now it says so -- the skip worked but nobody could tell.
+        if self.skip_on_keypress:
+            yield Static(
+                "Press any key to skip",
+                id="splash-skip-hint",
+                classes="splash-skip-hint",
             )
 
     async def on_mount(self) -> None:

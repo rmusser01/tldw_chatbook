@@ -174,7 +174,6 @@ def test_production_routes_share_the_canonical_local_note_authority() -> None:
         "UI/Wizards/first_run_rag_step.py",
         "UI/Wizards/first_run_speech_step.py",
         "UI/Wizards/first_run_tools_step.py",
-        "UI/Wizards/first_run_notes_step.py",
         "UI/Wizards/first_run_appearance_step.py",
         "UI/Wizards/first_run_protect_step.py",
         "UI/Wizards/first_run_summary_step.py",

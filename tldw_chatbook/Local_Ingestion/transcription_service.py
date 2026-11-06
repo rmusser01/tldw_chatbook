@@ -304,6 +304,44 @@ def _handle_progress_callback_error(e: Exception) -> None:
     logger.warning(f"Progress callback error (ignored): {e}")
 
 
+def _openai_key_for_endpoint(api_endpoint: str) -> str:
+    """The OpenAI provider's key, for a remote-whisper endpoint at https://api.openai.com.
+
+    TASK-34100.13: setup's cloud dictation choice reuses the key the user
+    already gave the OpenAI provider instead of storing a second copy under
+    ``[transcription.remote_whisper]``. The key is the one Console's own
+    readiness resolves (``provider_readiness.resolve_provider_credential``
+    over the loaded ``[api_settings.openai]``, which carries a legacy ``[API]
+    openai_api_key`` already), so a ``credential_source`` or a named
+    ``api_key_env_var`` decides here too (review R2). Any other endpoint gets
+    nothing, and neither does plain http (review F6): a key is never sent to a
+    host it was not issued for, or in clear text.
+
+    Args:
+        api_endpoint: The configured remote-whisper URL.
+
+    Returns:
+        The key, or "" when the endpoint is not OpenAI's over https or no key
+        resolves.
+    """
+    from urllib.parse import urlsplit
+
+    from ..Chat.provider_readiness import resolve_provider_credential
+    from ..config import ProviderSettingsError, load_settings, provider_settings_for_key
+
+    try:
+        parts = urlsplit(str(api_endpoint))
+    except ValueError:
+        return ""
+    if parts.scheme.lower() != "https" or (parts.hostname or "").lower() != "api.openai.com":
+        return ""
+    try:
+        table = provider_settings_for_key(load_settings().get("api_settings"), "openai")
+    except ProviderSettingsError:
+        return ""
+    return resolve_provider_credential("openai", table, environ=os.environ)[0] or ""
+
+
 class _LegacyTranscriptionBackend:
     """Unified service for audio transcription with multiple backend support."""
 
@@ -3149,6 +3187,10 @@ class _LegacyTranscriptionBackend:
         # Get API key from environment if specified
         if api_key_env_var and not api_key:
             api_key = os.environ.get(api_key_env_var, "")
+        # TASK-34100.13: setup's "Cloud — OpenAI Whisper" points this at
+        # OpenAI without copying the key; reuse the OpenAI provider's key.
+        if not api_key:
+            api_key = _openai_key_for_endpoint(api_endpoint)
 
         timeout = remote_config.get("timeout", 300)
         response_format = remote_config.get("response_format", "json")

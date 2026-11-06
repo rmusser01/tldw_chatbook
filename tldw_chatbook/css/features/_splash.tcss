@@ -58,6 +58,18 @@ SplashScreen, .splash-screen {
     margin-bottom: $ds-space-1;
 }
 
+/* TASK-34100.13: the skip hint, drawn whenever any key skips the splash.
+   Docked: #splash-display takes the full height, so a hint in the flow below
+   it was laid out off screen (seen live on the first build). */
+#splash-skip-hint, .splash-skip-hint {
+    dock: bottom;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    text-align: center;
+    color: $text-muted;
+    text-style: dim;
+}
+
 /* Progress bar styling */
 #splash-progress-bar, .splash-progress-bar {
     width: $ds-percent-80;

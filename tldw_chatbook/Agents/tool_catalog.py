@@ -1141,6 +1141,11 @@ class GateableTool(NamedTuple):
             on allows -- shown under the wizard's switch and as the hub
             row's tooltip. ``⚠`` marks a tool that creates or changes data
             on disk (a static judgment mirroring its ``risk_tags``).
+            TASK-34100.13: every row is risk-tagged, so the approval card
+            offers Once / This session / Deny and asks on each use; the
+            blurb says so in the card's own words, and a file tool names
+            where it can reach (Workspace folders and the chat scratch
+            area, ``Tools/workspace_file_roots.py``).
     """
 
     gate_key: str
@@ -1166,7 +1171,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "ReadFileTool",
         "read_file",
         "Read file",
-        "Read a file you point the assistant at. Asks before running unless you approve a longer scope.",
+        "Read a file in your Workspace folders or the chat scratch area. Asks before each use unless you pick This session.",
     ),
     GateableTool(
         "list_directory_enabled",
@@ -1174,7 +1179,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "ListDirectoryTool",
         "list_directory",
         "List directory",
-        "Browse the contents of a folder. Asks before running unless you approve a longer scope.",
+        "List a folder in your Workspace folders or the chat scratch area. Asks before each use unless you pick This session.",
     ),
     GateableTool(
         "write_file_enabled",
@@ -1182,7 +1187,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "WriteFileTool",
         "write_file",
         "Write file",
-        "⚠ Creates or overwrites files on disk.",
+        "⚠ Creates or overwrites files in your Workspace folders or the chat scratch area. Asks before each use unless you pick This session.",
     ),
     GateableTool(
         "create_note_enabled",
@@ -1190,7 +1195,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "CreateNoteTool",
         "create_note",
         "Create note",
-        "⚠ Adds new notes to your notebook.",
+        "⚠ Adds new notes to your notebook. Asks before each use unless you pick This session.",
     ),
     GateableTool(
         "update_note_enabled",
@@ -1198,7 +1203,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "UpdateNoteTool",
         "update_note",
         "Update note",
-        "⚠ Edits your existing notes.",
+        "⚠ Edits your existing notes. Asks before each use unless you pick This session.",
     ),
     GateableTool(
         "glob_files_enabled",
@@ -1206,7 +1211,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "GlobFiles",
         "glob_files",
         "Find files",
-        "Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.",
+        "Match file names (like *.md) in your Workspace folders or the chat scratch area. Asks before each use unless you pick This session.",
     ),
     GateableTool(
         "grep_files_enabled",
@@ -1214,7 +1219,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "GrepFiles",
         "grep_files",
         "Search in files",
-        "Search inside files for text. Asks before running unless you approve a longer scope.",
+        "Search inside files in your Workspace folders or the chat scratch area. Asks before each use unless you pick This session.",
     ),
     GateableTool(
         "expand_document_enabled",
@@ -1222,7 +1227,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "ExpandDocumentTool",
         "expand_document",
         "Expand document",
-        "Read the whole document behind a search result. Asks before running unless you approve a longer scope.",
+        "Read the whole document behind a search result. Asks before each use unless you pick This session.",
     ),
 )
 

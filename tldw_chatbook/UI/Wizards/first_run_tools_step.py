@@ -4,6 +4,12 @@ Moved whole out of ``FirstRunSetupWizard.py`` (TASK-34100.1), so its ``@on``
 handlers and workers stay registered on the class and fixes to this step have
 room under the size ratchet. ``FirstRunSetupWizard`` still exports the class.
 Patch this module, not the wizard, to replace what the step calls.
+
+TASK-34100.13 (fulltrack-02, fulltrack-06): the step no longer says
+"Everything is off by default". Its posture sentence is TASK-34100.5.3's
+``tools_step_posture`` over the config as it is now (the one tool-surface
+reading the Summary and the send share); this step adds the Workspace hint
+under the file rows and an untouched-step-writes-nothing baseline.
 """
 
 from __future__ import annotations
@@ -12,6 +18,8 @@ from typing import (
     Any,
     Dict,
 )
+
+from dataclasses import replace
 
 from textual.app import ComposeResult
 from textual.containers import (
@@ -24,7 +32,7 @@ from textual.widgets import (
     Switch,
 )
 
-from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.UI.Wizards import first_run_tools_posture as posture_mod
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep
 
 
@@ -34,6 +42,28 @@ FULL_AGENT_TOOLS_SWITCH = "full_agent_tools"
 
 class ToolsStep(SetupStep):
     """Turn on tools beyond plain chat's light set (all default OFF)."""
+
+    def _gates(self, view: Dict[str, Any] | None = None) -> list:
+        """Every gate, read from the config snapshot this step edits."""
+        from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+
+        if view is None:
+            view = posture_mod.gate_config_view(self.wizard)
+        return all_tool_gates(config=view)
+
+    def _shown_gates(self) -> dict[str, bool]:
+        """The gates the switches were built from (review V2: never a second
+        read, which can differ from the first and make an untouched step write).
+
+        TASK-34100.5.3's Full agent tools switch (group "agent") is on this
+        step too, so its saved value is part of the baseline.
+        """
+        gates = getattr(self, "_composed_gates", None)
+        return {
+            gate.key: gate.enabled
+            for gate in (self._gates() if gates is None else gates)
+            if gate.group in ("builtin", "agent")
+        }
 
     def compose_step(self) -> ComposeResult:
         from tldw_chatbook.Agents.builtin_tool_gate import (
@@ -59,18 +89,31 @@ class ToolsStep(SetupStep):
             for (section, key), scope in gate_effect_scopes().items()
             if section == "tools"
         }
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        # Re-run prefill: resurface whatever gates are already on instead of
-        # always showing OFF. First-run behavior is unchanged, since a fresh
-        # app_config has no "tools" section and tool_gates comes back empty.
-        prefill = wizard_state.read_wizard_prefill(app_config)
-        gate_values = dict(prefill.tool_gates)
+        # One read of the config as it is now: the switches, the posture and
+        # the commit baseline all come from it (review V2).
+        view = posture_mod.gate_config_view(self.wizard)
+        gates = self._composed_gates = self._gates(view)
+        # Re-run prefill: resurface whatever gates are already on, read from
+        # the full TOML -- load_settings() carries no [tools] table, so the
+        # old read showed every switch off after a restart.
+        gate_values = {gate.key: gate.enabled for gate in gates}
+        last_file_row = max(
+            (
+                index
+                for index, entry in enumerate(self._entries)
+                if entry.tool_name in posture_mod.FILE_TOOL_NAMES
+            ),
+            default=-1,
+        )
         with Vertical(classes="setup-tools"):
-            yield Static("Built-in tools", classes="setup-title")
+            yield Static("Tools", classes="setup-title")
             # TASK-34100.5.3: plain chat is never "all off" -- it keeps the
-            # light set -- so the posture is derived, not asserted.
+            # light set -- so the posture is derived, not asserted. The groups
+            # the old "Also available" line named (web, Watchlists, character
+            # cards) are no longer offered to plain chat by default; the Full
+            # agent tools row below says what adds them.
             yield Static(
-                tools_step_posture(summarize_tool_surface(app_config)),
+                tools_step_posture(summarize_tool_surface(view)),
                 id="setup-tools-posture",
                 classes="setup-subtitle",
                 markup=False,
@@ -92,7 +135,7 @@ class ToolsStep(SetupStep):
                         classes="setup-tool-desc",
                         markup=False,
                     )
-            for entry in self._entries:
+            for index, entry in enumerate(self._entries):
                 # TASK-1501/task-32284: plain-language name and one-line
                 # description, read off the gate table itself -- the MCP
                 # hub's Tool gates pane renders the same two fields, so a
@@ -115,6 +158,14 @@ class ToolsStep(SetupStep):
                             classes="setup-tool-desc",
                             markup=False,
                         )
+                if index == last_file_row:
+                    # fulltrack-06: one static hint, under the file rows.
+                    yield Static(
+                        posture_mod.WORKSPACE_HINT,
+                        id="setup-tools-workspace-hint",
+                        classes="setup-step-note",
+                        markup=False,
+                    )
 
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")
@@ -132,7 +183,6 @@ class ToolsStep(SetupStep):
     async def commit(self) -> tuple[bool, str]:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             build_tools_commit,
-            read_wizard_prefill,
             tools_commit_delta,
         )
 
@@ -147,16 +197,20 @@ class ToolsStep(SetupStep):
             gate_key = self.gate_key_for(switch)
             if gate_key:
                 gate_values[gate_key] = bool(switch.value)
-        current_gates = dict(
-            read_wizard_prefill(
-                getattr(self.wizard.app_instance, "app_config", {}) or {}
-            ).tool_gates
+        delta = tools_commit_delta(
+            gate_values=gate_values, current_gates=self._shown_gates()
         )
-        delta = tools_commit_delta(gate_values=gate_values, current_gates=current_gates)
         if not delta:
             return True, ""
         ok = await self.wizard.commit_config(build_tools_commit(gate_values=delta))
-        return (True, "") if ok else (False, "Saving tool settings failed.")
+        if not ok:
+            return False, "Saving tool settings failed."
+        # What is saved now is what the switches show: Back, then Next, writes nothing.
+        self._composed_gates = [
+            replace(gate, enabled=delta[gate.key]) if gate.key in delta else gate
+            for gate in getattr(self, "_composed_gates", ())
+        ]
+        return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
         return {

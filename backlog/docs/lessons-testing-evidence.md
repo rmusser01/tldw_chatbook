@@ -24681,3 +24681,12 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - When a Pilot test slows down on every OS at once, time the node and sample stacks before suspecting a hang or the runner. Look for a worker group that keeps restarting.
 - Judge a local run by its duration as well as its result. A `--timeout` overrun can still be reported as passed.
 - Install diagnostic patches at `pytest_runtest_call`, not at session start, in modules that capture function identities at import.
+
+## A "load flake" that fails only as a process's first test is a cold-start stall: repeat it serially and read index [0] (TASK-34100.13, 2026-11-05)
+
+**Incident.** Review TE-2 listed `test_rapid_double_escape_during_first_render_keeps_skip_setup_open` as a head-only load flake. The rebase pass had listed others the same way. Repeated with a scratch parametrizing plugin, the test failed only as repeat `[0]` when run serially, and failed 4 of 4 under `-n 4`, where every worker is cold. A clean export of dev passed 4 of 4 both ways. Instrumented, the second Escape reached the confirm dialog after its 0.5 s grace. The branch's Search step resolved RAG's embedding model from `on_mount`, on an executor thread, for every wizard, the Quick track included. The cold import of the RAG config chain takes about 0.5 s and is GIL-bound, so it starved the event loop. That was a real cold-start regression, not load. The same repeat run turned up two pruning races that had also been filed as flakes: a post-await `query_one` in a worker during teardown, and a stock `Select` inside a step that recomposes.
+
+**What to do.**
+- Before you list a mounted test as a load flake, repeat it about 8 times serially and under `-n 4`. If it fails only as `[0]` serially, or on every worker in parallel, it is cold-start dependent; compare it against a clean export of the base.
+- An executor thread is not free for the loop. A cold import or other pure-Python work on a thread holds the GIL. Defer that work to the first show of the widget that needs it, never `on_mount` of something hidden.
+- After an await, `is_attached` does not mean the children are there: teardown prunes a step's children before the step's worker is cancelled. Look widgets up with `query()` and treat a missing one as a no-op. Use `PruneSafeSelect` (TASK-1960) for any `Select` in a widget that recomposes.

@@ -306,6 +306,27 @@ _MUTATING_BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _gated_off_builtin_twins() -> frozenset[str]:
+    """Built-in tools hidden because their native twin is gated off.
+
+    If the config cannot be read, each gate takes its shipped default (the
+    value an absent key means everywhere else): ``create_note`` stays hidden,
+    and the character writes follow their default-on gate.
+    """
+    from tldw_chatbook.Agents import builtin_tool_gate
+
+    try:
+        return builtin_tool_gate.gated_off_mcp_builtin_twins()
+    except Exception as exc:  # noqa: BLE001 -- never abort composition
+        logger.warning(
+            "MCPToolProvider: tool gates unreadable ({}); using their defaults",
+            type(exc).__name__,
+        )
+        return builtin_tool_gate.gated_off_mcp_builtin_twins(
+            builtin_tool_gate.all_tool_gates(config={})
+        )
+
+
 def approval_effects_for_tool(tool: Any) -> tuple[str, ...]:
     """Return the card-facing effects implied by a tool's risk tags.
 
@@ -533,6 +554,10 @@ class MCPToolProvider:
         self._main_loop = main_loop
         self._approval_callback = approval_callback
         self._builtin_raw_name_exclusions = frozenset(builtin_raw_name_exclusions or ())
+        # TASK-34100.13: built-in twins of gated-off native tools ("Create
+        # note" left off). Read once per provider -- one per Console run -- so
+        # both install paths and the run-reuse key see the same gate state.
+        self._gated_off_twins = _gated_off_builtin_twins()
         # Read fresh on every catalog compose / persist -- never cached, so
         # the active workspace profile can change over this provider's
         # lifetime (Task 7's Console closure supplies the callable).
@@ -881,10 +906,16 @@ class MCPToolProvider:
         """Apply this provider's existing narrowing and run-owned naming."""
         from tldw_chatbook.MCP.permission_store import definition_hash
 
+        # TASK-34100.13: both install paths (compose_catalog and the adopted
+        # shared preparation) drop a built-in twin of a gated-off native tool.
+        gated_off = getattr(self, "_gated_off_twins", frozenset())
         eligible = [
             tool
             for tool in hub_tools
-            if effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE).state
+            if not (
+                tool.server_key == "builtin:tldw_chatbook" and tool.name in gated_off
+            )
+            and effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE).state
             != "deny"
             and (
                 self._maximum_tool_ids is None or tool.tool_id in self._maximum_tool_ids
@@ -944,14 +975,16 @@ class MCPToolProvider:
     def composition_key(self) -> tuple:
         """This provider's own inputs to ``compose_catalog`` (TASK-33620.15.1).
 
-        The permission profile, plugin ownership, built-in exclusions and the
-        run's tool and definition maxima; with an unchanged store fingerprint,
-        equal keys compose equal catalogs.
+        The permission profile, plugin ownership, built-in exclusions, the
+        gated-off built-in twins (TASK-34100.13) and the run's tool and
+        definition maxima; with an unchanged store fingerprint, equal keys
+        compose equal catalogs.
         """
         return (
             self._profile_kwargs(),
             frozenset(self._owned_profile_ids or ()),
             self._builtin_raw_name_exclusions,
+            self._gated_off_twins,
             self._maximum_tool_ids,
             None
             if self._maximum_definition_hashes is None

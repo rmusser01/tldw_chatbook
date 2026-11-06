@@ -279,7 +279,6 @@ tldw_chatbook/UI/Watchlists_Modules/watchlists_tab_strip	WatchlistsTabStrip.comp
 tldw_chatbook/UI/Wizards/ChatbookCreationWizard	ContentSelectionStep._load_content	notify_interp	1
 tldw_chatbook/UI/Wizards/ChatbookImportWizard	FileSelectionStep._browse_for_file	notify_interp	1
 tldw_chatbook/UI/Wizards/first_run_speech_step	SpeechSetupStep._use_as_default_pressed	notify_interp	1
-tldw_chatbook/UI/Wizards/first_run_speech_step	SpeechSetupStep.compose_step	button_label_interp	1
 tldw_chatbook/Widgets/AppFooterStatus	AppFooterStatus.on_tamagotchi_death	notify_interp	1
 tldw_chatbook/Widgets/AppFooterStatus	AppFooterStatus.on_tamagotchi_stat_critical	notify_interp	1
 tldw_chatbook/Widgets/Chat_Widgets/chat_message	ChatMessage.compose	button_label_interp	1

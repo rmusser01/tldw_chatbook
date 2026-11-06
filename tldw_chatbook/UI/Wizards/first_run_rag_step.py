@@ -1,127 +1,251 @@
-"""The first-run wizard's RAG step.
+"""The first-run wizard's Search step (step id ``rag``).
 
 Moved whole out of ``FirstRunSetupWizard.py`` (TASK-34100.1), so its ``@on``
 handlers and workers stay registered on the class and fixes to this step have
 room under the size ratchet. ``FirstRunSetupWizard`` still exports the class.
 Patch this module, not the wizard, to replace what the step calls.
+
+TASK-34100.13 (fulltrack-01, fulltrack-11): the step used to pick an
+``[embedding_config]`` model the RAG pipeline never reads. It now offers the
+one setting that changes what happens when you chat -- whether new Console
+conversations search the Library on every send -- and shows the embedding
+model RAG actually resolves, read-only. The facts and copy live in
+``first_run_rag_state``.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import (
     Any,
+    Callable,
     Dict,
+    Optional,
 )
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import (
+    Horizontal,
+    Vertical,
+)
+from textual.css.query import NoMatches
 from textual.widgets import (
+    Button,
+    Label,
+    RadioButton,
     RadioSet,
     Static,
 )
 
-from tldw_chatbook.Utils.input_validation import escape_markup
+from tldw_chatbook.UI.Wizards import first_run_rag_state as rag_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupRadioButton,
     SetupRadioSet,
     SetupStep,
-    _radio_model_id,
 )
+from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 
 
 class RagStep(SetupStep):
-    """RAG/embeddings: report dep status; pick a default embedding model."""
+    """Search: when new chats search the Library, and the model RAG uses."""
 
-    def __init__(self, wizard=None, config=None, *, deps_installed=None, **kwargs):
+    def __init__(
+        self,
+        wizard=None,
+        config=None,
+        *,
+        deps_installed: Optional[Callable[[], bool]] = None,
+        resolve_model: Optional[
+            Callable[[], Optional[rag_state.EmbeddingModelFacts]]
+        ] = None,
+        **kwargs: Any,
+    ):
         super().__init__(wizard=wizard, config=config, **kwargs)
         if deps_installed is None:
             from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
 
             deps_installed = embeddings_rag_deps_installed
         self._deps_installed = deps_installed
-        self.selected_embedding_model: str = ""
+        self._resolve_model = resolve_model or rag_state.resolve_active_embedding_model
+        self._model_worker = None
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        self._current_auto_retrieve = rag_state.read_auto_retrieve(app_config)
+        self.auto_retrieve: bool = self._current_auto_retrieve
 
     def compose_step(self) -> ComposeResult:
+        deps = self._extras_installed = bool(self._deps_installed())
         with Vertical(classes="setup-rag"):
-            yield Static("Search & RAG", classes="setup-title")
-            yield Static("", id="setup-rag-status", classes="setup-subtitle")
+            yield Static(rag_state.SEARCH_TITLE, classes="setup-title")
+            yield Static(rag_state.SEARCH_SUBTITLE, classes="setup-subtitle")
+            yield Label(rag_state.SEARCH_CHOICE_LABEL, classes="setup-field-label")
             with SetupRadioSet(
-                id="setup-rag-model-choice", classes="setup-choice-list"
+                id="setup-rag-auto-retrieve",
+                classes="setup-choice-list setup-choice-fit",
             ):
-                for model_id in self._embedding_model_ids():
-                    # The id comes from the user's `[embedding_config] models`
-                    # table, so it must not be handed to a markup parser: a
-                    # `[dim]` segment is silently deleted from the label (and
-                    # so from what is read back into config), and a `[/]` one
-                    # raises MarkupError out of compose(). The raw id rides
-                    # `name`, as AppearanceStep rides `_theme_name`, so the
-                    # committed value never depends on the rendering
-                    # (tier-2 review S21 P3).
-                    yield SetupRadioButton(escape_markup(model_id), name=model_id)
+                yield SetupRadioButton(
+                    rag_state.SEARCH_ON_REQUEST_LABEL,
+                    value=not self.auto_retrieve,
+                    id="setup-rag-auto-retrieve-on-request",
+                )
+                # AC#5 (owner ruling 2026-10-20): without the extras every
+                # automatic search is blocked and each send pauses, so the
+                # choice reads unavailable and cannot be picked. A saved
+                # "automatic" stays pressed (that is the setting today);
+                # "only when I ask" still turns it off.
+                yield SetupRadioButton(
+                    rag_state.SEARCH_AUTOMATIC_LABEL
+                    if deps
+                    else rag_state.SEARCH_AUTOMATIC_UNAVAILABLE_LABEL,
+                    value=self.auto_retrieve,
+                    id="setup-rag-auto-retrieve-automatic",
+                    disabled=not deps,
+                )
+            if not deps:
+                yield Static(
+                    rag_state.search_unavailable_copy(
+                        saved_automatic=self._current_auto_retrieve
+                    ),
+                    id="setup-rag-unavailable",
+                    classes="setup-step-note",
+                    markup=False,
+                )
+            yield Static(
+                "Embedding model: checking…",
+                id="setup-rag-model",
+                classes="setup-subtitle",
+                markup=False,
+            )
+            privacy = Static(
+                "", id="setup-rag-privacy", classes="setup-step-note", markup=False
+            )
+            privacy.display = False
+            yield privacy
+            download = Static(
+                "", id="setup-rag-download", classes="setup-step-note", markup=False
+            )
+            download.display = False
+            yield download
+            if not deps:
+                # The secondary line: the package to add, with a copy action.
+                with Horizontal(
+                    id="setup-rag-extras-row", classes="setup-rag-extras-row"
+                ):
+                    yield Static(
+                        rag_state.RAG_EXTRAS_PACKAGE,
+                        id="setup-rag-extras-package",
+                        markup=False,
+                    )
+                    yield Button(
+                        "Copy package name",
+                        id="setup-rag-copy-extras",
+                        classes="setup-tertiary-button",
+                    )
+                yield Static(
+                    rag_state.SEARCH_EXTRAS_INSTALL_COPY,
+                    id="setup-rag-extras",
+                    classes="setup-step-note",
+                    markup=False,
+                )
 
-    def _embedding_model_ids(self) -> list[str]:
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        embedding_config = app_config.get("embedding_config", {})
-        models = (
-            embedding_config.get("models", {})
-            if isinstance(embedding_config, dict)
-            else {}
+    def on_show(self) -> None:
+        """Resolve the embedding model the first time the step is shown.
+
+        Review TE-2 (TASK-34100.13): resolving at mount imported the RAG
+        config chain (~0.5 s cold) on an executor thread during every
+        wizard's first render, the Quick track's included; that GIL-bound
+        import starved the loop until a reflexive double Escape outlasted
+        the confirm dialog's grace (TASK-2314).
+        """
+        super().on_show()
+        if self._model_worker is not None:
+            return
+        self._model_worker = run_wizard_worker(
+            self,
+            self._show_resolved_model(),
+            exclusive=True,
+            group="setup-rag-model",
         )
-        return sorted(models) if isinstance(models, dict) else []
 
-    def on_mount(self) -> None:
-        status = self.query_one("#setup-rag-status", Static)
-        if self._deps_installed():
-            status.update(
-                "Embedding dependencies are installed. Pick a default model, or skip."
-            )
-        else:
-            status.update(
-                # Static.update() treats [..] as Rich markup by default, so the
-                # extras-package brackets must be escaped or "[embeddings_rag]"
-                # silently vanishes from the rendered text instead of showing.
-                # TASK-1502: quoted plainly — backticks are markdown idiom and
-                # render literally in a TUI.
-                "RAG lets the assistant search your own documents. Its "
-                "optional dependencies aren't installed — install with: pip "
-                'install "tldw_chatbook\\[embeddings_rag]" — then revisit '
-                "Settings ▸ RAG. Skipping for now is fine."
-            )
-            try:
-                # TASK-1502: hide the model list outright — a wall of disabled
-                # options under a "not installed" message reads as breakage
-                # and adds nothing the user can act on.
-                self.query_one("#setup-rag-model-choice", RadioSet).display = False
-            except Exception:
-                pass
-
-    @on(RadioSet.Changed, "#setup-rag-model-choice")
-    def _on_model(self, event: RadioSet.Changed) -> None:
-        self.selected_embedding_model = _radio_model_id(event.pressed)
-
-    def _effective_embedding_model(self) -> str:
-        """F-A fix: same pressed-radio fallback as ProviderStep/ModelStep."""
-        if self.selected_embedding_model:
-            return self.selected_embedding_model
+    async def _show_resolved_model(self) -> None:
+        facts = await asyncio.get_running_loop().run_in_executor(
+            None, self._resolve_model
+        )
+        # The step can leave the DOM while the resolver runs (TASK-32892).
         try:
-            pressed = self.query_one("#setup-rag-model-choice", RadioSet).pressed_button
+            line = self.query_one("#setup-rag-model", Static)
+            privacy = self.query_one("#setup-rag-privacy", Static)
+        except NoMatches:
+            return
+        line.update(rag_state.embedding_model_line(facts))
+        if facts is not None and facts.cloud:
+            privacy.update(rag_state.cloud_privacy_copy())
+            privacy.display = True
+        else:
+            privacy.display = False
+        self._facts = facts
+        self._show_download_note()
+
+    _facts: Optional[rag_state.EmbeddingModelFacts] = None
+    _extras_installed: bool = True
+
+    def _show_download_note(self) -> None:
+        """Under "automatically": what the first automatic search can fetch
+        (nothing without the extras: no search runs)."""
+        try:
+            note = self.query_one("#setup-rag-download", Static)
+        except NoMatches:
+            return
+        text = rag_state.automatic_download_note(self._facts)
+        note.update(text)
+        note.display = (
+            bool(text) and self._extras_installed and self._pressed_is_automatic()
+        )
+
+    @on(RadioSet.Changed, "#setup-rag-auto-retrieve")
+    def _on_auto_retrieve(self, event: RadioSet.Changed) -> None:
+        event.stop()
+        self.auto_retrieve = self._pressed_is_automatic()
+        self._show_download_note()
+
+    @on(Button.Pressed, "#setup-rag-copy-extras")
+    def _on_copy_extras(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.app.copy_to_clipboard(rag_state.RAG_EXTRAS_PACKAGE)
+        # OSC 52 gives no delivery receipt (lessons-clipboard.md), so the
+        # name stays on screen, selectable, whatever the terminal did.
+        self.notify(
+            f"Copied {rag_state.RAG_EXTRAS_PACKAGE} (if your terminal allows it).",
+            markup=False,
+        )
+
+    def _pressed_is_automatic(self) -> bool:
+        """F-A pattern: read the PRESSED radio, never only the Changed echo."""
+        try:
+            choice = self.query_one("#setup-rag-auto-retrieve", RadioSet)
         except Exception:
-            return ""
-        return _radio_model_id(pressed) if pressed is not None else ""
+            return self.auto_retrieve
+        pressed = choice.pressed_button
+        if pressed is None or pressed not in choice.query(RadioButton):
+            return self.auto_retrieve
+        return pressed.id == "setup-rag-auto-retrieve-automatic"
 
     async def commit(self) -> tuple[bool, str]:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_rag_commit
-
-        model_id = self._effective_embedding_model()
-        if not (self._deps_installed() and model_id):
-            return True, ""
-        ok = await self.wizard.commit_config(
-            build_rag_commit(default_model_id=model_id)
+        chosen = self._pressed_is_automatic()
+        mutation = rag_state.build_search_commit(
+            auto_retrieve=chosen, current=self._current_auto_retrieve
         )
-        if ok:
-            self.selected_embedding_model = model_id
-        return (True, "") if ok else (False, "Saving the embedding model failed.")
+        if not mutation:
+            return True, ""
+        ok = await self.wizard.commit_config(mutation)
+        if not ok:
+            return False, "Saving the search setting failed."
+        self.auto_retrieve = chosen
+        self._current_auto_retrieve = chosen
+        # Review R8: Back shows this step again without a rebuild.
+        for line in self.query("#setup-rag-unavailable").results(Static):
+            line.update(rag_state.search_unavailable_copy(saved_automatic=chosen))
+        return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
-        return {"embedding_model": self.selected_embedding_model}
+        return {"auto_retrieve": self._pressed_is_automatic()}

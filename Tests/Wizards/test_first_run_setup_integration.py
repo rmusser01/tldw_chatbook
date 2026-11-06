@@ -128,7 +128,9 @@ class TestCommitRoundTrip:
             )
         }
         assert rows["Notes folder sync"].ok is False
-        assert rows["Notes folder sync"].detail == "set up later in Library"
+        assert rows["Notes folder sync"].detail == (
+            "set up in Library ▸ Notes ▸ Add from files…"
+        )
 
 
 class TestFreshTemplateOfferGuard:

@@ -52,7 +52,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_DRAFT_VERSION,
     STEP_APPEARANCE,
     STEP_MODEL,
-    STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
     STEP_RAG,
@@ -71,7 +70,6 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     AppearanceStep,
     FirstRunSetupWizard,
     ModelStep,
-    NotesSyncStep,
     ProtectKeysStep,
     ProviderChoiceOption,
     ProviderStep,
@@ -1541,18 +1539,63 @@ async def test_rapid_double_escape_during_first_render_keeps_skip_setup_open():
     Escape presses sent within 5ms of the wizard's first paint left the
     dialog closed and the wizard showing, before this fix). The
     confirmation flow must stay up through a reflexive double-press, not
-    revert."""
+    revert.
+
+    Review TEF-1 (TASK-34100.13): ``pilot.press("escape", "escape")`` waits
+    for the app to go idle between the two keys, so the second press reached
+    the dialog only after its first frame plus that wait. Under load (an
+    8.9 s call) the wait outlasted the 0.5 s grace and the second Escape
+    was, by the dialog's own rule, deliberate. The keys now go in the way a
+    terminal delivers a reflexive double-press: both queued before the app
+    handles the first. The test then waits on the real conditions, not a
+    window: the second press reached the dialog's guarded binding, and the
+    dialog painted."""
+    from textual import events
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _SettlingGuardedConfirmationDialog,
+    )
+
+    reached: list[bool] = []
+    guarded = _SettlingGuardedConfirmationDialog.action_cancel_dialog_if_settled
+
+    async def spy(dialog) -> None:
+        reached.append(dialog._opened_at is not None)  # painted yet?
+        await guarded(dialog)
+
     wizard = _make_wizard()
     app = _HostApp(wizard)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("escape", "escape")
-        await pilot.pause()
-        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-            _SettlingGuardedConfirmationDialog,
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            _SettlingGuardedConfirmationDialog, "action_cancel_dialog_if_settled", spy
         )
+        async with app.run_test(size=(120, 40)) as pilot:
+            for _ in range(2):
+                app._driver.send_message(events.Key("escape", None))
 
-        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
-        assert app.wizard_result == "UNSET"
+            def settled() -> bool:
+                screen = app.screen
+                return (
+                    bool(reached)
+                    and isinstance(screen, _SettlingGuardedConfirmationDialog)
+                    and screen._opened_at is not None
+                )
+
+            await _until(pilot, settled)
+            await pilot.pause()
+            screen = app.screen
+            dialogs = [
+                s
+                for s in app.screen_stack
+                if isinstance(s, _SettlingGuardedConfirmationDialog)
+            ]
+    # A dialog the second Escape dismissed never comes back, and a second
+    # press that missed the dialog never calls its guarded binding: either
+    # way this still fails on the TASK-2314 regression.
+    assert reached, "the second Escape never reached the dialog's binding"
+    assert isinstance(screen, _SettlingGuardedConfirmationDialog)
+    assert len(dialogs) == 1  # the second press opened no second dialog
+    assert app.wizard_result == "UNSET"
 
 
 @pytest.mark.asyncio
@@ -10108,108 +10151,6 @@ def test_model_step_worker_group_is_not_wizard_advance():
 
 
 @pytest.mark.asyncio
-async def test_rag_step_missing_deps_shows_install_copy_and_commits_nothing():
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True),
-        rerun=False,
-    )
-    step = RagStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
-        deps_installed=lambda: False,
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        body = str(step.query_one("#setup-rag-status", Static).render())
-        assert "tldw_chatbook[embeddings_rag]" in body
-        ok, _ = await step.commit()
-        assert ok
-        wizard.commit_config.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_rag_step_commit_reads_pressed_radio_without_changed_event():
-    """F-A regression, same pattern as ProviderStep/ModelStep, applied to
-    RagStep's embedding-model RadioSet."""
-    from unittest.mock import AsyncMock
-    from types import SimpleNamespace
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(
-            app_config={"embedding_config": {"models": {"embed-a": {}, "embed-b": {}}}}
-        ),
-        commit_config=AsyncMock(return_value=True),
-        rerun=False,
-    )
-    step = RagStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
-        deps_installed=lambda: True,
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        radio_set = step.query_one("#setup-rag-model-choice", RadioSet)
-        target = step.query_one(RadioButton)
-        radio_set._pressed_button = target
-        assert step.selected_embedding_model == ""  # sanity: Changed never fired
-
-        ok, error = await step.commit()
-        assert ok, error
-        assert step.selected_embedding_model == str(target.label)
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed == {
-            "embedding_config": {"default_model_id": str(target.label)}
-        }
-
-
-@pytest.mark.asyncio
-async def test_rag_step_survives_a_markup_shaped_embedding_model_id():
-    """tier-2 review S21 P3: embedding model ids come from the user's
-    `[embedding_config] models` table and were fed straight to a
-    markup-parsing `RadioButton` label, then read back out of it. A `[dim]`
-    segment silently vanished from the committed config; a `[/]` one raised
-    `MarkupError` out of `compose()`.
-    """
-    from unittest.mock import AsyncMock
-    from types import SimpleNamespace
-
-    hostile = "embed-[dim]-v1"
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(
-            app_config={
-                "embedding_config": {"models": {hostile: {}, "embed-[/]-v2": {}}}
-            }
-        ),
-        commit_config=AsyncMock(return_value=True),
-        rerun=False,
-    )
-    step = RagStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
-        deps_installed=lambda: True,
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        radio_set = step.query_one("#setup-rag-model-choice", RadioSet)
-        target = next(
-            button for button in radio_set.query(RadioButton) if button.name == hostile
-        )
-        radio_set._pressed_button = target
-
-        ok, error = await step.commit()
-        assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed == {"embedding_config": {"default_model_id": hostile}}
-
-
-@pytest.mark.asyncio
 async def test_tools_step_commits_only_changed_gates():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -10287,31 +10228,6 @@ async def test_tools_step_on_to_off_transition_writes_false():
         assert ok
         committed = wizard.commit_config.call_args.args[0]
         assert committed == {"tools": {"read_file_enabled": False}}
-
-
-@pytest.mark.asyncio
-async def test_notes_step_is_informational_and_never_writes_legacy_sync_config():
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True),
-        rerun=False,
-    )
-    step = NotesSyncStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="notes", title="Notes sync", step_number=6),
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        ok, _ = await step.commit()
-        assert ok
-        wizard.commit_config.assert_not_awaited()
-        assert step.get_step_data() == {}
-        assert not step.query("#setup-notes-enable")
-        assert not step.query("#setup-notes-directory")
 
 
 @pytest.mark.asyncio
@@ -11458,6 +11374,8 @@ async def test_finalize_and_dismiss_screen_never_double_dismiss():
 
 @pytest.mark.asyncio
 async def test_appearance_step_commits_theme_and_card():
+    """TASK-34100.13: the splash-card gallery left setup (fulltrack-09); a
+    theme pick still commits, and nothing is written for the splash card."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -11469,17 +11387,16 @@ async def test_appearance_step_commits_theme_and_card():
     step = AppearanceStep(
         wizard=wizard,
         config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+        environ={},
     )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.selected_theme = "textual-light"
-        step.selected_splash_card = "matrix"
         ok, _ = await step.commit()
         assert ok
         committed = wizard.commit_config.call_args.args[0]
-        assert committed["general"] == {"default_theme": "textual-light"}
-        assert committed["splash_screen"] == {"card_selection": "matrix"}
+        assert committed == {"general": {"default_theme": "textual-light"}}
 
 
 @pytest.mark.asyncio
@@ -11538,12 +11455,9 @@ async def test_appearance_step_no_config_theme_preselects_nothing():
 
 @pytest.mark.asyncio
 async def test_appearance_step_rerun_change_only_splash_card_leaves_theme_untouched():
-    """Bug-2a/b: AppearanceStep.commit() used to fall back to a hardcoded
-    "textual-dark" default whenever selected_theme was empty, clobbering a
-    persisted theme on a rerun that only touches the splash card. compose()
-    must initialize selected_theme from the persisted default (a), and the
-    delta-aware commit must omit general.default_theme when the chosen
-    theme matches what's already persisted (b)."""
+    """Bug-2a/b: a rerun that changes only another Appearance control must
+    not rewrite the persisted theme. TASK-34100.13: that control is now the
+    startup animation (the splash-card gallery left setup)."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -11555,69 +11469,19 @@ async def test_appearance_step_rerun_change_only_splash_card_leaves_theme_untouc
     step = AppearanceStep(
         wizard=wizard,
         config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+        environ={},
     )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        # compose() must have initialized selected_theme from the persisted
-        # default -- pin that directly, since it's the crux of fix (a).
         assert step.selected_theme == "nord"
-
-        # Only the splash card changes this run; the theme RadioSet is left
-        # untouched at its pre-selected ("nord") position.
-        step.selected_splash_card = "matrix"
+        step.query_one("#setup-startup-off", RadioButton).value = True
+        await pilot.pause()
         ok, error = await step.commit()
         assert ok, error
         committed = wizard.commit_config.call_args.args[0]
         assert "general" not in committed
-        assert committed["splash_screen"] == {"card_selection": "matrix"}
-
-
-@pytest.mark.asyncio
-async def test_appearance_step_surprise_me_over_persisted_card_writes_random():
-    """Bug-2c: "Surprise me (random)" maps to splash_card=None, which the
-    old commit() unconditionally treated as "nothing to write" -- so a
-    previously persisted specific card could never be reset back to random.
-    Explicitly re-picking "Surprise me" over a persisted specific card must
-    write card_selection="random"."""
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(
-            app_config={"splash_screen": {"card_selection": "matrix"}}
-        ),
-        commit_config=AsyncMock(return_value=True),
-        rerun=True,
-    )
-    step = AppearanceStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        radio_set = step.query_one("#setup-splash-choice", RadioSet)
-        buttons = list(radio_set.query(RadioButton))
-        surprise_button = next(
-            b for b in buttons if str(b.label).startswith("Surprise me")
-        )
-        other_button = next(
-            b for b in buttons if not str(b.label).startswith("Surprise me")
-        )
-        # "Surprise me" is already the default mount-time pre-selection, and
-        # RadioSet does not fire Changed for its own initial state -- press
-        # a different card first, then explicitly re-press "Surprise me",
-        # to mirror a real user re-picking it.
-        other_button.value = True
-        await pilot.pause()
-        surprise_button.value = True
-        await pilot.pause()
-
-        ok, error = await step.commit()
-        assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed["splash_screen"] == {"card_selection": "random"}
+        assert committed["splash_screen"] == {"enabled": False}
 
 
 @pytest.mark.asyncio
@@ -11896,34 +11760,6 @@ class TestSetupRadioButtonStructuralState:
 
 
 @pytest.mark.asyncio
-async def test_rag_step_missing_deps_hides_model_list_and_copy_has_no_backticks():
-    """TASK-1502: no disabled model wall under the not-installed message."""
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import RagStep
-    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True),
-        rerun=False,
-    )
-    step = RagStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
-        deps_installed=lambda: False,
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        radio_set = step.query_one(RadioSet)
-        assert not radio_set.display, "disabled model list must be hidden entirely"
-        copy = str(step.query_one("#setup-rag-status", Static).render())
-        assert "`" not in copy
-
-
-@pytest.mark.asyncio
 async def test_model_step_subtitle_display_cases_provider_and_marks_recommended():
     """TASK-1503: no raw provider keys in copy; first curated model marked."""
     from types import SimpleNamespace
@@ -12067,38 +11903,20 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
 
 
 def test_read_class_tool_copy_mentions_per_call_approval():
-    """task-32289 AC#2: Full setup's tools step described reads as safe with
-    no mention that they still ask every time -- append that fact to every
-    read-class tool's description instead of just the mutating ones' ⚠.
-
-    task-32284 moved the wizard's private `_TOOL_COPY` table onto
-    `_GATEABLE_BUILTINS` (see `test_tools_step_copy_comes_from_the_shared_
-    gate_table` below), so this reads the catalog blurbs instead.
-
-    task-32284 (Qodo #2594 #6): "Asks you each time before running" was a
-    promise the approval card breaks on purpose -- "Approve for session"
-    and "Always allow" are right there on it. The sentence now names that
-    longer scope instead of denying it exists.
-    """
+    """task-32289 AC#2, then TASK-34100.13: every row says it asks before each
+    use and names the card's own session option; file tools say where they
+    reach (Workspace folders and the chat scratch area)."""
     from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
-    sentence = "Asks before running unless you approve a longer scope."
+    sentence = "Asks before each use unless you pick This session."
     blurbs = {t.tool_name: t.blurb for t in gateable_builtin_tools()}
 
-    for tool_name in (
-        "read_file",
-        "list_directory",
-        "glob_files",
-        "grep_files",
-        "expand_document",
-    ):
-        desc = blurbs[tool_name]
+    for tool_name, desc in blurbs.items():
         assert desc.endswith(f" {sentence}"), (tool_name, desc)
-
     for tool_name in ("write_file", "create_note", "update_note"):
-        desc = blurbs[tool_name]
-        assert sentence not in desc, (tool_name, desc)
-        assert "asks you each time" not in desc.lower(), (tool_name, desc)
+        assert "⚠" in blurbs[tool_name], tool_name
+    for tool_name in ("read_file", "list_directory", "write_file", "glob_files", "grep_files"):
+        assert "Workspace folders" in blurbs[tool_name], tool_name
 
 
 @pytest.mark.asyncio
@@ -12275,8 +12093,9 @@ async def test_full_track_progress_content_stays_inside_non_overlapping_items(
         await pilot.pause(0.1)
 
         rows = list(wizard.query(".setup-progress-item"))
-        # TASK-21148 (UAT N-6): Protect is always on the track.
-        assert len(rows) == 11
+        # TASK-21148 (UAT N-6): Protect is always on the track. TASK-34100.13
+        # removed the Notes step (fulltrack-05): Full is ten steps.
+        assert len(rows) == 10
         assert sum(row.has_class("-active") for row in rows) == 1
         assert all(
             row.has_class("-active")
@@ -12650,7 +12469,6 @@ class TestComposeCrashPolicy:
             (STEP_VOICE, "speech-tts"),
             (STEP_SPEECH, "speech-tts"),
             (STEP_TOOLS, "advanced-config"),
-            (STEP_NOTES, "advanced-config"),
             (STEP_APPEARANCE, "appearance"),
             (STEP_PROTECT, "privacy-security"),
             (STEP_SUMMARY, "diagnostics"),
@@ -14602,59 +14420,37 @@ async def test_summary_consent_allow_kicks_the_catalog_refresh(allowed):
 
 @pytest.mark.asyncio
 async def test_show_all_rebuilds_keep_the_selected_theme_and_card_pressed():
-    from textual.widgets import Button, RadioButton, RadioSet
+    """The chosen theme stays pressed when Show all rebuilds the list.
+    TASK-34100.13: the splash-card half left with the gallery."""
+    from textual.widgets import Button, RadioSet
 
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         appearance = wizard.query_one(AppearanceStep)
+        assert not appearance.query("#setup-splash-choice")
 
-        # Pick a theme and a card from the curated (short) lists.
         theme_rows = [
             b
             for b in appearance.query("#setup-theme-choice RadioButton")
             if getattr(b, "_theme_name", "")
         ]
         assert theme_rows
-        chosen_theme = theme_rows[-1]
-        chosen_theme.value = True
+        theme_rows[-1].value = True
         await pilot.pause(0.1)
-
-        card_rows = [
-            b
-            for b in appearance.query("#setup-splash-choice RadioButton")
-            if getattr(b, "_card_name", "")
-        ]
-        assert card_rows
-        chosen_card_name = getattr(card_rows[-1], "_card_name")
-        card_rows[-1].value = True
-        await pilot.pause(0.1)
-
         chosen_theme_name = appearance.selected_theme
-        assert chosen_theme_name and appearance.selected_splash_card == chosen_card_name
+        assert chosen_theme_name
 
-        # Expand both full lists.
         appearance.query_one("#setup-theme-show-all", Button).press()
         await pilot.pause(0.3)
-        appearance.query_one("#setup-splash-show-all", Button).press()
-        await pilot.pause(0.3)
 
-        # The selection survives in state AND is pressed in the rebuilt lists.
         assert appearance.selected_theme == chosen_theme_name
-        assert appearance.selected_splash_card == chosen_card_name
-
         theme_pressed = appearance.query_one(
             "#setup-theme-choice", RadioSet
         ).pressed_button
         assert theme_pressed is not None, "no theme row pressed after show-all"
         assert getattr(theme_pressed, "_theme_name", "") == chosen_theme_name
-
-        card_pressed = appearance.query_one(
-            "#setup-splash-choice", RadioSet
-        ).pressed_button
-        assert card_pressed is not None, "no card row pressed after show-all"
-        assert getattr(card_pressed, "_card_name", "") == chosen_card_name
 
 
 # ---------------------------------------------------------------------------
