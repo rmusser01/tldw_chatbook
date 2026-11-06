@@ -3001,8 +3001,10 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Backup_Recovery/portable_relocation.py | _write | write | 1 | unsupported | backup_recovery own pipeline; owner review pending |
 | tldw_chatbook/Backup_Recovery/portable_relocation.py | relocation_lock | create_private_file | 1 | unsupported | backup_recovery own pipeline; owner review pending |
 | tldw_chatbook/Backup_Recovery/portable_relocation.py | relocation_lock | open | 1 | unsupported | backup_recovery own pipeline; owner review pending |
+| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor._parse_import | open | 1 | unsupported | caller-selected-external-theme-export |
 | tldw_chatbook/Chat/console_launch_wake.py | pending_conversations_at_launch | connect_private_sqlite | 1 | unsupported | chat.launch_wake |
 | tldw_chatbook/Chat/console_trace_maintenance.py | PhysicalTraceCompactor._open_maintenance_connection | connect_private_sqlite | 1 | unsupported | chat.trace_maintenance |
+| tldw_chatbook/Chatbooks/local_chatbook_service.py | LocalChatbookService._save_registry | atomic_write_json | 1 | unsupported | chatbooks.registry; participant-task10 |
 | tldw_chatbook/config.py | _default_data_root_lock | create_private_text | 1 | unsupported | config |
 | tldw_chatbook/config.py | _default_data_root_lock | open_private_text_append_stream | 1 | unsupported | config |
 | tldw_chatbook/config.py | _load_settings_uncached | secure_private_directory | 1 | unsupported | config |
@@ -3160,7 +3162,6 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Chat/console_plugin_tests.py | ConsolePluginTests._execute | connect | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/portrait_performance_state.py | load_performance_motion_values | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/provider_setup_persistence.py | persist_provider_settings_atomic | write | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Chatbooks/local_chatbook_service.py | LocalChatbookService._save_registry | atomic_write_json | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chatbooks/server_chatbook_service.py | ServerChatbookService.download_export_job | atomic_write_bytes | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Dreams/profile_sources.py | _load_cache | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Dreams/profile_sources.py | _store_cache | atomic_private_write_text | 1 | unsupported | miscellaneous |
@@ -3371,7 +3372,6 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Web_Server/webauthn_store.py | WebAuthnCredentialStore.save | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Server/webauthn_store.py | WebAuthnCredentialStore.save | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_workspace_context.py | ConsoleWorkspaceContextTray._patch_in_place | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor._parse_import | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Workflows/authoring.py | WorkflowAuthoring._read_import | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Workflows/authoring.py | WorkflowAuthoring.create | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Workflows/authoring.py | WorkflowAuthoring.export_file | open | 1 | unsupported | miscellaneous |
