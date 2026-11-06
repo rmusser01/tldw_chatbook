@@ -12,7 +12,26 @@ import sqlite3
 
 import pytest
 
+from tldw_chatbook.DB import private_sqlite
 from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
+
+
+@pytest.fixture(autouse=True)
+def _register_kernel_test_owner(monkeypatch):
+    """Register the contract-test owner for these tests only (TASK-39053).
+
+    The production registry lists production owners only; this owner used to
+    sit there with ``Tests/DB/test_store_kernel`` as its production module.
+    """
+    monkeypatch.setitem(
+        private_sqlite._SQLITE_OWNER_POLICIES,
+        "tests.store_kernel",
+        private_sqlite.SQLiteOwnerPolicy(
+            "Tests/DB/test_store_kernel",
+            private_sqlite._PRIVATE_OR_MEMORY,
+            "Kernel contract tests support private files and exact in-memory targets.",
+        ),
+    )
 
 
 class _KernelStore(SQLiteStoreKernel):

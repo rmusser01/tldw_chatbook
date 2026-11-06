@@ -797,8 +797,8 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C92 owns local workflow definitions and recoverable authoring drafts.
         # C93/C94 own plugin registry and in-memory schema validation.
         # C95 validates the installed Guardian v1/v2 recovery catalogs.
-        # C97 is the SQLiteStoreKernel contract-test owner (TASK-33132;
-# renumbered after dev minted C95/C96 mid-flight).
+        # C97 was the SQLiteStoreKernel contract-test owner (TASK-33132); the
+        # test registers it itself since TASK-39053, so C97 is retired.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
@@ -807,7 +807,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 99) if number not in {8, 9, 10, 75}
+        for number in range(1, 99) if number not in {8, 9, 10, 75, 97}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
