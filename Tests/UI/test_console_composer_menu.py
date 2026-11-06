@@ -691,6 +691,7 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
         NO_APP,
         stub_fleet_controller,
         stub_library_activity_controller,
+        stub_session_controller,
     )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -706,6 +707,9 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
         # This shell has no app at all; it reads the store through the
         # session controller only.
         app_instance=NO_APP,
+    )
+    stub_session_controller(
+        screen, context="composer menu bare screen", app_instance=NO_APP
     )
     # This store-only shell has no mounted decision/projection controls.
     screen.console_view_hooks = lambda: {}
@@ -1171,6 +1175,7 @@ def _bare_promote_screen(store):
         NO_APP,
         stub_fleet_controller,
         stub_library_activity_controller,
+        stub_session_controller,
     )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -1186,6 +1191,9 @@ def _bare_promote_screen(store):
         # `app_instance` is assigned further down this fixture; the promote
         # scenarios touch no library-activity seam.
         app_instance=NO_APP,
+    )
+    stub_session_controller(
+        screen, context="composer menu bare screen", app_instance=NO_APP
     )
     # Promotion is tested through the real session controller below; this
     # unmounted shell has no view callbacks to bind during store assignment.

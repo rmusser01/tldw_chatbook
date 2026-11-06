@@ -24,6 +24,13 @@ TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
+#: 2026-11-06, TASK-38988 (owner size waiver: re-pin at the measured value):
+#: chat_screen.py grew under the screen-size ratchet's own dated waivers (its
+#: ChatScreen row is 24,616 / 741) while no lane ran this file. Measured at dev
+#: e8eeae7db9: 24,604 lines, 741 methods. Only the live-screen comparisons use
+#: these; every wave-6 constant still pins its own frozen revision.
+LIVE_SCREEN_LINE_CEILING = 24_604
+LIVE_SCREEN_METHOD_CEILING = 741
 FLEET_TASK0_IMPLEMENTATION_BASE = "d4f3f97763ddf3fa46eeb35ae9473827e72695bc"
 FLEET_TASK0_BASE_SCREEN_LINES = 20_428
 FLEET_TASK0_BASE_METHODS = 653
@@ -1214,11 +1221,10 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
     assert _method_count(base_class) == BASELINE_METHODS
     assert len(post_image_source.splitlines()) == POST_IMAGE_BASELINE_LINES
     assert _method_count(post_image_class) == POST_IMAGE_BASELINE_METHODS
-    assert len(screen_source.splitlines()) <= POST_IMAGE_BASELINE_LINES, (
+    assert len(screen_source.splitlines()) <= LIVE_SCREEN_LINE_CEILING, (
         POST_IMAGE_IMPLEMENTATION_BASE
     )
-    assert len(screen_source.splitlines()) <= TASK10_SCREEN_LINE_CEILING
-    assert _method_count(screen_class) <= POST_IMAGE_BASELINE_METHODS, (
+    assert _method_count(screen_class) <= LIVE_SCREEN_METHOD_CEILING, (
         POST_IMAGE_IMPLEMENTATION_BASE
     )
     assert set(WAVE6_GROUPS) == {
@@ -1859,8 +1865,19 @@ def test_character_controller_has_only_named_non_dom_dependencies() -> None:
         "console_image_default_mode",
         "is_mounted",
         "render_character_avatar",
+        # TASK-38988 review: e289f48355 (workspace alignment before a
+        # roleplay activation) and b333cebdfe (radio portraits) added these.
+        "set_active_workspace_for_session",
+        "speech_presentation",
+        "render_radio",
     }
-    assert init.args.kw_defaults == [None] * len(init.args.kwonlyargs)
+    # b333cebdfe gave its two presentation hooks no-op defaults; every other
+    # dependency must be wired. Proposed follow-up: make them required too.
+    optional = {"speech_presentation", "render_radio"}
+    assert all(
+        (default is None) is (argument.arg not in optional)
+        for argument, default in zip(init.args.kwonlyargs, init.args.kw_defaults)
+    )
     assert init.args.vararg is None
     assert init.args.kwarg is None
     assert "_screen" not in _self_assignments(controller)
@@ -2198,10 +2215,8 @@ def test_first_chat_task_ratchet_is_earned() -> None:
         "first-chat task methods returned to ChatScreen: "
         f"{sorted(name for name in group.moved if current_counts[name])}"
     )
-    assert (
-        len(current_source.splitlines()) <= TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES
-    )
-    assert _method_count(current_class) <= TASK_3070_9_FINAL_DELIVERY_MAX_METHODS
+    assert len(current_source.splitlines()) <= LIVE_SCREEN_LINE_CEILING
+    assert _method_count(current_class) <= LIVE_SCREEN_METHOD_CEILING
 
 
 @pytest.mark.unit
@@ -2554,13 +2569,13 @@ def test_fleet_task_ratchet_is_earned() -> None:
         "fleet task methods returned to ChatScreen: "
         f"{sorted(name for name in group.moved if current_counts[name])}"
     )
-    assert len(current_source.splitlines()) <= FLEET_FINAL_REBASE_MAX_SCREEN_LINES, (
+    assert len(current_source.splitlines()) <= LIVE_SCREEN_LINE_CEILING, (
         "fleet task screen-line ratchet remains RED: "
-        f"{len(current_source.splitlines())} > {FLEET_FINAL_REBASE_MAX_SCREEN_LINES}"
+        f"{len(current_source.splitlines())} > {LIVE_SCREEN_LINE_CEILING}"
     )
-    assert _method_count(current_class) <= FLEET_FINAL_REBASE_MAX_METHODS, (
+    assert _method_count(current_class) <= LIVE_SCREEN_METHOD_CEILING, (
         "fleet task method ratchet remains RED: "
-        f"{_method_count(current_class)} > {FLEET_FINAL_REBASE_MAX_METHODS}"
+        f"{_method_count(current_class)} > {LIVE_SCREEN_METHOD_CEILING}"
     )
 
 

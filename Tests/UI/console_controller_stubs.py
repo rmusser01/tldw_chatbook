@@ -17,6 +17,7 @@ constructor inside a test file.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
@@ -25,6 +26,7 @@ from tldw_chatbook.UI.Console_Modules.library_activity import (
     ConsoleLibraryActivityController,
 )
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 
 #: Every keyword-only dependency of ``ConsoleMessageController.__init__``
 #: except ``app_instance`` (a plain value, not a callable).
@@ -378,6 +380,81 @@ def stub_library_activity_controller(
         },
     )
     screen._library_activity = controller
+    return controller
+
+
+def _session_controller_callables() -> tuple[str, ...]:
+    """Every keyword-only constructor callable of ``ConsoleSessionController``.
+
+    Read from the signature rather than listed: the controller takes 76 of
+    them, and a hand-kept tuple would drift the way this module's callers did.
+    """
+    parameters = inspect.signature(ConsoleSessionController.__init__).parameters
+    return tuple(
+        name
+        for name, parameter in parameters.items()
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY and name != "app_instance"
+    )
+
+
+def stub_session_controller(
+    screen: Any,
+    *,
+    context: str = "stub_session_controller",
+    app_instance: Any = None,
+    **wired: Any,
+) -> ConsoleSessionController:
+    """Attach a ``ConsoleSessionController`` to a bare ``ChatScreen`` shell.
+
+    TASK-38988: the controller the store setter now reaches in place of
+    ``_library_activity``. ``console_view_hooks`` (wiring.py) reads the
+    session controller's three project-instruction projection methods while
+    ``screen._console_chat_store = ...`` attaches the view, so a shell
+    without ``_session`` dies in setup with an ``AttributeError`` it never
+    mentions (``test_console_rag_settings_modal``'s round-trip did on dev).
+    The hook build only reads those bound methods, so a controller whose
+    constructor callables are all raisers is enough.
+
+    Args:
+        screen: The ``ChatScreen.__new__(ChatScreen)`` shell. Gets its
+            ``_session`` attribute set as a side effect.
+        context: Label used in the failure message of unwired callables.
+        app_instance: The controller's ``app_instance``; defaults to the
+            shell's own. Pass ``NO_APP`` to state that the fixture has none.
+        **wired: Any subset of the constructor callables, wired for real.
+            Everything omitted raises ``AssertionError`` when called.
+
+    Returns:
+        The controller, already assigned to ``screen._session``.
+
+    Raises:
+        TypeError: If ``wired`` names something that is not a constructor
+            callable.
+        AssertionError: If no ``app_instance`` can be resolved and
+            ``NO_APP`` was not passed.
+    """
+    callables = _session_controller_callables()
+    unknown = set(wired) - set(callables)
+    if unknown:
+        raise TypeError(
+            f"stub_session_controller got unknown callable(s) {sorted(unknown)}"
+        )
+    resolved_app = (
+        app_instance
+        if app_instance is not None
+        else getattr(screen, "app_instance", None)
+    )
+    assert resolved_app is not None, (
+        f"{context}: no app_instance to snapshot. Attach the controller AFTER "
+        "the harness app sets screen.app_instance, or pass app_instance=NO_APP "
+        "to state that this fixture deliberately has none."
+    )
+    controller = ConsoleSessionController(
+        screen,
+        app_instance=None if resolved_app is NO_APP else resolved_app,
+        **{name: wired.get(name, _raiser(name, context)) for name in callables},
+    )
+    screen._session = controller
     return controller
 
 

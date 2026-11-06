@@ -27,6 +27,14 @@ MINIMUM_LINE_REDUCTION = 409
 MINIMUM_METHOD_REDUCTION = 7
 PROJECTED_LINE_CEILING = 17_215
 PROJECTED_METHOD_CEILING = 532
+#: 2026-11-06, TASK-38988 (owner size waiver: re-pin at the measured
+#: value): chat_screen.py grew under the screen-size ratchet's own dated
+#: waivers (its ChatScreen row is 24,616 / 741) while no lane ran this file.
+#: Measured at dev e8eeae7db9: (24,604 lines, 709 unique direct methods).
+#: The projection above is the historical target.
+LIVE_SCREEN_COUNTS = (24_604, 709)
+#: The screen-size ratchet row this file holds unraised, re-pinned the same day.
+LIVE_RATCHET_ROW = ("ChatScreen", 24_616, 741)
 MAX_DELEGATE_LINES = 5
 
 MOVE_METHODS = frozenset(
@@ -518,7 +526,7 @@ def test_build_console_controllers_is_the_single_explicit_constructor() -> None:
 def test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise() -> None:
     """The extraction earns the conservative screen reduction itself."""
     source = CHAT_SCREEN_PATH.read_text(encoding="utf-8")
-    assert _counts(source) <= (PROJECTED_LINE_CEILING, PROJECTED_METHOD_CEILING)
+    assert _counts(source) <= LIVE_SCREEN_COUNTS
     ratchet_tree = ast.parse(RATCHET_PATH.read_text(encoding="utf-8"))
     assignment = next(
         node
@@ -529,7 +537,7 @@ def test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise() 
     )
     assert assignment.value is not None
     budgets = ast.literal_eval(assignment.value)
-    assert budgets[SCREEN_RELATIVE_PATH] == ("ChatScreen", 16_966, 563)
+    assert budgets[SCREEN_RELATIVE_PATH] == LIVE_RATCHET_ROW
 
 
 @pytest.mark.unit

@@ -54,6 +54,7 @@ from Tests.UI.console_controller_stubs import (
     NO_APP,
     stub_fleet_controller,
     stub_library_activity_controller,
+    stub_session_controller,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -154,21 +155,24 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         # generation branches touch no library-activity seam.
         app_instance=NO_APP,
     )
-    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
-    screen._session._chat_store_accessor = lambda: screen._console_chat_store
-    screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
+    # Task 3 attachment inventories project-decision projection hooks while
+    # the runtime claim is created, so a session controller must exist before
+    # the store setter attaches the bare screen (TASK-38988: the stub).
+    stub_session_controller(
+        screen, context="_bare_generation_screen", app_instance=NO_APP
+    )
     # TASK-19642.6: the `__new__` bypass skips ConsoleSessionController's
     # own `__init__` line that seeds `_console_visible_draft_session_id`
     # (session.py). The screen's wave-2 proxy property delegates to that
     # attribute (and its setter also reaches `self._hooks.cancel_pending()`
     # when the value changes), so the H3 tests that assign the visible
     # draft session need both seams wired on this shell.
-    screen._session._console_visible_draft_session_id = None
     screen._hooks = SimpleNamespace(cancel_pending=lambda: None)
-    # Task 3 attachment inventories project-decision projection hooks while
-    # the runtime claim is created, so the session projection owner must
-    # exist before this property setter attaches the bare screen.
     screen._console_chat_store = store
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    screen._session._chat_store_accessor = lambda: screen._console_chat_store
+    screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
+    screen._session._console_visible_draft_session_id = None
     screen.app_instance = SimpleNamespace(notify=lambda *a, **k: None)
     screen._sync_native_console_chat_ui = AsyncMock()
     # `_clear_console_composer_draft` now also syncs the slash-command popup;

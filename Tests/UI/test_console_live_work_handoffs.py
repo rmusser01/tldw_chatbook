@@ -2078,6 +2078,7 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         stub_image_controller,
         stub_library_activity_controller,
         stub_message_controller,
+        stub_session_controller,
     )
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -2099,9 +2100,16 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         context="live work handoffs screen",
         app_instance=resolved_app,
     )
-    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    # TASK-38988: the store setter's hook build reads `_session`'s project-
+    # instruction projections; the restore paths below use a bare session.
+    stub_session_controller(
+        screen, context="live work handoffs screen", app_instance=resolved_app
+    )
     screen._console_chat_store = ConsoleChatStore()
-    screen._console_visible_draft_session_id = None
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    # The `__new__` session lacks the attribute its `__init__` seeds, and the
+    # screen proxy's setter reads it first (TASK-38988).
+    screen._session._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     screen._task_resume_state = TaskResumeState()
     # `_restore_native_console_state` calls the three
