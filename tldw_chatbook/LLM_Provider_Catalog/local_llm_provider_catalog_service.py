@@ -875,9 +875,11 @@ class LocalLLMProviderCatalogService:
                         error_kind = (
                             result.error.kind if result.error else "request_failed"
                         )
+                        # TASK-38963 review r10e-rev3: no endpoint in the log;
+                        # one holding a pasted key went past the file redaction.
                         logger.info(
-                            f"Model catalog auto-refresh failed for {list_key} "
-                            f"(fingerprint {fingerprint}): {error_kind}"
+                            f"Model catalog auto-refresh failed for {list_key}: "
+                            f"{error_kind}"
                         )
                         outcomes[index] = ProviderRefreshOutcome(
                             provider_list_key=list_key,

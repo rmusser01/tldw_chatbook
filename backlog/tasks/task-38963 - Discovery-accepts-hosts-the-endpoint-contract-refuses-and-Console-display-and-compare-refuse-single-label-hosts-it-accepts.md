@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: '2026-11-06 07:18'
+updated_date: '2026-11-06 07:47'
 labels:
 - follow-up
 - providers
@@ -104,6 +104,16 @@ Review r10e-rev2:
 - `contract_refusal_reason`'s docstring now says it returns None for a missing or malformed key; any well-formed key is resolved.
 - Runs: the endpoint-display, discovery, contract and LLM_Provider_Catalog files with `Tests/CI`, 2029 passed, 1 skipped. Preflight passed.
 
-- Proposed follow-ups, not changed here: Discover models still accepts a bracketed IPv6 zone id that the save refuses (pinned on purpose by discovery's test), and QwenCloud's Discover refuses a schemeless loopback endpoint (`localhost:5001/v1`) that the save accepts. Discovery's `fingerprint_endpoint` echoes a schemeless key-like input as `http://<key>/...`, as at base.
+Review r10e-rev3:
+- `test_a_schemeless_token_with_a_slash_is_never_echoed` moved, unchanged, from `Tests/Chat/test_console_provider_endpoints.py` (no PR lane) to `Tests/Chat/test_local_server_discovery.py` (dreams-boundary, whole file). It keeps its display, compare and unsaved-copy checks.
+- Fold-in, present at base too: discovery's `fingerprint_endpoint` turned a key pasted into an endpoint field without a scheme into `http://<key>/`. `refresh_stale_configured_providers` logged it at INFO ("auto-refresh failed for … (fingerprint …)"), past the file sink's redaction, on every launch.
+  - An endpoint that discovery and the contract (read as Custom) both refuse now fingerprints to `[invalid-endpoint]`, keeping only a typed http, https or ftp scheme.
+  - The log line no longer carries the endpoint at all.
+  - Three pins were rewritten on purpose to the stricter sentinel: the ftp, schemeless malformed-port and https malformed-port fingerprints. Each still checks that no secret appears.
+  - The production diagnostic inventory's row for `local_llm_provider_catalog_service.py` was re-pinned after reading the statement diff (`--statements --since 453cebcc67`). The one removed statement interpolated the fingerprint. The one added statement interpolates only the catalog key and the error kind.
+  - Other places: grep found no other log or display of `endpoint_fingerprint` or of a raw configured endpoint in `LLM_Provider_Catalog`. The plugin model reference digests the fingerprint, and the disk cache stores it for successful listings only.
+  - Tests in the laned file: `test_a_refused_endpoints_fingerprint_never_carries_a_pasted_key` (10 key shapes, from the reviewer's probes 8 and 9) and `test_a_failed_catalog_refresh_logs_no_part_of_a_pasted_key` (MistralAI, 2 shapes, every 8-character window of the key). Red at abe944955d: 10 fingerprints read `http://<key>/`, and both logs held the key. Green after.
+
+- Proposed follow-ups, not changed here: Discover models still accepts a bracketed IPv6 zone id that the save refuses (pinned on purpose by discovery's test), and QwenCloud's Discover refuses a schemeless loopback endpoint (`localhost:5001/v1`) that the save accepts. Console display (and the Chat settings preview) still show a schemeless key that contains a dot, such as a ZAI `<32 hex>.<16>` key, as a dotted host, as at base.
 
 Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py`, `tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py`, `Tests/UI/test_settings_provider_save_scope.py`, `Docs/User_Guide/settings.md`, `Docs/User_Guide/console.md`.

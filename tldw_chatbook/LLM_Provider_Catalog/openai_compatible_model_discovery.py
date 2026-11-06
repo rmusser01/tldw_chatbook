@@ -571,8 +571,20 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
 
 
 def fingerprint_endpoint(endpoint: str) -> str:
-    """Return a safe endpoint fingerprint without secrets or query details."""
+    """Return a safe endpoint fingerprint without secrets or query details.
+
+    TASK-38963 review r10e-rev3: an endpoint discovery and the contract both
+    refuse may be a key pasted into the field (``sk-abc/def``, 64 hex), and
+    its ``http://<key>/`` fingerprint reached the auto-refresh log. It gets
+    the sentinel, keeping only a typed http(s)/ftp scheme.
+    """
     parsed = _parse_endpoint(endpoint)
+    if parsed is None and resolve_provider_endpoint("custom", endpoint).errors:
+        scheme, separator, _rest = str(endpoint or "").strip().partition("://")
+        typed = scheme.lower() if scheme.lower() in {"http", "https", "ftp"} else ""
+        return f"{typed}://[invalid-endpoint]" if separator and typed else (
+            "[invalid-endpoint]"
+        )
     if parsed is None:
         display_parsed = _parse_endpoint_for_fingerprint(endpoint)
         if display_parsed is not None:

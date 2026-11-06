@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: '2026-11-06 06:13'
+updated_date: '2026-11-06 07:47'
 labels:
 - follow-up
 - providers
@@ -89,6 +89,11 @@ KoboldCpp's native-route rule lives in `Provider_Contract`, and every path that 
   - `Tests/Architecture` size ratchets: 205 passed.
 - Ratchet rows set to the measured size, each with a dated comment (owner waiver): `providers_models_card.py` 2,401 -> 2,405, `console_settings_modal.py` 6,176 -> 6,191, `first_run_provider_step.py` 1,690 -> 1,691. `settings_screen.py` shrank, so its row is lowered: 35,669 -> 35,654.
 - Review r10e-rev1: `koboldcpp_native_endpoint` read a root at KoboldAI's `/api` base as a prefix. A detected `…:5001/api`, from a configured `/api`, `/api/` or `/api/v1`, became `…/api/api/v1/generate`. It now drops a trailing `/api` path segment (by segment, so a host named `api` is untouched) before adding the route, and returns an endpoint already on the route unchanged. The three shapes are added to `test_server_adoption_writes_koboldcpp_s_native_route`, which now states each expected route. Red first: three `…/api/api/v1/generate` mismatches. Green after.
+- Review r10e-rev3 (fold-in, every endpoint write):
+  - The Console default writer authorized any authority `parse_console_endpoint_preview` parsed, and that took a bare key for a "Remote/unknown" host. For llama.cpp, readiness did not stop it either, so at abe944955d Make default wrote 8 of the 10 key shapes and `gpu-box.lan:8000/v1` to `api_url`. That is 9 red cases of `test_make_default_never_writes_an_endpoint_the_contract_refuses` (5 providers × 12 endpoints, laned file). The other 4 providers already failed readiness.
+  - `_endpoint_patch_is_authorized` now also needs `_contract_accepts_authority`: the contract's scheme rule (`is_exact_schemeless_host`) and host rule (`canonical_endpoint_host`).
+  - The preview takes Console display's rule: a single label other than localhost needs a port, or a path after a typed scheme. So Chat settings' "Not written to disk" summary no longer names a bare key (`test_the_default_recovery_summary_never_names_a_pasted_key`, red for 7 shapes; the other two are over 63 characters and were already refused).
+  - The preview pins in `test_console_settings_defaults.py` stay green, and so do the 6 Console settings UI files. Their 1 failure, `test_shared_evidence_change_refreshes_the_console_once`, fails at base too.
 - Docs: `Docs/User_Guide/settings.md` (the row says the refusal as you type) and `Docs/User_Guide/console.md` (Save endpoint & use model refuses a KoboldCpp root; the Get started card saves KoboldCpp's native route).
 
 Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/Chat/console_settings_defaults.py`, `tldw_chatbook/Widgets/Console/console_settings_modal.py`, `tldw_chatbook/UI/Console_Modules/model_switcher.py`, `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/UI/Settings_Modules/providers_models_card.py`, `tldw_chatbook/UI/Wizards/first_run_setup_state.py`, `tldw_chatbook/UI/Wizards/first_run_provider_step.py`, `tldw_chatbook/UI/Wizards/first_run_provider_detection.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/UI/test_console_settings_saved_defaults.py`, `Tests/UI/test_settings_provider_save_scope.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Docs/User_Guide/settings.md`, `Docs/User_Guide/console.md`.

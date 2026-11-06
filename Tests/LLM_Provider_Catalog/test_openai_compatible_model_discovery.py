@@ -412,7 +412,9 @@ def test_malformed_endpoint_port_is_not_eligible_and_does_not_crash():
     endpoint = "https://user:secret@example.test:bad/v1/models"
 
     assert supports_openai_compatible_model_discovery("custom", endpoint) is False
-    assert fingerprint_endpoint(endpoint) == "https://example.test/v1/models"
+    # TASK-38963 review r10e-rev3, rewritten on purpose: an endpoint discovery
+    # and the contract both refuse gets the sentinel, never its host or path.
+    assert fingerprint_endpoint(endpoint) == "https://[invalid-endpoint]"
 
 
 @pytest.mark.parametrize(
@@ -734,7 +736,9 @@ def test_endpoint_fingerprint_redacts_credentials_for_unsupported_scheme():
         "ftp://user:secret@example.test/v1/models?api_key=secret"
     )
 
-    assert fingerprint == "ftp://example.test/v1/models"
+    # TASK-38963 review r10e-rev3, rewritten on purpose: an endpoint discovery
+    # and the contract both refuse gets the sentinel, never its host or path.
+    assert fingerprint == "ftp://[invalid-endpoint]"
     assert "secret" not in fingerprint
     assert "api_key" not in fingerprint
 
@@ -744,7 +748,9 @@ def test_endpoint_fingerprint_redacts_credentials_for_host_only_malformed_port()
         "user:secret@example.test:bad/v1/models?api_key=secret"
     )
 
-    assert fingerprint == "http://example.test/v1/models"
+    # TASK-38963 review r10e-rev3, rewritten on purpose: an endpoint discovery
+    # and the contract both refuse gets the sentinel, never its host or path.
+    assert fingerprint == "[invalid-endpoint]"
     assert "secret" not in fingerprint
     assert "api_key" not in fingerprint
 

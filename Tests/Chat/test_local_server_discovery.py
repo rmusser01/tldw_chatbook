@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.provider_setup_persistence import (
     build_provider_setup_mutation,
 )
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    fingerprint_endpoint,
     supports_openai_compatible_model_discovery,
 )
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
@@ -1482,3 +1483,168 @@ async def test_discover_names_the_contracts_reason_for_a_refused_host(provider):
         _saved_endpoint(provider, "http://-kobold:8000/v1") is None
     )  # the save refuses it for that reason
     client.assert_not_awaited()
+
+
+#: TASK-38963 review r10e-rev3: provider key shapes pasted into an endpoint
+#: field without a scheme (the reviewer's probes 8 and 9).
+_KEY_SHAPED_ENDPOINTS = (
+    "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE",
+    "0123456789abcdef" * 4,
+    "dapi" + "0123456789abcdef" * 2,
+    "csk-" + "ab1cd2ef3gh4" * 4,
+    "fw_" + "Ab1Cd2Ef3Gh4" * 2,
+    "AIzaSyD-1234567890abcdefghijklmnopqrstu",
+    "gsk_" + "a1B2c3D4" * 7,
+    "xai-" + "Q" * 80,
+    "sk-abc123def456/extra",
+    "0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOp",
+)
+
+
+@pytest.mark.parametrize("key", _KEY_SHAPED_ENDPOINTS)
+def test_a_refused_endpoints_fingerprint_never_carries_a_pasted_key(key):
+    """The fingerprint of an endpoint the contract refuses read
+    ``http://<key>/...``; it is the sentinel."""
+    assert resolve_provider_endpoint("custom", key).errors
+    fingerprint = fingerprint_endpoint(key)
+
+    assert fingerprint == "[invalid-endpoint]"
+    assert key.lower()[:12] not in fingerprint.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", _KEY_SHAPED_ENDPOINTS[:2])
+async def test_a_failed_catalog_refresh_logs_no_part_of_a_pasted_key(tmp_path, key):
+    """Auto-refresh logged "failed for MistralAI (fingerprint http://<key>/)"
+    at INFO, past the file sink's redaction, on every launch."""
+    from loguru import logger
+
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+        ModelCatalogSettings,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+        ModelCatalogDiskStore,
+    )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"MistralAI": ["saved-1"]},
+        settings_loader=lambda: {
+            "providers": {"MistralAI": ["saved-1"]},
+            "api_settings": {"mistralai": {"api_base_url": key, "api_key": "k"}},
+        },
+        save_discovered_models_callback=lambda _values: True,
+        environ={},
+    )
+    logged: list[str] = []
+    sink_id = logger.add(lambda message: logged.append(str(message)), level="DEBUG")
+    try:
+        report = await service.refresh_stale_configured_providers(
+            catalog_settings=ModelCatalogSettings(),
+            disk_store=ModelCatalogDiskStore(tmp_path / "cache.json"),
+            provider_list_keys=("MistralAI",),
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert report.outcomes[0].status == "failed", report
+    text = "".join(logged).lower()
+    assert "auto-refresh failed for mistralai" in text
+    for start in range(0, len(key) - 7, 4):
+        assert key.lower()[start : start + 8] not in text, key[start : start + 8]
+
+
+#: Providers whose Console default write takes an endpoint patch, each with
+#: a saved table that makes the pair ready.
+_DEFAULT_WRITE_PROVIDERS = {
+    "vllm": {"api_url": "http://127.0.0.1:8000/v1"},
+    "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+    "ollama": {"api_url": "http://127.0.0.1:11434"},
+    "custom": {"api_url": "http://127.0.0.1:8000/v1/chat/completions"},
+    "openai": {"api_key": "test-key", "api_base_url": "https://api.openai.com/v1"},
+}
+
+
+@pytest.mark.parametrize("provider", sorted(_DEFAULT_WRITE_PROVIDERS))
+@pytest.mark.parametrize(
+    ("endpoint", "written"),
+    [
+        *((key, False) for key in _KEY_SHAPED_ENDPOINTS),
+        ("gpu-box.lan:8000/v1", False),
+        ("http://127.0.0.1:8001/v1", True),
+    ],
+)
+def test_make_default_never_writes_an_endpoint_the_contract_refuses(
+    tmp_path, monkeypatch, _reset_console_default_intents, provider, endpoint, written
+):
+    """TASK-38964 review r10e-rev3: Save endpoint & use model takes any
+    authority the preview parses, a pasted key included ("Remote/unknown").
+    Nothing the contract refuses may reach the config file."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {provider: dict(_DEFAULT_WRITE_PROVIDERS[provider])},
+                "chat_defaults": {"provider": "anthropic", "model": "old-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    select_config_source(monkeypatch, config_path, vars(defaults_module))
+    before = config_path.read_bytes()
+
+    outcome = defaults_module.apply_console_default_intent(
+        defaults_module.ConsoleDefaultMutationIntent(
+            generation=1,
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            provider_config_key=provider,
+            literal_model_id="some-model",
+            field_mask=FULL_MODEL_DEFAULT_FIELDS,
+            values={"temperature": 0.25},
+            endpoint_patch=defaults_module.ConsoleEndpointPatch(
+                endpoint, provider, True, True
+            ),
+        )
+    )
+
+    if written:
+        assert outcome.runtime_published is True, outcome
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        assert endpoint in saved["api_settings"][provider].values()
+    else:
+        assert outcome.file_replaced is False
+        assert config_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("key", [k for k in _KEY_SHAPED_ENDPOINTS if "." not in k])
+def test_the_default_recovery_summary_never_names_a_pasted_key(key):
+    """TASK-38964 review r10e-rev3: Chat settings' "Not written to disk"
+    summary named the endpoint through the preview, which took a bare key
+    for a remote authority and showed it lower-cased."""
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    intent = defaults_module.ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="vllm",
+        literal_model_id="vllm-model",
+        field_mask=FULL_MODEL_DEFAULT_FIELDS,
+        values={},
+        endpoint_patch=defaults_module.ConsoleEndpointPatch(key, "vllm", True, True),
+    )
+    modal = SimpleNamespace(
+        _default_durability_state=SimpleNamespace(
+            recovery_intent=intent,
+            failure_phase=defaults_module.ConsoleDefaultSavePhase.BEFORE_REPLACE,
+        )
+    )
+
+    summary = ConsoleSettingsModal._default_recovery_summary(modal)
+
+    assert summary.startswith("Not written to disk")
+    assert key.lower()[:12] not in summary.lower()
+    assert defaults_module.format_console_endpoint_preview(key) is None

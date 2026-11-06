@@ -32,6 +32,8 @@ from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    canonical_endpoint_host,
+    is_exact_schemeless_host,
     koboldcpp_route_refusal,
     valid_dns_label,
 )
@@ -1110,8 +1112,31 @@ def _endpoint_patch_is_authorized(
         and provider_identity_key(patch.bound_provider_config_key)
         == canonical_provider
         and parse_console_endpoint_preview(patch.value) is not None
+        # TASK-38964 review r10e-rev3: the preview takes a pasted key for a
+        # remote authority; the write needs the contract's scheme and host.
+        and _contract_accepts_authority(patch.value)
         # TASK-38964: a koboldcpp endpoint off its native route cannot send.
         and not koboldcpp_route_refusal(canonical_provider, patch.value)
+    )
+
+
+def _contract_accepts_authority(value: str) -> bool:
+    """Whether the endpoint contract's scheme and host rules accept ``value``.
+
+    A remote endpoint needs its http(s) scheme; only loopback may be typed
+    without one. The host must pass ``canonical_endpoint_host``.
+    """
+    candidate = value.strip()
+    has_scheme = "://" in candidate
+    try:
+        parsed = urlsplit(candidate if has_scheme else f"http://{candidate}")
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    return (
+        bool(hostname)
+        and canonical_endpoint_host(hostname) is not None
+        and (has_scheme or is_exact_schemeless_host(parsed.netloc))
     )
 
 
@@ -1453,6 +1478,17 @@ def parse_console_endpoint_preview(value: str) -> ConsoleEndpointPreview | None:
     else:
         classification = "Remote/unknown"
 
+    # TASK-38964 review r10e-rev3: Console display's rule. A single label
+    # other than localhost needs a port, or a path after a typed scheme, so a
+    # key pasted into the field is never shown as an authority.
+    if (
+        address is None
+        and "." not in normalized_host
+        and normalized_host != "localhost"
+        and port is None
+        and not ("://" in candidate and parsed.path.rstrip("/"))
+    ):
+        return None
     rendered_host = (
         f"[{normalized_host}]" if ":" in normalized_host else normalized_host
     )
