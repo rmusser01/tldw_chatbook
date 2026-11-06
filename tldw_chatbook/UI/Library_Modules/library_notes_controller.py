@@ -7346,7 +7346,11 @@ class LibraryNotesController:
     async def _run_library_notes_bulk_move(
         self, note_ids: tuple[str, ...], destination_id: str, destination_label: str
     ) -> None:
-        service = getattr(self.app_instance, "notes_scope_service", None)
+        app = self.app_instance
+        try:
+            service = app.notes_scope_service
+        except AttributeError:
+            service = None
         common = {"scope": "local_note", "user_id": self._library_notes_user_id()}
         moved: list[str] = []
         try:
@@ -7425,7 +7429,11 @@ class LibraryNotesController:
         """
         parsed = self._library_note_keywords_from_input(keyword) or []
         if len(parsed) != 1:
-            notify = getattr(self.app_instance, "notify", None)
+            app = self.app_instance
+            try:
+                notify = app.notify
+            except AttributeError:
+                notify = None
             if callable(notify):
                 # A toast: select mode hides the status line a notice uses,
                 # and the dialog has closed (review R0 M-8: a lone comma
@@ -7574,7 +7582,11 @@ class LibraryNotesController:
             # what did not change, but check nothing behind a closed mode.
             receipt += f" · {len(failed)} {failed_verb}"
             state.row_selection.clear()
-            notify = getattr(self.app_instance, "notify", None)
+            app = self.app_instance
+            try:
+                notify = app.notify
+            except AttributeError:
+                notify = None
             if callable(notify):
                 notify(receipt, severity="warning", markup=False)
         elif failed:
@@ -7583,7 +7595,11 @@ class LibraryNotesController:
             )
             state.row_selection.clear()
             state.row_selection.select_all(failed)
-            notify = getattr(self.app_instance, "notify", None)
+            app = self.app_instance
+            try:
+                notify = app.notify
+            except AttributeError:
+                notify = None
             if callable(notify):
                 notify(receipt, severity="warning", markup=False)
         else:
@@ -8225,7 +8241,11 @@ class LibraryNotesController:
         if self._library_notes_view != "trash":
             return
         if self._library_notes_mutation_fenced():
-            notify = getattr(self.app_instance, "notify", None)
+            app = self.app_instance
+            try:
+                notify = app.notify
+            except AttributeError:
+                notify = None
             if callable(notify):
                 notify(
                     "Nothing was deleted — another change to your notes is "
@@ -8268,8 +8288,12 @@ class LibraryNotesController:
         purged = False
         message = ""
         reload_page = False
+        app = self.app_instance
         try:
-            service = getattr(self.app_instance, "notes_scope_service", None)
+            try:
+                service = app.notes_scope_service
+            except AttributeError:
+                service = None
             purge_note = getattr(service, "purge_note", None)
             if not callable(purge_note):
                 message = "Delete forever is unavailable."
@@ -8324,7 +8348,10 @@ class LibraryNotesController:
             self._refresh_library_notes_trash(focus_role=trash_focus)
         elif reload_page:
             self._refresh_library_notes_trash()
-        notify = getattr(self.app_instance, "notify", None)
+        try:
+            notify = app.notify
+        except AttributeError:
+            notify = None
         if not callable(notify):
             return
         if purged:
@@ -8543,7 +8570,15 @@ class LibraryNotesController:
         I-1), so a runtime not built yet is built for the read; one that
         could not build adds no kept-file clause -- and its purge refuses.
         """
-        service = getattr(self.app_instance, "notes_scope_service", None)
+        app = self.app_instance
+        try:
+            service = app.notes_scope_service
+        except AttributeError:
+            service = None
+        try:
+            sync_state = app.sync_state_repository
+        except AttributeError:
+            sync_state = None
         read = getattr(service, "deleted_notes_purge_scope", None)
         if not callable(read):
             return {}
@@ -8560,7 +8595,7 @@ class LibraryNotesController:
                 await read(
                     note_ids,
                     sync_runtime=sync_runtime,
-                    sync_state=getattr(self.app_instance, "sync_state_repository", None),
+                    sync_state=sync_state,
                 )
             )
         except Exception:  # noqa: BLE001 - no clause; the guide says it
