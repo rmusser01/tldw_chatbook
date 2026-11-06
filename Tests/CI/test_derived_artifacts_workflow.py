@@ -67,6 +67,7 @@ VERDICTS = {
     "dreams-boundary": "Require successful Dreams and Guardian boundary contracts",
     "dreams-tracking": "Require successful Dreams tracking tests",
     "architecture-guards": "Require successful Architecture guard contracts",
+    "pr-fast-lane-arch": "Require successful PR fast lane (architecture-review tests)",
 }
 
 
@@ -117,6 +118,8 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         "dreams-tracking",
         # TASK-38989: Architecture guards red on dev in no PR lane before.
         "architecture-guards",
+        # Architecture-review program tests, split out of pr-fast-lane (cap).
+        "pr-fast-lane-arch",
         "derived-artifacts",
         "queue-tick",
     ]
@@ -442,6 +445,7 @@ def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
         "dreams-boundary",
         "dreams-tracking",
         "architecture-guards",
+        "pr-fast-lane-arch",
     ):
         for step in _workflow()["jobs"][job_name]["steps"]:
             run = step.get("run", "")
@@ -486,6 +490,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "dreams-boundary: Run Dreams admission-sensitive contracts",
         "dreams-tracking: Run the Dreams tracking tests",
         "architecture-guards: Run Architecture guard contracts",
+        "pr-fast-lane-arch: Run the architecture-review tests",
     )
     overlapping = _census_checker().overlapping_targets
     for name, targets in steps:

@@ -1247,6 +1247,52 @@ jobs:
             --timeout=180 \
             --tb=short
 
+  pr-fast-lane-arch:
+    needs: [preflight]
+    # The 2026-10-25 architecture-review program's 14 tests, which ran in no
+    # pull-request lane. A first attempt appended them to pr-fast-lane, whose
+    # run then hit its 35-min cap (PR #3399); the job's own note says to add
+    # a job, not minutes. Their own job, so no existing lane moves toward its
+    # cap. Sandboxed only (no bootstrap_profile node), one invocation, same
+    # minimal dependency set and serial pytest as the other lanes. All 14 ran
+    # in about 2.5 min locally.
+    name: PR Fast Lane (architecture-review tests)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+
+      - name: Run the architecture-review tests
+        run: |
+          pytest \
+            Tests/DB/test_store_error_bases.py \
+            Tests/Chat/test_approval_constants.py \
+            Tests/Chat/test_console_environment_state.py \
+            Tests/Utils/test_character_display_text_shim.py \
+            Tests/Architecture/test_participants_public_names.py \
+            Tests/Backup_Recovery/test_unsaved_editors.py::test_exact_type_names_point_at_their_defining_modules \
+            Tests/Chat/test_scope_picker_listers.py::test_scope_picker_contract_has_no_widgets_or_textual_import \
+            Tests/Architecture/test_chat_code_identity_ratchet.py \
+            Tests/test_config_hot_reload.py \
+            Tests/Local_Ingestion/test_ingest_import_weight.py \
+            Tests/Tools/test_note_tool_user_id.py::test_note_tools_use_the_real_service_on_the_supplied_database \
+            Tests/Tools/test_note_tool_user_id.py::test_note_tools_succeed_in_a_process_where_nothing_created_the_db \
+            Tests/Utils/test_optional_deps.py::test_apply_config_eager_flags_propagates_recovery_required \
+            Tests/Architecture/test_agents_chat_boundary.py \
+            --timeout=180 \
+            --tb=short
+
   derived-artifacts:
     permissions:
       actions: read
@@ -1254,7 +1300,7 @@ jobs:
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [preflight, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking, architecture-guards]
+    needs: [preflight, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking, architecture-guards, pr-fast-lane-arch]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1346,6 +1392,14 @@ jobs:
         run: |
           echo "Architecture guard contracts result: ${{ needs.architecture-guards.result }}"
           echo "::error::The required Architecture guard contracts did not succeed."
+          exit 1
+
+      # Same shape again, for the architecture-review tests.
+      - name: Require successful PR fast lane (architecture-review tests)
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane-arch.result != 'success' }}
+        run: |
+          echo "PR Fast Lane (architecture-review tests) result: ${{ needs.pr-fast-lane-arch.result }}"
+          echo "::error::The required architecture-review tests did not succeed."
           exit 1
 
       # TASK-38100: diagnostics only; every verdict above remains fail-closed.

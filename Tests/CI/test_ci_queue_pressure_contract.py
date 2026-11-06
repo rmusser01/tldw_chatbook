@@ -433,6 +433,25 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Persona_Buddy/test_controller_failure_logging.py",
     "Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type",
 )
+
+# The 2026-10-25 architecture-review program's tests, in their own job
+# (appended to pr-fast-lane they took it past its 35-min cap, PR #3399).
+ARCH_REVIEW_TARGETS = (
+    "Tests/DB/test_store_error_bases.py",
+    "Tests/Chat/test_approval_constants.py",
+    "Tests/Chat/test_console_environment_state.py",
+    "Tests/Utils/test_character_display_text_shim.py",
+    "Tests/Architecture/test_participants_public_names.py",
+    "Tests/Backup_Recovery/test_unsaved_editors.py::test_exact_type_names_point_at_their_defining_modules",
+    "Tests/Chat/test_scope_picker_listers.py::test_scope_picker_contract_has_no_widgets_or_textual_import",
+    "Tests/Architecture/test_chat_code_identity_ratchet.py",
+    "Tests/test_config_hot_reload.py",
+    "Tests/Local_Ingestion/test_ingest_import_weight.py",
+    "Tests/Tools/test_note_tool_user_id.py::test_note_tools_use_the_real_service_on_the_supplied_database",
+    "Tests/Tools/test_note_tool_user_id.py::test_note_tools_succeed_in_a_process_where_nothing_created_the_db",
+    "Tests/Utils/test_optional_deps.py::test_apply_config_eager_flags_propagates_recovery_required",
+    "Tests/Architecture/test_agents_chat_boundary.py",
+)
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
     "Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop",
@@ -827,6 +846,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "dreams-boundary",
         "dreams-tracking",
         "architecture-guards",
+        "pr-fast-lane-arch",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -859,6 +879,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
         ("architecture-guards", "Require successful Architecture guard contracts"),
+        ("pr-fast-lane-arch", "Require successful PR fast lane (architecture-review tests)"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -874,6 +895,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "dreams-boundary",
         "dreams-tracking",
         "architecture-guards",
+        "pr-fast-lane-arch",
     ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
@@ -1171,6 +1193,27 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     assert not fast_targets & set(_pytest_targets(admission["run"]))
 
 
+def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None:
+    """The architecture-review tests run in their own bounded job, once."""
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["pr-fast-lane-arch"]
+
+    assert job["name"] == "PR Fast Lane (architecture-review tests)"
+    assert job["if"] == LANES
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 20
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    assert shlex.split(install) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    )
+    step = _named_step(job, "Run the architecture-review tests")
+    assert "if" not in step
+    assert _pytest_targets(step["run"]) == ARCH_REVIEW_TARGETS
+    assert not set(ARCH_REVIEW_TARGETS) & set(FAST_LANE_TARGETS)
+
+
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     """TASK-34929: the Dreams tracking tests run, whole, on every pull request.
 
@@ -1463,6 +1506,9 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("pr-fast-lane-admission-3", None),
         ("pr-fast-lane-admission-3", "Run admission-sensitive suites 3"),
         ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 3)"),
+        ("pr-fast-lane-arch", None),
+        ("pr-fast-lane-arch", "Run the architecture-review tests"),
+        ("derived-artifacts", "Require successful PR fast lane (architecture-review tests)"),
         ("dreams-tracking", None),
         ("dreams-tracking", "Run the Dreams tracking tests"),
         ("derived-artifacts", "Require successful Dreams tracking tests"),

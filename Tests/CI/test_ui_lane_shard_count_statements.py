@@ -50,10 +50,11 @@ def _counts() -> dict[str, int]:
     Eligible application jobs exclude the serialized preflight. Peak runners
     apply the UI matrix's max-parallel ceiling after preflight succeeds.
     The PR Fast Lane's three jobs, the Console P0 gate, the Dreams
-    tracking tests, the Dreams and Guardian boundary contracts and the
-    Architecture guard contracts since TASK-34916, TASK-35575, TASK-34929,
-    TASK-34986 and TASK-38989 each use one runner: a second matrix job among
-    them fails here instead of miscounting.
+    tracking tests, the Dreams and Guardian boundary contracts, the
+    Architecture guard contracts and the architecture-review tests since
+    TASK-34916, TASK-35575, TASK-34929, TASK-34986, TASK-38989 and PR #3399
+    each use one runner: a second matrix job among them fails here instead
+    of miscounting.
     """
     jobs = _jobs(WORKFLOW)
     needs = [name for name in jobs["derived-artifacts"]["needs"] if name != "preflight"]
