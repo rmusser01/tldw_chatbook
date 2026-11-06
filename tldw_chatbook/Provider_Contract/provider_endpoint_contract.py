@@ -467,11 +467,17 @@ def koboldcpp_native_endpoint(endpoint: object) -> str | None:
         The native route, unchanged for an endpoint already on it, or None
         when the contract refuses the endpoint.
     """
-    models_url = resolve_provider_endpoint("koboldcpp", endpoint).models_url
-    if models_url is None:
+    resolution = resolve_provider_endpoint("koboldcpp", endpoint)
+    if resolution.models_url is None:
         return None
-    root = models_url.removesuffix("/v1/models")
-    return resolve_provider_endpoint("koboldcpp", root + _KOBOLD_NATIVE_PATH).chat_url
+    if not koboldcpp_route_refusal("koboldcpp", endpoint):
+        return resolution.chat_url
+    root = urlsplit(resolution.models_url.removesuffix("/v1/models"))
+    # TASK-38964 review: a root at KoboldAI's /api base (configured as /api or
+    # /api/v1) takes the route's /v1/generate, not a second /api.
+    path = root.path.removesuffix("/api") + _KOBOLD_NATIVE_PATH
+    native = urlunsplit((root.scheme, root.netloc, path, "", ""))
+    return resolve_provider_endpoint("koboldcpp", native).chat_url
 
 
 def canonical_connection_identity(

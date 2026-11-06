@@ -1354,9 +1354,20 @@ def test_make_default_writes_a_koboldcpp_endpoint_only_on_its_native_route(
 
 
 @pytest.mark.parametrize(
-    "configured", [*_KOBOLD_OFF_ROUTE, "http://localhost:5001/kobold"]
+    ("configured", "native"),
+    [
+        *((value, _KOBOLD_NATIVE) for value in _KOBOLD_OFF_ROUTE),
+        ("http://localhost:5001/kobold", "http://localhost:5001/kobold/api/v1/generate"),
+        # Review r10e-rev1: a root at KoboldAI's /api base gets one /api.
+        *(
+            (f"http://127.0.0.1:5001{path}", _KOBOLD_NATIVE)
+            for path in ("/api", "/api/", "/api/v1")
+        ),
+    ],
 )
-def test_server_adoption_writes_koboldcpp_s_native_route(monkeypatch, configured):
+def test_server_adoption_writes_koboldcpp_s_native_route(
+    monkeypatch, configured, native
+):
     """TASK-38964 AC#3: adopting a detected koboldcpp wrote its root (the only
     shape discovery finds) as ``api_url``. It writes the root's native route,
     and this chat sends there too."""
@@ -1365,7 +1376,6 @@ def test_server_adoption_writes_koboldcpp_s_native_route(monkeypatch, configured
 
     screen, writes = _adopt(monkeypatch, "koboldcpp", configured, root)
 
-    native = f"{root}/api/v1/generate"
     assert writes[0]["api_settings.koboldcpp"]["api_url"] == native
     assert [settings.base_url for settings in screen.session_settings] == [native]
     assert screen.notes == []
