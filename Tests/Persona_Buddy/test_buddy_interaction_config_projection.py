@@ -108,3 +108,41 @@ async def test_loaded_motion_settings_drive_actual_visual_controller(
     controller = app.ensure_persona_buddy_controller()
     assert controller is not None
     assert controller._current_reduced_motion() is expected_static
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("environ", "saved_reduce_motion", "expected_static"),
+    [({"TLDW_REDUCE_MOTION": "0"}, True, False), ({"NO_MOTION": "1"}, False, True)],
+    ids=["explicit-false-env-wins", "env-asks-for-less"],
+)
+@private_profile_test
+async def test_the_environment_motion_override_reaches_the_buddy_controller(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    environ: dict,
+    saved_reduce_motion: bool,
+    expected_static: bool,
+):
+    """Qodo review (2026-11-05, TASK-34100.13): TLDW_REDUCE_MOTION=0 overrides
+    a saved reduce_motion = true for Buddy too, as it does for the splash."""
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    for name in ("TLDW_REDUCE_MOTION", "NO_MOTION"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+    assert save_settings_to_cli_config(
+        {
+            "appearance": {"reduce_motion": saved_reduce_motion},
+            "buddy_interaction": {"animated": True},
+            "model_catalog": {"auto_refresh_enabled": False},
+        }
+    )
+
+    from tldw_chatbook.app import TldwCli
+
+    app = TldwCli()
+    controller = app.ensure_persona_buddy_controller()
+    assert controller is not None
+    assert controller._current_reduced_motion() is expected_static

@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Mapping
+from typing import Any
 
 #: Set (to any non-empty value) to keep the historical verbose startup —
 #: the live-verification workflow reads import-time logs when diagnosing
@@ -211,11 +213,16 @@ def replay_startup_notices() -> None:
 
 #: Environment variables that ask for reduced motion before any config is read.
 REDUCE_MOTION_ENV_VARS = ("TLDW_REDUCE_MOTION", "NO_MOTION")
+#: The one that can also ask for motion: set to a false word it overrides a
+#: saved ``reduce_motion = true`` (env over config; Qodo review 2026-11-05).
+#: ``NO_MOTION`` follows the ``NO_COLOR`` style of opt-out flag: it only ever
+#: turns motion off, so a false word there means the same as unset.
+REDUCE_MOTION_ENV_VAR = "TLDW_REDUCE_MOTION"
 
 _FALSE_WORDS = frozenset({"", "0", "false", "no", "off"})
 
 
-def motion_reduced_by_environment(environ=None) -> bool:
+def motion_reduced_by_environment(environ: Mapping[str, str] | None = None) -> bool:
     """True when ``TLDW_REDUCE_MOTION`` or ``NO_MOTION`` is set (not to a false word).
 
     Args:
@@ -231,11 +238,33 @@ def motion_reduced_by_environment(environ=None) -> bool:
     )
 
 
+def motion_from_environment(environ: Mapping[str, str] | None = None) -> bool | None:
+    """What the environment says about motion, if anything.
+
+    A variable asking for reduced motion wins; otherwise
+    ``TLDW_REDUCE_MOTION`` set to a false word ("0", "false", "no", "off")
+    asks for motion. Unset or empty, it says nothing.
+
+    Args:
+        environ: The environment mapping; ``os.environ`` when None.
+
+    Returns:
+        True (reduce), False (do not reduce), or None (no say).
+    """
+    env = os.environ if environ is None else environ
+    if motion_reduced_by_environment(env):
+        return True
+    word = str(env.get(REDUCE_MOTION_ENV_VAR, "")).strip().lower()
+    return False if word else None
+
+
 _TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
 
 
-def motion_reduced(appearance, environ=None) -> bool:
-    """Whether motion is reduced: the saved ``reduce_motion`` or the environment.
+def motion_reduced(
+    appearance: Mapping[str, Any] | None, environ: Mapping[str, str] | None = None
+) -> bool:
+    """Whether motion is reduced: the environment, else the saved ``reduce_motion``.
 
     Args:
         appearance: The ``[appearance]`` table (any mapping; anything else is
@@ -243,18 +272,22 @@ def motion_reduced(appearance, environ=None) -> bool:
         environ: The environment mapping; ``os.environ`` when None.
 
     Returns:
-        True when ``reduce_motion`` is saved on or the environment asks for it.
+        What the environment says (``motion_from_environment``) when it says
+        anything, else whether ``reduce_motion`` is saved on.
     """
-    if motion_reduced_by_environment(environ):
-        return True
+    said = motion_from_environment(environ)
+    if said is not None:
+        return said
     value = appearance.get("reduce_motion") if hasattr(appearance, "get") else None
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in _TRUE_WORDS
 
 
-def with_motion_environment(appearance, environ=None) -> dict:
-    """An ``[appearance]`` table with ``reduce_motion`` forced on by the environment.
+def with_motion_environment(
+    appearance: Mapping[str, Any] | None, environ: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """An ``[appearance]`` table with ``reduce_motion`` set by the environment.
 
     For a caller about to hand the table to a motion reader (the splash).
     Never store the result where a save could write it back.
@@ -264,9 +297,11 @@ def with_motion_environment(appearance, environ=None) -> dict:
         environ: The environment mapping; ``os.environ`` when None.
 
     Returns:
-        A new dict.
+        A new dict; ``reduce_motion`` is what the environment says, when it
+        says anything (``motion_from_environment``).
     """
     merged = dict(appearance) if hasattr(appearance, "items") else {}
-    if motion_reduced_by_environment(environ):
-        merged["reduce_motion"] = True
+    said = motion_from_environment(environ)
+    if said is not None:
+        merged["reduce_motion"] = said
     return merged
