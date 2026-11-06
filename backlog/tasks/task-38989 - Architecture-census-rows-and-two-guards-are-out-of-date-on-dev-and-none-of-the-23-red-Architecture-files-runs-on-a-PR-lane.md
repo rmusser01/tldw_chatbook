@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 09:27
+updated_date: 2026-11-06 10:17
 labels:
 - follow-up
 - tests
@@ -95,7 +95,18 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b on 2026-
 **Other census rows, reviewed.**
 - **Patch targets.** `test_app_instance_warning.py` now patches `get_subscriptions_db_path` on every app module through `set_app_global`.
 - **Persona Buddy boundary.** TASK-32901's six controller logs interpolated the class name into free text. They are now the boundary's fixed `persona_buddy_*` categories, with the class bound as `exception_type` (bounded by a regex, as `preferences.py` does). `test_controller_failure_logging.py` reads the bound field.
-- **Buddy log class, review r10a-rev1.** `_forward_loguru_to_standard` renders only the message, so the bound class appears in the record's `extra` and never in a forwarded log line. The test comments in `test_controller_failure_logging.py` now say so. The forwarder rendering is a follow-up for the coordinator to file.
+- **Buddy log class, regression found by the round-10 filer, fixed.** Moving the six controller logs to fixed categories plus `logger.bind(exception_type=…)` dropped the class from what users see. The only production loguru sink, `Logging_Config._forward_loguru_to_standard`, forwarded only `record["message"]`, so dev's "Persona buddy visual graph unreadable: RuntimeError" became the bare category. My earlier test read `extra` and missed it.
+  - **Fix, per the coordinator's ruling.** The forwarder appends a bound `exception_type` as `"{message}: {exception_type}"`, through `_with_bound_exception_type`. It renders only that one key, and only when the value is a plain class name (`[A-Za-z][A-Za-z0-9_]{0,63}`); no other `extra` field reaches the log. This also fixes `preferences.py`'s bound log.
+  - `test_controller_failure_logging.py` now captures what users see: loguru, then the real forwarder, then std logging, formatted by `RedactingFileFormatter`. Red before the forwarder change (`assert 'RuntimeError' in 'persona_buddy_visual_graph_unreadable'`), green after.
+  - New `Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type` checks three things:
+    - a plain class is appended;
+    - a non-class value and any other bound key are not rendered;
+    - `redact_log_line`, through `RedactingFileFormatter`, still masks a credential in a forwarded line that carries a class.
+
+    It was red with the forwarder change reverted.
+  - **Lanes.** Neither test file runs on a PR lane; no laned test file imports the forwarder.
+  - **Regression check.** Buddy, forwarder and sanitizer tests: 20 failed and 394 passed, the same 20 as at HEAD 47dc0fcb94 (RecoveryRequired / environment). The only new node is the forwarder test.
+  - **Diagnostic inventory.** It flagged the forwarder's two `std_logger.log` calls, which now pass `text`. Reviewed with `--statements`, then regenerated.
 - **Legacy downloader.** `Backup_Recovery/config_adapter.py`, `detached_layout.py` and `inventory.py` name `model_download_dir` only to classify it as an inert external location. None of them reads or writes the directory.
 - **Diagnostic inventory.** The Buddy and export log changes moved it, and the full branch run caught that. Every row was reviewed with `--statements` before `--write` (separate commit).
 

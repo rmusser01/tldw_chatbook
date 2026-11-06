@@ -26,37 +26,62 @@ the canary assertions below.
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
 
 import pytest
 from loguru import logger
 
+from tldw_chatbook.Logging_Config import (
+    RedactingFileFormatter,
+    _forward_loguru_to_standard,
+)
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
 
 
+class _ForwardedRecords(logging.Handler):
+    """Collect the standard-logging records the production forwarder emits."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
 @pytest.fixture()
 def captured():
-    records: list = []
-    sink_id = logger.add(lambda record: records.append(record), level="DEBUG")
+    """What a user's log shows: loguru -> the real forwarder -> std logging.
+
+    ``_forward_loguru_to_standard`` is the only production loguru sink
+    (``configure_application_logging`` removes loguru's default one), so
+    these records are the user-visible output (TASK-38989 regression fix).
+    """
+    handler = _ForwardedRecords()
+    root = logging.getLogger()
+    old_level = root.level
+    root.setLevel(logging.DEBUG)
+    root.addHandler(handler)
+    sink_id = logger.add(_forward_loguru_to_standard, level="DEBUG")
     try:
-        yield records
+        yield handler.records
     finally:
         logger.remove(sink_id)
+        root.removeHandler(handler)
+        root.setLevel(old_level)
 
 
 def _rendered(records) -> str:
-    """Message plus bound fields: the class rides in ``extra``, which this
-    capture reads but ``_forward_loguru_to_standard`` does not render
-    (TASK-38989)."""
-    return "".join(
-        f"{record.record['message']} {record.record['extra']}" for record in records
-    )
+    """The forwarded lines as the persistent sink's redacting formatter writes them."""
+    formatter = RedactingFileFormatter("%(message)s")
+    return "\n".join(formatter.format(record) for record in records)
 
 
 def _attached_tracebacks(records) -> list:
-    """Every record that carries loguru's structured exception payload."""
-    return [record for record in records if record.record["exception"] is not None]
+    """Every forwarded record that carries exception details."""
+    return [record for record in records if record.exc_info]
 
 
 def test_graph_read_failure_is_recorded(captured):
@@ -70,10 +95,8 @@ def test_graph_read_failure_is_recorded(captured):
 
     assert controller._read_graph("persona-1") is None
     rendered = _rendered(captured)
-    # Diagnosable: the site is the message; the failure class is bound into
-    # the record's ``extra``, not the message. The standard-logging forwarder
-    # renders only the message, so forwarded log lines do not show the class
-    # (TASK-38989 review r10a-rev1; the forwarder rendering is a follow-up).
+    # Diagnosable: the fixed site category and the failure class both reach
+    # the forwarded line (the forwarder renders the bound exception_type).
     assert "persona_buddy_visual_graph_unreadable" in rendered
     assert "RuntimeError" in rendered
     # Bounded: the exception's own text and traceback do not.
