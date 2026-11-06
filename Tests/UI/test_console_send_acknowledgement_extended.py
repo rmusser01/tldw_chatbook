@@ -189,6 +189,15 @@ async def test_second_enter_during_admission_never_starts_a_second_provider_call
             host.app_instance.notify = lambda message, **_k: notices.append(
                 str(message)
             )
+            # TASK-38994 AC#4: record each send the visible-send path starts.
+            real_send = console._send_console_message_from_visible_action
+            sends: list[object] = []
+
+            async def recording_send(**kwargs):
+                sends.append(kwargs.get("pending_send_token"))
+                return await real_send(**kwargs)
+
+            console._send_console_message_from_visible_action = recording_send
             gate = HeldAdmission(console)
             try:
                 press(host, "enter", "\r")
@@ -201,6 +210,9 @@ async def test_second_enter_during_admission_never_starts_a_second_provider_call
                 await asyncio.sleep(0.2)
                 gate.release.set()
                 await until(gateway.validation_started.is_set)
+                # The repeat Enter was held as a repeat of the running capture
+                # and dropped once that send settled: it never started a send.
+                assert len(sends) == 1, sends
                 # TASK-38994: the pressed draft stays until durable acceptance
                 # (077e5bfa09, ADR-230), which comes after validation, so this
                 # press is on the draft being sent.

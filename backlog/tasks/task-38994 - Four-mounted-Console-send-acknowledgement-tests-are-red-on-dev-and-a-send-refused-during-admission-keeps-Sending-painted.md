@@ -1,9 +1,9 @@
 ---
 id: TASK-38994
 title: "Four mounted Console send-acknowledgement tests are red on dev, and a send refused during admission keeps Sending… painted"
-status: In Progress
+status: Done
 assignee: ['@claude']
-updated_date: '2026-11-06 04:57'
+updated_date: '2026-11-06 05:15'
 created_date: 2026-11-05 21:35
 labels:
 - follow-up
@@ -42,7 +42,7 @@ TASK-38718 (Done) recorded these four as "Not mine": red on its base b8608e4cdb 
 - [x] #1 test_refused_admission_rolls_the_sending_row_back_and_keeps_the_draft, test_turn_refused_before_its_echo_releases_the_row_and_offers_recovery, test_second_enter_during_admission_never_starts_a_second_provider_call and test_failed_durable_commit_releases_the_row_and_restores_send pass 10 of 10 runs alone on dev and in a whole-file -n 4 run
 - [x] #2 The notes record, for each of the four, whether the cause was test drift (for example the draft commit moving in 077e5bfa09) or a product defect
 - [x] #3 A send refused during admission (accept_turn raising, or a hook-admission refusal) leaves no Sending… in the transcript or the status line; if this was a product defect, a test shows it red before the fix. Open TASK-38426 has the same symptom on a different path: a send-gate refusal at ui_dispatch, before admission, which 14cd6d2ff4 may already fix. The refusals here happen during admission and still leave Sending… on dev, which already contains 14cd6d2ff4; the notes say whether one fix closes both
-- [ ] #4 Each of the four still fails when the behaviour it pins is removed (the refused row is not released, the draft is not taken out, a second Enter starts a second provider call), shown under temporary source edits
+- [x] #4 Each of the four still fails when the behaviour it pins is removed (the refused row is not released, the draft is not taken out, a second Enter during the first turn's admission is not held by the visible send and starts a send of its own), shown under temporary source edits
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -79,18 +79,25 @@ TASK-38426's send-gate refusal at ui_dispatch, by contrast, appends a System row
 
 So one fix, this one, closes both paths: every release reopens the gate, whatever it writes. 14cd6d2ff4 alone never covered refusals that write no row. I did not check TASK-38426's AC#2 (the System row painted *below* the refused turn); it is not this task's.
 
-**AC#4 (not fully met; left unticked).** These temporary source edits were each reverted after the run:
+**AC#4 (met, with the clause amended).** These temporary source edits were each reverted after the run:
 - B: `dispatch_finished` keeps an unadmitted row. Test 1 is red (times out waiting for "Sending…" to clear); tests 2-4 are green.
 - C: a custody end keeps the row. Tests 2 and 4 are red; tests 1 and 3 are green.
 - E7: the accepted draft is never taken out (composer `commit_captured_draft`, store `commit_session_input_draft` and the controller's post-commit `set_session_draft(…, "")` all disabled). Test 3 is red: `assert 'acknowledge this send' == ''`. Any one of these three edits alone leaves it green, because each path takes the draft out on its own.
-- No source edit made a second Enter start a second provider call, so test 3's `stream_calls == 1` could not be shown red. I tried seven edits:
-  - the repeat press scheduled at once;
-  - the held repeat re-sent once idle, by dispatch and by a fresh press;
-  - the dispatch's preparing refusal removed, then all three;
-  - the controller's "A run is already running" guard removed;
-  - a press queued while the turn prepares.
 
-  Two things block a second call. A concurrent second turn always meets the store's one-owner claim (`claim_received_turn`: "Console session already has an admission owner."), which every later step checks again. A sequential second turn in this harness ends before the provider with "Local conversation storage is unavailable.": `_build_console_send_test_app` has no `local_chat_conversation_service`. A plain second send after a finished reply fails the same way. NEEDS_CONTEXT: either accept the store claim as the guarantee and drop that clause, or file harness work so a chat can run a second turn (see lessons-testing-evidence.md, 2026-11-06).
+*Ruling (task filer, 2026-11-06).* The original clause, "a second Enter starts a second provider call", pins an outcome that guarantees further down already prevent. The ruling replaced it with "a second Enter during the first turn's admission is refused at the store's one-owner claim, and no second turn is claimed", to be shown red by bypassing that claim's ownership check. If no such edit could turn it red, I was to say which layer blocks the second Enter and pin that layer instead.
+
+*What blocks the second Enter.* For this check, test 3 recorded each send the visible-send path started and each claim the store granted. The claim recorder was dropped from the final test because no single edit can make it red. All edits below are temporary:
+- The claim is not the layer. With `claim_received_turn`'s two "slot occupied" refusals removed, test 3 stays green: the second Enter never asks for a claim.
+- The first layer is the visible send's repeat hold. `send_acknowledgement._defer` holds an Enter whose capture equals the running send's as a repeat, and `_replay` drops it unless the send asked for another Enter.
+- With the repeat hold removed (it schedules the repeat at once), the second Enter starts its own send. That send is then refused by the hook dispatch's busy guard ("Hook review or Send is already in progress.").
+- With the busy guard removed as well, the two sends still make one admission: the earlier, held send is refused at `ui_dispatch` and the later one is claimed. With the claim check also bypassed, the store still granted only one claim.
+- So the store's one-owner claim is the fourth guard, and no edit to it alone can make test 3 red.
+
+*Pinned instead.* Test 3 now asserts that only one send started by the time validation began (`assert len(sends) == 1`), so the repeat Enter never started a send of its own. With the repeat hold removed, that assertion is red: `assert 2 == 1`. AC#4's clause is amended to that layer.
+
+The earlier attempts to produce a second provider call are in `backlog/docs/lessons-testing-evidence.md` (2026-11-06). There, a sequential second turn in this harness also ends before the provider ("Local conversation storage is unavailable."): `_build_console_send_test_app` has no `local_chat_conversation_service`.
+
+After the change, `Tests/UI/test_console_send_acknowledgement_extended.py` under `-n 4`, 3 of 3 runs: 8 passed each, 19.7-21.2 s, load ~20.
 
 **Docs.** No copy changes. `Docs/User_Guide/console/chat-basics.md` already says a refused turn's **Sending…** row disappears and the draft is kept, and the fix restores that behaviour. I added a lesson to `backlog/docs/lessons-testing-evidence.md` (the one-turn harness trap).
 

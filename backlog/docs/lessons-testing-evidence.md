@@ -15,7 +15,12 @@
 - the controller's "A run is already running in this tab." guard removed;
 - the press queued while the turn prepares.
 
-Two facts explained it. First, a concurrent second turn always meets the store's one-owner claim (`claim_received_turn`, "Console session already has an admission owner."), which every later step checks again. Second, a sequential second turn never reaches the provider in this harness. A plain second Enter after a completed reply was admitted, then ended with `RuntimeError('Local conversation storage is unavailable.')`. The harness app (`_build_console_send_test_app`) has no `local_chat_conversation_service`, and a chat whose first turn was saved needs it. So the count can only see a concurrent duplicate, which the store already makes impossible.
+Two facts explained it. First, a concurrent second Enter is stopped before it reaches the store's one-owner claim (`claim_received_turn`), by three layers:
+- the visible send holds a repeat of the running capture;
+- the hook dispatch's busy guard refuses a second send;
+- one of the two sends is refused at dispatch, so only one admission remains.
+
+Bypassing the claim's own check therefore turned nothing red. Second, a sequential second turn never reaches the provider in this harness. A plain second Enter after a completed reply was admitted, then ended with `RuntimeError('Local conversation storage is unavailable.')`. The harness app (`_build_console_send_test_app`) has no `local_chat_conversation_service`, and a chat whose first turn was saved needs it. So the count could only see a concurrent duplicate, and those layers already prevent one. The test now pins the first layer instead: it counts the sends the visible-send path starts, and removing the repeat hold turns that count red (2 == 1).
 
 **What to do.** Before you build a control for "never a second provider call" in the send harness, send two turns in one chat with nothing removed. If the second turn does not stream, the count is not evidence against a sequential duplicate. Assert the observable a duplicate would leave instead (a second echo row, a refusal notice), or give the harness a local conversation service first. When the product stacks independent guards, say which guard the count actually rests on.
 
