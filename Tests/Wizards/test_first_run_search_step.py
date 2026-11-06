@@ -650,3 +650,70 @@ async def test_choosing_automatic_says_the_first_search_may_download_a_local_mod
 
 def test_a_cloud_model_has_no_download_note() -> None:
     assert rag_state.automatic_download_note(CLOUD_MODEL) == ""
+
+
+# -- tier-2 review S21, restored (TASK-34100.13 review TEF-4) ----------------
+#
+# The embedding model id comes from the user's active RAG profile, and the
+# step and the Summary paint it into Statics. Textual parses a Static's text
+# as markup unless it is built with markup=False: "[b]" silently vanishes and
+# "[/x]" raises MarkupError (inside a worker here, so the line just stays on
+# "checking…"). The old S21 test covered the retired picker; these cover the
+# read-only line, the download note and the Summary row that replaced it.
+
+MARKUP_SHAPED_IDS = ("embed-[b]-v1", "embed-[/x]-v2")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", MARKUP_SHAPED_IDS)
+async def test_a_markup_shaped_model_id_renders_literally_on_the_step(
+    model_id,
+) -> None:
+    model = rag_state.EmbeddingModelFacts(name=model_id, cloud=False)
+    _wizard, step = _rag_step({}, model=model)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        line = str(step.query_one("#setup-rag-model", Static).render())
+        step.query_one("#setup-rag-auto-retrieve-automatic", RadioButton).value = True
+        await pilot.pause()
+        note = step.query_one("#setup-rag-download", Static)
+        assert note.display
+        note_text = str(note.render())
+    assert f"Embedding model: {model_id} · " in line
+    assert f"If {model_id} isn't on this computer yet" in note_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", MARKUP_SHAPED_IDS)
+async def test_a_markup_shaped_model_id_renders_literally_in_the_summary_row(
+    model_id,
+) -> None:
+    from tldw_chatbook.UI.Wizards.first_run_summary_step import SummaryStep
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "full"}},
+    )
+    facts = rag_state.EmbeddingModelFacts(name=model_id, cloud=False)
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=10),
+        load_config=lambda: {"chat_defaults": {"rag_auto_retrieve_on_send": True}},
+        rag_deps_installed=lambda: True,
+        speech_installed=lambda: False,
+        speech_runtime_installed=lambda: False,
+        rag_model=lambda: facts,
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        rows = ""
+        for _ in range(40):
+            await pilot.pause(0.05)
+            rows = str(step.query_one("#setup-summary-rows", Static).render())
+            if "(on this computer)" in rows:
+                break
+    search = next(line for line in rows.splitlines() if " Search — " in line)
+    assert search.endswith(
+        f"Search — automatic when you chat · {model_id} (on this computer)"
+    )
