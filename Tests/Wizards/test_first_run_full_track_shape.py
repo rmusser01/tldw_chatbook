@@ -32,13 +32,18 @@ def test_wizard_no_longer_owns_the_notes_section() -> None:
 
 
 def test_summary_notes_row_points_at_add_from_files() -> None:
+    """Review G13-R1-01 (coordinator decision 2026-11-05): sync roots live in
+    the Library database, which the Summary never reads, so the row is an
+    action pointer and claims no state -- "not set up" was false on a re-run
+    after a folder had been added in Library."""
     rows = {
         row.label: row
         for row in wizard_state.build_summary_rows({}, {}, rag_deps_installed=True)
     }
     row = rows["Notes folder sync"]
     assert row.state == wizard_state.ROW_DEFAULT
-    assert row.detail == "not set up · Library ▸ Notes ▸ Add from files…"
+    assert row.detail == "set up in Library ▸ Notes ▸ Add from files…"
+    assert "not set up" not in row.detail
 
 
 def _draft_config(active_step: str, values: dict) -> dict:

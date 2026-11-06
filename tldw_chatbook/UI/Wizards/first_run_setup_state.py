@@ -2453,10 +2453,12 @@ def build_summary_rows(
         ),
         # TASK-34100.13 (fulltrack-05): text only -- Library has no deep
         # link to Add from files; "Write your first note" lands in Notes.
+        # Review G13-R1-01: an action pointer, never "not set up" -- sync
+        # roots live in the Library database, which this config never shows.
         SummaryRow(
             "Notes folder sync",
             ROW_DEFAULT,
-            "not set up · Library ▸ Notes ▸ Add from files…",
+            "set up in Library ▸ Notes ▸ Add from files…",
         ),
         # TASK-34100.13 (fulltrack-13): the display name with a tone tag,
         # the same label the Appearance step's theme rows carry.
