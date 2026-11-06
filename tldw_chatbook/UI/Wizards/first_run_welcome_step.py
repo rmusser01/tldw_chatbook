@@ -202,6 +202,27 @@ class WelcomeStep(SetupStep):
         super().on_show()
         if self._footer is not None:
             self._footer.display = True
+            self._show_saved_reduce_motion()
+
+    def _show_saved_reduce_motion(self) -> None:
+        """Review G13-R1-03: show Reduce motion as it is saved now.
+
+        Appearance edits the same setting, and the wizard mirrors what it
+        saves into ``app_config``; Back to Welcome showed the value from
+        mount against a stale baseline, so Next there wrote nothing.
+        """
+        app_config = _live_app_config(self._app_instance())
+        if app_config is None or self._footer is None:
+            return
+        try:
+            box = self._footer.query_one("#setup-welcome-reduce-motion", Checkbox)
+        except Exception:
+            return  # not mounted yet: compose read the same value
+        appearance = app_config.get("appearance")
+        saved = bool(isinstance(appearance, Mapping) and appearance.get("reduce_motion"))
+        with box.prevent(Checkbox.Changed):
+            box.value = saved
+        self._reduce_motion_at_mount = saved
 
     def on_hide(self) -> None:
         super().on_hide()
