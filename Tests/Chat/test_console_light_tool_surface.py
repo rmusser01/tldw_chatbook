@@ -587,6 +587,49 @@ def test_a_light_run_starts_no_fleet_and_spawns_nothing(tmp_path):
     assert "conv-light" not in bridge._fleet_coordinators
 
 
+def test_a_refused_hallucinated_call_does_not_count_as_agent_use(tmp_path):
+    """TASK-34100.5.3.2 review round 1 (F3-11), on the real persisted trace.
+
+    A light-surface send whose model names ``web_search`` anyway is refused
+    ("Tool not permitted"), but the run log still records the call. The
+    one-time Full agent tools upgrade must not read that refusal as "this
+    profile uses agent features"; a dispatched non-light call still counts.
+    """
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import (
+        SIGNAL_TOOL_CALL,
+        detect_agent_feature_use,
+    )
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [[_fence("web_search", {"query": "x"})], ["hi"]]
+    )
+    outcome = _send(bridge, session, assistant_id, _test_resolution())
+    refused = [
+        step
+        for step in outcome.steps
+        if step.kind == "tool_result" and step.tool_name == "web_search"
+    ]
+    assert [step.tool_outcome for step in refused] == ["blocked"], refused
+    # The Console's runs database, where production finds it: beside the
+    # app's ChaChaNotes file.
+    runs_path = tmp_path / "agent_runs.db"
+    assert runs_path.is_file()
+    workspaces = WorkspaceDB(tmp_path / "upgrade-workspaces.db", client_id="probe")
+    try:
+        assert detect_agent_feature_use(runs_path, workspaces) is None
+
+        # Control: a tool the model was offered and that ran does count.
+        bridge._db.insert_steps_at_indices(
+            bridge._db.create_run(conversation_id="conv-full", agent_kind="primary"),
+            [(0, {"index": 0, "kind": "tool_call", "tool_name": "fs_list",
+                  "call_id": "turn-1-call-0"})],
+        )
+        assert detect_agent_feature_use(runs_path, workspaces) == SIGNAL_TOOL_CALL
+    finally:
+        workspaces.close()
+
+
 class _LiveFleet:
     def live_count(self):
         return 1

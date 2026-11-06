@@ -21,7 +21,16 @@ nothing written to their config.
 * an earlier Console agent run that called a tool outside the light set (a
   ``tool_call``/``spawn`` step of a primary or sub-agent run, in the per-row
   step log or the pre-v13 JSON blob, or any sub-agent run, which only
-  ``spawn_subagent`` creates).
+  ``spawn_subagent`` creates). A call the loop refused -- a ``blocked``
+  ``tool_result`` for the same ``call_id``, such as the light surface's "Tool
+  not permitted" for a tool a small model named anyway -- was never
+  dispatched and is not use (review round 1, F3-11).
+
+Runs are read from the Console's ``agent_runs.db`` beside ChaChaNotes and,
+when it exists, the served mobile companion's ``<user_data>/mobile/runs.db``
+(review round 1, F5-6): phone sends got the full agent surface before the
+light surface too. When ChaChaNotes is unavailable the Console's runs
+database cannot be found, and that is a failure, not "no signal" (F3-4).
 
 How it runs (``run_for_profile``): once per launch, as the first staggered boot
 worker, on a worker thread after the UI is ready, so it never blocks startup
@@ -45,6 +54,16 @@ Any failure writes nothing and records no marker, so the profile stays on the
 light set for this launch and the next launch tries again. Logs name the
 outcome, the first signal found and an exception type; never a path, a tool
 name or other user content.
+
+A lost marker (the workspaces database replaced or deleted) makes the next
+launch run the upgrade again, and that is safe by construction (review round
+1, F4-5): it writes only when the raw config has no
+``full_agent_tools_enabled`` at all, it only ever writes ``true``, and only
+when the profile shows agent use at that moment. A user who turned Full
+agent tools off has the key explicitly ``false``, which is left alone (step
+2). The one profile a rerun can turn on is a light one that has since gained
+a binding, a definition or a dispatched non-light call -- which is exactly
+what the owner's "uses agent features" test asks.
 """
 
 from __future__ import annotations
@@ -138,6 +157,14 @@ class _DetectionTimeout(Exception):
     """The signal reads ran past their budget."""
 
 
+class _RunsDatabaseUnavailable(Exception):
+    """The Console's runs database cannot be located (no usable ChaChaNotes).
+
+    Not "no signal": a profile whose only signal lives there would lose its
+    tools for good if this launch recorded the marker (review round 1, F3-4).
+    """
+
+
 def _deadline_handler(deadline: float) -> Callable[[], int]:
     """An SQLite progress handler that interrupts the query past ``deadline``."""
 
@@ -186,81 +213,70 @@ def _runs_signal(connection: Any, light_names: tuple[str, ...]) -> str | None:
     step_kinds = ", ".join("?" for _ in _TOOL_STEP_KINDS)
     light = ", ".join("?" for _ in light_names)
     # The JSON is checked before it is parsed: one malformed row must not
-    # turn the whole read into an error. The instr() pre-filter skips the
-    # parse for the (many) steps that cannot be a tool call.
+    # turn the whole read into an error. The instr() pre-filters skip the
+    # parse for the (many) steps that cannot be a tool call or a refusal.
     tool_step = (
-        f"json_extract(step, '$.kind') IN ({step_kinds}) "
-        f"AND COALESCE(json_extract(step, '$.tool_name'), '') "
+        f"json_extract(c.step, '$.kind') IN ({step_kinds}) "
+        f"AND COALESCE(json_extract(c.step, '$.tool_name'), '') "
         f"NOT IN ('', {light})"
+    )
+    # A call the loop refused (a ``blocked`` tool_result for the same
+    # call_id in the same run) was never dispatched: not use (F3-11). A
+    # call with no call_id (older rows) cannot be paired and counts.
+    refused = (
+        "COALESCE(json_extract(c.step, '$.call_id'), '') <> '' "
+        "AND json_extract({step}, '$.kind') = 'tool_result' "
+        "AND json_extract({step}, '$.tool_outcome') = 'blocked' "
+        "AND json_extract({step}, '$.call_id') = json_extract(c.step, '$.call_id')"
     )
     parameters = (*_AGENT_RUN_KINDS, *_TOOL_STEP_KINDS, *light_names)
     if "agent_run_steps" in tables:
+        result_step = "CASE WHEN json_valid(b.payload) THEN b.payload ELSE '{}' END"
         query = (
             "SELECT 1 FROM ("
-            "SELECT CASE WHEN json_valid(s.payload) THEN s.payload ELSE '{}' END "
+            "SELECT s.run_id AS run_id, "
+            "CASE WHEN json_valid(s.payload) THEN s.payload ELSE '{}' END "
             "AS step FROM agent_run_steps AS s "
             "JOIN agent_runs AS r ON r.id = s.run_id "
             f"WHERE r.agent_kind IN ({kinds}) "
             "AND (instr(s.payload, 'tool_call') > 0 OR instr(s.payload, 'spawn') > 0)"
-            f") WHERE {tool_step} LIMIT 1"
+            f") AS c WHERE {tool_step} AND NOT EXISTS ("
+            "SELECT 1 FROM agent_run_steps AS b WHERE b.run_id = c.run_id "
+            "AND instr(b.payload, 'blocked') > 0 AND "
+            + refused.format(step=result_step)
+            + ") LIMIT 1"
         )
         if connection.execute(query, parameters).fetchone() is not None:
             return SIGNAL_TOOL_CALL
     if "steps" in run_columns:
         query = (
             "SELECT 1 FROM ("
-            "SELECT step.value AS step FROM agent_runs AS r, json_each("
-            "CASE WHEN json_valid(r.steps) AND json_type(r.steps) = 'array' "
-            "THEN r.steps ELSE '[]' END) AS step "
+            "SELECT run.blob AS blob, step.value AS step FROM ("
+            "SELECT CASE WHEN json_valid(r.steps) AND json_type(r.steps) = 'array' "
+            "THEN r.steps ELSE '[]' END AS blob FROM agent_runs AS r "
             f"WHERE r.agent_kind IN ({kinds}) "
-            "AND (instr(r.steps, 'tool_call') > 0 OR instr(r.steps, 'spawn') > 0) "
-            "AND step.type = 'object'"
-            f") WHERE {tool_step} LIMIT 1"
+            "AND (instr(r.steps, 'tool_call') > 0 OR instr(r.steps, 'spawn') > 0)"
+            ") AS run, json_each(run.blob) AS step WHERE step.type = 'object'"
+            f") AS c WHERE {tool_step} AND NOT EXISTS ("
+            "SELECT 1 FROM json_each(c.blob) AS b WHERE b.type = 'object' AND "
+            + refused.format(step="b.value")
+            + ") LIMIT 1"
         )
         if connection.execute(query, parameters).fetchone() is not None:
             return SIGNAL_TOOL_CALL
     return None
 
 
-def detect_agent_feature_use(
-    agent_runs_path: Path | None,
-    workspace_db: Any,
-    *,
-    budget_seconds: float = DETECTION_BUDGET_SECONDS,
-    light_names: Collection[str] = LIGHT_SURFACE_TOOL_NAMES,
+def _read_runs_signal(
+    path: Path, deadline: float, light_names: tuple[str, ...]
 ) -> str | None:
-    """Return the first agent-feature signal this profile shows, or ``None``.
-
-    Args:
-        agent_runs_path: The profile's ``agent_runs.db``. ``None`` or an
-            absent file has no signal; the file is never created, migrated
-            or written.
-        workspace_db: The profile's ``WorkspaceDB`` (bindings live there).
-        budget_seconds: How long the reads may take in all.
-        light_names: The light set; a tool call to one of these is not a
-            signal.
-
-    Returns:
-        ``SIGNAL_WORKSPACE_BINDING``, ``SIGNAL_AGENT_DEFINITION``,
-        ``SIGNAL_SUBAGENT_RUN`` or ``SIGNAL_TOOL_CALL``, or ``None``.
-
-    Raises:
-        Exception: Any read failure, including ``_DetectionTimeout`` past the
-            budget. The caller treats every failure as "stay light".
-    """
-    deadline = time.monotonic() + budget_seconds
-    if workspace_db.has_runtime_binding(_WORKSPACE_TOOL_BINDING_KINDS):
-        return SIGNAL_WORKSPACE_BINDING
-    if agent_runs_path is None or not Path(agent_runs_path).is_file():
-        return None
-    if time.monotonic() >= deadline:
-        raise _DetectionTimeout()
+    """Open one existing runs database read-only and read its signal."""
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
     with closing(
         connect_private_sqlite(
             "agents.full_agent_tools_upgrade",
-            agent_runs_path,
+            path,
             read_only=True,
             must_exist=True,
             operation_deadline=deadline,
@@ -271,11 +287,60 @@ def detect_agent_feature_use(
             _deadline_handler(deadline), _BUDGET_CHECK_STEPS
         )
         try:
-            return _runs_signal(connection, tuple(light_names))
+            return _runs_signal(connection, light_names)
         except Exception as exc:
             if time.monotonic() >= deadline:
                 raise _DetectionTimeout() from exc
             raise
+
+
+def detect_agent_feature_use(
+    agent_runs_path: Path | None,
+    workspace_db: Any,
+    *,
+    companion_runs_path: Path | Callable[[], Path | None] | None = None,
+    budget_seconds: float = DETECTION_BUDGET_SECONDS,
+    light_names: Collection[str] = LIGHT_SURFACE_TOOL_NAMES,
+) -> str | None:
+    """Return the first agent-feature signal this profile shows, or ``None``.
+
+    Args:
+        agent_runs_path: The Console's ``agent_runs.db``. An absent file has
+            no signal; the file is never created, migrated or written.
+            ``None`` means its location is unknown, which is a failure.
+        workspace_db: The profile's ``WorkspaceDB`` (bindings live there).
+        companion_runs_path: The served mobile companion's runs database
+            (or a callable resolving it, called only when needed). Read the
+            same way when it exists.
+        budget_seconds: How long the reads may take in all.
+        light_names: The light set; a tool call to one of these is not a
+            signal.
+
+    Returns:
+        ``SIGNAL_WORKSPACE_BINDING``, ``SIGNAL_AGENT_DEFINITION``,
+        ``SIGNAL_SUBAGENT_RUN`` or ``SIGNAL_TOOL_CALL``, or ``None``.
+
+    Raises:
+        Exception: Any read failure, including ``_DetectionTimeout`` past the
+            budget and ``_RunsDatabaseUnavailable`` for an unknown runs
+            database. The caller treats every failure as "stay light".
+    """
+    deadline = time.monotonic() + budget_seconds
+    if workspace_db.has_runtime_binding(_WORKSPACE_TOOL_BINDING_KINDS):
+        return SIGNAL_WORKSPACE_BINDING
+    if agent_runs_path is None:
+        raise _RunsDatabaseUnavailable()
+    if callable(companion_runs_path):
+        companion_runs_path = companion_runs_path()
+    for path in (agent_runs_path, companion_runs_path):
+        if path is None or not Path(path).is_file():
+            continue
+        if time.monotonic() >= deadline:
+            raise _DetectionTimeout()
+        signal = _read_runs_signal(Path(path), deadline, tuple(light_names))
+        if signal is not None:
+            return signal
+    return None
 
 
 def _explicit_in(raw: Any) -> bool:
@@ -324,6 +389,7 @@ def run_full_agent_tools_upgrade(
     *,
     workspace_db: Any,
     agent_runs_path: Path | None,
+    companion_runs_path: Path | Callable[[], Path | None] | None = None,
     budget_seconds: float = DETECTION_BUDGET_SECONDS,
 ) -> UpgradeResult:
     """Run the one-time upgrade for one profile (see the module docstring).
@@ -331,7 +397,10 @@ def run_full_agent_tools_upgrade(
     Args:
         workspace_db: The profile's ``WorkspaceDB``: the bindings it holds and
             where the marker is recorded. ``None`` fails (nothing written).
-        agent_runs_path: The profile's ``agent_runs.db``, or ``None``.
+        agent_runs_path: The profile's ``agent_runs.db``; ``None`` (location
+            unknown) fails unless the marker or an explicit value decides.
+        companion_runs_path: The served companion's runs database, or a
+            callable resolving it when detection needs it.
         budget_seconds: The signal reads' time budget.
 
     Returns:
@@ -346,7 +415,10 @@ def run_full_agent_tools_upgrade(
             workspace_db.mark_agent_backfill_complete(FULL_AGENT_TOOLS_UPGRADE_MARKER)
             return _logged(UpgradeResult(UpgradeOutcome.EXPLICIT))
         signal = detect_agent_feature_use(
-            agent_runs_path, workspace_db, budget_seconds=budget_seconds
+            agent_runs_path,
+            workspace_db,
+            companion_runs_path=companion_runs_path,
+            budget_seconds=budget_seconds,
         )
         if signal is None:
             outcome = UpgradeOutcome.LIGHT
@@ -379,11 +451,28 @@ def _logged(result: UpgradeResult) -> UpgradeResult:
 
 
 def _agent_runs_path(chachanotes_db: Any) -> Path | None:
-    """The Console's runs database: ``agent_runs.db`` beside ChaChaNotes."""
+    """The Console's runs database: ``agent_runs.db`` beside ChaChaNotes.
+
+    The derivation every production reader uses (``ConsoleRuntime``,
+    Settings > Agents, change retention). ``None`` when ChaChaNotes is
+    unavailable or in memory: the location is unknown, a failure.
+    """
     db_path = getattr(chachanotes_db, "db_path", None)
     if not db_path or str(db_path) == ":memory:" or str(db_path).startswith("file:"):
         return None
     return Path(db_path).parent / "agent_runs.db"
+
+
+def _companion_runs_path() -> Path:
+    """The served mobile companion's runs database.
+
+    ``Web_Server/serve.py`` builds the companion over
+    ``get_user_data_dir() / "mobile"`` and ``MobileChatService`` keeps its
+    runs in ``runs.db`` there.
+    """
+    from tldw_chatbook.config import get_user_data_dir
+
+    return Path(get_user_data_dir()) / "mobile" / "runs.db"
 
 
 def _mirror_into_app_config(app_config: Any) -> None:
@@ -425,7 +514,9 @@ def run_for_profile(
     """
     try:
         result = run_full_agent_tools_upgrade(
-            workspace_db=workspace_db, agent_runs_path=_agent_runs_path(chachanotes_db)
+            workspace_db=workspace_db,
+            agent_runs_path=_agent_runs_path(chachanotes_db),
+            companion_runs_path=_companion_runs_path,
         )
     finally:
         close = getattr(workspace_db, "close", None)

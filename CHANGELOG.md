@@ -16,13 +16,15 @@ and this project adheres to Some kind of Versioning
   Profiles that already use agent features keep them: the first time this
   version opens a profile with no `full_agent_tools_enabled` setting, it
   checks once, in the background, for a sub-agent definition, a workspace
-  folder or SSH binding, or an earlier Console reply that called a tool
-  outside the light set, and if it finds one it adds the one line
-  `full_agent_tools_enabled = true` under `[tools]` in config.toml. The rest
-  of the file is kept byte for byte, comments and layout included. New profiles and
-  profiles that use none of these stay on the light set with config.toml
-  unchanged. The check runs once per profile and never overrides a value you
-  set, so switching Full agent tools off afterwards keeps it off.
+  folder or SSH binding, or an earlier Console or mobile-companion reply that
+  ran a tool outside the light set (a call that was refused does not count).
+  If it finds one, it adds the one line `full_agent_tools_enabled = true`
+  under `[tools]` in config.toml and keeps the rest of the file byte for
+  byte, comments and layout included. New profiles and profiles that use
+  none of these stay on the light set with config.toml unchanged. The check
+  runs once per profile and never overrides a value you set, so switching
+  Full agent tools off afterwards keeps it off. If it cannot read the
+  profile's data, it changes nothing and tries again at the next launch.
 - Console replies now stream by default for every provider, including
   OpenAI, Anthropic and the Custom OpenAI-compatible slots: the shipped
   `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]

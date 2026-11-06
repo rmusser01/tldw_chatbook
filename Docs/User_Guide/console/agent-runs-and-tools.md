@@ -83,15 +83,18 @@ features:
 
 - a sub-agent definition (**Settings ▸ Agents**);
 - a workspace folder or SSH remote binding (**Settings ▸ Workspaces**);
-- an earlier Console reply that called a tool outside the light set (a
-  workspace, web or Watchlists tool, a sub-agent, and so on).
+- an earlier Console reply, or a reply in the mobile companion that
+  `tldw-serve` serves, that ran a tool outside the light set
+  (a workspace, web or Watchlists tool, a sub-agent, and so on). A call that
+  was refused, such as a tool a small model named although plain chat never
+  offered it, does not count.
 
 If it finds any of them, it turns **Full agent tools** on for you, so plain
 chat keeps the tools it had. It adds one line, `full_agent_tools_enabled =
 true`, under `[tools]` in config.toml (or a new `[tools]` table at the end of
-the file), and keeps every other byte, your comments and layout included. A profile with none of
-them, and every new profile, stays on the light set, and its config.toml is
-left as it was. The check runs at most once per profile and never changes a
+the file), and keeps every other byte, your comments and layout included. A
+profile with none of them, and every new profile, stays on the light set, and
+its config.toml is left as it was. The check runs at most once per profile and never changes a
 value you set yourself, so switching Full agent tools off afterwards keeps
 it off. If it cannot read the profile's data, it changes nothing and tries
 again at the next launch.
