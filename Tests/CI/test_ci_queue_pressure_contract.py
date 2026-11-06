@@ -393,6 +393,10 @@ DREAMS_BOUNDARY_TARGETS = (
     # keeps an entry near 30 s. This job ran
     # 6.2-7.1 min of its 20 in three PR runs to 2026-11-05.
     "Tests/UI/test_library_modal_dismissal.py",
+    # TASK-39049: the quit-time store retirement (TASK-38955, TASK-39047,
+    # TASK-39048) and the retention pass's worker handles, in no PR lane.
+    # Sandboxed and guard-clean, ~10-20 s serial. Last: it pauses no storage.
+    "Tests/DB/test_sync_log_retention.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"

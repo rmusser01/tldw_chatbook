@@ -138,6 +138,7 @@ INHERITED = {
         "Tests/LLM_Management/test_vllm_profiles.py",  # TASK-38759
         "Tests/Chat/test_qwencloud_provider_contract.py",  # TASK-38966
         "Tests/UI/test_library_modal_dismissal.py",  # TASK-38985
+        "Tests/DB/test_sync_log_retention.py",  # TASK-39049
         "--storage-lease-guard",  # TASK-38986
         "--timeout=180",
         "--tb=short",
