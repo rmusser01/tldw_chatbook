@@ -512,6 +512,10 @@ _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it he
 #: The items list's recovery copy when a character read fails (spec 1.5.4,
 #: with Retry; frame slice B2b). Dev showed "No characters yet" there.
 _CHARACTERS_LOAD_FAILED = "Characters could not be loaded."
+#: The centre over that failure (TASK-33910.46): dev said "No characters yet".
+_CHARACTERS_LOAD_FAILED_GUIDANCE = (
+    "Characters could not be loaded — use [b]Retry[/b] to read the list again."
+)
 #: F-037: reason shown on local-only actions (card Edit, inspector
 #: export/delete) while browsing server-owned characters.
 _SERVER_READ_ONLY_TOOLTIP = frame_state.SERVER_CHARACTERS_READ_ONLY
@@ -1053,6 +1057,9 @@ class PersonasScreen(BaseAppScreen):
         # The unfiltered COUNT, the title's "of M" while a search or tag
         # narrows the list; None until known (spec 1.5.1).
         self._character_unfiltered_total: int | None = None
+        # The server's last unfiltered (server id, total, known): a server
+        # search's "of M" (TASK-33910.37). Dev showed a bare count.
+        self._server_unfiltered_total: tuple[str | None, int, bool] | None = None
         # The last character reload failed: the title reads "(?)" (spec 1.4.2).
         self._character_list_failed: bool = False
         # The items list's window state, shared with the list (TASK-33910.34):
@@ -1928,6 +1935,7 @@ class PersonasScreen(BaseAppScreen):
         self._set_persona_editor_runtime_source(normalized)
         self._count_cache_key = None
         self._character_unfiltered_total = None
+        self._server_unfiltered_total = None
         self._characters = []
         self._character_total = 0
         self._update_purpose_line()
@@ -2207,6 +2215,21 @@ class PersonasScreen(BaseAppScreen):
         if self._character_list_failed:
             return frame_state.items_border_title("character", total=0, failed=True)
         if self.state.runtime_source == "server":
+            unfiltered = self._server_unfiltered_total
+            if (
+                self.state.search_query
+                and unfiltered is not None
+                and unfiltered[0] == self._active_server_target()
+            ):
+                # Owner decision 2026-11-05: "12 of 340", or "12 of 100+"
+                # when that page was full with no total; no server call.
+                return frame_state.items_border_title(
+                    "character",
+                    total=unfiltered[1],
+                    total_known=unfiltered[2],
+                    matched=self._character_total,
+                    matched_known=self._character_total_known,
+                )
             return frame_state.items_border_title(
                 "character",
                 total=self._character_total,
@@ -3791,6 +3814,14 @@ class PersonasScreen(BaseAppScreen):
                 # "100+" until a short window arrives (spec 1.5.6 "Server").
                 self._character_total = max(total, len(self._characters))
                 self._character_total_known = total_known
+            if fence.runtime_source == "server" and not (
+                fence.query or failed or blank
+            ):
+                self._server_unfiltered_total = (
+                    fence.server_id,
+                    self._character_total,
+                    self._character_total_known,
+                )
             self._update_purpose_line()
             try:
                 library = self.query_one(PersonasLibraryPane)
@@ -16243,6 +16274,8 @@ class PersonasScreen(BaseAppScreen):
         Returns:
             Guidance copy for the current library state.
         """
+        if self._character_list_failed:
+            return _CHARACTERS_LOAD_FAILED_GUIDANCE
         if (self.state.search_query or self.state.tag_filter) and not (
             self._character_total
         ):
