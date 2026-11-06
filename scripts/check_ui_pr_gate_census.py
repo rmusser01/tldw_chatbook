@@ -1049,10 +1049,10 @@ MINIMUM_FILES = 2028
 #   executor, ~10-12 s alone at load ~17, with and without the w1b plugin; kept
 #   out of its ~10 s sibling so neither nears the budget): 935 -> 936.
 # Rebased 2026-11-12 onto dev 4b90eb860b (2028 entries, floor 2028): the
-# polish-1b entries above, then PR #3423's 2 review-fix pins, stay
+# polish-1b entries above, then PR #3423's 3 review-fix pins, stay
 # appended at the tail, so no existing slot moves; the floor is the
-# measured entry count: 2028 + 22 = 2050.
-MINIMUM_FILES = 2050
+# measured entry count: 2028 + 23 = 2051.
+MINIMUM_FILES = 2051
 
 
 def read_census(path: Path) -> list[str]:
