@@ -207,7 +207,7 @@ _BUDGETS: dict[str, int] = {
     # (+15) -- parse-pool teardown kills workers that outlive the SIGTERM.
     # 2026-11-23, TASK-42470 review: the kill logs a warning with the pids:
     # 5072 -> 5081 (+9).
-    "tldw_chatbook/app_ingest_queue.py": 5081,
+    "tldw_chatbook/app_ingest_queue.py": 5080,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
@@ -1282,7 +1282,8 @@ _BUDGETS: dict[str, int] = {
     # dev's 9,534 plus TASK-39118's +22.
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9558,
+    # PR3345 retains the pre-integration media source ceiling.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9534,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -1324,7 +1325,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9231 -> 9230.
     # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9230 -> 9233.
     # 2026-11-22: re-measured after rebasing onto dev 2f7790873a (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8958 -> 9230.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 9230,
+    # PR3345 used an 8935-line pin on its prior integration base.
+    # Reconcile the incoming Workspace carry against the measured source.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 9169,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -1387,7 +1390,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 7,208, plus this branch's
     # +35, exact: 7,243.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7243,
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7226,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.

@@ -55,6 +55,7 @@ def count_compositor_updates(counts: dict[str, int]) -> Iterator[None]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_section_toggle_never_full_screen_updates() -> None:
     """Opening/closing a rail section must not redraw the whole screen.
 
@@ -90,6 +91,7 @@ async def test_section_toggle_never_full_screen_updates() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_rail_collapse_still_relayouts_the_screen() -> None:
     """Hiding a rail resizes the main column -- the screen must relayout."""
     async with make_console_pilot(size=(160, 45), production_styles=True) as pilot:

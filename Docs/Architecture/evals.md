@@ -30,6 +30,8 @@ Dictionaries merge recursively; lists and scalars replace. Explicit updates rema
 
 Backup/recovery keeps the `eval.definitions` owner for private YAML, separate from the `db.evals` owner for results. Discovery uses the same override selector, records genuine canonical absence as `unused`, and blocks complete backup on nonregular or unreadable overrides. Legacy recovered definitions retain their existing provenance, inactive destinations and activation requirements; startup never automatically adopts or rewrites them.
 
+File-backed per-sample writes share one thread-owned connection. Maintenance drain and ordinary async close share a retained physical retirement task; a drain deadline or cancelled waiter leaves cleanup owned. A new writer waits for successful close and thread shutdown, while failed cleanup retains its executor and refuses replacement. Synchronous close refuses pending retirement. Capture cannot treat async cancellation as proof that a native write ended.
+
 ## Classic eval run (dataflow)
 
 1. **Configure**: task (file or template; loader validates → DB row), model config (validator → DB row), dataset (format inferred from suffix).

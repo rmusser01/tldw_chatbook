@@ -190,7 +190,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: `Agents.ordinary_tree`, `Agents.workflow_task_scope`,
 #: `Chat.console_ordinary_tree` and `Workspaces.worktree_activity` (dev is at
 #: 1040); measured.
-MAX_TLDW_MODULES_AT_UI_READY = 1040
+# PR3345 retains the pre-integration ready-module limit.
+MAX_TLDW_MODULES_AT_UI_READY = 1031
 
 #: Modules a thread other than the UI loop imports during boot, so whether
 #: they are resident at ``_ui_ready`` depends on thread timing. They count on
