@@ -195,10 +195,13 @@ async def compose_turn_review_provider(
     confirm_project_dispatch,
     startup_candidate,
 ):
-    """Compose this turn's review tools; review is optional for ordinary turns."""
-    from tldw_chatbook.Agents.code_review_models import ReviewRefused
+    """Compose this turn's review tools; review is optional for ordinary turns.
 
-    from .console_code_review import compose_native_review_provider
+    Run start calls this only for a turn ``review_turn_possible`` admits. The
+    review service loads on the composition's worker thread, never on the UI
+    loop (TASK-33620.15.53).
+    """
+    from tldw_chatbook.Agents.code_review_models import ReviewRefused
 
     def review_destination_check(target):
         if (
@@ -241,7 +244,7 @@ async def compose_turn_review_provider(
 
     try:
         return await asyncio.to_thread(
-            compose_native_review_provider,
+            _compose_native_review_provider,
             controller,
             session_id=session_id,
             message=message,
@@ -269,6 +272,13 @@ async def compose_turn_review_provider(
         ):
             _review_needs_attention(controller, session_id, "review_tools_unavailable")
     return None
+
+
+def _compose_native_review_provider(controller: Any, **kwargs):
+    """Import the review service and compose, both on the worker thread."""
+    from .console_code_review import compose_native_review_provider
+
+    return compose_native_review_provider(controller, **kwargs)
 
 
 def _review_needs_attention(controller: Any, session_id, reason: str) -> None:

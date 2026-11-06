@@ -309,3 +309,133 @@ def test_a_first_review_request_loads_the_review_service_on_a_worker_thread(
         "a first review request loaded the review service on the UI loop:\n"
         + _report(on_loop)
     )
+
+
+# --- The ordinary-turn check run start makes before the review composition ---
+
+_STAGE_REQUESTS = (
+    "review",
+    "Review my changes",
+    "Please review and verify my changes.",
+    "Can you please do a multi-model code review?",
+    "$multi-model-review review my changes",
+    "verify",
+    "Consolidate the findings.",
+    "retry reviewer r2",
+    "Retry the verification",
+    "resume review",
+)
+
+
+@pytest.mark.parametrize("text", _STAGE_REQUESTS)
+def test_every_stage_request_names_a_review_word(text):
+    from tldw_chatbook.Agents.code_review_models import mentions_review_request
+    from tldw_chatbook.Chat.console_code_review import _explicit_stages
+
+    assert _explicit_stages(text, ("multi-model-review",)), text  # a real request
+    assert mentions_review_request(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "owner", "boundary", "possible"),
+    [
+        ("hello", None, None, False),
+        (None, None, None, False),
+        ("What changed in the weather today?", None, None, False),
+        ("Review my resume", None, None, True),  # classify decides; may be chat
+        ("VERIFY", None, None, True),
+        ("yes", object(), None, True),  # an offer answer needs the owner's state
+        (None, object(), None, True),
+        ("hello", None, object(), True),  # an accepted review wake
+    ],
+)
+def test_review_turn_possible_is_false_only_for_an_ordinary_turn(
+    text, owner, boundary, possible
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.code_review_models import review_turn_possible
+
+    wake = None if boundary is None else SimpleNamespace(review_boundary=boundary)
+    assert (
+        review_turn_possible(text, review_owner=owner, wake_authorization=wake)
+        is possible
+    )
+
+
+_FRAGMENTS = (
+    "review",
+    "Review",
+    "REVIEW",
+    "verify",
+    "Verify",
+    "consolidate",
+    "retry",
+    "resume",
+    "reviewer",
+    "r2",
+    "the",
+    "this",
+    "my",
+    "changes",
+    "patch",
+    "verification",
+    "please",
+    "can you",
+    "do a multi-model code",
+    "and",
+    "then",
+    "not",
+    "don't",
+    "if",
+    "?",
+    ".",
+    "!",
+    '"',
+    "'",
+    "`",
+    ">",
+    "$multi-model-review",
+    "hello",
+    "findings",
+    "reports",
+    "\n",
+)
+
+
+def test_the_review_word_gate_changes_no_stage_the_parser_finds():
+    """``_explicit_stages`` returns what it returned before its first gate.
+
+    The gate is what lets run start skip a turn unparsed, so it must be a
+    necessary condition of every stage, never a new refusal: with the gate
+    forced open, the parser finds the same stages for every text.
+    """
+    from unittest import mock
+
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    from tldw_chatbook.Chat import console_code_review
+
+    texts = st.one_of(
+        st.text(max_size=60),
+        st.lists(st.sampled_from(_FRAGMENTS), max_size=8).map(" ".join),
+    )
+
+    requests = []
+
+    @settings(max_examples=400, deadline=None, derandomize=True)
+    @given(text=texts, trusted=st.booleans())
+    def check(text, trusted):
+        bindings = ("multi-model-review",) if trusted else ()
+        gated = console_code_review._explicit_stages(text, bindings)
+        with mock.patch.object(
+            console_code_review, "mentions_review_request", lambda _text: True
+        ):
+            ungated = console_code_review._explicit_stages(text, bindings)
+        assert gated == ungated, text
+        if gated:
+            requests.append(text)
+
+    check()
+    assert len(requests) >= 5, "the generated texts held almost no stage request"
