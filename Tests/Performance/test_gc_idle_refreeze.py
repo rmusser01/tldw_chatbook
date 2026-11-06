@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import os
 import threading
 import weakref
 from collections.abc import Callable
@@ -862,13 +863,32 @@ def test_live_foreground_objects_a_refreeze_now_freezes_count_as_growth(
 def test_a_refreeze_now_is_off_under_pytest_unless_overridden(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The same switch as every other idle re-freeze (TASK-33620.15.57)."""
+    """The same default switch as every other idle re-freeze (TASK-33620.15.57).
+
+    The refreezer keeps its default ``enabled`` gate here, so this pins the
+    ``PYTEST_CURRENT_TEST`` / ``TLDW_IDLE_HEAP_REFREEZE`` gate itself, not
+    only that ``refreeze_now`` consults whatever switch it was given.
+
+    Args:
+        monkeypatch: Sets and clears ``TLDW_IDLE_HEAP_REFREEZE``.
+    """
     ops = Ops()
     refreezer = IdleHeapRefreezer(
-        enabled=lambda: False, refreeze=ops.refreeze, freeze_count=ops.freeze_count
+        refreeze=ops.refreeze, freeze_count=ops.freeze_count, unfrozen_count=lambda: 0
     )
+    monkeypatch.delenv("TLDW_IDLE_HEAP_REFREEZE", raising=False)
+    assert "PYTEST_CURRENT_TEST" in os.environ
     assert refreezer.refreeze_now("first_send_preimport") == "off"
     assert ops.calls == []
+
+    monkeypatch.setenv("TLDW_IDLE_HEAP_REFREEZE", "0")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert refreezer.refreeze_now("first_send_preimport") == "off"
+    assert ops.calls == []
+
+    monkeypatch.setenv("TLDW_IDLE_HEAP_REFREEZE", "1")
+    assert refreezer.refreeze_now("first_send_preimport") == "refreeze"
+    assert ops.calls == ["refreeze:first_send_preimport"]
 
 
 def test_every_freeze_advances_the_freeze_epoch(
