@@ -356,9 +356,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-05 owner decision (expand limits, never contort code; B2b
     # follow-up burn-down PR 3): TASK-33910.46's centre failure copy and
     # TASK-33910.37's per-server unfiltered total for a server search's
-    # "N of M" title: +33; rebased onto dev 4b90eb860b 2026-11-12, set to the
-    # measurement (16,834 -> 16,867).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16867,
+    # "N of M" title: +35 (dev 4b90eb860b's 16,834 -> 16,869, rebased
+    # 2026-11-12, set to the measurement).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16869,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

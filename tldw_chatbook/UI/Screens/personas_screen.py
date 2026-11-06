@@ -2219,9 +2219,11 @@ class PersonasScreen(BaseAppScreen):
                 self.state.search_query
                 and unfiltered is not None
                 and unfiltered[0] == self._active_server_target()
+                and not (unfiltered[2] and self._character_total > unfiltered[1])
             ):
                 # Owner decision 2026-11-05: "12 of 340", or "12 of 100+"
-                # when that page was full with no total; no server call.
+                # when that page was full with no total; no server call. A
+                # known M the search outgrew is stale and is not shown.
                 return frame_state.items_border_title(
                     "character",
                     total=unfiltered[1],
