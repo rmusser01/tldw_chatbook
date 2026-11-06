@@ -315,9 +315,12 @@ class SQLiteStoreKernel:
     def close_idle_connections(self) -> bool:
         """Close every same-file handle unless one is in use; sets no barrier.
 
-        Only for a store that keeps a ``_connection_quiescence`` registry.
+        A store without a ``_connection_quiescence`` registry tracks no
+        other thread's handle, so there is nothing to close.
 
         Returns:
-            Whether the handles were closed; see ``close_if_idle``.
+            Whether the handles were closed; see ``close_if_idle``. True,
+            closing nothing, for a store without a registry.
         """
-        return self._connection_quiescence.close_if_idle(self)
+        registry = self._connection_quiescence
+        return True if registry is None else registry.close_if_idle(self)

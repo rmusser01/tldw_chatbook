@@ -4,12 +4,11 @@ title: "Worker-thread handles of the media, Dreams and Guardian stores are never
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 15:44
+updated_date: 2026-11-06 18:27
 labels:
 - follow-up
 - database
 - lifecycle
-- needs-owner-decision
 priority: medium
 references:
 - tldw_chatbook/app_lifecycle.py
@@ -103,7 +102,7 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 
 **Tests (`Tests/DB/test_sync_log_retention.py`), with red evidence.**
 - `test_app_unmount_retires_a_worker_thread_handle_of_each_store[media|dreams|guardian]` (AC#2, AC#3). Each store opens a handle on a pool thread that stays alive across the quit: media through the real scope-picker tag lister, Dreams and Guardian through `asyncio.to_thread` reads. The quit then runs the real `on_unmount`, with its own hops on another executor. The test asserts that no live lease is left on the store's file on any thread. Red at base: media `['kept_0'] == []`; Dreams and Guardian `['MainThread', 'kept_0'] == []`.
-- `test_app_unmount_store_close_never_aborts_a_straggler_write_in_each_store[...]` (AC#4). A writer pauses inside an open transaction across the quit close, then writes again and commits. The test asserts that both rows landed and the close took under 1 s. It is green at base, which closed none of these stores' worker handles. It was red 3 of 3 with a temporary edit that removed both the transaction check and the core-operation check from `close_if_idle`. I first tried a writer looping transactions, the shape of TASK-38955's test. It could not be made red: with both checks removed, it and TASK-38955's own loop test stayed green in 2 of 2 runs. The writer releases the GIL in COMMIT, so the close lands between its transactions, and its next getter then waits on the acquisition.
+- `test_app_unmount_store_close_never_aborts_a_straggler_write_in_each_store[...]` (AC#4). A writer pauses inside an open transaction across the quit close, then writes again and commits. The test asserts that both rows landed and the close took under 1 s. It is green at base, which closed none of these stores' worker handles. It was red 3 of 3 with a temporary edit that removed both the transaction check and the core-operation check from `close_if_idle`. I first tried a writer looping transactions, the shape of TASK-38955's test. It could not be made red: with both checks removed, it stayed green in 2 of 2 runs. The writer releases the GIL in COMMIT, so the close lands between its transactions, and its next getter then waits on the acquisition. TASK-38955's ChaChaNotes loop test also stayed green under that control, but for another reason. A ChaChaNotes transaction holds a registry use token for its whole length (`TransactionContextManager.__enter__` -> `begin_use`), so `_active_uses` refuses the close, and the control left that check alone.
 - `test_app_unmount_store_close_skips_a_store_with_a_core_operation_running[media|dreams|guardian]`. A worker holds a raw handle inside a core operation between two reads, with no transaction open. The test asserts that both reads ran and that the logger got the "still in use" line. Red 3 of 3 with the core-operation check removed: `ProgrammingError: Cannot operate on a closed database`.
 - `test_idle_close_refuses_while_a_getter_is_opening_a_handle[...]`. A raw getter call on a worker blocks in its connection open, and the test checks the idle close's verdict, first while the open is blocked, then after it finishes. Red 3 of 3 with `registry_acquisition` disabled: `(True, True) == (False, True)`.
 - TASK-38955's quit tests stay green by name: `test_app_pass_retires_the_handles_it_opens_on_its_worker_thread`, `test_app_unmount_retires_both_stores_on_every_thread` (its owner stub is now the shared `_unmount_owner` helper, with its assertions unchanged), `test_app_unmount_store_close_never_aborts_a_straggler_write`, `test_app_unmount_store_close_skips_a_busy_store_without_blocking` and `test_app_unmount_ui_close_bounds_its_checkpoint_wait`.

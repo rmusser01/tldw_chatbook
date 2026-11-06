@@ -1135,10 +1135,15 @@ class _StorageLeaseGuard:
     dreams-boundary step passes. The autouse fixture is set up before, and
     torn down after, the test's own function fixtures; leases of wider-scoped
     fixtures are already in ``before``. Startup admissions are left out of
-    that count, as the drain leaves them, and reported on their own: a
-    selection's config import admits its fresh profile, and the selection's
-    undo releases it (``config_test_support``, TASK-39059), so one still held
-    would make a later in-process backup refuse to retire its startup.
+    that count, as the drain leaves them, and reported on their own
+    (TASK-39059): one held beside the process's own makes a later in-process
+    backup refuse to retire its startup. Two releases run before this check.
+    ``isolate_test_environment`` releases every admission under the test's
+    own fresh profile (``tmp_path/test_data``), whether a selection or a
+    module admitting at import filed it, and a selection's monkeypatch undo
+    releases the one its import added (``config_test_support``). So this
+    finding catches an admission outside the test's own profile, such as a
+    patched bootstrap root a test leaves held.
     """
 
     @staticmethod
@@ -1164,19 +1169,18 @@ class _StorageLeaseGuard:
         root = key[1] if key else "no admission root (unqualified lease)"
         return f"storage lease without a SQLite handle, admission root {root}"
 
-    @pytest.fixture(autouse=True)
-    def _no_new_live_storage_lease(self, request):
-        before, startups = self._live(), self._startups()
-        yield
-        leaked = self._live() - before
+    @classmethod
+    def _findings(cls, before: set, startups: dict) -> list[str]:
+        """What a test left since ``before`` (live leases) and ``startups``."""
+        leaked = cls._live() - before
         kept = sorted(
             key[1]
-            for key, lease in self._startups().items()
+            for key, lease in cls._startups().items()
             if startups.get(key) is not lease
         )
         findings = []
         if leaked:
-            where = sorted(self._describe(lease) for lease in leaked)
+            where = sorted(cls._describe(lease) for lease in leaked)
             findings.append(
                 f"left {len(leaked)} new live storage lease(s) open: {where}"
             )
@@ -1185,6 +1189,13 @@ class _StorageLeaseGuard:
                 f"left {len(kept)} new startup admission(s) held, admission "
                 f"root(s): {kept}"
             )
+        return findings
+
+    @pytest.fixture(autouse=True)
+    def _no_new_live_storage_lease(self, request):
+        before, startups = self._live(), self._startups()
+        yield
+        findings = self._findings(before, startups)
         if findings:
             pytest.fail(f"{request.node.nodeid} " + "; ".join(findings), pytrace=False)
 
@@ -1972,8 +1983,10 @@ def _release_profile_startups(profile_dir: Path) -> None:
     server) admits the fresh profile of the test that first imports it, and
     holds it until exit, though nothing uses that profile again. Any startup
     left beside the process's own makes ``_LocalPause.retire_startup`` refuse
-    (``runtime_startup_scope_unqualified``). Selections release their own
-    earlier (``config_test_support``).
+    (``runtime_startup_scope_unqualified``). This runs before the test's
+    ``monkeypatch`` undo, so it also releases a fresh-profile selection's
+    admission; ``config_test_support`` releases a selection's own at its
+    undo, which comes first only for a ``MonkeyPatch.context()`` in the body.
     """
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
 

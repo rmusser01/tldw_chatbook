@@ -695,6 +695,18 @@ def test_idle_close_refuses_while_a_getter_is_opening_a_handle(
     assert (while_opening, db.close_idle_connections()) == (False, True)
 
 
+def test_kernel_idle_close_is_a_no_op_for_a_store_without_a_registry(tmp_path):
+    """TASK-39047 review: only Dreams and Guardian keep a registry; the idle
+    close of any other kernel store raised AttributeError."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    try:
+        assert db.close_idle_connections() is True
+    finally:
+        db.close()
+
+
 @contextmanager
 def _raw_handle_in_a_core_operation(db):
     """A raw handle held inside a counted core operation, outside a transaction."""
