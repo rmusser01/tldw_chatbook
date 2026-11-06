@@ -171,6 +171,35 @@ async def test_a_bogus_hugging_face_token_is_rejected_by_whoami() -> None:
     assert str(seen[-1].url) == "https://huggingface.co/api/whoami-v2"
 
 
+@pytest.mark.asyncio
+async def test_an_accepted_hugging_face_token_is_verified_by_whoami() -> None:
+    """Review F5: HF's whoami-v2 200 path was untested (and no real HF token
+    exists to check it live). TASK-34100.6's Check key reads
+    ``key_verified``/``key_check_passed``, so an accepted token must set both."""
+    result, seen = await _discover(
+        "huggingface",
+        "https://router.huggingface.co/v1/chat/completions",
+        {
+            "https://router.huggingface.co/v1/models": httpx.Response(
+                200, json={"data": [{"id": "openai/gpt-oss-120b"}]}
+            ),
+            "https://huggingface.co/api/whoami-v2": httpx.Response(
+                200, json={"type": "user", "name": "someone"}
+            ),
+        },
+        api_key="hf_test_token_value",
+    )
+
+    assert result.status == "success"
+    assert result.key_verified is True
+    assert key_check_probe_result(result, key_sent=True).key_check_passed is True
+    assert [str(request.url) for request in seen] == [
+        "https://router.huggingface.co/v1/models",
+        "https://huggingface.co/api/whoami-v2",
+    ]
+    assert seen[-1].headers["Authorization"] == "Bearer hf_test_token_value"
+
+
 def _openrouter_listing() -> dict[str, httpx.Response]:
     return {
         "https://openrouter.ai/api/v1/models": httpx.Response(
