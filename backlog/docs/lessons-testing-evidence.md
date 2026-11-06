@@ -4,11 +4,15 @@
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
 - `Backup_Recovery/native_platform.rename_noreplace` bound the native no-replace publication by tuple assignment (`fn, flags = libc.renameatx_np, 0x4`).
-- 19 modules had moved onto the `Utils/atomic_file_ops` writers, which were outside the census vocabulary. Model_Artifacts and the Chatbooks registry were among them.
+- 4 modules had moved a counted write onto the `Utils/atomic_file_ops` writers, which were outside the vocabulary: `trajectory_export`, `model_discovery_disk_cache`, `config_profiles` and `file_operation_tools`.
+- The Personas exports ran `path.mkdir` / `write_text` / `write_bytes` through `asyncio.to_thread(path.write_text, ...)`. A callable passed by reference was never counted.
+- `EvalConfigLoader.save` wrote the qualified `eval.definitions` source with `yaml.safe_dump` into a stream from a non-vocabulary opener.
+
+The first fix round still missed the last two. It had read each surviving symbol's direct calls for known writer names, so it missed a callable passed as an argument and an unfamiliar serializer. Review r11b-rev1 found both.
 
 Deleting those rows as "gone" would have certified that live durable writers had no owner row.
 
-**What to do.** Before removing a gone row from a source census, check whether its symbol still exists. If it does, read what the symbol calls now. A shim import, a new alias form or a repo-local helper that replaced the counted call is a scanner gap: extend the scanner, with a unit test that is red first. Only rows whose code is really gone (a deleted file, a removed call) leave the inventory.
+**What to do.** Before removing a gone row from a source census, check whether its symbol still exists. If it does, read every call it makes now, including callables passed as arguments (`to_thread`, `run_in_executor`, `partial`). A shim import, a new alias form, a reference passed to a runner or a repo-local or library writer that replaced the counted call is a scanner gap. Extend the scanner, with a unit test that is red first. If a symbol still writes through something you do not add (tempfile, a third-party exporter, a subprocess), say so where its row is removed. Only rows whose code is really gone (a deleted file, a removed call) leave the inventory without a note.
 
 ## A test server's sleeping handler is paid in full when `async with server` exits (TASK-38965, 2026-11-06)
 

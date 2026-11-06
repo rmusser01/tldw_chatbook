@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 15:43
+updated_date: 2026-11-06 16:52
 labels:
 - follow-up
 - backup
@@ -84,41 +84,48 @@ Classifying rows into owners and backup cohorts is a product decision about what
 Owner decision (2026-11-06): "Agent proposes, you sign off: a stream classifies every row by the existing doc's rules and each module's policy flags, groups them by cohort and flags only the ambiguous ones; you sign off the cohort table in the PR, and nothing merges until you do."
 
 **What changed.** Branch `fu/r11-backupinv`, base dev 2684e5453f.
-- The census had three blind spots. They hid live producers, so some rows looked gone. All three are fixed in the test only:
-  - `from <module> import os` never bound `os`. 60+ modules import `os` from `Utils/platform_files`, and 24 "gone" rows were live `os.replace` / `os.unlink` calls.
-  - A tuple assignment, `fn, flags = libc.renameatx_np, 0x4`, hid the native no-replace publication in `Backup_Recovery/native_platform.rename_noreplace`.
-  - The `Utils/atomic_file_ops` writers (`atomic_write_text`, `_bytes`, `_json`, `atomic_copy`) were not in the vocabulary. 19 modules call them, among them Model_Artifacts, the Chatbooks registry and the model catalog cache. The doc's own rule is that a new persistence API extends the vocabulary as part of owner review.
-- After those fixes, the drift at dev 2684e5453f was 682 added, 170 gone and 13 changed producer rows, plus 13 new and 8 gone SQLite members.
+- The census had blind spots that hid live producers, so some rows looked gone. All are fixed in the test only, each with a unit test that was red first:
+  - `from <module> import os` never bound `os`. 69 modules import `os` from `Utils/platform_files`, and 24 "gone" rows were live `os.replace` / `os.unlink` calls.
+  - A tuple assignment, `fn, flags = libc.renameatx_np, 0x4`, hid the native no-replace publication in `Backup_Recovery/native_platform.rename_noreplace`. Assigned aliases are now lexically scoped (review r11b-rev1): the module-wide binding had also counted `fn = libc.fstatfs; fn(...)` in `linux_identity` as `renameatx_np`.
+  - The `Utils/atomic_file_ops` writers (`atomic_write_text`, `_bytes`, `_json`, `atomic_copy`) were not in the vocabulary. 19 modules call them: 4 had rows that looked gone (`trajectory_export`, `model_discovery_disk_cache`, `config_profiles`, `file_operation_tools`), and the other 15 were never counted.
+  - (review r11b-rev1) A producer passed by reference was never counted. This covers `asyncio.to_thread(path.write_text, ...)`, `drain_thread(archive.write_bytes)` and `run_in_executor(None, atomic_write_text, ...)`. The four Personas export rows (`_dictionary_export_worker`, `_export_expression_set`: mkdir, write_text, write_bytes) are restored. `x.open` / `x.connect` values passed as arguments are not counted: here they are widget state (`header.open`, `event.open`) or `webbrowser.open`.
+  - (review r11b-rev1) `yaml.safe_dump` / `safe_dump_all` / `dump_all` were not in the vocabulary. `EvalConfigLoader.save` writes the qualified `eval.definitions` source with `safe_dump` into a `raw.file(...)` stream, so its row carries onto `safe_dump`. `yaml.dump`, `json.dump`, `pickle.dump` and `toml.dump` were already counted as `dump`.
+  - (review r11b-rev1) `os.rename` and `os.link`, which publish like `os.replace`: `snapshot_store._move_verified`, `ModelArtifactService._promote`, the backup `crypto.transform` and others.
+- With these forms counted, the drift at dev 2684e5453f is 716 added, 166 gone and 13 changed producer rows, plus 13 new and 8 gone SQLite members. The original scanner gave 644 / 194 / 12.
+- Known limits, recorded in the doc: these are outside the vocabulary.
+  - `tempfile` creation: 86 rows if counted, 22 of them in symbols that have no other row. Follow-up.
+  - Third-party writers such as pydub `AudioSegment.export`, subprocess outputs, and dynamic bindings such as `local_tool_impls`' `file_os`.
 - `backlog/docs/backup-recovery-owner-inventory.md`:
   - Moved or renamed producers replace their old rows in place.
   - The 13 changed counts are updated.
-  - The 170 gone rows are removed: 60 moved or renamed, 53 in 13 deleted files, 57 removed or refactored code.
-  - A new section, "Census reconciliation (TASK-39053)", holds the rules, the 12 new SQLite rows and the 621 new producer rows, grouped by cohort.
+  - The 166 gone rows are removed: 61 moved or renamed (62 rows replace them), 53 in 13 deleted files, 17 in symbols that no longer exist, and 35 in symbols that still exist. A table in the doc says where each of those 35 symbols' producer went.
+  - Only one of the 35 still writes outside the vocabulary: `AudioService.create_m4b_with_chapters`, which writes a temporary `.m4a` through tempfile and pydub, and the M4B through an ffmpeg subprocess. The doc says so instead of calling it removed.
+  - A new section, "Census reconciliation (TASK-39053)", holds the rules, the 12 new SQLite rows and the 654 new producer rows, grouped by cohort.
   - The 8 doc-only SQLite rows are removed, each with its cause. `recovery.operations.receipts` was never a registry member: it was written for the doc in b5251e9a6e, and `git log -S` finds no registry commit. Four `settings.*` owners (`pre_restore_backup`, `restore`, `schema`, `single_backup`) left in c9f243f4a2 on 2026-08-29. The other three (`bulk_backup`, `integrity`, `vacuum`) left in bd1a4258ea (TASK-33244) on 2026-10-10. The task description's "all seven in bd1a4258ea" is corrected here.
 - AC#2, the recommended option: `tests.store_kernel` is removed from `_SQLITE_OWNER_POLICIES`. `Tests/DB/test_store_kernel.py` now registers the same policy with `monkeypatch.setitem` for its own tests. The SQLite census retires C97, in the `.md` row and in the id-sequence test. All of this is one commit (faeffb9c0e); reverting it restores the old arrangement.
 - AC#6: both nodes now raise with the full listing. Before, a bare `assert ==` let pytest truncate the diff ("851 lines hidden").
 - AC#7: the file is laned on `architecture-guards` ("Run Architecture guard contracts"), appended after the last target, and pinned in `ARCHITECTURE_GUARD_TARGETS`.
 - No production behaviour changed except the AC#2 registry entry. What a backup captures is unchanged.
 
-**Cohort sign-off table** (682 added producer rows, 12 new SQLite members, and AC#2):
+**Cohort sign-off table** (716 added producer rows, 12 new SQLite members, and AC#2):
 
 | # | Owner / cohort | Rule | Rows | Examples | Needs owner |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Moved or renamed producers (any cohort) | Same producer under a new symbol or module: it keeps its reviewed row, in place | 61 (replace 60) | `RunLogWriter._bind_under_scope` (qualified, agents.history); `NotesDeviceStateStore._connect` (qualified, notes.sync_state); `native_platform.rename_noreplace` (generic_boundary, backup_native_storage) | no |
-| 2 | Changed counts | The extra calls use the same mechanism, so the classification is kept | 13 | `ChatbookCreator._create_zip_archive` open 1→3; `BaseDB._get_connection` 1→2; `KeyringServerCredentialStore._save_index` set_password 1→3 | no |
-| 3 | Same mechanism in a reviewed module | A new symbol does what the module's reviewed rows do (read in source). File tools keep the old split: write is `external_input`, open and mkdir are `unsupported` | 52 | `ConsoleChatStore._persist_generation_variant` (memory); `ChatbookImporter._preflight_archive` (generic_boundary); `FileNotesService.restore_revision` (external_input); `models_dev_catalog._write_cache_file` (disposable, diagnostics) | no |
+| 1 | Moved or renamed producers (any cohort) | Same producer under a new symbol or module: it keeps its reviewed row, in place | 62 (replace 61) | `RunLogWriter._bind_under_scope` (qualified, agents.history); `NotesDeviceStateStore._connect` (qualified, notes.sync_state); `EvalConfigLoader.save` safe_dump (generic_boundary, eval.definitions) | no |
+| 2 | Changed counts | Classification kept. 11 counts went up with calls of the same mechanism. 2 went down because calls moved out: `ChatbookCreator._collect_notes` write 8→3 and `PinnedSyncRoot._create_temporary` os.unlink 2→1 | 13 | `ChatbookCreator._create_zip_archive` open 1→3; `BaseDB._get_connection` 1→2; `KeyringServerCredentialStore._save_index` set_password 1→3 | no |
+| 3 | Same mechanism in a reviewed module or symbol | A new call in a reviewed symbol, or a new symbol that does what the module's reviewed rows do (read in source). File tools follow their reviewed split. Symbols that write into the user-selected root (write, mkdir, write-target opens, like `WriteFileTool.execute`) are `external_input`. Read, lock and verify helpers stay `unsupported`, like the old `read_file` / `edit_file` opens | 63 | `ConsoleChatStore._persist_generation_variant` (memory); `ChatbookImporter._preflight_archive` (generic_boundary); `local_tool_impls._mkdir_relative_directory` (external_input); `models_dev_catalog._write_cache_file` (disposable, diagnostics) | no |
 | 4 | generic | Private path, SQLite or file utility boundary | 22 | `atomic_file_ops._publish_no_clobber`; `SQLiteStoreKernel._open_connection`; `private_sqlite_helper.run` | no |
-| 5 | memory, new modules | `value.to_json()` into a column or payload; `Image.open(BytesIO(...))`; exact `sqlite3.connect(":memory:")` | 37 | `ChatPersistenceService.commit_completed_voice_pair`; `contracts._validate_portrait`; `profile_sqlite_policy.require_native_close_policy_support` | no |
+| 5 | memory, new modules | `value.to_json()` into a column or payload; `yaml.safe_dump(value)` with no stream; `Image.open(BytesIO(...))`; exact `sqlite3.connect(":memory:")` | 42 | `ChatPersistenceService.commit_completed_voice_pair`; `note_frontmatter._dump`; `portrait_performance.normalize_performance_frame` | no |
 | 6 | process-transport, new modules | Writes to a child's stdin or the module's own stdio, a pipe, a pty or a socket | 40 | `diarizer_worker.serve`; `PosixTerminalBackend.write`; `age_worker._encrypt` (pipe-only worker); `Petdex/network.fetch_bytes` (connect) | no |
-| 7 | Registered SQLite owners, unsupported | A row in an owner's production module takes the owner id as cohort; with no capture flag it stays `unsupported` | 23 | `PluginRegistry.__init__` (plugins.registry); `PersonalContextRepository._connect`; `LegacyCollectionsRecovery._write_export` | no |
+| 7 | Registered SQLite owners, unsupported | A row in an owner's production module takes the owner id as cohort; with no capture flag it stays `unsupported` | 26 | `PluginRegistry.__init__` (plugins.registry); `PersonalContextRepository._connect`; `LegacyCollectionsRecovery._publish_export` (os.link) | no |
 | 8 | Dreams and Guardian, qualified | `centralized_backup_allowed` and `recovery_capture_allowed`, with installed adapters and owner tests (f927f98add, c49d71439e), the same as the other `recovery.operations.*` owners | 6, plus 2 SQLite rows | `DreamsDB` inherits:BaseDB (qualified, db.dreams); `_GuardianAdapter.capture` (generic_boundary, native-operational-recovery) | no |
-| 9 | Named cohorts, unsupported | The module's reviewed cohort, else the cohort table's package cohort | 127 | agents 36, tts 23, models 15, mcp 13, assets 9, workspaces 9, config 7, skills 5, files 4, other 6 | no |
-| 10 | miscellaneous, unsupported | No named cohort, so the doc's conservative default applies. This includes pipes, sockets and widget writes that row 6 does not cover | 294 | Plugins 60, Actor_Packs 30, Audio 23, LLM_Management 23, UI 22, Web_Server 17, Personal_Context 15, Tool_Packs 15, Tools 13, other 76 | no |
+| 9 | Named cohorts, unsupported | The module's reviewed cohort, else the cohort table's package cohort | 126 | agents 36, tts 23, models 15, mcp 13, workspaces 9, assets 8, config 6, skills 5, files 4, other 7 | no |
+| 10 | miscellaneous, unsupported | No named cohort, so the doc's conservative default applies. This includes pipes, sockets and widget writes that row 6 does not cover | 309 | Plugins 61, Actor_Packs 30, UI 30, LLM_Management 24, Audio 23, Tool_Packs 17, Web_Server 17, Personal_Context 15, Tools 13, other 79 | no |
 | 11 | Backup_Recovery's own new pipeline | Left `unsupported` until the backup owner reviews each symbol. The 20 rows are listed below | 20 | `produce_detached_archive`; `relocation_lock`; `acquire_source` | **yes** |
 | 12 | New SQLite members, settled by flags | No capture flag, so `sqlite/unsupported` | 8 | chat.launch_wake, plugins.registry, workflows.local | no |
 | 13 | New SQLite members whose policy reason says "excluded" | `db.workspace_project_index` ("excluded from backup and sync") and `personal_context.interview_drafts` ("excluded from centralized backup") are `sqlite/unsupported`. A False flag does not make an exclusion; `db.chachanotes.primary` has the same flags. Alternative: an installed exclusion adapter, like `notes.sync_state`'s `_DeviceStateExclusion` | 2 | — | **yes** |
 | 14 | AC#2: `tests.store_kernel` | Implemented: removed from the production registry, and the kernel tests register it themselves. Alternative: keep it in the registry, with a `tests/excluded` row in both inventories | 1 member | — | **yes** |
-| 15 | Scanner vocabulary | Three blind spots fixed (test only); they account for 24 "gone" rows, 1 changed count and 38 added rows. The doc says vocabulary extensions are part of owner review | — | `from …platform_files import os`; `fn, flags = libc.renameatx_np, …`; `atomic_write_*` | **yes** |
+| 15 | Scanner vocabulary | The blind spots above, fixed in the test only. Against the original scanner they account for 28 "gone" rows, 1 changed count and 72 added rows. Known limits: tempfile, third-party writers, subprocesses, dynamic bindings, and `x.open`/`x.connect` passed by reference. The doc says vocabulary extensions are part of owner review | — | `from …platform_files import os`; `to_thread(path.write_bytes, …)`; `yaml.safe_dump`; `os.rename` | **yes** |
 
 The 20 row-11 rows, each with a proposed classification for the owner:
 - `detached_layout`: `_normalize_sqlite` connect, create_private_file ×2 and write; `produce_detached_archive` create_private_file ×2 and write ×2; `_restored_cache_paths` open. This is the confined import of acquired portable bytes. Proposed: `disposable`, private output staging.
@@ -138,19 +145,25 @@ Observations for later cohort work (no decision needed now):
   - Doc 1059 rows against production 1509: 644 added, 194 gone, 12 changed.
   - SQLite: 13 new, 8 gone.
   - At the base worktree, serial: 2 failed, 9 passed in 24.6 s: `test_every_persistence_source_symbol_has_reviewed_owner_row` and `test_sqlite_registry_members_have_explicit_census_rows`.
-- Each new census unit test was red before its fix, at `assert 0 == 1`: `test_census_tracks_os_bound_by_from_import_shim` and `test_census_tracks_native_callable_bound_by_tuple_assignment`.
-- Green after: `Tests/Architecture/test_backup_owner_inventory.py` (serial), 13 passed. Both inventory nodes pass, and the doc's 1571 rows equal production's 1571.
-- AC#6 negative control (temporary source edits, then reverted):
+- Each scanner extension's unit test was red before its fix:
+  - `test_census_tracks_os_bound_by_from_import_shim`: `assert 0 == 1`.
+  - `test_census_tracks_native_callable_bound_by_tuple_assignment`: `assert 0 == 1`.
+  - `test_census_native_alias_assignment_is_lexically_scoped`: `assert 1 == 0` (the `identity` case).
+  - `test_census_counts_producer_callables_passed_by_reference`: `assert 0 == 1`.
+  - `test_census_counts_yaml_safe_dump_serializers`: `assert 0 == 1`.
+  - `test_census_tracks_native_rename_and_link_publication`: `assert 0 == 2`.
+- Green after: `Tests/Architecture/test_backup_owner_inventory.py` (serial), 17 passed in 27.7 s. Both inventory nodes pass, and the doc's 1609 rows equal production's 1609.
+- AC#6 negative control, rerun after review r11b-rev1 (temporary source edits, then reverted):
   - The edits: a synthetic `_synthetic_unreviewed_producer` (open + write) in `Utils/file_durability.py`; a removed `mkdir` in `tls_trust._merged_bundle_path`; an extra `open` in `tls_trust._file_digest`.
   - Result: "2 added, 1 gone, 1 changed", with all four rows listed.
-- AC#2 covering tests: `Tests/DB/test_store_kernel.py`, `test_private_sqlite_inventory.py` and `test_private_sqlite.py` at `-n 4`.
-  - Result: 23 failed, 399 passed. The same 23 fail on plain dev 2684e5453f with the same command (23 failed, 401 passed). The 2 fewer passes are `OWNER_KIND_CASES` parameters of the removed owner. No new failure.
-  - These three files are in no PR lane (only one inventory node is), and their 23 reds are pre-existing.
+- AC#2 covering tests (round 1, no DB change since): `Tests/DB/test_store_kernel.py`, `test_private_sqlite_inventory.py` and `test_private_sqlite.py` at `-n 4`.
+  - Result: 23 failed, 399 passed. The same 23 fail on plain dev 2684e5453f with the same command (23 failed, 401 passed). The 2 fewer passes are `OWNER_KIND_CASES` parameters of the removed owner.
+  - These three files are in no PR lane, and their 23 reds are pre-existing.
 - `Tests/CI` at `-n 4`: 1215 passed, 1 skipped.
 - AC#7 timings:
   - CI before, read-only: on #3436 (fu/r10-arch, run 42218508176) the step took 402 s and the job 7.6 min, against a 20 min cap.
-  - Local, `bash $FU/jobstep.sh fu-r11-backupinv "Run Architecture guard contracts"`, serial, three runs: 318.6 s, 348.9 s and 370.8 s of pytest time (345, 375 and 398 s wall), 173 passed each time. Load average was 27-65, with other agents sharing the 18 CPUs.
-  - The file alone: 26.0 s serial (24.6 s at base).
+  - Local, `bash $FU/jobstep.sh fu-r11-backupinv "Run Architecture guard contracts"`, serial. Round 1, three runs: 318.6 s, 348.9 s and 370.8 s of pytest time (345, 375 and 398 s wall), 173 passed each time, with load average 27-65 and other agents sharing the 18 CPUs. After review r11b-rev1, one run: 591.9 s of pytest time (656 s wall), 177 passed, with load average 39-65. The file alone stays about 28 s, so the extra time is load.
+  - The file alone: 27.7 s serial (24.6 s at base).
 - `bash $FU/bootbudget.sh fu-r11-backupinv`: 32 passed. `./scripts/preflight.sh` through run.sh: all derived-artifact checks passed.
 
 **Files.**
