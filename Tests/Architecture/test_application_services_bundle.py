@@ -21,6 +21,7 @@ exclusion list (ADR-250 section 2, Q3).
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 import re
 import sys
@@ -371,4 +372,9 @@ async def test_every_alias_is_still_the_bundle_field_after_mount(request) -> Non
     app = _build_test_app()
     async with app.run_test(size=(180, 48)) as pilot:
         await pilot.pause()
+        # After the deferred post-mount setup too, not just the first frame.
+        deadline = asyncio.get_running_loop().time() + 60
+        while not getattr(app, "_ui_ready", False):
+            assert asyncio.get_running_loop().time() < deadline, "app never reached _ui_ready"
+            await asyncio.sleep(0.05)
         assert not _misaligned(app)
