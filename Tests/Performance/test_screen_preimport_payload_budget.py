@@ -135,7 +135,10 @@ MAX_PASS_ADDED_MODULES = 558
 #: `Canvas.config_policy` (312 lines) out of `config.py`, which the census
 #: counts as baseline, into a module `settings_screen` imports, so the pass
 #: shows code that was already resident.
-MAX_PASS_ADDED_LOC = 426_512
+#: 426,512 -> 426,539 (2026-11-05, TASK-36516; owner size waiver 2026-10-31):
+#: +27 in `settings_screen` (the koboldcpp native-route save refusal), modules
+#: unchanged, pinned at the measurement.
+MAX_PASS_ADDED_LOC = 426_539
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
