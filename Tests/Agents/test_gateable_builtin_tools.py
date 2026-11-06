@@ -120,3 +120,34 @@ def test_every_blurb_says_how_often_the_card_asks():
     for entry in gateable_builtin_tools():
         assert entry.blurb.endswith(f" {sentence}"), entry.tool_name
         assert "longer scope" not in entry.blurb, entry.tool_name
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [e for e in gateable_builtin_tools() if "Asks before each use" in e.blurb],
+    ids=lambda e: e.tool_name,
+)
+def test_a_blurb_that_says_it_asks_belongs_to_a_tool_the_gate_floors_to_ask(entry):
+    """Review TEF-5 (TASK-34100.13): "Asks before each use unless you pick
+    This session" is true only while the tool carries a risk tag that floors
+    an inherited ``allow`` to ``ask``. The blurb test above checks wording
+    only, and the risk-tag tests pin five of the eight tools, so a tool that
+    lost its tags would keep a blurb that had become false.
+
+    Resolved the way the built-in gate does: the tool's own ``risk_tags``,
+    through ``tool_ref``, against an empty permission store, whose built-in
+    default is ``allow``."""
+    from tldw_chatbook.Agents.builtin_tool_gate import tool_ref
+    from tldw_chatbook.MCP.permission_store import (
+        BUILTIN_DEFAULT_STATE,
+        BUILTIN_HIGH_RISK_TAGS,
+        resolve_builtin_state,
+    )
+
+    tool = build_gateable_tool(entry)
+    tags = set(tool.risk_tags)
+    assert tags, f"{entry.tool_name} declares no risk tags"
+    assert tags <= BUILTIN_HIGH_RISK_TAGS, tags - BUILTIN_HIGH_RISK_TAGS
+    assert BUILTIN_DEFAULT_STATE == "allow"  # else {} below proves nothing
+    effective = resolve_builtin_state({}, tool_ref(tool))
+    assert (effective.state, effective.risk_floored) == ("ask", True)
