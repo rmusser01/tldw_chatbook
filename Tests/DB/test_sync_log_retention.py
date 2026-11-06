@@ -295,6 +295,177 @@ def test_app_pass_prunes_both_stores(
         assert stale_left == 0
 
 
+def test_app_pass_retires_the_handles_it_opens_on_its_worker_thread(
+    chacha_db: CharactersRAGDB,
+    media_db: MediaDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """TASK-38955: the pass opens a handle per store on a default-executor
+    thread. Left open there, its storage lease keeps a backup pause from
+    draining, and no close on the UI thread can reach it."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    def live_leases() -> set:
+        with storage_admission._lock:
+            return set(storage_admission._live_leases)
+
+    chacha_db.add_conversation({"title": "app pass", "character_id": 1})
+    _media_log_event(media_db, f"uuid-{uuid.uuid4().hex[:8]}")
+    connections_before = chacha_db.registered_connection_count()
+    leases_before = live_leases()
+    monkeypatch.setattr(lifecycle_module, "get_cli_setting", lambda *a, **k: 90)
+    # Kept alive past the pass, as the app's default pool threads are.
+    pool = ThreadPoolExecutor(max_workers=1)
+
+    async def one_pass():
+        asyncio.get_running_loop().set_default_executor(pool)
+        await lifecycle_module.LifecycleMixin._perform_sync_log_retention(
+            _fake_app(chachanotes_db=chacha_db, media_db=media_db)
+        )
+        return chacha_db.registered_connection_count(), live_leases() - leases_before
+
+    try:
+        connections_after, new_leases = asyncio.run(one_pass())
+    finally:
+        pool.shutdown(wait=True)
+
+    # (registered before, registered after, new live leases)
+    assert (connections_before, connections_after, len(new_leases)) == (1, 1, 0)
+
+
+async def test_app_unmount_retires_both_stores_on_every_thread(
+    chacha_db: CharactersRAGDB,
+    media_db: MediaDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """TASK-38955: quit closed neither store, so their handles and storage
+    leases outlived the app, on the UI thread and on worker threads."""
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import AsyncMock, Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Utils.private_paths import lexical_path
+
+    paths = {lexical_path(chacha_db.db_path), lexical_path(media_db.db_path)}
+
+    def store_leases() -> list:
+        with storage_admission._lock:
+            return [
+                lease
+                for lease in storage_admission._live_leases
+                if lease.resource_path in paths
+            ]
+
+    chacha_db.add_conversation({"title": "unmount", "character_id": 1})
+    _media_log_event(media_db, f"uuid-{uuid.uuid4().hex[:8]}")
+    pool = ThreadPoolExecutor(max_workers=1)
+    # A worker-thread handle that nothing on that thread closes.
+    await asyncio.get_running_loop().run_in_executor(pool, chacha_db.get_connection)
+    assert chacha_db.registered_connection_count() == 2
+
+    order: list[str] = []
+    owner = object.__new__(type("_Owner", (lifecycle_module.LifecycleMixin,), {}))
+    close_stores = owner._close_main_databases
+
+    async def recorded_close() -> None:
+        order.append("stores closed")
+        await close_stores()
+
+    owner.__dict__.update(
+        _close_main_databases=recorded_close,
+        chachanotes_db=chacha_db,
+        media_db=media_db,
+        loguru_logger=Mock(),
+        ui_responsiveness_monitor=None,
+        _rich_log_handler=None,
+        db_status_manager=SimpleNamespace(stop_periodic_updates=Mock()),
+        _shutdown_actor_pack_recovery=AsyncMock(return_value=None),
+        _shutdown_workflow_session=AsyncMock(),
+        _settle_speech_initialization=AsyncMock(return_value=None),
+        _stop_served_canvas_control=AsyncMock(),
+        _shutdown_app_owned_lifecycles=AsyncMock(),
+        _cancel_and_settle_workers=AsyncMock(
+            side_effect=lambda *_: order.append("workers settled")
+        ),
+        _close_owned_tts_resources=AsyncMock(),
+        _stop_ui_responsiveness_monitor=Mock(),
+        _shutdown_ingest_parse_pool=Mock(),
+        _stop_footer_status_timers=Mock(),
+    )
+    monkeypatch.setattr(lifecycle_module, "arm_exit_watchdog", Mock())
+    monkeypatch.setattr(lifecycle_module, "persist_event", Mock())
+    monkeypatch.setattr(lifecycle_module, "unregister_running_app", Mock())
+    monkeypatch.setattr(lifecycle_module.logging, "shutdown", Mock())
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle."
+        "stop_all_server_processes",
+        lambda app: [],
+    )
+    try:
+        await owner.on_unmount()
+        left = (chacha_db.registered_connection_count(), len(store_leases()))
+    finally:
+        pool.shutdown(wait=True)
+
+    # (registered ChaChaNotes handles, live leases on either store)
+    assert left == (0, 0)
+    assert order == ["workers settled", "stores closed"]
+
+
+async def test_app_unmount_store_close_is_bounded_and_keeps_the_loop_live(
+    chacha_db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """TASK-38955: a ChaChaNotes user that never finishes cannot hold quit.
+    Quiescence gives up at its bound, off the loop, and the close goes on."""
+    import threading
+    import time
+    from unittest.mock import Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+
+    monkeypatch.setattr(lifecycle_module, "_QUIT_QUIESCE_SECONDS", 0.3)
+    entered, release = threading.Event(), threading.Event()
+
+    def stuck_writer() -> None:
+        try:
+            with chacha_db.transaction():
+                entered.set()
+                release.wait(10)
+        finally:
+            chacha_db.close_connection()
+
+    writer = threading.Thread(target=stuck_writer)
+    writer.start()
+    assert entered.wait(5)
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    owner = SimpleNamespace(chachanotes_db=chacha_db, loguru_logger=Mock())
+    beat = asyncio.create_task(ticker())
+    started = time.monotonic()
+    try:
+        await lifecycle_module.LifecycleMixin._close_main_databases(owner)
+        waited = time.monotonic() - started
+    finally:
+        beat.cancel()
+        release.set()
+        writer.join(5)
+
+    assert waited < 3.0, waited
+    assert ticks >= 5, f"the event loop froze during the close ({ticks} ticks)"
+    assert "quiescing ChaChaNotes" in owner.loguru_logger.error.call_args.args[0]
+
+
 def test_app_pass_zero_disables(
     chacha_db: CharactersRAGDB,
     media_db: MediaDatabase,

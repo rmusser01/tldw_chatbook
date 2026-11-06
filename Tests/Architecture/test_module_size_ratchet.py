@@ -171,7 +171,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
     # into app_keep_alive.py).
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
-    "tldw_chatbook/app_lifecycle.py": 2147,
+    # 2026-11-06, TASK-38955 (owner size waiver): 2147 -> 2189 (+42) -- quit
+    # retires the ChaChaNotes and media handles; the retention pass retires its.
+    "tldw_chatbook/app_lifecycle.py": 2189,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
