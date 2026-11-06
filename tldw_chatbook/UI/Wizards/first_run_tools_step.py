@@ -65,6 +65,17 @@ class ToolsStep(SetupStep):
         # app_config has no "tools" section and tool_gates comes back empty.
         prefill = wizard_state.read_wizard_prefill(app_config)
         gate_values = dict(prefill.tool_gates)
+        # TASK-34100.5.3.2 review round 1 (F2-3): what each switch shows, so
+        # commit writes only what the user moved (see on_show and commit).
+        self._shown_gates = {
+            FULL_AGENT_TOOLS_GATE_KEY: bool(
+                gate_values.get(FULL_AGENT_TOOLS_GATE_KEY, False)
+            ),
+            **{
+                entry.gate_key: bool(gate_values.get(entry.gate_key, False))
+                for entry in self._entries
+            },
+        }
         with Vertical(classes="setup-tools"):
             yield Static("Built-in tools", classes="setup-title")
             # TASK-34100.5.3: plain chat is never "all off" -- it keeps the
@@ -116,6 +127,42 @@ class ToolsStep(SetupStep):
                             markup=False,
                         )
 
+    def on_show(self) -> None:
+        super().on_show()
+        self._show_saved_gates()
+
+    def _show_saved_gates(self) -> None:
+        """Bring switches the user has not moved up to the saved gates.
+
+        TASK-34100.5.3.2 review round 1 (F2-3): the wizard composes every
+        step when it mounts, before the boot's staggered workers run, so the
+        one-time Full agent tools upgrade can turn the gate on after this
+        step composed it OFF. A switch still showing what it was composed
+        (or last re-shown) with follows the saved value; one the user moved
+        keeps theirs.
+        """
+        from tldw_chatbook.Agents.plain_chat_tool_surface import (
+            summarize_tool_surface,
+            tools_step_posture,
+        )
+
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        saved = dict(wizard_state.read_wizard_prefill(app_config).tool_gates)
+        shown = getattr(self, "_shown_gates", {})
+        changed = False
+        for switch in self.query(Switch):
+            gate_key = self.gate_key_for(switch)
+            if not gate_key or gate_key not in shown:
+                continue
+            value = bool(saved.get(gate_key, False))
+            if bool(switch.value) == shown[gate_key] and value != shown[gate_key]:
+                switch.value = shown[gate_key] = value
+                changed = True
+        if changed:
+            self.query_one("#setup-tools-posture", Static).update(
+                tools_step_posture(summarize_tool_surface(app_config))
+            )
+
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")
         if tool_name == FULL_AGENT_TOOLS_SWITCH:
@@ -132,7 +179,6 @@ class ToolsStep(SetupStep):
     async def commit(self) -> tuple[bool, str]:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             build_tools_commit,
-            read_wizard_prefill,
             tools_commit_delta,
         )
 
@@ -147,16 +193,19 @@ class ToolsStep(SetupStep):
             gate_key = self.gate_key_for(switch)
             if gate_key:
                 gate_values[gate_key] = bool(switch.value)
-        current_gates = dict(
-            read_wizard_prefill(
-                getattr(self.wizard.app_instance, "app_config", {}) or {}
-            ).tool_gates
-        )
-        delta = tools_commit_delta(gate_values=gate_values, current_gates=current_gates)
+        # TASK-34100.5.3.2 review round 1 (F2-3): the delta is against what
+        # the switches SHOWED, not the live config. Against the live config,
+        # a switch composed OFF before the boot's Full agent tools upgrade
+        # turned the gate ON read as the user turning it off, and undid it.
+        shown = dict(getattr(self, "_shown_gates", {}))
+        delta = tools_commit_delta(gate_values=gate_values, current_gates=shown)
         if not delta:
             return True, ""
         ok = await self.wizard.commit_config(build_tools_commit(gate_values=delta))
-        return (True, "") if ok else (False, "Saving tool settings failed.")
+        if not ok:
+            return False, "Saving tool settings failed."
+        self._shown_gates = {**shown, **delta}
+        return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
         return {
