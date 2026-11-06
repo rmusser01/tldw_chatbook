@@ -14,6 +14,9 @@ These tests pin:
   every extra directory adds one ``lstat`` per resolution);
 * the value: ``_resolved(path)`` is exactly ``path.resolve()`` for every path shape,
   links and errors included, with the one-walk proof on and off;
+* the descriptors: every one it opens is closed before it returns, and it never opens
+  the leaf, so a POSIX lock this process holds on a database survives (checked from
+  another process, with a control that drops the lock);
 * the refusals the resolutions exist for, unchanged: a directory swapped for a link
   mid-operation is refused (``operation_path_outside_scope``), and a link swapped
   into the selector's or the source's chain after acquisition is refused
@@ -25,8 +28,11 @@ These tests pin:
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat
+import subprocess
 import sys
+import threading
 from collections import Counter
 from pathlib import Path
 
@@ -392,16 +398,109 @@ def test_execution_selection_values_are_path_resolve_values(nested_scope, scope)
         ), target
 
 
-def test_resolved_never_leaves_a_descriptor_open(tmp_path):
+def _called_from_resolved(frame) -> bool:
+    code = frame.f_code
+    return code.co_name == "_resolved" and code.co_filename.endswith(_ADMISSION_FILE)
+
+
+def test_resolved_closes_every_descriptor_it_opens(tmp_path, monkeypatch):
+    """Each descriptor ``_resolved`` opens is closed before it returns, on every shape.
+
+    Only ``_resolved``'s own calls on this thread are recorded, so a descriptor another
+    thread opens or closes meanwhile cannot change the result.
+    """
     catalog = _catalog(tmp_path / "shapes")
+    events: list[tuple[str, int]] = []
+    real_open, real_close = os.open, os.close
+    thread = threading.get_ident()
+
+    def recorded_open(*args, **kwargs):
+        descriptor = real_open(*args, **kwargs)
+        if threading.get_ident() == thread and _called_from_resolved(sys._getframe(1)):
+            events.append(("open", descriptor))
+        return descriptor
+
+    def recorded_close(descriptor):
+        if threading.get_ident() == thread and _called_from_resolved(sys._getframe(1)):
+            events.append(("close", descriptor))
+        return real_close(descriptor)
+
     try:
-        before = len(os.listdir("/dev/fd"))
-        for _ in range(3):
-            for path in catalog.values():
-                _outcome(storage._resolved, path)
-        assert len(os.listdir("/dev/fd")) == before
+        with monkeypatch.context() as patch:
+            patch.setattr(storage.os, "open", recorded_open)
+            patch.setattr(storage.os, "close", recorded_close)
+            for _ in range(3):
+                for path in catalog.values():
+                    _outcome(storage._resolved, path)
     finally:
         (tmp_path / "shapes" / "locked").chmod(0o700)
+    opened = [descriptor for kind, descriptor in events if kind == "open"]
+    if storage._NOFOLLOW_ANY:
+        assert opened, "the one-walk proof opened no parent directory at all"
+    assert events == [
+        (kind, descriptor) for descriptor in opened for kind in ("open", "close")
+    ], "a descriptor _resolved opened was not closed before its next open or return"
+
+
+# --------------------------------------------------------------------------- locks
+_TRY_TO_WRITE = """
+import sqlite3, sys
+connection = sqlite3.connect(sys.argv[1], timeout=0, isolation_level=None)
+try:
+    connection.execute("BEGIN IMMEDIATE")
+except sqlite3.OperationalError as error:
+    print("locked" if "locked" in str(error) else "error: " + str(error))
+else:
+    connection.execute("ROLLBACK")
+    print("acquired")
+"""
+
+
+def _another_process_tries_to_write(db_path: Path) -> str:
+    """POSIX locks are per process, so only another process sees a dropped one."""
+    completed = subprocess.run(
+        [sys.executable, "-c", _TRY_TO_WRITE, str(db_path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def test_resolved_never_drops_a_lock_this_process_holds_on_the_leaf(nested_scope):
+    """Closing any descriptor of a file drops every POSIX lock this process holds on it.
+
+    The leaf is often a SQLite database the caller holds a lock on, so the one-walk
+    proof may open only the parent directory, never the leaf. Each resolution shape
+    that reaches the database runs while this process holds ``BEGIN EXCLUSIVE``, and
+    another process must still find it locked. The control at the end closes a
+    descriptor of the leaf and shows the probe does see a dropped lock.
+    """
+    _root, _config, data, _ = nested_scope
+    db_path = data / "held.db"
+    link = data / "held-link.db"
+    holder = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        holder.execute("CREATE TABLE t (x)")
+        link.symlink_to(db_path)
+        holder.execute("BEGIN EXCLUSIVE")
+        assert _another_process_tries_to_write(db_path) == "locked"
+        shapes = {
+            "the database": db_path,
+            "the database used as a directory": db_path / "x.db",
+            "a link to the database": link,
+        }
+        for name, path in shapes.items():
+            assert storage._resolved(path) == path.resolve(), name
+            assert _another_process_tries_to_write(db_path) == "locked", name
+        assert storage._execution_selection_for(db_path)[5] == db_path
+        assert _another_process_tries_to_write(db_path) == "locked", "selection"
+
+        os.close(os.open(db_path, os.O_RDONLY))  # control: the lock is gone now
+        assert _another_process_tries_to_write(db_path) == "acquired"
+    finally:
+        holder.close()
 
 
 def test_unreadable_parent_matches_path_resolve(tmp_path):
