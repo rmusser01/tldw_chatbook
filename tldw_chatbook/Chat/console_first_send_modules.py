@@ -40,6 +40,17 @@ the warm-up.
 So each third-party package the send path loads is its own step, listed
 after its dependencies; the heaviest left is aiohttp (about 37 ms CPU).
 
+ADR-097's row for this list (``MAX_FIRST_SEND_WARMUP_ADDED_MODULES``) is full
+and the owner declined a raise on 2026-10-31. TASK-33620.15.53 measured a
+first send after the warm-up (origin/dev e8eeae7db9) still loading the review
+service on the UI loop (``console_code_review`` with four
+``Agents.code_review_*`` modules: median 19 ms at load1 ~20, 117 ms at load1
+~120) and ``agent_lesson_promotion``. The latter took the row's last slot. An
+ordinary turn no longer loads the review service at all (run start checks
+``code_review_models.review_turn_possible`` first), and a review turn loads it
+on its composition's worker thread. So a module the send needs that cannot be
+listed must leave the send's UI-loop path some other way.
+
 Keep the list to modules the send path really imports, in the order it does
 (a package's dependencies first); ``Tests/UI/test_console_first_send_preimport.py``
 checks that each is still lazy at UI-ready, that the harness's send imports
@@ -72,6 +83,9 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_configuration_capture",
     "tldw_chatbook.UI.Console_Modules.turn_admission",
     "tldw_chatbook.MCP.console_snapshot",
+    # TASK-33620.15.53: the capacity check's tool-surface preview (a durable
+    # chat's first message) and run start's managed-skill gate import it.
+    "tldw_chatbook.Agents.agent_lesson_promotion",
     "tldw_chatbook.Chat.console_send_start",  # TASK-36610: opened at acceptance.
     "tldw_chatbook.Chat.console_received_turn",
     "tldw_chatbook.Chat.console_send_diagnostics",
