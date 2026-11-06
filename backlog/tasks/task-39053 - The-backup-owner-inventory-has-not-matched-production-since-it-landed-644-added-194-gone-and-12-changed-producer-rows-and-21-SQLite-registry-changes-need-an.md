@@ -1,11 +1,11 @@
 ---
 id: TASK-39053
 title: "The backup owner inventory has not matched production since it landed: 644 added, 194 gone and 12 changed producer rows and 21 SQLite registry changes need an owner and cohort review"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 17:26
+updated_date: 2026-11-06 18:02
 labels:
 - follow-up
 - backup
@@ -56,10 +56,10 @@ Classifying rows into owners and backup cohorts is a product decision about what
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the 13 new SQLite members has a reviewed row with a classification and a cohort; where a member's `SQLiteOwnerPolicy` flags do not settle its cohort, the owner decides it and the decision is recorded
-- [ ] #2 The owner decides whether a test-owned policy (`tests.store_kernel`) may stay in the production registry; the decision is recorded and the registry and census follow it
+- [x] #1 Each of the 13 new SQLite members has a reviewed row with a classification and a cohort; where a member's `SQLiteOwnerPolicy` flags do not settle its cohort, the owner decides it and the decision is recorded
+- [x] #2 The owner decides whether a test-owned policy (`tests.store_kernel`) may stay in the production registry; the decision is recorded and the registry and census follow it
 - [x] #3 The 8 rows that exist only in the doc are removed, each with its cause recorded
-- [ ] #4 Every added and changed producer row has an owner-reviewed classification (the owner signs off the classifications, or the cohorts they fall in, in this task's notes), and every gone row is removed
+- [x] #4 Every added and changed producer row has an owner-reviewed classification (the owner signs off the classifications, or the cohorts they fall in, in this task's notes), and every gone row is removed
 - [x] #5 Both nodes pass; they are red before (2 of 2 on dev b2c618185f: 644 / 194 / 12, SQLite 13 / 8)
 - [x] #6 Negative control: a synthetic unreviewed producer turns the test red, and the failure message lists every added, gone and changed row
 - [x] #7 The file runs on a PR lane (the Architecture guards job, or another the owner picks; never the fast PR contract), with three timings of that lane's command recorded
@@ -79,7 +79,7 @@ Classifying rows into owners and backup cohorts is a product decision about what
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Status: pending owner sign-off.** AC#1, #2 and #4 stay unticked until the owner signs off the cohort table below; nothing merges before that.
+**Status: signed off.** The owner signed off the cohort table on 2026-11-06, answering in the coordinator's session; the answers are recorded next to the table.
 
 Owner decision (2026-11-06): "Agent proposes, you sign off: a stream classifies every row by the existing doc's rules and each module's policy flags, groups them by cohort and flags only the ambiguous ones; you sign off the cohort table in the PR, and nothing merges until you do."
 
@@ -110,25 +110,40 @@ Owner decision (2026-11-06): "Agent proposes, you sign off: a stream classifies 
 
 **Cohort sign-off table** (714 added producer rows, 12 new SQLite members, and AC#2):
 
-| # | Owner / cohort | Rule | Rows | Examples | Needs owner |
+| # | Owner / cohort | Rule | Rows | Examples | Owner |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Moved or renamed producers (any cohort) | Same producer under a new symbol or module: it keeps its reviewed row, in place | 62 (replace 61) | `RunLogWriter._bind_under_scope` (qualified, agents.history); `NotesDeviceStateStore._connect` (qualified, notes.sync_state); `EvalConfigLoader.save` safe_dump (generic_boundary, eval.definitions) | no |
-| 2 | Changed counts | Classification kept. 11 counts went up with calls of the same mechanism. 2 went down because calls moved out: `ChatbookCreator._collect_notes` write 8→3 and `PinnedSyncRoot._create_temporary` os.unlink 2→1 | 13 | `ChatbookCreator._create_zip_archive` open 1→3; `BaseDB._get_connection` 1→2; `KeyringServerCredentialStore._save_index` set_password 1→3 | no |
-| 3 | Same mechanism in a reviewed module or symbol | A new call in a reviewed symbol, or a new symbol that does what the module's reviewed rows do (read in source). File tools follow their reviewed split. Symbols that write into the user-selected root (write, mkdir, write-target opens, like `WriteFileTool.execute`) are `external_input`. Read, lock and verify helpers stay `unsupported`, like the old `read_file` / `edit_file` opens | 64 | `ConsoleChatStore._persist_generation_variant` (memory); `ChatbookImporter._preflight_archive` (generic_boundary); `local_tool_impls._mkdir_relative_directory` (external_input); `models_dev_catalog._write_cache_file` (disposable, diagnostics); `briefing_audio.generate_script_audio` (qualified, subscriptions.assets: it writes the WAV into the qualified `briefing_audio_dir`) | no |
-| 4 | generic | Private path, SQLite or file utility boundary | 22 | `atomic_file_ops._publish_no_clobber`; `SQLiteStoreKernel._open_connection`; `private_sqlite_helper.run` | no |
-| 5 | memory, new modules | `value.to_json()` into a column or payload; `yaml.safe_dump(value)` with no stream; `Image.open(BytesIO(...))`; exact `sqlite3.connect(":memory:")` | 42 | `ChatPersistenceService.commit_completed_voice_pair`; `note_frontmatter._dump`; `portrait_performance.normalize_performance_frame` | no |
-| 6 | process-transport, new modules | Writes to a child's stdin or the module's own stdio, a pipe, a pty or a socket | 40 | `diarizer_worker.serve`; `PosixTerminalBackend.write`; `age_worker._encrypt` (pipe-only worker); `Petdex/network.fetch_bytes` (connect) | no |
-| 7 | Registered SQLite owners, unsupported | A row in an owner's production module takes the owner id as cohort; with no capture flag it stays `unsupported` | 26 | `PluginRegistry.__init__` (plugins.registry); `PersonalContextRepository._connect`; `LegacyCollectionsRecovery._publish_export` (os.link) | no |
-| 8 | Dreams and Guardian, qualified | `centralized_backup_allowed` and `recovery_capture_allowed`, with installed adapters and owner tests (f927f98add, c49d71439e), the same as the other `recovery.operations.*` owners | 6, plus 2 SQLite rows | `DreamsDB` inherits:BaseDB (qualified, db.dreams); `_GuardianAdapter.capture` (generic_boundary, native-operational-recovery) | no |
-| 9 | Named cohorts, unsupported | The module's reviewed cohort, else the cohort table's package cohort | 125 | agents 36, tts 23, models 15, mcp 13, workspaces 9, assets 8, config 6, skills 5, files 4, other 6 | no |
-| 10 | miscellaneous, unsupported | No named cohort, so the doc's conservative default applies. This includes pipes, sockets and widget writes that row 6 does not cover | 307 | Plugins 61, Actor_Packs 30, UI 29, LLM_Management 24, Audio 23, Web_Server 17, Tool_Packs 16, Personal_Context 15, Tools 13, other 79 | no |
-| 11 | Backup_Recovery's own new pipeline | Left `unsupported` until the backup owner reviews each symbol. The 20 rows are listed below | 20 | `produce_detached_archive`; `relocation_lock`; `acquire_source` | **yes** |
-| 12 | New SQLite members, settled by flags | No capture flag, so `sqlite/unsupported` | 8 | chat.launch_wake, plugins.registry, workflows.local | no |
-| 13 | New SQLite members whose policy reason says "excluded" | `db.workspace_project_index` ("excluded from backup and sync") and `personal_context.interview_drafts` ("excluded from centralized backup") are `sqlite/unsupported`. A False flag does not make an exclusion; `db.chachanotes.primary` has the same flags. Alternative: an installed exclusion adapter, like `notes.sync_state`'s `_DeviceStateExclusion` | 2 | — | **yes** |
-| 14 | AC#2: `tests.store_kernel` | Implemented: removed from the production registry, and the kernel tests register it themselves. Alternative: keep it in the registry, with a `tests/excluded` row in both inventories | 1 member | — | **yes** |
-| 15 | Scanner vocabulary | The blind spots above, fixed in the test only. Against the original scanner they account for 28 "gone" rows, 1 changed count and 70 added rows. Known limits: tempfile, third-party writers, subprocesses, dynamic bindings, `x.open`/`x.connect` passed by reference, and introspection arguments (`inspect.signature`, `isinstance`, `issubclass`, `callable`). The doc says vocabulary extensions are part of owner review | — | `from …platform_files import os`; `to_thread(path.write_bytes, …)`; `yaml.safe_dump`; `os.rename` | **yes** |
+| 1 | Moved or renamed producers (any cohort) | Same producer under a new symbol or module: it keeps its reviewed row, in place | 62 (replace 61) | `RunLogWriter._bind_under_scope` (qualified, agents.history); `NotesDeviceStateStore._connect` (qualified, notes.sync_state); `EvalConfigLoader.save` safe_dump (generic_boundary, eval.definitions) | signed off 2026-11-06 |
+| 2 | Changed counts | Classification kept. 11 counts went up with calls of the same mechanism. 2 went down because calls moved out: `ChatbookCreator._collect_notes` write 8→3 and `PinnedSyncRoot._create_temporary` os.unlink 2→1 | 13 | `ChatbookCreator._create_zip_archive` open 1→3; `BaseDB._get_connection` 1→2; `KeyringServerCredentialStore._save_index` set_password 1→3 | signed off 2026-11-06 |
+| 3 | Same mechanism in a reviewed module or symbol | A new call in a reviewed symbol, or a new symbol that does what the module's reviewed rows do (read in source). File tools follow their reviewed split. Symbols that write into the user-selected root (write, mkdir, write-target opens, like `WriteFileTool.execute`) are `external_input`. Read, lock and verify helpers stay `unsupported`, like the old `read_file` / `edit_file` opens | 64 | `ConsoleChatStore._persist_generation_variant` (memory); `ChatbookImporter._preflight_archive` (generic_boundary); `local_tool_impls._mkdir_relative_directory` (external_input); `models_dev_catalog._write_cache_file` (disposable, diagnostics); `briefing_audio.generate_script_audio` (qualified, subscriptions.assets: it writes the WAV into the qualified `briefing_audio_dir`) | signed off 2026-11-06 |
+| 4 | generic | Private path, SQLite or file utility boundary | 22 | `atomic_file_ops._publish_no_clobber`; `SQLiteStoreKernel._open_connection`; `private_sqlite_helper.run` | signed off 2026-11-06 |
+| 5 | memory, new modules | `value.to_json()` into a column or payload; `yaml.safe_dump(value)` with no stream; `Image.open(BytesIO(...))`; exact `sqlite3.connect(":memory:")` | 42 | `ChatPersistenceService.commit_completed_voice_pair`; `note_frontmatter._dump`; `portrait_performance.normalize_performance_frame` | signed off 2026-11-06 |
+| 6 | process-transport, new modules | Writes to a child's stdin or the module's own stdio, a pipe, a pty or a socket | 40 | `diarizer_worker.serve`; `PosixTerminalBackend.write`; `age_worker._encrypt` (pipe-only worker); `Petdex/network.fetch_bytes` (connect) | signed off 2026-11-06 |
+| 7 | Registered SQLite owners, unsupported | A row in an owner's production module takes the owner id as cohort; with no capture flag it stays `unsupported` | 26 | `PluginRegistry.__init__` (plugins.registry); `PersonalContextRepository._connect`; `LegacyCollectionsRecovery._publish_export` (os.link) | signed off 2026-11-06 |
+| 8 | Dreams and Guardian, qualified | `centralized_backup_allowed` and `recovery_capture_allowed`, with installed adapters and owner tests (f927f98add, c49d71439e), the same as the other `recovery.operations.*` owners | 6, plus 2 SQLite rows | `DreamsDB` inherits:BaseDB (qualified, db.dreams); `_GuardianAdapter.capture` (generic_boundary, native-operational-recovery) | signed off 2026-11-06 |
+| 9 | Named cohorts, unsupported | The module's reviewed cohort, else the cohort table's package cohort | 125 | agents 36, tts 23, models 15, mcp 13, workspaces 9, assets 8, config 6, skills 5, files 4, other 6 | signed off 2026-11-06 |
+| 10 | miscellaneous, unsupported | No named cohort, so the doc's conservative default applies. This includes pipes, sockets and widget writes that row 6 does not cover | 307 | Plugins 61, Actor_Packs 30, UI 29, LLM_Management 24, Audio 23, Web_Server 17, Tool_Packs 16, Personal_Context 15, Tools 13, other 79 | signed off 2026-11-06 |
+| 11 | Backup_Recovery's own new pipeline | Classified as proposed and signed off (listed below); was `unsupported` pending review | 20 | `produce_detached_archive`; `relocation_lock`; `acquire_source` | signed off 2026-11-06: proposals applied |
+| 12 | New SQLite members, settled by flags | No capture flag, so `sqlite/unsupported` | 8 | chat.launch_wake, plugins.registry, workflows.local | signed off 2026-11-06 |
+| 13 | New SQLite members whose policy reason says "excluded" | `db.workspace_project_index` ("excluded from backup and sync") and `personal_context.interview_drafts` ("excluded from centralized backup") are `sqlite/unsupported`. A False flag does not make an exclusion; `db.chachanotes.primary` has the same flags. Alternative: an installed exclusion adapter, like `notes.sync_state`'s `_DeviceStateExclusion` | 2 | — | signed off 2026-11-06: keep unsupported + follow-up |
+| 14 | AC#2: `tests.store_kernel` | Implemented: removed from the production registry, and the kernel tests register it themselves. Alternative: keep it in the registry, with a `tests/excluded` row in both inventories | 1 member | — | signed off 2026-11-06: accepted |
+| 15 | Scanner vocabulary | The blind spots above, fixed in the test only. Against the original scanner they account for 28 "gone" rows, 1 changed count and 70 added rows. Known limits: tempfile, third-party writers, subprocesses, dynamic bindings, `x.open`/`x.connect` passed by reference, and introspection arguments (`inspect.signature`, `isinstance`, `issubclass`, `callable`). The doc says vocabulary extensions are part of owner review | — | `from …platform_files import os`; `to_thread(path.write_bytes, …)`; `yaml.safe_dump`; `os.rename` | signed off 2026-11-06: accepted |
 
-The 20 row-11 rows, each with a proposed classification for the owner:
+Owner sign-off (2026-11-06), quoted answers to the table:
+- Rows 1-10 and 12: "Sign off."
+- Row 11: "Apply the proposals." The 20 Backup_Recovery pipeline rows are now classified exactly as proposed below.
+  - Detached-layout staging is `disposable` (private output staging).
+  - The detached-source reads (`acquire_source` open, `review_source.walk` open) are `external_input` (verified acquired archive read only). Its private copy (`acquire_source` create_private_file, `_hash` write) is `disposable` (private archive staging).
+  - `portable_relocation` and `config_binding` are `generic_boundary` / backup_control.
+  - `destinations._configs` and `effective_roots` are `generic_boundary` / backup_control_reader. The proposal said "reader"; this is the doc's existing backup reader cohort.
+  - `launcher._open_tty` is `process_artifact`.
+  - `agent_worktree_storage` stays `unsupported` (workspaces).
+- Row 13: "Keep unsupported + follow-up." `db.workspace_project_index` and `personal_context.interview_drafts` stay `sqlite/unsupported`; see Proposed follow-ups.
+- Rows 14 and 15: "Accept both." faeffb9c0e (`tests.store_kernel` registered by its test, not production) and the scanner vocabulary extension stay.
+
+Proposed follow-ups (the owner files them; no task file created here):
+- Install real exclusion adapters for `db.workspace_project_index` and `personal_context.interview_drafts`, like the installed `notes.sync_state` exclusion (`_DeviceStateExclusion` in `Notes/recovery.py`). Their policy reasons already say they are excluded from backup.
+
+The 20 row-11 rows, classified as proposed (owner sign-off 2026-11-06):
 - `detached_layout`: `_normalize_sqlite` connect, create_private_file ×2 and write; `produce_detached_archive` create_private_file ×2 and write ×2; `_restored_cache_paths` open. This is the confined import of acquired portable bytes. Proposed: `disposable`, private output staging.
 - `detached_source`: `_hash` write; `acquire_source` create_private_file and open; `review_source.walk` open. This is the read-only acquisition of detached files. Proposed: reads `external_input` ("verified acquired archive read only"); the private copy `disposable`.
 - `portable_relocation`: `_write` create_private_file and write; `relocation_lock` create_private_file and open. Proposed: `generic_boundary`, backup_control.
@@ -155,6 +170,7 @@ Observations for later cohort work (no decision needed now):
   - `test_census_tracks_native_rename_and_link_publication`: `assert 0 == 2`.
   - `test_census_ignores_arguments_to_introspection_calls` (review r11b-rev2): it counted 4 rows where it should count none (`assert Counter({...}) == Counter()`).
 - Green after: `Tests/Architecture/test_backup_owner_inventory.py` (serial), 18 passed in 35.6 s (load average 28-45). Both inventory nodes pass, and the doc's 1607 rows equal production's 1607.
+- After the owner sign-off (row-11 classifications applied; still 1607 rows): the inventory file (serial): 18 passed in 74.3 s (load average 48-56). `Tests/CI` at `-n 4`: 1215 passed, 1 skipped. preflight: all derived-artifact checks passed.
 - AC#6 negative control, rerun after review r11b-rev1 (temporary source edits, then reverted):
   - The edits: a synthetic `_synthetic_unreviewed_producer` (open + write) in `Utils/file_durability.py`; a removed `mkdir` in `tls_trust._merged_bundle_path`; an extra `open` in `tls_trust._file_digest`.
   - Result: "2 added, 1 gone, 1 changed", with all four rows listed.

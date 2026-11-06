@@ -2900,9 +2900,9 @@ subprocess outputs and dynamic bindings such as `Tools/local_tool_impls`'
 `file_os` are outside the vocabulary.
 
 With these forms counted, the drift is 714 added, 166 gone and 13 changed
-producer rows. The classifications below are proposals pending owner sign-off of
-the cohort table in TASK-39053. They apply the rules this document already uses,
-in order:
+producer rows. The owner signed off the cohort table in TASK-39053 on 2026-11-06.
+The classifications below apply the rules this document already uses, in
+order:
 
 1. **Moved or renamed producer**: a row whose code moved (same producer, new symbol
    or module) keeps its reviewed classification and cohort. Those rows replace
@@ -2926,9 +2926,15 @@ in order:
    adapter and owner tests (Dreams, Guardian: same as the other
    `recovery.operations.*` owners).
 6. **Everything else stays `unsupported`**: cohort is the module's reviewed
-   cohort, else the cohort table's package cohort, else `miscellaneous`. New
-   Backup_Recovery pipeline producers are `unsupported` pending the backup
-   owner's per-symbol review.
+   cohort, else the cohort table's package cohort, else `miscellaneous`.
+7. **New Backup_Recovery pipeline producers**, per the owner's sign-off
+   (2026-11-06): detached-layout staging is `disposable` (private output
+   staging); detached-source reads are `external_input` (verified acquired
+   archive read only) and its private copy `disposable`; portable relocation and
+   config binding are `generic_boundary` / backup_control; destinations and
+   effective roots are `generic_boundary` / backup_control_reader; the launcher's
+   `/dev/tty` is `process_artifact`; the agent worktree base stays `unsupported`
+   (workspaces).
 
 Removed rows: of the 166 gone producer rows, 61 moved or were renamed (62 rows
 replace them in place), 53 were in 13 deleted files and 17 were in symbols that no
@@ -3017,31 +3023,19 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Persona_Visual/export.py | build_native_buddy_archive | ZipFile | 2 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/snapshot.py | read_buddy_archive | ZipFile | 1 | unsupported | assets |
 | tldw_chatbook/Backup_Recovery/qualification.py | _load_evidence | open | 1 | generic_boundary | backup qualification reader; installed metadata only |
+| tldw_chatbook/Backup_Recovery/config_binding.py | preserve_owned_binding | os.replace | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/config_binding.py | preserve_owned_binding | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/control_records.py | _ensure | mkdir | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/control_records.py | _ensure | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/portable_relocation.py | _write | create_private_file | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/portable_relocation.py | _write | write | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/portable_relocation.py | relocation_lock | create_private_file | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/portable_relocation.py | relocation_lock | open | 1 | generic_boundary | backup_control |
 | tldw_chatbook/RAG_Search/generation.py | _persist_dependencies | open | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._discard_unpublished_locks | os.unlink | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/bootstrap.py | _registry_read_lock | open | 1 | generic_boundary | backup_control_reader |
-| tldw_chatbook/Backup_Recovery/agent_worktree_storage.py | prepare_agent_worktrees_base | secure_private_directory | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/config_binding.py | preserve_owned_binding | os.replace | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/config_binding.py | preserve_owned_binding | os.unlink | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/destinations.py | _configs | ZipFile | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | connect | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | create_private_file | 2 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | write | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_layout.py | _restored_cache_paths | open | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_layout.py | produce_detached_archive | create_private_file | 2 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_layout.py | produce_detached_archive | write | 2 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_source.py | _hash | write | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_source.py | acquire_source | create_private_file | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_source.py | acquire_source | open | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/detached_source.py | review_source.walk | open | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/effective_roots.py | effective_roots | open | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/launcher.py | _open_tty | open | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/portable_relocation.py | _write | create_private_file | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/portable_relocation.py | _write | write | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/portable_relocation.py | relocation_lock | create_private_file | 1 | unsupported | backup_recovery own pipeline; owner review pending |
-| tldw_chatbook/Backup_Recovery/portable_relocation.py | relocation_lock | open | 1 | unsupported | backup_recovery own pipeline; owner review pending |
+| tldw_chatbook/Backup_Recovery/destinations.py | _configs | ZipFile | 1 | generic_boundary | backup_control_reader |
+| tldw_chatbook/Backup_Recovery/effective_roots.py | effective_roots | open | 1 | generic_boundary | backup_control_reader |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor._parse_import | open | 1 | unsupported | caller-selected-external-theme-export |
 | tldw_chatbook/Chat/console_launch_wake.py | pending_conversations_at_launch | connect_private_sqlite | 1 | unsupported | chat.launch_wake |
 | tldw_chatbook/Chat/console_trace_maintenance.py | PhysicalTraceCompactor._open_maintenance_connection | connect_private_sqlite | 1 | unsupported | chat.trace_maintenance |
@@ -3501,11 +3495,19 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Widgets/Persona_Widgets/actor_pack_import_review.py | _portrait_widget | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Plugins/registry.py | PluginRegistry.__init__ | connect_private_sqlite | 1 | unsupported | plugins.registry |
 | tldw_chatbook/Plugins/registry.py | PluginRegistry._reference_schema | connect_private_sqlite | 1 | unsupported | plugins.registry |
+| tldw_chatbook/Backup_Recovery/detached_source.py | _hash | write | 1 | disposable | private archive staging |
+| tldw_chatbook/Backup_Recovery/detached_source.py | acquire_source | create_private_file | 1 | disposable | private archive staging |
 | tldw_chatbook/Utils/private_paths.py | open_private_lock_stream | create_private_text | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | open_private_lock_stream | mkdir | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | open_private_lock_stream | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | unlink_private_file | open_private_binary | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | unlink_private_file | os.unlink | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | connect | 1 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | create_private_file | 2 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | write | 1 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/detached_layout.py | _restored_cache_paths | open | 1 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/detached_layout.py | produce_detached_archive | create_private_file | 2 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/detached_layout.py | produce_detached_archive | write | 2 | disposable | private output staging |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.link | 1 | disposable | private staged credential rewrite |
 | tldw_chatbook/Agents/hooks_v2/command_executor.py | CommandExecutor._run | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Agents/run_hooks.py | _capture_hook | write | 1 | process_artifact | process-transport |
@@ -3522,6 +3524,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Backup_Recovery/age_worker.py | _encrypt | write | 3 | process_artifact | process-transport |
 | tldw_chatbook/Backup_Recovery/age_worker.py | run | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Backup_Recovery/launcher.py | _choice | write | 2 | process_artifact | process-transport |
+| tldw_chatbook/Backup_Recovery/launcher.py | _open_tty | open | 1 | process_artifact | process-transport |
 | tldw_chatbook/Canvas/control_protocol.py | _write_message | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Chat/console_trace_regex_worker.py | _worker_main | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Chunking/lab_runner.py | LocalPreviewRunner._supervise | write | 1 | process_artifact | process-transport |
@@ -3610,7 +3613,10 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/TTS/pcm_playback.py | create_pcm16_wav_copy | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_sqlite_proof.py | TTSProof.initialize | connect | 1 | unsupported | tts |
 | tldw_chatbook/Utils/db_upgrade_notice.py | print_db_upgrade_notice_if_pending | connect_private_sqlite | 1 | unsupported | utils.db_upgrade_notice |
+| tldw_chatbook/Backup_Recovery/detached_source.py | acquire_source | open | 1 | external_input | verified acquired archive read only |
+| tldw_chatbook/Backup_Recovery/detached_source.py | review_source.walk | open | 1 | external_input | verified acquired archive read only |
 | tldw_chatbook/DB/Workflows_DB.py | WorkflowsDB.__init__ | connect_private_sqlite | 1 | unsupported | workflows.local |
+| tldw_chatbook/Backup_Recovery/agent_worktree_storage.py | prepare_agent_worktrees_base | secure_private_directory | 1 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/environment_status.py | BacklogTaskScanner._parse_head | open | 1 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/file_inspector.py | _open_root_descriptor | open | 1 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/file_inspector.py | _open_target_descriptor | open | 1 | unsupported | workspaces |
