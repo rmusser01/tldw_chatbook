@@ -2544,3 +2544,4 @@ Tests/UI/test_library_notes_trash_pages_reach_every_deleted_note.py
 Tests/UI/test_library_notes_trash_x_under_import_keeps_its_row.py
 Tests/UI/test_library_notes_trash_purge_sync_unknown.py
 Tests/UI/test_library_notes_bulk_keyword_sync_v2.py
+Tests/UI/test_library_note_export_focus_return_yields.py
