@@ -434,6 +434,8 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type",
     # TASK-39053: the backup owner inventory, red since it landed, now matches.
     "Tests/Architecture/test_backup_owner_inventory.py",
+    # TASK-39061: the shared log sanitizer.
+    "Tests/Utils/test_log_sanitizer.py",
 )
 
 # The 2026-10-25 architecture-review program's tests, in their own job

@@ -393,6 +393,14 @@ def sanitize_trace_credentials_v1(text: str) -> str:
     return result
 
 
+#: Key shapes masked in diagnostics only (TASK-39061): `sk_`/`rk_` secret and
+#: restricted keys, live or test. They are not in ``_STANDALONE_CREDENTIALS``
+#: because ``sanitize_trace_credentials_v1`` reads that tuple, and its stored
+#: projection must not change. The 24-character floor and the body's lack of
+#: `_` keep identifiers such as ``sk_live_mode_enabled`` readable.
+_DIAGNOSTIC_ONLY_CREDENTIALS = (
+    re.compile(r"(?<![A-Za-z0-9_-])[rs]k_(?:live|test)_[A-Za-z0-9]{24,}(?![A-Za-z0-9_-])"),
+)
 _DIAGNOSTIC_PII_PATTERNS = (
     re.compile(r"(?i)(?<![\w.%+-])[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+"),
     re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
@@ -441,7 +449,11 @@ def _sanitize_diagnostic_text(text: str) -> str:
     )
     result = _DIAGNOSTIC_URL_USERINFO.sub(r"\1" + REDACTION_MARKER + "@", result)
     result = _BEARER.sub(r"\1" + REDACTION_MARKER, result)
-    for pattern in (*_STANDALONE_CREDENTIALS, *_DIAGNOSTIC_PII_PATTERNS):
+    for pattern in (
+        *_STANDALONE_CREDENTIALS,
+        *_DIAGNOSTIC_ONLY_CREDENTIALS,
+        *_DIAGNOSTIC_PII_PATTERNS,
+    ):
         result = pattern.sub(REDACTION_MARKER, result)
     return result
 

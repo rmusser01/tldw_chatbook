@@ -1,8 +1,11 @@
 ---
 id: TASK-39061
 title: "redact_log_line does not mask bare sk_live_, sk_test_, rk_live_ or rk_test_ secrets, including one the log forwarder renders as '<message>: sk_live_…'"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 12:31
+updated_date: 2026-11-06 14:42
 labels:
 - follow-up
 - logging
@@ -50,3 +53,10 @@ Found in round 10 of the 2026-10-23 burn-down, by the TASK-38989 review; checked
 - [ ] #2 Short identifiers that only share a prefix (for example `sk_live_mode`) stay readable, and the existing sanitizer tests stay green, with counts recorded
 - [ ] #3 The new test runs on a PR lane (never the fast PR contract), with three timings of that lane's command recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Add a test in `Tests/Utils/test_log_sanitizer.py` for the six unmasked probe lines (through `redact_log_line` and `sanitize_string`), plus negative cases for short or underscore-joined identifiers that only share the prefix. Show it red at base.
+2. Add the `sk_`/`rk_` `live`/`test` pattern to the diagnostic path that `sanitize_string` and `redact_log_line` share. Leave `_STANDALONE_CREDENTIALS` alone: `sanitize_trace_credentials_v1` uses it too, and that versioned trace projection must not change.
+3. Run the whole sanitizer file and the other sanitizer suites, and record the counts.
+4. Lane `Tests/Utils/test_log_sanitizer.py` on the Architecture guards job (append to the step and to `ARCHITECTURE_GUARD_TARGETS`), then time the job command three times.

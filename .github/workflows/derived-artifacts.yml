@@ -1245,6 +1245,7 @@ jobs:
             Tests/Persona_Buddy/test_controller_failure_logging.py \
             Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type \
             Tests/Architecture/test_backup_owner_inventory.py \
+            Tests/Utils/test_log_sanitizer.py \
             --timeout=180 \
             --tb=short
 
