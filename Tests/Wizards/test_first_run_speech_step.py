@@ -2689,7 +2689,13 @@ async def test_target_controls_are_disabled_while_a_download_runs():
         await pilot.pause()
         gguf = step.query_one("#setup-speech-choose-transcribe-cpp-gguf", Button)
         assert gguf.disabled is True
-        assert all(radio.disabled for radio in step.query(RadioButton))
+        # TASK-34100.13 (rebased onto this): the engine choice is locked as a
+        # whole set and the language is a Select, so "disabled" is the
+        # effective state a user meets (``is_disabled`` includes the parent).
+        radios = list(step.query(RadioButton))
+        assert radios
+        assert all(radio.is_disabled for radio in radios)
+        assert step.query_one("#setup-speech-language", Select).disabled is True
 
 
 @pytest.mark.asyncio
