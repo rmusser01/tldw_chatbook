@@ -89,7 +89,10 @@ goes.)
   repository (a `git rev-parse` check runs once per linked folder, and a
   trusted Session Git repository counts too), and "· N session change(s)"
   otherwise — a plain folder never says "Git" (task-32543). A running or
-  failed Git operation, or a folder problem, takes this slot instead.
+  failed Git operation, or a folder problem, takes this slot instead. So does
+  a background refresh of the folder that fails ("· Refresh failed"), even
+  while a narrow navigator hides the work area; it clears on the next refresh
+  that succeeds.
 - **Folder navigator** (left) — a **New** action, a "File contents…" search
   input, the **Files** tree of everything under the linked folder, and a
   **Search results** tree that appears only while a query is active. Directly
@@ -119,7 +122,7 @@ goes.)
 - **Narrow terminals (under 80 columns)** — Folder files switches between
   the navigator and the file work area. Opening a file switches to the work
   area, which takes the whole width, and its **‹ Files** returns to the
-  navigator. From 60 columns the navigator keeps a narrow work area beside
+  navigator with focus in the **Files** tree. From 60 columns the navigator keeps a narrow work area beside
   the **Files** pane. Below 60 the **Files** pane takes the whole width and
   the work area stays hidden until you open or select a file, so **Tab**
   never lands on a control you cannot see. Reopening Folder files with its
@@ -130,8 +133,10 @@ goes.)
   returns to the navigator with **New** focused. While a save failure or a
   conflict stands, a resize below 60 columns keeps the work area in view.
   **‹ Files** still returns to the navigator; opening another file is then
-  refused and brings the failure back. **Manage**, and Session Git with it,
-  is reached by opening a file first.
+  refused and brings the failure back. While the work area is hidden, the
+  navigator's header shows its own **Manage** beside **New**, in the Tab
+  order: it opens the work area in Manage, where **Review
+  session changes (N)** opens Session Git, with or without a file open.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **‹ Files** returns to the files.

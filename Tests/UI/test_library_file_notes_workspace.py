@@ -7407,6 +7407,155 @@ async def test_file_notes_narrow_navigator_choice_wins_on_the_library_screen(
         assert not unseen, unseen
 
 
+@pytest.mark.parametrize("decade", ["40", "50", "60", "70"])
+@pytest.mark.asyncio
+async def test_file_notes_back_leaves_focus_on_a_visible_navigator_control(
+    tmp_path: Path,
+    decade: str,
+) -> None:
+    """TASK-38982 AC#1: ‹ Files hid itself (the navigator view drops Back) and
+    nothing took focus, so it fell to None at every width 40-79 on the real
+    Library screen. Now it lands on a visible control in the Files pane. One
+    case per ten widths, so each stays well inside the lane's entry budget."""
+    first = int(decade)
+    async with _library_folder_files(tmp_path, (first + 9, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        back = workspace.query_one("#file-notes-back", Button)
+        for width in range(first, first + 10):
+            await pilot.resize_terminal(width, 24)
+            assert await workspace.open_path("one.md"), width
+            await _wait_until(
+                pilot,
+                lambda: workspace.editor_visible and _seen_cells(back) > 0,
+                f"{width}: the narrow editor did not show ‹ Files",
+            )
+            back.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.navigator_visible
+                    and screen.focused is not None
+                    and shell.items in screen.focused.ancestors
+                    and _seen_cells(screen.focused) > 0
+                ),
+                f"{width}: ‹ Files left focus on {screen.focused!r}",
+            )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_session_git_is_reachable_from_the_narrow_navigator(
+    tmp_path: Path,
+) -> None:
+    """TASK-38982 AC#2: below 60 columns the navigator hides the work pane,
+    which holds Manage and Session Git, so with no file open neither could be
+    reached. Tab from the tree reaches a visible Manage; Enter on it and on
+    Review session changes opens Session Git, all by keyboard."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
+        assert workspace.current_path == ""
+
+        async def tab_to(predicate: Callable[[Widget], bool], what: str) -> None:
+            for _ in range(20):
+                focused = screen.focused
+                if focused is not None and predicate(focused):
+                    return
+                await pilot.press("tab")
+                await pilot.pause()
+            raise AssertionError(f"Tab never reached {what}")
+
+        workspace.query_one("#file-notes-tree", Tree).focus()
+        await pilot.pause()
+        await tab_to(
+            lambda widget: (
+                isinstance(widget, Button)
+                and str(widget.label) == "Manage"
+                and _seen_cells(widget) > 0
+            ),
+            "a visible Manage",
+        )
+        await pilot.press("enter")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        await _wait_until(
+            pilot,
+            lambda: shell.work.display and _seen_cells(entry) > 0,
+            "Manage did not show Session Git",
+        )
+        await tab_to(lambda widget: widget is entry, "Review session changes")
+        await pilot.press("enter")
+        panel = workspace.query_one("#file-notes-git-panel", LibraryFileNotesGitPanel)
+        await _wait_until(
+            pilot,
+            lambda: panel.display and _seen_cells(panel) > 0,
+            "Review session changes did not open Session Git",
+        )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_failed_refresh_shows_beside_the_hidden_work_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38982 AC#3: a failed background reconcile wrote "Refresh failed"
+    only into the work pane, which the 50-column navigator hides. It shows on
+    the authority line instead, without moving the view, and the next
+    healthy pass clears it."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
+        service = workspace._service
+        assert service is not None
+        healthy = service.reconcile
+
+        def fail() -> object:
+            raise OSError("disk went away")
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        monkeypatch.setattr(service, "reconcile", fail)
+        assert not await workspace.refresh_files()  # what the poll runs
+        await _wait_until(
+            pilot,
+            lambda: "Refresh failed"
+            in _painted_text_in_region(pilot.app, authority.region),
+            "the failed reconcile was not shown beside the navigator",
+        )
+        assert workspace.navigator_visible and not shell.work.display
+
+        monkeypatch.setattr(service, "reconcile", healthy)
+        assert await workspace.refresh_files()
+        await _wait_until(
+            pilot,
+            lambda: "Refresh failed"
+            not in _painted_text_in_region(pilot.app, authority.region),
+            "the next healthy pass did not clear the failure",
+        )
+        assert "Refresh failed" not in _static_text(
+            workspace, "#file-notes-action-status"
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(40, 20), (120, 40), (160, 45)])
 async def test_library_notes_source_choices_render_and_switch_by_keyboard(

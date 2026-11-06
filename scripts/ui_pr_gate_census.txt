@@ -2447,3 +2447,14 @@ Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_reads_a_fresh_
 # Retry save writes the unchanged draft once the folder is back (1.4-1.5 s).
 # Appended at the tail.
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_failed_save_names_a_working_step_and_retries_unchanged
+# TASK-38982 (2026-11-06): on the real Library screen ‹ Files leaves focus on a
+# visible Files-pane control at every width 40-79 (one node per ten widths,
+# 17-23 s each at -n 4, load 22), Session Git is reached from the 50-column
+# navigator by keyboard, and a failed refresh shows on the authority line
+# beside the hidden work pane (4-9 s). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[40]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[50]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[60]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[70]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_session_git_is_reachable_from_the_narrow_navigator
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_failed_refresh_shows_beside_the_hidden_work_pane

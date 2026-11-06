@@ -830,6 +830,10 @@ MINIMUM_FILES = 1701
 # TASK-38983 (2026-11-06): append the failed-save next-step node at the tail.
 # The floor is the measured entry count.
 MINIMUM_FILES = 1702
+# TASK-38982 (2026-11-06): append the six narrow-navigator focus, Session
+# Git and refresh-failure nodes at the tail. The floor is the measured entry
+# count.
+MINIMUM_FILES = 1708
 
 
 def read_census(path: Path) -> list[str]:

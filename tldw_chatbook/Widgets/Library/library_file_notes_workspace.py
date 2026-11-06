@@ -1426,6 +1426,7 @@ class LibraryFileNotesWorkspace(Vertical):
        Truncation is defined at every width. */
     .file-notes-toolbar Button,
     #file-notes-new,
+    #file-notes-navigator-manage,
     #file-notes-back,
     #file-notes-session-changes {
         width: auto;
@@ -1676,6 +1677,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._action_detail = ""
         self._initialized = False
         self._root_offline: bool | None = None
+        #: TASK-38982: a failed background reconcile, until the next healthy pass.
+        self._refresh_failure = ""
         self._narrow = False
         self._narrow_view: Literal["navigator", "editor"] = "navigator"
         # TASK-38757: the user chose the narrow navigator (Back or the Files
@@ -1799,10 +1802,17 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _build_reader_items_pane(self) -> Widget:
         """Build the retained Folder navigator role once."""
+        # TASK-38982: the hidden work pane's Manage (and Session Git), shown
+        # only while the narrow navigator hides that pane.
+        self._navigator_manage = Button(
+            "Manage", id="file-notes-navigator-manage", compact=True
+        )
+        self._navigator_manage.display = False
         return Vertical(
             Horizontal(
                 Static("Folder files", classes="destination-section", markup=False),
                 Button("New", id="file-notes-new", compact=True),
+                self._navigator_manage,
                 id="file-notes-tree-header",
             ),
             # task-32621 AC#2 (A cap 29, B cap 35): the tree silently omitted
@@ -2694,6 +2704,8 @@ class LibraryFileNotesWorkspace(Vertical):
         authority_running = ""
         if self._root is not None and self._root_offline is True:
             authority_failure = "Folder unavailable"
+        elif self._refresh_failure:
+            authority_failure = "Refresh failed"
         elif self._runtime_warning:
             authority_uncertain = "Folder warning"
         elif self._root_transitioning:
@@ -3308,6 +3320,7 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         self._deleted_paths = deleted
         self._root_offline = result.offline
+        self._clear_refresh_failure()
         self._runtime_warning = "; ".join(
             warning
             for warning in (result.replica_warning, additional_warning)
@@ -3360,10 +3373,18 @@ class LibraryFileNotesWorkspace(Vertical):
         self._deleted_paths = deleted
         self._root_offline = result.offline
         self._runtime_warning = result.replica_warning or ""
+        self._clear_refresh_failure()
         return self._render_projection(
             offline=result.offline,
             rebuild_tree=navigator_changed,
         )
+
+    def _clear_refresh_failure(self) -> None:
+        """A healthy pass ends a failed reconcile's report (TASK-38982)."""
+        if self._refresh_failure:
+            self._refresh_failure = ""
+            if self._action_detail.startswith("Refresh failed:"):
+                self._action_detail = ""
 
     def _show_root_row_button(
         self,
@@ -3455,9 +3476,9 @@ class LibraryFileNotesWorkspace(Vertical):
             shell.items.display = linked and shell.effective_layout.items_open
             shell.items_grip.display = linked
             shell.library_grip.display = linked
-            shell.work.display = linked and not self._navigator_hides_work(
-                shell.effective_layout
-            )
+            hides_work = self._navigator_hides_work(shell.effective_layout)
+            shell.work.display = linked and not hides_work
+            self._navigator_manage.display = linked and hides_work
         try:
             body = self.query_one("#file-notes-body")
         except NoMatches:
@@ -6855,6 +6876,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     )
                 )
             except Exception as error:
+                self._refresh_failure = str(error)
                 self._set_action_status(f"Refresh failed: {error}")
                 # A failed reconcile never earns backoff: stay active so
                 # the first healthy pass is picked up immediately.
@@ -7808,7 +7830,16 @@ class LibraryFileNotesWorkspace(Vertical):
     def _back_to_navigator(self, event: Button.Pressed) -> None:
         event.stop()
         self._navigator_chosen = True
+        # TASK-38982: Back hides itself in the navigator view, and the Files
+        # pane is still closed (disabled) until the layout reopens it. Park
+        # focus on the Files grip first, so it is never None; the files take
+        # it once their pane shows.
+        shell = self._reader_shell
+        if shell is not None:
+            self.screen.set_focus(shell.items_grip, scroll_visible=False)
         self._set_narrow_view("navigator")
+        results = self._search_results_widget
+        self._focus_once_shown(results if results.display else self._tree_widget)
 
     @on(Button.Pressed, "#file-notes-session-changes")
     def _session_git_pressed(self, event: Button.Pressed) -> None:
@@ -9120,6 +9151,13 @@ class LibraryFileNotesWorkspace(Vertical):
         self._work_mode = "edit"
         self._sync_work_mode()
         self.call_after_refresh(self._editor_widget.focus)
+
+    @on(Button.Pressed, "#file-notes-navigator-manage")
+    def _show_manage_from_navigator(self, event: Button.Pressed) -> None:
+        """Open Manage from a navigator that hides the work pane (TASK-38982)."""
+        # Hand focus on before this button hides with the navigator view.
+        self.screen.set_focus(self.query_one("#file-notes-manage", Button))
+        self._show_manage_mode(event)
 
     @on(Button.Pressed, "#file-notes-manage")
     def _show_manage_mode(self, event: Button.Pressed) -> None:

@@ -828,7 +828,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-38983, 2026-11-06 (same waiver): 9802 -> 9835 (+33). A refused
     # folder change says why, offline drafts name a step that works, and a
     # failed save offers Retry save.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9835,
+    # TASK-38982, 2026-11-06 (same waiver): 9835 -> 9873 (+38). ‹ Files keeps
+    # focus, the narrow navigator offers Manage, and a failed refresh shows
+    # on the authority line.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
