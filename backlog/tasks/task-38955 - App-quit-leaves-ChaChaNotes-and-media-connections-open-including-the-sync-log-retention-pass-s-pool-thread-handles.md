@@ -7,7 +7,7 @@ labels:
 - follow-up
 - database
 - lifecycle
-priority: low
+priority: medium
 references:
 - tldw_chatbook/app_lifecycle.py
 - tldw_chatbook/app_shutdown.py
@@ -39,3 +39,20 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 - [ ] #2 After app unmount, the ChaChaNotes and media DBs have no registered connection or ordinary lease left on any thread; a test is red on dev
 - [ ] #3 The quit path stays bounded: the closes run after workers settle and never hold the exit past the shutdown watchdog
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-05, evidence added at filing (round 8, commit 3). Priority raised from low to medium because the leftover retention-pass lease also blocks a backup pause.
+
+**Probe.** Run with the `Tests/DB/test_sync_log_retention.py` fixtures, one case per process, through the scratch-profile wrapper:
+- One retention pass, then closes on the main thread: 2 storage leases were left on asyncio_0, and `_begin_local_pause().drain()` with a 1 s budget returned False after 1.00 s.
+- Control, the same pass plus `close_connection` on the worker thread: 0 leases were left, and the drain returned True in 0.00 s.
+
+**Effect during a real backup (inferred from code, not run in a mounted app).**
+- `monitor_app` (`runtime_maintenance.py:698-731`) calls `retire_current_thread_caches` (`participants.py:113`), which closes only the loop thread's caches.
+- It then retries `pause.drain` until its 30 s deadline and raises `RecoveryRequired("runtime_native_resources_not_settled")`.
+- So a retention pass that ran since startup could make the next backup fail to settle.
+
+The test-side leases of the same shape are filed separately as the dreams-boundary Guardian lease task.
+<!-- SECTION:NOTES:END -->

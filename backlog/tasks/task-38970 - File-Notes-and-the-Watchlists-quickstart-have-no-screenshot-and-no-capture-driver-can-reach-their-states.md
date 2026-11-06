@@ -33,12 +33,12 @@ Neither picture can be retaken yet because there is no driver for either state:
 
 Capture today is the hand recipe in `Docs/User_Guide/_template.md:55-134`. The repo's only capture script is `scripts/regen_approval_card_svg.py`, which captures the approval card through a harness. TASK-36521's capture scripts stayed in a scratchpad. TASK-24632's workflow image was a copied UAT capture, not a driver.
 
-Merge note: the TASK-38757 branch adds 16 lines to `library/file-notes.md` and still has the `![File Notes workspace](../images/library/file-notes.svg)` line (`:53`). Whichever of the two branches merges second must keep the image removed.
+Merge state: the TASK-36521 branch is now stacked on the TASK-38757 branch, and its tip (cc9647f8cd) has neither image nor any reference to them, so the removal survives both merges.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 After both branches have merged, no User Guide page references a missing image; a Docs test resolves every image link under Docs/User_Guide and fails when one link is pointed at a missing file (negative control)
+- [ ] #1 No User Guide page references a missing image; a Docs test resolves every image link under Docs/User_Guide and fails when one link is pointed at a missing file (negative control)
 - [ ] #2 A checked-in capture driver reaches the File Notes workspace with a folder chosen and the Watchlists Console workflow in its completed state, using a scratch profile and no real provider
 - [ ] #3 File Notes and the Watchlists quickstart each show a screenshot again, taken from the current app at 235x52 with that driver and with cdnjs font URLs stripped; if a state cannot be reached, the notes say which and why
 <!-- AC:END -->
