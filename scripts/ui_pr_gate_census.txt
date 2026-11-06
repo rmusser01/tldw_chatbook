@@ -2551,3 +2551,15 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library
 Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[notes]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[prompts]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[skills]
+# TASK-38978 (2026-11-06): the real-key Ctrl+Q tests for guarded modals,
+# whole file (17 tests: TASK-33622.15, TASK-38747 and TASK-38980's Promote
+# write). Appended at the tail.
+Tests/UI/test_app_quit_in_flight_modals.py
+# TASK-38979 (2026-11-06): the portrait region editor, whole file, now that a
+# retire before mount closes it and every cleanup is bounded (about 100 s
+# serial). Appended at the tail.
+Tests/UI/test_portrait_region_editor.py
+# TASK-38980 (2026-11-06): a confirmed Promote's write keeps the rules manager
+# busy and open, then reports promoted, refused or failed (about 3 s each).
+# Appended at the tail.
+Tests/UI/test_response_rules_modal.py::test_a_confirmed_promote_keeps_the_manager_busy_and_open_until_it_reports
