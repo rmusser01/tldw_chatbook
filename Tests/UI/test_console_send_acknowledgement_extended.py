@@ -113,7 +113,9 @@ async def test_turn_refused_before_its_echo_releases_the_row_and_offers_recovery
             # Dev's TASK-33621.2 shelf states the refusal: "Not sent: <reason>".
             shelf = turn_recovery_label(REFUSAL)
             assert shelf.startswith("Not sent: Hook admission refused"), shelf
-            assert shelf in "\n".join(_painted_lines(host))
+            # The shelf is the queue strip, not the transcript: at load ~83 it
+            # was painted after the row had already gone (1 run in 40).
+            await until(lambda: shelf in "\n".join(_painted_lines(host)))
             assert gateway.stream_calls == 0
 
 
@@ -125,7 +127,7 @@ async def test_failed_durable_commit_releases_the_row_and_restores_send():
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
-            console, _composer = await ready_console(host, pilot, gateway)
+            console, composer = await ready_console(host, pilot, gateway)
             store = console._ensure_console_chat_store()
 
             def refuse_commit(*_args, **_kwargs):
@@ -140,12 +142,15 @@ async def test_failed_durable_commit_releases_the_row_and_restores_send():
                 assert held.user_row and held.sending, held
                 gate.release.set()
                 await until(gateway.validation_started.is_set)
+                # TASK-38994: since 077e5bfa09 (ADR-230, 2026-10-31) only the
+                # pressed snapshot retires its draft, after durable acceptance.
+                # Before it no transfer exists and the draft is still shown.
                 claim = store.received_turn_for_session(store.active_session_id)
                 assert claim is not None and claim.draft_revision is not None
-                assert claim._draft_transfer_revision == store.session_input_snapshot(
-                    store.active_session_id
-                ).draft_revision
-                assert claim._draft_transfer_revision > claim.draft_revision
+                assert claim._draft_transfer_revision is None
+                inputs = store.session_input_snapshot(store.active_session_id)
+                assert inputs.draft_revision == claim.draft_revision
+                assert inputs.draft == DRAFT and composer.draft_text() == DRAFT
             finally:
                 gate.release.set()
                 # The durable commit comes after provider validation.
@@ -168,12 +173,20 @@ async def test_failed_durable_commit_releases_the_row_and_restores_send():
             assert "Sending" not in painted
             assert "Not sent: " in painted and "Restore" in painted, painted
             assert not console._console_send_ack.active_for(store.active_session_id)
+            # ADR-230: failed acceptance keeps the draft and refuses dispatch.
+            assert composer.draft_text() == DRAFT
             assert gateway.stream_calls == 0
 
 
 @pytest.mark.asyncio
 async def test_second_enter_during_admission_never_starts_a_second_provider_call():
-    """AC#4: the first send is visibly in flight; a repeat is refused, not sent."""
+    """AC#4: the first send is visibly in flight, and neither repeat sends.
+
+    The Enter during admission repeats the running capture: the visible send
+    holds it silently and drops it once that send settles. The press during
+    validation is refused with "Preparing the current turn…" and keeps the
+    draft.
+    """
     host, gateway, _timeline = build()
     notices: list[str] = []
     async with host.run_test(size=(160, 45)) as pilot:
@@ -182,6 +195,15 @@ async def test_second_enter_during_admission_never_starts_a_second_provider_call
             host.app_instance.notify = lambda message, **_k: notices.append(
                 str(message)
             )
+            # TASK-38994 AC#4: record each send the visible-send path starts.
+            real_send = console._send_console_message_from_visible_action
+            sends: list[object] = []
+
+            async def recording_send(**kwargs):
+                sends.append(kwargs.get("pending_send_token"))
+                return await real_send(**kwargs)
+
+            console._send_console_message_from_visible_action = recording_send
             gate = HeldAdmission(console)
             try:
                 press(host, "enter", "\r")
@@ -194,11 +216,19 @@ async def test_second_enter_during_admission_never_starts_a_second_provider_call
                 await asyncio.sleep(0.2)
                 gate.release.set()
                 await until(gateway.validation_started.is_set)
-                await until(lambda: composer.draft_text() == "")
-                composer.load_draft(DRAFT)
-                await pilot.pause()
+                # The repeat Enter was held as a repeat of the running capture
+                # and dropped once that send settled: it never started a send,
+                # and said nothing.
+                assert len(sends) == 1, sends
+                assert notices == [], notices
+                # TASK-38994: the pressed draft stays until durable acceptance
+                # (077e5bfa09, ADR-230), which comes after validation, so this
+                # press is on the draft being sent.
+                assert composer.draft_text() == DRAFT
                 press(host, "enter", "\r")
-                await until(lambda: len(notices) >= 1)
+                await until(
+                    lambda: any("Preparing the current turn" in n for n in notices)
+                )
                 await pilot.pause()
                 in_flight = paint_state(host)
                 assert in_flight.user_row and not in_flight.header_idle, in_flight
@@ -209,7 +239,8 @@ async def test_second_enter_during_admission_never_starts_a_second_provider_call
             await until(lambda: REPLY in "\n".join(_painted_lines(host)))
             await pilot.pause(0.3)
             assert gateway.stream_calls == 1
-            assert composer.draft_text() == DRAFT
+            # Accepted once, the sent draft leaves the composer.
+            assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio

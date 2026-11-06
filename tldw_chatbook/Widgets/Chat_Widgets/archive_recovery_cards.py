@@ -15,6 +15,7 @@ from textual.widgets import Button, Select, Static
 
 from tldw_chatbook.Chat.archive_recovery.contracts import RecoveryConfirmation
 from tldw_chatbook.Chat.archive_recovery.runtime import ArchiveRecoveryPresentation
+from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
 
 SCOPE_LABELS = {
     "chat_only": "Restore chat only",
@@ -256,7 +257,9 @@ class ArchiveRecoveryConfirmCard(Vertical):
         yield Static(
             "", id="recovery-effects", markup=False, classes="archive-recovery-copy"
         )
-        yield Select(
+        # TASK-38951: every Console sync that renders a new chat mounts this
+        # card, so a quit or the next switch can prune it mid-mount.
+        yield PruneSafeSelect(
             [(label, scope) for scope, label in SCOPE_LABELS.items()],
             id="recovery-scope",
             prompt="Choose exact scope",

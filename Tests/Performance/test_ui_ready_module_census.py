@@ -175,7 +175,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: `Chat.console_capture_policy` and `Canvas.config_policy` (#3375, out of
 #: `config.py`). Measured 1036 at dev 447628d08b; limit = measured + the
 #: documented +/-1 warm-boot wobble, as TASK-32856 and PR #2223 pinned.
-MAX_TLDW_MODULES_AT_UI_READY = 1037
+#: 1037 -> 1038 (2026-11-06, TASK-38951; owner size waiver 2026-10-31): the
+#: Console control bar's compact Selects are `Widgets.prune_safe_select`'s
+#: `PruneSafeSelect`, resident at ready. Measured 1037 alone; the bootbudget
+#: step measured 1038 when `DB.character_conversation_search` also loaded
+#: before ready (the +/-1 wobble). Limit = measured + 1, as above.
+MAX_TLDW_MODULES_AT_UI_READY = 1038
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

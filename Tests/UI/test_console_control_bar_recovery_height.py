@@ -137,3 +137,46 @@ async def test_newly_mounted_bar_applies_recovery_after_previous_bar_removal() -
         await pilot.pause()
         assert app.bar.region.height == 2
         assert app.bar.query_one("#console-auto-speak-resume", Button).display is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("select_id", ["compact-api-provider", "compact-api-model"])
+async def test_a_bar_pruned_while_a_compact_select_composes_never_exits_the_app(
+    monkeypatch: pytest.MonkeyPatch, select_id: str
+) -> None:
+    """TASK-38951 review: a ChatScreen can be pruned during its first compose.
+
+    A runtime identity flip (local <-> server) uninstalls and removes the
+    cached ChatScreen, and a new one composes new compact Selects; a quit can
+    land in that compose too. Textual then skips the Select's child mounts but
+    still runs ``Select._on_mount``, whose ``query_one(SelectOverlay)`` raised
+    ``NoMatches`` and exited the app. The prune lands as the Select composes.
+    """
+    from textual.containers import Vertical
+    from textual.widgets import Select
+
+    class HostApp(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.app_config = {}
+
+        def compose(self) -> ComposeResult:
+            yield Vertical(id="host")
+
+    real_compose = Select.compose
+
+    def compose_after_a_prune(select):
+        if select.id == select_id:
+            bar = next(n for n in select.ancestors if isinstance(n, ConsoleControlBar))
+            bar.remove()  # Sets ``_pruning`` on the bar's whole subtree now.
+        return real_compose(select)
+
+    monkeypatch.setattr(Select, "compose", compose_after_a_prune)
+    app = HostApp()
+    async with app.run_test(size=(120, 10)) as pilot:
+        await app.query_one("#host").mount(
+            ConsoleControlBar(ConsoleControlState.from_values(), app)
+        )
+        await pilot.pause()
+        assert not app.query(ConsoleControlBar)
+        assert app.is_running

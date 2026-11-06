@@ -6,6 +6,24 @@
 
 **What to do.** A handler that must stay silent should read until the client hangs up (`while await reader.read(n): pass`) and keep a long timeout only as a backstop. The client's timeout then ends the handler too, and the stall it tests is unchanged. To check a negative control, make the handler answer. The case then fails on its assertion, and it may still wait for the backstop, because a client that got an answer keeps its connection open.
 
+## The Console send harness runs one turn per chat, so a provider-call count cannot see a sequential duplicate (TASK-38994, 2026-11-06)
+
+**Incident.** An acceptance criterion asked for a negative control showing that `test_second_enter_during_admission_never_starts_a_second_provider_call` fails when a second Enter starts a second provider call. Seven temporary source edits all left `stream_calls == 1`:
+- the repeat press scheduled at once instead of held;
+- the held repeat re-sent once the chat was idle, by dispatch and by a fresh press;
+- the dispatch's "Preparing the current turn" refusal removed, then all three of them;
+- the controller's "A run is already running in this tab." guard removed;
+- the press queued while the turn prepares.
+
+Two facts explained it. First, a concurrent second Enter is stopped before it reaches the store's one-owner claim (`claim_received_turn`), by three layers:
+- the visible send holds a repeat of the running capture;
+- the hook dispatch's busy guard refuses a second send;
+- one of the two sends is refused at dispatch, so only one admission remains.
+
+Bypassing the claim's own check therefore turned nothing red. Second, a sequential second turn never reaches the provider in this harness. A plain second Enter after a completed reply was admitted, then ended with `RuntimeError('Local conversation storage is unavailable.')`. The harness app (`_build_console_send_test_app`) has no `local_chat_conversation_service`, and a chat whose first turn was saved needs it. So the count could only see a concurrent duplicate, and those layers already prevent one. The test now pins the first layer instead: it counts the sends the visible-send path starts, and removing the repeat hold turns that count red (2 == 1).
+
+**What to do.** Before you build a control for "never a second provider call" in the send harness, send two turns in one chat with nothing removed. If the second turn does not stream, the count is not evidence against a sequential duplicate. Assert the observable a duplicate would leave instead (a second echo row, a refusal notice), or give the harness a local conversation service first. When the product stacks independent guards, say which guard the count actually rests on.
+
 ## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
 
 **Incident.** Two Prompts DB privacy pins forbid `str(second_id)` in a log that must contain `count=2`, and the filed task called them self-contradictory: `second_id` was 2. The tests meant to seed ids 71,234,567 and 81,234,567 by INSERTing a `sqlite_sequence` row. The v5->v6 mix-in migration (7970fbcada) rebuilds `Prompts` and keeps its sequence, so a fresh database already has a `('Prompts', 0)` row; SQLite reads the first row and ignored the test's second, and the ids fell back to 1 and 2. Dropping the id check, the obvious "fix", would have weakened a privacy pin. The negative controls then found a second hole: stored keywords are lower-cased, so `"PRIVATE KEYWORD"` never matched a leaked keyword (2 passed with the keyword logged).

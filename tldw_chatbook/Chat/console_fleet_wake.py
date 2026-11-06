@@ -1438,7 +1438,17 @@ class ConsoleFleetWakeCoordinator:
                 await asyncio.sleep(0.05)
             if self._disposed:
                 return
-            ledger = self._runs_db().automatic_work
+            database = self._runs_db()
+            if database is None:
+                # TASK-38971: no agent-runs DB (no durable ChaChaNotes, or no
+                # receipt service) means no wake was ever recorded to audit.
+                with self._registry_lock:
+                    if self._disposed:
+                        return
+                    self._recovery_failure_reason = None
+                    self._recovery_ready = True
+                return
+            ledger = database.automatic_work
             await run_owned_db_call(ledger._db, ledger.recover, current_owner_id=self._owner_id)
             if self._disposed:
                 return
