@@ -969,7 +969,9 @@ _BUDGETS: dict[str, int] = {
     # while the session lease is still held) and its provision-continuation
     # allowlist entry; dev pinned this row while the branch was in flight.
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
-    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
+    # 2026-11-05, TASK-38226: 4,775 -> 4,773, the Markdown card regexes moved
+    # to Character_Chat/card_markdown_scan.py as linear scans.
+    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4773,
     # 2026-11-04, TASK-38686 (owner size waiver 2026-10-31): +1, the comment
     # on update_prompt_by_id's IMMEDIATE transaction.
     "tldw_chatbook/DB/Prompts_DB.py": 4674,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)

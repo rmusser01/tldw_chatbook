@@ -17,10 +17,15 @@ the extension plus a bounded, advisory look at the file's first bytes:
   for its top-level keys and its ``data`` keys. A card ``spec`` wins; a chat
   dictionary export (``dictionary_id`` with ``data``) is told apart from the
   generic V2 ``data`` shape before that shape is read as a card.
-* Markdown gets linear checks only: never the card parser, which is
-  quadratic on adversarial input. That parser exists on dev today and B2b
-  does not fix it (TASK-38226); the sniff only keeps it off this path. A
-  Markdown file whose text starts with
+* Markdown gets linear marker checks only, never the card parser. That
+  parser was quadratic on adversarial input (cubic on a crafted
+  frontmatter) until TASK-38226 made it linear
+  (``Character_Chat/card_markdown_scan.py``). The sniff still does not call
+  it. The sniff reads at most ``SNIFF_MAX_BYTES``, which can cut a card's
+  frontmatter or json block short, so the parser would refuse a card that
+  the importer accepts from the whole file. And the parser builds and
+  validates the whole card, logging an error for every file that is not
+  one: work the importer does again. A Markdown file whose text starts with
   ``{`` is read as JSON first, so a card saved as ``.md`` keeps its
   ``spec``; dev's card importer reads such a file's raw JSON. Only a
   ``---@@@---`` line decides a chat dictionary: ``key: value`` lines alone
@@ -28,7 +33,7 @@ the extension plus a bounded, advisory look at the file's first bytes:
   decision D8).
 * Any other extension (``.yaml``, ``.txt``, none) is a character card when
   its text is YAML frontmatter or holds a json block (fenced with or without
-  ``json``: the card importer's own pattern takes both), the same linear
+  ``json``: the card importer's own scan takes both), the same linear
   checks: dev's card picker read every non-image file as text under All
   Files, and no other kind's importer reads such a file.
 
@@ -102,8 +107,9 @@ _LORE_KEYS = frozenset({"scan_depth", "token_budget", "recursive_scanning"})
 _DICTIONARY_KEYS = frozenset({"strategy", "max_tokens", "default_token_budget"})
 _DICTIONARY_SEPARATOR = "---@@@---"
 #: The opening of a json block, fenced ```json or bare ``` (the card
-#: importer's pattern, ```(?:json)?\s*(\{.*?\})\s*```, takes both). Linear:
-#: only the opening is matched, never the block.
+#: importer's ``card_markdown_scan.fenced_json_object`` takes both, as dev's
+#: regex ```(?:json)?\s*(\{.*?\})\s*``` did). Linear: only the opening is
+#: matched, never the block, which may end past the bytes read.
 _JSON_FENCE = re.compile(r"```(?:json)?\s*\{", re.IGNORECASE)
 
 

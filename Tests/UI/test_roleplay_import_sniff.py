@@ -491,9 +491,11 @@ def test_a_json_card_saved_as_markdown_reads_as_a_card(suffix):
 
 
 def test_the_sniff_never_runs_the_markdown_card_parser(tmp_path, monkeypatch):
-    """The card parser's json-block regex is quadratic (0.39 s at 25 KB, 5.7 s
-    at 100 KB on dev, measured): it exists on dev and B2b does not fix it,
-    so the sniff must never call it."""
+    """The card parser's regexes were quadratic on dev (cubic on a crafted
+    frontmatter) until TASK-38226 made the parser linear. The sniff still
+    never calls it: it reads only ``SNIFF_MAX_BYTES``, which can cut a card
+    short, and the parser logs an error for every file that is not a card
+    (the sniff module's docstring)."""
 
     calls: list[tuple] = []
 
