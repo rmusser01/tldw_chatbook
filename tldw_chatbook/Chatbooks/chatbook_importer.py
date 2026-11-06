@@ -2769,6 +2769,14 @@ class ChatbookImporter:
                             {"title": note_title, "content": note_content},
                             expected_version=int(existing["version"]),
                         )
+                        self._restore_chachanotes_keywords(
+                            db,
+                            db.link_note_to_keyword,
+                            str(existing["id"]),
+                            note_keywords,
+                            content_type=ContentType.NOTE,
+                            status=status,
+                        )
                         status.record_success(ContentType.NOTE)
                         logger.debug("Replaced note {} in place", existing["id"])
                         continue
@@ -3229,7 +3237,8 @@ class ChatbookImporter:
                     system_prompt=decoded["system_prompt"],
                     user_prompt=decoded["user_prompt"],
                     keywords=decoded["keywords"],
-                    overwrite=False,
+                    # REPLACE updates a same-named prompt in place (TASK-38594).
+                    overwrite=conflict_resolution == ConflictResolution.REPLACE,
                     prompt_format=decoded["prompt_format"],
                     prompt_schema_version=decoded["prompt_schema_version"],
                     prompt_definition=decoded["prompt_definition"],
@@ -3379,6 +3388,10 @@ class ChatbookImporter:
                             ingestion_date=media_data.get("metadata", {}).get(
                                 "ingestion_date"
                             ),
+                            # REPLACE updates the media row with this URL in
+                            # place (TASK-38594).
+                            overwrite=conflict_resolution
+                            == ConflictResolution.REPLACE,
                         )
                     )
 

@@ -1335,8 +1335,8 @@ class RAGService:
         # `keyword_source_types` one this subclass's docstring warns about.
         if query_embedding is not None and search_type != "semantic":
             raise ValueError(
-                "query_embedding is not supported for search_type="
-                f"'{search_type}' (only the semantic leg embeds the query; "
+                "query_embedding is only supported for search_type='semantic', "
+                f"not '{search_type}' (only the semantic leg embeds the query; "
                 "pass query_embedding=None for keyword/hybrid searches)"
             )
 
@@ -1534,9 +1534,13 @@ class RAGService:
             logger.warning(
                 f"[{correlation_id}] Vector store search failed; degrading to "
                 f"{'keyword-only' if search_type == 'hybrid' else 'empty'} "
-                f"results (not cached): {e}"
+                f"results (not cached): {type(e).__name__}"
             )
             if search_type == "hybrid":
+                # ponytail: the hybrid gather already ran this keyword leg
+                # before the semantic leg raised, so a store outage costs one
+                # repeated local FTS query; keep the leg's result on the
+                # error if that query ever gets expensive.
                 try:
                     return await self._keyword_search(
                         query,

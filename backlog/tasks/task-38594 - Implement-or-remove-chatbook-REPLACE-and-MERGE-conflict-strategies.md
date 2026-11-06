@@ -27,6 +27,10 @@ The import wizard offers Replace and Merge radio buttons but the importer only i
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 REPLACE is update-in-place via versioned DB APIs (conversations retire-then-recreate, one ACTIVE row); MERGE removed from the wizard and rejected before any write; dead merge_notes deleted. Commit a76d67e6be.
+
+**Review of the rebuilt #3361 (2026-11-06).**
+- dev had added note keyword round-trip (TASK-34000.19) after the audit's base. The REPLACE branch now re-links the bundle's keywords on the updated note, like the create path (`test_replace_note_relinks_the_bundles_keywords`, red before).
+- REPLACE now also covers the other two stores. Prompts pass `overwrite` for REPLACE, so a same-named prompt updates in place instead of failing `ConflictError` (`test_prompt_import_replace_overwrites_the_existing_prompt`, red before). Media pass `overwrite` for REPLACE on the existing URL (`test_replace_overwrites_existing_media_in_place`; its fixture hits the local-only RecoveryRequired profile error here, so CI runs it).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
