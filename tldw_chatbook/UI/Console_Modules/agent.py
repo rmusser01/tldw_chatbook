@@ -1038,6 +1038,9 @@ class ConsoleAgentController:
         self._console_subagent_counts_cache_during_run = False
         self._console_subagent_counts_read: dict[frozenset[str], dict[str, Any]] = {}
         self._console_subagent_counts_read_owner: tuple[Any, Any] | None = None
+        #: TASK-36571.1 review: the last count read's (bridge, rows, row ids),
+        #: which ``_renew_due_subagent_counts`` re-reads once it ages.
+        self._console_subagent_counts_last: tuple[Any, tuple, frozenset] | None = None
         self._console_historical_read: dict[str, Any] | None = None
         self._historical_reads_held = False  # TASK-33620.15.1 input reads.
         #: TASK-33620.15.1.1: the drilled sub-agent run reads one poll tick
@@ -2539,9 +2542,11 @@ class ConsoleAgentController:
         """
         if bridge is None:
             return {}
+        rows = tuple(rows)
         row_ids = frozenset(
             cid for row in rows if (cid := getattr(row, "conversation_id", None))
         )
+        self._console_subagent_counts_last = (bridge, rows, row_ids)
         from ...DB.AgentRuns_DB import AgentRunsDB
 
         database = getattr(bridge, "_db", None)
@@ -2620,6 +2625,33 @@ class ConsoleAgentController:
                 CONSOLE_ACTIVE_RUN_STATUSES
             )
         return self._console_subagent_counts_cache
+
+    def _renew_due_subagent_counts(self) -> None:
+        """Re-read the last count read's rows once that read is due, as a build would.
+
+        TASK-36571.1 review: idle, the Console's syncs built the workspace
+        context, and each build's ``_console_subagent_counts_for_rows`` call
+        re-read aged counts (the off-loop read publishes a change). The
+        cheaper reads that replaced those builds call this instead. It checks
+        the read's own TTL rule first, so fresh counts cost no live-token pass.
+        """
+        last = self._console_subagent_counts_last
+        if last is None or not last[2] or last[0] is not self._console_agent_bridge:
+            return
+        bridge, rows, row_ids = last
+        state = self._console_subagent_counts_read.get(row_ids)
+        if state is None:
+            due = self._console_subagent_counts_refresh_needed(row_ids)
+        else:
+            from ..Screens.chat_screen import CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+
+            due = not state["pending"] and (
+                not state["at"]
+                or time.monotonic() - state["at"]
+                >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+            )
+        if due:
+            self._console_subagent_counts_for_rows(bridge, rows)
 
     def _historical_presentation_key(self, bridge: Any, conversation_id: str) -> tuple:
         """Capture only process-local source and display ownership identities."""

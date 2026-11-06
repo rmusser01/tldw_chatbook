@@ -1680,6 +1680,7 @@ def build_console_controllers(
                 rows,
             )
         ),
+        renew_subagent_counts=lambda: screen._agent._renew_due_subagent_counts(),
         conversation_browser_collapse_preferences=(
             lambda: screen._console_conversation_browser_collapse_preferences()
         ),

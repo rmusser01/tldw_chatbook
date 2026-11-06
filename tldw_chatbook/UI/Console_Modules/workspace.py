@@ -443,9 +443,13 @@ class _ConsoleRegistryDisplayReads:
       MagicMock's auto-attribute compares equal to itself forever and would
       freeze the view -- the TASK-21118 lesson), so reduced test doubles stay
       on live reads.
-    * ADR-028 is preserved by construction: only the SQL is cached.
-      ``display_state._safe_runtime_bindings`` still recomputes filesystem
-      binding status straight from disk on every build.
+    * ADR-028 is preserved by construction: the view caches registry rows,
+      never filesystem status. The builder reads binding status only from
+      the controller's off-loop availability snapshot, which
+      ``_capture_workspace_files_availability_for_registry`` recomputes from
+      disk. TASK-36571.1: ``display_key`` lets the controller memo the
+      builder's whole output while the view's reads and that snapshot are
+      unmoved.
     """
 
     __slots__ = (
@@ -705,6 +709,11 @@ class ConsoleTickWorkspaceBuilds:
             )
         return state
 
+    @property
+    def run_tick(self) -> bool:
+        """Whether a run tick opened this scope (it builds, or reuses a build once)."""
+        return self._serial is not None
+
     def workspace_label(self) -> str:
         """The build's label: one display read under this build's read rule (TASK-36571.1).
 
@@ -806,6 +815,7 @@ class ConsoleWorkspaceController:
         complete_manual_read_visit: Callable[..., None] | None = None,
         sync_session_titles: Callable[[], Awaitable[None]] | None = None,
         await_title_views: Callable[[], Awaitable[bool]] | None = None,
+        renew_subagent_counts: Callable[[], None] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -855,6 +865,8 @@ class ConsoleWorkspaceController:
             broken_conversation_ids_accessor: Return non-openable conversation ids.
             ensure_agent_bridge: Return the Console agent bridge.
             subagent_counts_for_rows: Compute sub-agent counts for browser rows.
+            renew_subagent_counts: Re-read the last count read once it ages
+                (TASK-36571.1 review; ``request_due_console_context_rereads``).
             conversation_browser_collapse_preferences: Return collapse preferences.
             wake_retry_poke: Optionally request a staged-wake retry after resume.
             workspace_tree_owner_accessor: Return the mounted Tree owner identity.
@@ -930,6 +942,7 @@ class ConsoleWorkspaceController:
         self._broken_conversation_ids_accessor = broken_conversation_ids_accessor
         self._ensure_agent_bridge_fn = ensure_agent_bridge
         self._subagent_counts_for_rows_fn = subagent_counts_for_rows
+        self._renew_subagent_counts_fn = renew_subagent_counts
         self._conversation_browser_collapse_preferences_fn = (
             conversation_browser_collapse_preferences
         )
@@ -4590,6 +4603,12 @@ class ConsoleWorkspaceController:
         token = self._console_conversation_browser_search_token
         await self._refresh_console_conversation_browser_search(query, token)
 
+    def _console_browser_projection_query(self) -> str:
+        """The query the browser's rows are read with: a failed search keeps the settled one."""
+        if self._flat_conversation_search.error:
+            return self._flat_conversation_search.settled_query
+        return self._console_conversation_browser_query
+
     def _with_console_conversation_browser_state(
         self,
         state: ConsoleWorkspaceContextState,
@@ -4602,12 +4621,7 @@ class ConsoleWorkspaceController:
             "conversation_local_marks_service",
             None,
         )
-        query = self._console_conversation_browser_query
-        projection_query = (
-            self._flat_conversation_search.settled_query
-            if self._flat_conversation_search.error
-            else query
-        )
+        projection_query = self._console_browser_projection_query()
         rows, total, error_copy = self._current_console_browser_rows(
             projection_query,
             current_conversation_id=current_conversation_id,
@@ -7129,12 +7143,77 @@ class ConsoleWorkspaceController:
         TASK-36571.1: the rail badge and the Inspector's conversation rows
         show only this label, and each projection built the whole
         Conversations browser for it. A run tick's or control-bar sync's
-        scope lends its display-read rule; elsewhere it reads live.
+        scope lends its display-read rule; elsewhere it reads live. It asks
+        for the re-reads the build would ask for
+        (``request_due_console_context_rereads``).
         """
+        self.request_due_console_context_rereads()
         builds = getattr(self, "_console_tick_builds", None)
         if builds is not None and builds.accepts_current_task():
             return builds.workspace_label()
         return console_workspace_label(self._console_registry_reads_view())
+
+    def request_due_console_context_rereads(self) -> None:
+        """Ask for the TTL-gated re-reads a context build asks for, without the build.
+
+        TASK-36571.1 review: idle, the settings-summary, control-bar and Agent
+        section syncs built the whole workspace context for its label and the
+        Agent section's open flag, and each build asked for the folder-
+        availability snapshot, the saved Conversations rows and the browser's
+        sub-agent counts once each aged past its TTL. The cheaper label and
+        open-flag reads ask here instead, through the same TTL gates; each
+        re-read pushes when it lands with something new. A run tick asks
+        nothing: its own build asks (or, once, it reuses a build that just
+        asked).
+        """
+        builds = getattr(self, "_console_tick_builds", None)
+        if builds is not None and builds.accepts_current_task() and builds.run_tick:
+            return
+        if not self._screen_running_accessor():
+            return
+        view = self._console_registry_reads_view()
+        try:
+            active = view.get_active_workspace() if view is not None else None
+        except Exception:  # noqa: BLE001 - the build's degraded path; it logs.
+            active = None
+        self._request_workspace_files_availability_refresh(
+            self._console_availability_workspace_ids(
+                getattr(active, "workspace_id", "")
+            )
+        )
+        self._sync_persisted_console_browser_rows(
+            self._console_browser_projection_query(),
+            current_conversation_id=self._current_console_conversation_id(),
+        )
+        renew_subagent_counts = getattr(self, "_renew_subagent_counts_fn", None)
+        if renew_subagent_counts is not None:
+            renew_subagent_counts()
+
+    def _console_availability_workspace_ids(
+        self, active_workspace_id: Any
+    ) -> tuple[str, ...]:
+        """The workspaces a context build asks folder availability for.
+
+        Args:
+            active_workspace_id: The built state's ``workspace_id`` (the
+                active workspace's, or empty without one).
+
+        Returns:
+            The active workspace first, then every listed one, deduplicated.
+        """
+        return tuple(
+            dict.fromkeys(
+                workspace_id
+                for workspace_id in (
+                    str(active_workspace_id or "").strip(),
+                    *(
+                        str(workspace.workspace_id or "").strip()
+                        for workspace in self._console_browser_workspace_records()
+                    ),
+                )
+                if workspace_id
+            )
+        )
 
     def live_workspace_build_scope(self):
         """One shared context build for a user-triggered sync, read live.
@@ -7601,9 +7680,9 @@ class ConsoleWorkspaceController:
         current_conversation = self._current_console_conversation_id()
         # The generation-keyed display-read view stands in for the raw
         # service (TASK-22201): the builder's read set (active workspace,
-        # workspaces, runtime bindings, memberships) is served without SQL
-        # while the registry is unchanged. ADR-028's from-disk binding
-        # status recompute still runs per build inside the builder.
+        # workspaces, memberships) is served without SQL while the registry
+        # is unchanged. Binding status comes only from the off-loop
+        # availability snapshot (ADR-028), one of the memo's inputs below.
         view = self._console_registry_reads_view()
         inputs = (
             current_conversation,
@@ -7642,19 +7721,7 @@ class ConsoleWorkspaceController:
             state,
             current_conversation_id=current_conversation,
         )
-        workspace_ids = tuple(
-            dict.fromkeys(
-                workspace_id
-                for workspace_id in (
-                    str(state.workspace_id or "").strip(),
-                    *(
-                        str(workspace.workspace_id or "").strip()
-                        for workspace in self._console_browser_workspace_records()
-                    ),
-                )
-                if workspace_id
-            )
-        )
+        workspace_ids = self._console_availability_workspace_ids(state.workspace_id)
         self._request_workspace_files_availability_refresh(workspace_ids)
         availability = MappingProxyType(
             {
@@ -7780,9 +7847,13 @@ class ConsoleWorkspaceController:
 
         TASK-36571.1: a send's run flips VALIDATING -> STREAMING -> ... while
         no session's run marker or attention facts move, and each flip forced
-        a rebuild that found the browser unchanged. The build reads runs only
+        a rebuild that found the browser unchanged. The build reads runs
         through those (and the queued counts the fingerprint keeps), so a
-        run tick may reuse a build across such a flip.
+        run tick may reuse a build across such a flip. Its attention rows also
+        read the activity receipts' unseen snapshot and the manual-unread
+        marks, which this key leaves out: a receipt is published in the same
+        step as its run's marker change, and a manual-unread landing pushes on
+        its own (TASK-39070 inventories the rest).
 
         Returns:
             The key, or ``None`` (never reuse) when the run display is unreadable.

@@ -338,7 +338,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # whole rail state, and the rail reads the workspace label alone: +17
     # lines over dev 29592ecc9b's 24604 and two methods (the shared
     # stored-preference read and the flag): 24616/741 -> 24621/743.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24621, 743),
+    # TASK-36571.1 review fix, 2026-11-06: same waiver. The open-flag read
+    # asks for the re-reads the rail-state build it replaced asked for: +2
+    # lines, no methods: 24621/743 -> 24623/743.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24623, 743),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

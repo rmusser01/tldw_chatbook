@@ -12334,8 +12334,10 @@ class ChatScreen(BaseAppScreen):
         TASK-36571.1: equals ``_current_console_rail_state().agent_open`` (the
         stored preference, then the fleet's force-open; no other rail rule
         touches it), which the Agent section's sync built, Inspector state
-        included, on every projection for this one flag.
+        included, on every projection for this one flag. Asks for the
+        re-reads that build asked for (``request_due_console_context_rereads``).
         """
+        self._workspace.request_due_console_context_rereads()
         _preference_key, stored_preferences = self._console_rail_stored_preferences()
         return self._agent._fleet_agent_section_open(
             coerce_console_rail_preferences(stored_preferences).agent_open

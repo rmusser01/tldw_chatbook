@@ -854,7 +854,13 @@ _BUDGETS: dict[str, int] = {
     # registry view's reads are unmoved, the projection reads the workspace
     # label alone, and an unchanged folder-availability re-read no longer
     # pushes a rebuild: 8961 -> 9160 (+199).
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 9160,
+    # TASK-36571.1 review fix, 2026-11-06: same waiver (owner rule: a fix
+    # over a size ratchet raises the row by the branch's growth with a dated
+    # comment). The label and open-flag reads ask for the TTL-gated re-reads
+    # (folder availability, saved rows, sub-agent counts) the idle builds
+    # they replaced asked for, and two stale docstrings are corrected:
+    # 9160 -> 9231 (+71).
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 9231,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
