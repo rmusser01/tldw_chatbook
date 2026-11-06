@@ -25,7 +25,7 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the Architecture branch that lands TASK-38989 (the state after it merges). TASK-38989 carved these two nodes out of its scope and left them red for an owner review. Its branch adds an `architecture-guards` PR job and keeps this file out of it.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on Architecture PR #3436 (head b7c8e809b3), which lands TASK-38989. Line numbers are dev's and are the same on that head. TASK-38989 carved these two nodes out of its scope and left them red for an owner review. #3436 adds an `architecture-guards` PR job and keeps this file out of it.
 
 **The drift.** It was recomputed with the test's own `census()` / `production_census()`. The result is the same on dev, on every round-10 branch and on e8eeae7db9:
 - The doc has 1059 producer rows and production has 1509: **644 added, 194 gone, 12 changed**.

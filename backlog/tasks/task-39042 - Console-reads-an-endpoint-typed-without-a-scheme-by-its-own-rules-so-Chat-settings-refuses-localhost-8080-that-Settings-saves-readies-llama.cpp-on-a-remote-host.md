@@ -26,30 +26,30 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the state after TASK-38963 and TASK-38964 (endpoint PR) merge. Every probe result below is the same in both trees; line numbers are from the post-merge state. Probes ran without network or config writes; the key is synthetic.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on endpoint PR #3432 (head 760d2987c7), which lands TASK-38963 and TASK-38964. Every probe result below is the same on both; line numbers are dev's, and ones marked #3432 are from that head. Probes ran without network or config writes; the key is synthetic.
 
 **Readiness has its own scheme rule.**
-- Console readiness checks the session endpoint with `_valid_base_url` (`console_session_settings.py:3199-3208`, called at `:1803-1807`). It runs `validate_url`, which needs a typed scheme, except for llama.cpp, whose value `normalize_llamacpp_base_url` rewrites first.
+- Console readiness checks the session endpoint with `_valid_base_url` (`console_session_settings.py:3199-3208`, called at `:1802-1808`). It runs `validate_url`, which needs a typed scheme, except for llama.cpp, whose value `normalize_llamacpp_base_url` rewrites first.
 - vllm, ollama and custom with `localhost:8080` read "Invalid URL" (blocker `endpoint_invalid`, "Endpoint must be a valid http(s) URL."), so Chat settings cannot save it. **s** saves `http://localhost:8080/v1/chat/completions` for the same input.
 - llama.cpp reads Ready for `gpu-box.lan:8080`, `192.168.1.20:8080` and a pasted dotted key. The contract refuses all three: "Remote endpoint URLs must include an HTTP or HTTPS scheme." That is the rule TASK-16200 AC#4 set ("remote schemeless endpoints remain blocked").
-- TASK-38964's `console_default_endpoint_refusal` (`console_settings_defaults.py:1119-1140`) does not refuse any of these, so this is not a regression from that PR.
+- TASK-38964's new `console_default_endpoint_refusal` (#3432 `console_settings_defaults.py:1119-1140`) does not refuse any of these, so this is not a regression from that PR.
 
 **A pasted key with a dot displays as a host.**
-- `safe_endpoint_display`'s fallback for a value without a scheme (`console_provider_endpoints.py:355-358`) returns the typed text whenever `http://<value>` resolves. `_is_allowed_endpoint_host` (`:440-463`) accepts any dotted host.
-- `parse_console_endpoint_preview` (`console_settings_defaults.py:1425`) accepts any valid dotted hostname without a scheme.
+- `safe_endpoint_display`'s fallback for a value without a scheme (`console_provider_endpoints.py:355-361`; #3432 :355-358) returns the typed text whenever `http://<value>` resolves. `_is_allowed_endpoint_host` (`:423`; #3432 :440) accepts any dotted host.
+- `parse_console_endpoint_preview` (`console_settings_defaults.py:1396`; #3432 :1425) accepts any valid dotted hostname without a scheme.
 - With the synthetic key `0123456789abcdef0123456789abcdef.ABCDEFGHijklmnop` (a ZAI-shaped `<32 hex>.<16>`), the key is shown lower-cased by:
   - `safe_endpoint_display` and `local_server_discovery.endpoint_display`;
   - the unsaved-endpoint copy ("Selected endpoint: 0123…");
   - `format_console_endpoint_preview`;
   - the Chat settings Endpoint row for llama.cpp (`console_session_settings.py:3388-3404`);
-  - Settings' Test-result Endpoint row (`settings_screen.py:17167`; found by reading the code, not mounted).
+  - Settings' Test-result Endpoint row (`settings_screen.py:17184`; found by reading the code, not mounted).
 - The same happens with `/v1` appended and with an `sk-` prefix.
 - TASK-38963 already stopped discovery's `fingerprint_endpoint` from echoing it (`[invalid-endpoint]`); on dev it reads `http://0123…/`.
 - A value with a typed `http://` cannot be told from a real URL and is out of scope.
 
 **Pins a fix must respect.**
-- `local-service:9090/v1` displays as itself (`Tests/Chat/test_console_provider_endpoints.py:92`).
-- `("printer.local/api", "printer.local", "LAN")` (`Tests/Chat/test_console_settings_defaults.py:1638`) contradicts a rule that a non-loopback value without a scheme needs a port.
+- `local-service:9090/v1` displays as itself (`Tests/Chat/test_console_provider_endpoints.py:91`).
+- `("printer.local/api", "printer.local", "LAN")` (`Tests/Chat/test_console_settings_defaults.py:1635`) contradicts a rule that a non-loopback value without a scheme needs a port.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

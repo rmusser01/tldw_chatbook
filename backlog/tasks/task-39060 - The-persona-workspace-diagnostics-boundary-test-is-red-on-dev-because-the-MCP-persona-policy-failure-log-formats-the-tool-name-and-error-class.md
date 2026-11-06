@@ -21,10 +21,10 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f and on e8eeae7db9 (`fu-base-r10`), 2026-11-06. Line numbers are from e8eeae7db9; dev's are the same.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f and on e8eeae7db9 (`fu-base-r10`), 2026-11-06. Line numbers are dev's (the same at e8eeae7db9).
 
 **The red.**
-- `Tests/test_persistent_diagnostic_boundary.py:95` `test_persona_workspace_diagnostics_do_not_interpolate_private_values` requires a constant, single-argument message for each prefix in `_CONSTANT_DIAGNOSTIC_PREFIXES` (`:20-30`), including "MCPToolProvider: persona_policy_provider failed".
+- `Tests/test_persistent_diagnostic_boundary.py:95` `test_persona_workspace_diagnostics_do_not_interpolate_private_values` requires a constant, single-argument message for each prefix in `_CONSTANT_DIAGNOSTIC_PREFIXES` (`:20-44`), including "MCPToolProvider: persona_policy_provider failed".
 - `tldw_chatbook/Agents/mcp_tool_provider.py:1635-1639` logs:
 
   ```
@@ -37,10 +37,8 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f and on 
 
 **Who already knows.**
 - TASK-31977 (In Progress) records this failure as a baseline limitation and does not own it.
-- The Architecture branch (TASK-38989) lanes only this file's new forwarder node (`test_forwarder_renders_only_a_plain_bound_exception_type`), not the whole file, because of this red.
+- Architecture PR #3436 (head b7c8e809b3, TASK-38989) lanes only this file's new forwarder node (`test_forwarder_renders_only_a_plain_bound_exception_type`), not the whole file, because of this red.
 - No PR lane runs the file on dev.
-
-**What changes after TASK-38989.** Its forwarder renders a bound `exception_type` (a plain class name only) on the forwarded line. So a constant message plus `logger.bind(exception_type=...)`, the shape the Persona Buddy logs now use, keeps the class visible without formatting a runtime value into the template.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -49,3 +47,5 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f and on 
 - [ ] #2 With a `persona_policy_provider` that raises, the line the production forwarder emits still names the error class and holds no value the boundary test forbids; a test through the real forwarder shows this
 - [ ] #3 `Tests/test_persistent_diagnostic_boundary.py` runs whole on a PR lane (never the fast PR contract), replacing the single-node entry if TASK-38989 added one, with three timings of that lane's command recorded
 <!-- AC:END -->
+
+Possible approach (not required): after TASK-38989 the forwarder renders a bound `exception_type` (a plain class name only), so a constant message plus `logger.bind(exception_type=...)`, the shape the Persona Buddy logs use, would keep the class visible.

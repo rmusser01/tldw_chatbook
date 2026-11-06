@@ -28,22 +28,22 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the state after TASK-38955 (storage PR) merges. Line numbers are from that post-merge state. TASK-38955 narrowed its AC#2 to ChaChaNotes and says "A follow-up will track this" and "The other `to_thread` sites were not audited"; TASK-38986 says the same of the other offload sites.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on storage PR #3435 (head 3cc391fadc), which lands TASK-38955. Line numbers are dev's; ones marked #3435 are code that PR adds. TASK-38955 narrowed its AC#2 to ChaChaNotes and says "A follow-up will track this" and "The other `to_thread` sites were not audited"; TASK-38986 says the same of the other offload sites.
 
 **What TASK-38955 does for ChaChaNotes.**
 - ChaChaNotes has a per-file `SQLiteConnectionQuiescenceRegistry` (`DB/base_db.py:180`), created at `ChaChaNotes_DB.py:2919`.
-- `close_idle_connections` (`ChaChaNotes_DB.py:3258`) closes every thread's handle through `close_if_idle` (`base_db.py:355-384`).
-- That runs from `_close_main_databases` (`app_lifecycle.py:437`), at the end of `on_unmount`.
+- `close_idle_connections` (#3435 `ChaChaNotes_DB.py:3258`) closes every thread's handle through `close_if_idle` (#3435 `base_db.py:355-384`).
+- That runs from `_close_main_databases` (#3435 `app_lifecycle.py:437`), at the end of `on_unmount`.
 
 **Media has no such path.**
 - Media keeps one connection per thread (`self._local = threading.local()`, `Client_Media_DB_v2.py:1110`).
-- `close_connection` closes only the calling thread's handle; `core_closing` refuses a close from another thread (`participants.py:482`). At quit media is closed on the UI thread only (`app_lifecycle.py:447`, `:462-472`).
+- `close_connection` closes only the calling thread's handle; `core_closing` refuses a close from another thread (`participants.py:482`). At quit #3435 closes media on the UI thread only (#3435 `app_lifecycle.py:447`, `:462-472`); dev closes neither store's worker handles.
 - `participant.connections[connection] = lease` (`participants.py:563`) is a plain dict, so a pool thread's handle and its lease outlive the thread.
 - A probe ran the real scope-picker tag lister (`build_keyword_tag_lister`, `asyncio.to_thread(media_db.get_keyword_usage_stats)` at `scope_picker_listers.py:519`) on a pool thread, then the real `_close_main_databases`. Media's pool-thread lease survived the quit close and the thread's exit: `[('media','pool_0')]`. A 1 s local-pause drain then returned False.
 
-**The same holds for other stores.** An AST census of the post-merge tree found 223 `asyncio.to_thread` offloads that reach a DB: 139 call `<db>.<method>` directly and 84 pass a DB to a helper. A probe made one call per class on a pool thread and counted leases:
+**The same holds for other stores.** An AST census of #3435's tree found 223 (dev has the same 223) `asyncio.to_thread` offloads that reach a DB: 139 call `<db>.<method>` directly and 84 pass a DB to a helper. A probe made one call per class on a pool thread and counted leases:
 
-| Store | Offload sites | Worker lease left behind | Retired at quit after the merge |
+| Store | Offload sites | Worker lease left behind | Retired at quit on #3435 |
 |---|---|---|---|
 | DreamsDB | 65 | yes, outlives the thread | no; the app-lifetime `dreams_db` (`app_service_wiring.py:3346`) is never closed, and `close_all` (`Dreams_DB.py:410`) is only called for the reconcile's temporary instance |
 | MediaDatabase | 8, plus thread workers | yes, outlives the thread | UI thread only |

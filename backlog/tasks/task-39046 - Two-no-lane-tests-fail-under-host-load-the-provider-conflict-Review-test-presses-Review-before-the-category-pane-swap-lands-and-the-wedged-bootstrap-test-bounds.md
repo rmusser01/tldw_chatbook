@@ -21,7 +21,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the state after the round-10 Console PRs merge. Both files are the same in the two trees at these lines; line numbers are from the post-merge state.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the round-10 Console PRs (send #3433, head e3106a313c; Console tests #3434, head 16c99d2d9f), run stacked with storage #3435. Line numbers are dev's; ones marked #3434 are from that head.
 
 **`test_provider_navigation_conflict_requires_review_discard_or_return`** (`Tests/UI/test_settings_configuration_hub.py`, a private-profile test). No PR lane runs it: the census lists other nodes of this file, not this one.
 - 10 runs at `-n 4`: 1 red (run 9, load 28) with `SettingsURLInput(id='settings-provider-endpoint-value').has_focus` False at `:8720`. The others took 14.6-27.8 s at load 16-31.
@@ -30,7 +30,7 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - A pending navigation focus overriding a focus the user just set is also a minor product edge, reachable only by a press within about 40 ms of the navigation.
 
 **`test_a_wedged_bootstrap_does_not_park_a_second_worker`** (`Tests/Chat/test_console_chat_controller.py`). No PR lane runs the file.
-- It asserts `second_elapsed < 0.01` (`:11789`, from 027a136111, task-32275), while the budget it guards is patched to 0.05 s. It failed at 11 ms in a whole-file run at load 15-63.
+- It asserts `second_elapsed < 0.01` (`:11758`, #3434 :11789, from 027a136111, task-32275), while the budget it guards is patched to 0.05 s. It failed at 11 ms in a whole-file run at load 15-63.
 - Alone, 10 runs at `-n 4`: 10 green, 4.1-6.4 s, load 15-26.
 - A probe of 200 repetitions at load about 24 gave median 0.1 ms, p99 4.9 ms and max 6.0 ms, so the margin is about 1.7x.
 - Also, a released earlier worker's `_bootstrap` finally clears whichever `_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT` is patched in at that moment (`console_chat_controller.py:20818-20826`). A repeated body without per-iteration isolation saw `calls == [1, 1]`.

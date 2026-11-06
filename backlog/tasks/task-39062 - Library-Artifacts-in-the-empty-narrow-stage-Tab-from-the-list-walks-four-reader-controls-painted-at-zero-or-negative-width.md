@@ -22,11 +22,11 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the Library branch that lands TASK-38981 (the state after it merges). TASK-38981's notes (re-review fixes, r10l-rev2) record it as a pre-existing follow-up. Line numbers are from the branch.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the round-10 Library branch that lands TASK-38981 (not yet a final pushed head). TASK-38981's notes (re-review fixes, r10l-rev2) record it as a pre-existing follow-up. The branch's code is named by symbol, since its lines are still moving.
 
 **What TASK-38981 changed.**
 - TASK-38981 hides a zero-width work pane in every Library destination's narrow stage.
-- Artifacts opts out (`LibraryArtifactsReaderShell.hide_zero_width_work = False`, `library_artifacts_reader_shell.py:30`), because F6 or Tab into its reader reveals it at full width (`reveal_focused_reader`, `:78`).
+- Artifacts opts out (`LibraryArtifactsReaderShell.hide_zero_width_work = False`, in `library_artifacts_reader_shell.py`), because F6 or Tab into its reader reveals it at full width (`LibraryArtifactsReaderShell.reveal_focused_reader`).
 - With no artifact selected there is nothing to reveal, so the reader's controls stay in the focus chain off screen.
 
 **Probe.** A mounted Library with no reports, `artifacts-reports` selected, Tab from `#library-artifacts-list`. The result is identical on dev and after TASK-38981:

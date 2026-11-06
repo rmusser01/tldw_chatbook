@@ -25,13 +25,13 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the Architecture branch that lands TASK-38988 and TASK-38989 (the state after it merges). TASK-38989 keeps these four files off its new Architecture guards job pending an owner decision. Line numbers are from the branch; dev's are 7 lower.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on Architecture PR #3436 (head b7c8e809b3), which lands TASK-38988 and TASK-38989. TASK-38989 keeps these four files off its new Architecture guards job pending an owner decision. Line numbers are dev's; #3436's are 11-12 higher (given in brackets).
 
 **Which nodes read history.** Each file has a `git show` helper:
-- `test_console_realtime_controller_boundary.py:368` reads `origin/dev`.
-- `test_console_review_selection_controller_boundary.py:170` reads TASK_BASE c6218918d1 and `origin/dev`.
-- `test_console_wave6_inventory.py:602` reads seven frozen revisions (bed39af6b0, 8d806b71d9, d4f3f97763, 02cd80b330, 0da426e1e4, ede2162143, a2c09daa81).
-- `test_console_wave6_closeout_inventory.py:233` reads 8d806b71d9, 87791f8553 and d20dd733b7, plus seven (base, delivered) pairs.
+- `test_console_realtime_controller_boundary.py:358` (`_source_at_revision`, [#3436 :369]) reads `origin/dev`.
+- `test_console_review_selection_controller_boundary.py:159` (`_source_at_revision`, [#3436 :171]) reads TASK_BASE c6218918d1 and `origin/dev`.
+- `test_console_wave6_inventory.py:592` (`_source_at_revision`, [#3436 :603]) reads seven frozen revisions (bed39af6b0, 8d806b71d9, d4f3f97763, 02cd80b330, 0da426e1e4, ede2162143, a2c09daa81).
+- `test_console_wave6_closeout_inventory.py:223` (`_source_file_at_revision`, [#3436 :235]) reads 8d806b71d9, 87791f8553 and d20dd733b7, plus seven (base, delivered) pairs.
 
 That is 23 distinct revisions, all ancestors of origin/dev, so `fetch-depth: 0` would make them available.
 

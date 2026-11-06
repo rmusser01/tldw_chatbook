@@ -25,13 +25,13 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the Architecture branch that lands TASK-38988 (the state after it merges). TASK-38988's notes list it as a follow-up for once TASK-36549 and TASK-36550 land. Both are Done on dev, since 2026-10-24.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on Architecture PR #3436 (head b7c8e809b3), which lands TASK-38988. Line numbers are dev's; ones marked #3436 are from that head. TASK-38988's notes list it as a follow-up for once TASK-36549 and TASK-36550 land. Both are Done on dev, since 2026-10-24.
 
 - `ConsoleCharacterController.__init__` gives both hooks no-op defaults (`UI/Console_Modules/character.py:98-99`, from b333cebdfe):
   - `speech_presentation: Callable[[], Any | None] = lambda: None`;
   - `render_radio: Callable[..., None] = lambda *args, **kwargs: None`.
 - The only production caller, `UI/Console_Modules/wiring.py:1780-1784`, passes both.
-- TASK-38988 adds an allowance for the defaults: `optional = {"speech_presentation", "render_radio"}` in `test_character_controller_has_only_named_non_dom_dependencies` (`Tests/Architecture/test_console_wave6_inventory.py:1880`, branch tip).
+- TASK-38988 adds an allowance for the defaults: `optional = {"speech_presentation", "render_radio"}` in `test_character_controller_has_only_named_non_dom_dependencies` (#3436 `Tests/Architecture/test_console_wave6_inventory.py:1880`).
 - These test constructors omit both hooks and would need them:
   - `Tests/UI/test_console_character_avatar.py:146`;
   - `Tests/UI/test_console_persona_visual_identity.py:239` and `:294`;

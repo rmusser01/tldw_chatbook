@@ -22,7 +22,7 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the Architecture branch that lands TASK-38990 (the state after it merges). TASK-38990's notes list it as a follow-up.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on Architecture PR #3436 (head b7c8e809b3), which lands TASK-38990. TASK-38990's notes list it as a follow-up. Line numbers are dev's; ones marked #3436 are from that head.
 
 **No production caller.**
 - An untruncated `git grep` on dev finds `ensure_builtin_pixel_migu_buddy` in `tldw_chatbook/` only at its own definition (`Persona_Visual/builtin_pixel_migu.py:27`).
@@ -33,7 +33,7 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 **Its only callers are tests.**
 - `Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py` imports it (`:12`, `:139`, `:291`, `:326`, `:360`, `:386`); it passes on dev, 21 passed at `-n 4`.
 - `Tests/Packaging/test_pixel_migu_distribution.py:44` calls it inside the installed-wheel probe (`:51`, `:73`). So that packaging test proves a path production does not run.
-- TASK-38990 pins the import as a reviewed exception, with a liveness pin (`Tests/Architecture/test_persona_visual_runtime_boundary.py:36-41`, branch).
+- TASK-38990 pins the import as a reviewed exception, with a liveness pin (#3436 `Tests/Architecture/test_persona_visual_runtime_boundary.py:36-41`).
 - Neither test file runs on a PR lane.
 <!-- SECTION:DESCRIPTION:END -->
 

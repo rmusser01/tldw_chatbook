@@ -28,9 +28,9 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the state after the round-10 Console PRs merge (TASK-38971 and others). Results are the same on both; line numbers are from the post-merge state.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the round-10 Console PRs (send #3433, head e3106a313c, which lands TASK-38971; Console tests #3434, head 16c99d2d9f), run stacked with storage #3435. Results are the same on both. Line numbers are dev's; every cited line is the same on those heads.
 
-**How the reds split.** TASK-38971's 28-file fleet-wake set (`-n 4`, load 11-24) gave 62 failed / 177 passed on dev and 62 failed / 178 passed after the merge.
+**How the reds split.** TASK-38971's 28-file fleet-wake set (`-n 4`, load 11-24) gave 62 failed / 177 passed on dev and 62 failed / 178 passed on the PRs.
 - Rerun under a temporary `bootstrap_profile` marker (applied as a `-p` plugin, no tree edit), the 15 files with reds give 16 failed / 99 passed in both trees.
 - So 46 of the 62 are TASK-38111's `RecoveryRequired: raw_source_selection_changed`. That is 30 directly, and 16 that read as "wake never delivered" when run plain but pass under the marker. TASK-38111 owns those 46.
 - The other 16 fail with the marker too. No PR lane runs any of the 15 files; the one laned node, `test_automatic_launch_recovery.py::test_chat_opened_while_the_wake_loads_its_tree_is_not_opened_twice` (`derived-artifacts.yml:688`), passes.
@@ -47,7 +47,7 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - `test_console_headless_wake_fires.py:205` `test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor`.
 - `test_console_launch_wake.py:674` `test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch`.
 
-**5 nodes that race load:** `test_console_automatic_work_pause.py::test_pause_copy_is_painted_with_no_live_children_and_survives_view_clear`. It was red in 5 of 6 parametrizations after the merge and 4 on dev.
+**5 nodes that race load:** `test_console_automatic_work_pause.py::test_pause_copy_is_painted_with_no_live_children_and_survives_view_clear`. It was red in 5 of 6 parametrizations on the PRs and 4 on dev.
 - The notice has zero size after one click and one pause (`:161-163`).
 - Its diagnostic at `:58-61` walks ancestors up to the App and raises `AttributeError: '_PauseHarness' object has no attribute 'region'`, which hides the real assertion.
 

@@ -21,15 +21,15 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the Library branch that lands TASK-38957 (the state after it merges). TASK-38957's notes record the click case as a follow-up. Line numbers are from that branch; dev's are the same up to `:11241`.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the round-10 Library branch that lands TASK-38957 (not yet a pushed, final head). TASK-38957's notes record the click case as a follow-up. Line numbers are dev's; the branch's change is named by symbol.
 
 **Why a click is read as programmatic.**
 - `on_resize` sets `resize_settling = True` (`library_screen.py:8452`).
-- Only real input clears it: `_mark_library_notes_user_interaction` (`library_notes_controller.py:3018-3020`). That runs from `on_mouse_down` (`library_screen.py:8560`), `on_key`, the wheel, and `action_focus_next`/`previous` (`:9420-9450`, TASK-32106's keyboard fix).
-- `on_descendant_focus` counts `resize_settling` as programmatic (`:11203-11208`). The focus generation only advances when `relevant and not programmatic` (`:11254-11258`).
+- Only real input clears it: `_mark_library_notes_user_interaction` (`library_notes_controller.py:3018-3020`). That runs from `on_mouse_down` (`library_screen.py:8560`), `on_key`, the wheel, and `action_focus_next`/`previous` (`:9422-9450`, TASK-32106's keyboard fix).
+- `on_descendant_focus` counts `resize_settling` as programmatic (`:11203-11208`). The focus generation only advances when `relevant and not programmatic` (`:11251-11255`).
 - Textual moves focus before it forwards the MouseDown. So for a click the screen sees DescendantFocus first, while `resize_settling` is still True, and the generation stays put.
 - The settled restore's guard (`library_notes_controller.py:2768-2777`, `library_screen.py:5717-5735`) then still passes, and the restore moves focus back.
-- TASK-38957 only widened `relevant` to Folder files (`:11242-11244`). The `programmatic` term is shared by every Notes mode and is unchanged.
+- TASK-38957 only widens `relevant` (`:11240-11248`) to Folder files, with `or self._file_notes_active()`. The `programmatic` term is shared by every Notes mode and is unchanged.
 
 **Probe.** The probe held `_restore_library_notes_settled_focus`, resized across the compact breakpoint, acted, then ran the held restore. `resize_settling` was True before every action. The holds make it deterministic: 3 runs at `-n 4` gave the same result (load 18-20).
 

@@ -20,18 +20,18 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the Architecture branch that lands TASK-38989 (the state after it merges). TASK-38989's notes propose this and keep the file off its new Architecture guards job. No PR lane runs it on dev or on the branch.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on Architecture PR #3436 (head b7c8e809b3), which lands TASK-38989; the #3436 timings below were taken on an earlier commit of that branch. Line numbers are dev's; ones marked #3436 are from that head. TASK-38989's notes propose this and keep the file off its new Architecture guards job. No PR lane runs it on dev or on #3436.
 
 **Shape and cost.**
-- `Tests/Architecture/test_no_undefined_module_globals.py:158` parametrizes once per module: `@pytest.mark.parametrize("path", _module_files(), ids=lambda p: str(p.name))`. That gives 2,942 nodes on dev and 2,943 after the merge. The ids are basenames, which repeat.
-- Run alone (serial, after the merge): 2,943 passed in 37.0 s, load 18-20. The AST check itself is about 30-33 s, 10.5 s of it parsing.
-- In the Architecture guards job's command (27 targets, serial, `--timeout=180 --tb=short`, after the merge):
+- `Tests/Architecture/test_no_undefined_module_globals.py:158` (#3436 :176) parametrizes once per module: `@pytest.mark.parametrize("path", _module_files(), ids=lambda p: str(p.name))`. That gives 2,942 nodes on dev and 2,943 on #3436. The ids are basenames, which repeat.
+- Run alone (serial, #3436): 2,943 passed in 37.0 s, load 18-20. The AST check itself is about 30-33 s, 10.5 s of it parsing.
+- In the Architecture guards job's command (27 targets, serial, `--timeout=180 --tb=short`, #3436):
   - without this file: 152 passed in 210.5 s (load 12-18);
   - with it: 3,095 passed in 567.1 s (load 12-20).
   - So the file adds about 357 s.
 
 **Why the context matters.**
-- `Tests/conftest.py:608` sets `_GC_EVERY = 25`, and `cleanup_file_descriptors` runs `gc.collect()` every 25th test (`:656-666`).
+- `Tests/conftest.py:608` sets `_GC_EVERY = 25`, and `cleanup_file_descriptors` runs `gc.collect()` every 25th test (`:632`, the collect at `:666`).
 - Once earlier files have loaded the app heap, each collect takes about 3 s. The 15 slowest durations in the combined run were all 3.0-3.4 s teardowns of trivial nodes.
 - About 118 collects of about 3 s each is about 354 s, which matches the added time. One node removes almost all of it.
 <!-- SECTION:DESCRIPTION:END -->

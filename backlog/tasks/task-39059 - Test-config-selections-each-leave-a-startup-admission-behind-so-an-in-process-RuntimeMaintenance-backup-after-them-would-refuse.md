@@ -25,10 +25,10 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down, by the storage review of TASK-38986; checked on dev b2c618185f, 2026-11-06, and on the state after the storage PR (TASK-38986, branch tip 3cc391fadc) merges. Line numbers are from that post-merge state; the helper and the admission code are the same on dev.
+Found in round 10 of the 2026-10-23 burn-down, by the storage review of TASK-38986; checked on dev b2c618185f, 2026-11-06, and on storage PR #3435 (head 3cc391fadc), which lands TASK-38986 and carries the endpoint PR's tests. Line numbers are dev's; ones marked #3435 are from that head. The helper and the admission code are the same on both.
 
 **How a selection adds a startup.**
-- `Tests/conftest.py`'s per-test isolation gives every test outside the bootstrap-profile list its own `HOME` (`:1829-1846`). The bootstrap root is `Path.home()/.config/tldw_cli/recovery-bootstrap` (`bootstrap.py:128-129`, `profile_paths.py:21-22`), so each such test has its own root.
+- `Tests/conftest.py`'s per-test isolation gives every test outside the bootstrap-profile list its own `HOME` (`:1783-1800`; #3435 :1829-1846). The bootstrap root is `Path.home()/.config/tldw_cli/recovery-bootstrap` (`bootstrap.py:128-129`, `profile_paths.py:21-22`), so each such test has its own root.
 - `select_config_source` calls `install_config_source` (`Tests/Backup_Recovery/config_test_support.py:15-29`), which re-executes `tldw_chatbook.config`.
 - Importing `config.py` calls `admit_startup()` (`config.py:4-6`). `_admit_startup` files a lease in `storage_admission._startups`, keyed by (pid, bootstrap root) (`storage_admission.py:1540-1560`).
 - Nothing releases it at teardown; `_shutdown` releases every startup at exit (`atexit`, `:1595`).
@@ -39,7 +39,7 @@ Found in round 10 of the 2026-10-23 burn-down, by the storage review of TASK-389
 | File | Tree | Passed | Startups held at the end |
 |---|---|---|---|
 | `Tests/Chat/test_local_server_discovery.py` | dev | 94 | 1 |
-| `Tests/Chat/test_local_server_discovery.py` | after the endpoint and storage PRs | 282 | 110, one per TASK-38964 make-default node |
+| `Tests/Chat/test_local_server_discovery.py` | #3435 | 282 | 110, one per TASK-38964 make-default node |
 | `Tests/Wizards/test_first_run_protect_state.py` | dev | 73 | 15 |
 | `Tests/test_config_private_bootstrap.py` | dev | 24 | 4 |
 | `Tests/test_config_delete_settings.py` | dev | 46 | 1 |
@@ -51,7 +51,7 @@ Found in round 10 of the 2026-10-23 burn-down, by the storage review of TASK-389
   - the tests that call `retire_startup` (`Tests/Backup_Recovery/test_runtime_startup_handoff.py`, `test_rag_projection_capture.py`) run their app in a child process (`_run`);
   - the dreams step's later backup file runs in sandboxed children.
 - Production admits once per process.
-- TASK-38986 made `--storage-lease-guard` subtract `_startups` (`Tests/conftest.py:1147`; its docstring calls them "each held until exit by design"). So the guard no longer reports these, which was right for the drain it protects but leaves this case unwatched.
+- TASK-38986 made `--storage-lease-guard` subtract `_startups` (#3435 `Tests/conftest.py:1147`; its docstring calls them "each held until exit by design"). So the guard no longer reports these, which was right for the drain it protects but leaves this case unwatched.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

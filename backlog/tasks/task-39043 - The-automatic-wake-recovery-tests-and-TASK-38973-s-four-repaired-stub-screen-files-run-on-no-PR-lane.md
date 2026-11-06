@@ -28,18 +28,18 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the state after TASK-38971 (Console send PR) and TASK-38973 (Console tests PR) merge. Line numbers are from that post-merge state.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on send PR #3433 (head e3106a313c) and Console tests PR #3434 (head 16c99d2d9f), which land TASK-38971 and TASK-38973; the runs used those PRs stacked with storage #3435. Line numbers are dev's.
 
 **What has no lane.**
 - `grep -n <file> .github/workflows/*.yml scripts/ui_pr_gate_census.txt` finds no PR lane for any of these five files. `test_home_citation_retirement.py` appears in `perf-guard.yml:52,96` only as a `paths:` trigger.
 - `Tests/Chat/test_automatic_wake_recovery.py` holds TASK-38971's new test, recovery with no agent-runs DB. Dev has 6 tests and the merge adds the 7th.
-- TASK-38973 repaired four stub-screen files, which were 26 failed / 38 passed on dev and 64 passed after the merge:
+- TASK-38973 repaired four stub-screen files, which were 26 failed / 38 passed on dev and 64 passed on #3434:
   - `Tests/Backup_Recovery/test_console_config_sync_lifetime.py`;
   - `Tests/Backup_Recovery/test_console_sync_maintenance.py`;
   - `Tests/Backup_Recovery/test_home_citation_retirement.py`;
   - `Tests/UI/test_console_full_config_preparation.py`.
 
-**Local timings after the merge** (load 16-31):
+**Local timings on #3434** (load 16-31):
 
 | File | `-n 4` x3 | Serial, the dreams step's flags (`--storage-lease-guard --timeout=180 --tb=short`) |
 |---|---|---|

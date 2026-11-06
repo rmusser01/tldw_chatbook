@@ -21,9 +21,9 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the Library branch that lands TASK-38984 (the state after it merges). TASK-38984's notes say "The file still runs on no PR lane; the criteria do not ask for one".
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the round-10 Library branch that lands TASK-38984 (not yet a final pushed head). TASK-38984's notes say "The file still runs on no PR lane; the criteria do not ask for one".
 
-- `Tests/UI/test_library_notes_w5_session_git_layout.py` (10 nodes) is in no `pull_request` job: `grep -n "w5_session_git" .github/workflows/*.yml scripts/ui_pr_gate_census.txt` finds nothing on dev or on the branch. Only `test.yml` (push to main) and the scheduled nightly run reach it. TASK-32615 wrote the file without a lane AC.
+- `Tests/UI/test_library_notes_w5_session_git_layout.py` (10 nodes) is in no `pull_request` job: `grep -n "w5_session_git" .github/workflows/*.yml scripts/ui_pr_gate_census.txt` finds nothing on dev or on the Library branch. Only `test.yml` (push to main) and the scheduled nightly run reach it. TASK-32615 wrote the file without a lane AC.
 - Three runs at `-n 4` (load 16.5-21.5):
   - On dev: 4 passed, 6 failed, in 8.7-10.1 s. The failures are:
     - the three `test_the_trust_dialog_never_breaks_the_path_it_asks_consent_for[size0-2]` reds TASK-38984 fixes (`assert '           /...4/power/vault' == '/Users/macbo...4/power/vault'`);

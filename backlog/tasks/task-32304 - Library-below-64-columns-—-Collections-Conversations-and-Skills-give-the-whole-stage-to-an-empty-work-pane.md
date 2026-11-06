@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-11 00:54'
-updated_date: '2026-11-06 12:26'
+updated_date: '2026-11-06 13:11'
 labels:
   - library
   - ux
@@ -29,7 +29,7 @@ Media fixed this for itself with `list_first_when_empty` (task-32065): with noth
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Closed by TASK-38981 (the Library list-stage work, round 10 of the 2026-10-23 burn-down), verified 2026-11-06. TASK-34851 and TASK-32304 are the same filing: identical text and the same created date. This one is closed as the duplicate of TASK-34851.
+Closed by TASK-38981 (the Library list-stage work, round 10 of the 2026-10-23 burn-down), verified 2026-11-06. TASK-34851 and TASK-32304 are the same filing: identical text and the same created date. This one, the lower id, is the original; TASK-34851 is closed as its duplicate with the same evidence.
 
 - **The rule.** TASK-38981 adds Media's `list_first_when_empty` to the Collections, Conversations and Skills reader profiles (`tldw_chatbook/UI/Library_Modules/screen_constants.py`), so with nothing open the narrow stage goes to the list.
 - **The hidden work pane.** In that stage, `AdaptivePaneShell` hides the zero-width work pane, so its controls are not left in the focus chain.
@@ -39,6 +39,7 @@ Closed by TASK-38981 (the Library list-stage work, round 10 of the 2026-10-23 bu
   - Conversations, with no conversations: `test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[conversations-empty]`. At 60x24 the list takes the narrow stage, and no work-pane control is a zero-width Tab stop. Red before: `('conversations-empty', ['library-conversation-reader-read', …])`.
     - With conversations, the Library opens the first one on entry, so there is no empty state there.
     - The same test covers `[collections|skills|prompts]`.
+    - This node asserts the `items_open` layout flag; the resolver and shell pins below cover the list's display and width.
   - Resolver pin: `Tests/Library/test_library_adaptive_reader_state.py::test_an_empty_narrow_stage_goes_to_the_list_for_every_list_destination`.
   - Shell pin: `Tests/UI/test_adaptive_pane_shell.py::test_a_pane_given_the_whole_stage_hides_the_work_pane_and_returns_to_it`.
   - Picks after the list takes the stage: `test_an_item_picked_from_the_stage_list_takes_the_stage_back[notes|media|conversations|collections|skills|prompts]`.

@@ -28,20 +28,20 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on the state after the storage PR (TASK-38954, 38955, 38956, 38972, 38986) merges. Line numbers are from that post-merge state.
+Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-11-06, and on storage PR #3435 (head 3cc391fadc), which lands TASK-38954, 38955, 38956, 38972 and 38986. Line numbers are dev's.
 
 **What has no lane.**
 - The storage PR adds or changes tests in eight places. These are laned:
-  - the three Guardian files TASK-38986 fixed (dreams-boundary step, `derived-artifacts.yml:1106-1110`);
+  - the three Guardian files TASK-38986 fixed (dreams-boundary step, `derived-artifacts.yml:1103-1107`);
   - `Tests/CI` and the module-size ratchet (fast PR contract);
   - `Tests/Performance/test_boot_worker_census.py` (`perf-guard.yml:180`).
-- These four run on no PR lane, either after the merge or on dev; grep of `derived-artifacts.yml`, `perf-guard.yml` and `scripts/ui_pr_gate_census.txt`:
+- These four run on no PR lane, on #3435 or on dev; grep of `derived-artifacts.yml`, `perf-guard.yml` and `scripts/ui_pr_gate_census.txt`:
   - `Tests/DB/test_sync_log_retention.py`: TASK-38955's quit-time retirement and its retention-pass worker handles.
   - `Tests/RAG_Search/test_keyword_leg_db_resolution.py`: TASK-38956's FTS5 pool retirement.
   - `Tests/Web_Server/test_mobile_service.py`: TASK-38972's mobile shutdown.
   - `Tests/Library/test_library_ingest_runner.py`: TASK-38954's Research startup ordering. Three of its nodes run only in the label-triggered `task-603-platform-evidence.yml`.
 
-**Local timings after the merge** (pytest time; 3 runs at `-n 4`, then 1 serial run with the dreams step's flags `-p no:xdist --storage-lease-guard --timeout=180`; load 17-30):
+**Local timings on #3435** (pytest time; 3 runs at `-n 4`, then 1 serial run with the dreams step's flags `-p no:xdist --storage-lease-guard --timeout=180`; load 17-30):
 
 | File | Result locally | `-n 4` x3 | Serial with the guard |
 |---|---|---|---|
