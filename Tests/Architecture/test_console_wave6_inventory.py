@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import ast
-import hashlib
-import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,64 +10,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from Tests.Architecture.test_screen_size_ratchet import _BUDGETS as _SCREEN_SIZE_BUDGETS
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCREEN_PATH = _REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py"
-IMPLEMENTATION_BASE = "bed39af6b004e4db86218fad01d2ea515b332135"
-BASELINE_LINES = 22_338
-BASELINE_METHODS = 705
-POST_IMAGE_IMPLEMENTATION_BASE = "8d806b71d9c5ae7ed333ccb42780f6b2ea68acd0"
-POST_IMAGE_BASELINE_LINES = 22_172
-POST_IMAGE_BASELINE_METHODS = 712
 TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
-#: 2026-11-06, TASK-38988 (owner size waiver): the live ChatScreen ceiling is
-#: the screen-size ratchet's own ChatScreen row (24,616 / 741 on that day),
-#: read from that file rather than re-pinned here. A pin at the measured
-#: 24,604 would go red unseen whenever the row is raised by a dated waiver
-#: (review r10a-rev1). Only the live-screen comparisons use it; every
-#: wave-6 constant still pins its own frozen revision.
-_, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
-    "tldw_chatbook/UI/Screens/chat_screen.py"
-]
-FLEET_TASK0_IMPLEMENTATION_BASE = "d4f3f97763ddf3fa46eeb35ae9473827e72695bc"
-FLEET_TASK0_BASE_SCREEN_LINES = 20_428
-FLEET_TASK0_BASE_METHODS = 653
-FLEET_TASK0_DEFINITION_LINES = 421
-FLEET_TASK0_MAX_SCREEN_LINES = 20_007
-FLEET_TASK0_MAX_METHODS = 637
-FLEET_FINAL_REBASE_BASE = "02cd80b33004305765b5cd91b3d264aa3664596e"
-FLEET_FINAL_REBASE_BASE_SCREEN_LINES = 20_486
-FLEET_FINAL_REBASE_BASE_METHODS = 656
-FLEET_FINAL_REBASE_DEFINITION_LINES = 421
-FLEET_FINAL_REBASE_MAX_SCREEN_LINES = 20_065
-FLEET_FINAL_REBASE_MAX_METHODS = 640
-FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS = frozenset(
-    {
-        "_console_inspector_active",
-        "_request_console_context_allocation_reconcile",
-        "_request_console_live_work_reconcile",
-    }
-)
-TASK_3070_9_DESIGN_BASE = "0da426e1e4c2846f13671690b8f981f72e673359"
-TASK_3070_9_TASK0_IMPLEMENTATION_BASE = "ede2162143331e324c44832ff6a3910e1185cf58"
-TASK_3070_9_TASK0_BASE_SCREEN_LINES = 19_995
-TASK_3070_9_TASK0_BASE_METHODS = 640
-TASK_3070_9_DEFINITION_LINES = 328
-TASK_3070_9_TASK0_MAX_SCREEN_LINES = 19_667
-TASK_3070_9_TASK0_MAX_METHODS = 632
-TASK_3070_9_FINAL_DELIVERY_BASE = "a2c09daa81935dbc59cf487b96128a729d843382"
-TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES = 20_250
-TASK_3070_9_FINAL_DELIVERY_BASE_METHODS = 641
-TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES = 328
-TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES = 19_922
-TASK_3070_9_FINAL_DELIVERY_MAX_METHODS = 633
-TASK_3070_9_FAMILY_SHA256 = (
-    "3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee"
-)
 TASK_3070_9_FAMILY_NAMES = (
     "_first_chat_defaults_match",
     "_current_first_chat_defaults",
@@ -152,7 +99,6 @@ class Wave6Group:
     deleted: frozenset[str] = frozenset()
     raw_lines: int = 0
     residue_lines: int = 0
-    source_revision: str = IMPLEMENTATION_BASE
 
     @property
     def raw_names(self) -> frozenset[str]:
@@ -289,7 +235,6 @@ WAVE6_GROUPS = {
         delegates=frozenset({"on_console_workspace_conversation_search_changed"}),
         raw_lines=959,
         residue_lines=5,
-        source_revision=POST_IMAGE_IMPLEMENTATION_BASE,
     ),
     "retrieval": Wave6Group(
         target_path="tldw_chatbook/UI/Console_Modules/retrieval.py",
@@ -422,7 +367,6 @@ WAVE6_GROUPS = {
             }
         ),
         raw_lines=401,
-        source_revision=POST_IMAGE_IMPLEMENTATION_BASE,
     ),
     "first_chat": Wave6Group(
         target_path="tldw_chatbook/UI/Console_Modules/session.py",
@@ -441,7 +385,6 @@ WAVE6_GROUPS = {
             }
         ),
         raw_lines=328,
-        source_revision=POST_IMAGE_IMPLEMENTATION_BASE,
     ),
     "auto_speak": Wave6Group(
         target_path="tldw_chatbook/UI/Console_Modules/hands_free.py",
@@ -462,7 +405,6 @@ WAVE6_GROUPS = {
         ),
         raw_lines=48,
         residue_lines=15,
-        source_revision=POST_IMAGE_IMPLEMENTATION_BASE,
     ),
 }
 
@@ -600,19 +542,6 @@ def _class_node_from_source(
     return classes[0]
 
 
-def _source_at_revision(revision: str, path: Path) -> str:
-    relative_path = path.relative_to(_REPO_ROOT).as_posix()
-    result = subprocess.run(
-        ["git", "show", f"{revision}:{relative_path}"],
-        cwd=_REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return result.stdout
-
-
 def _methods_from_class(class_node: ast.ClassDef) -> dict[str, ast.AST]:
     return {node.name: node for node in _method_definitions(class_node)}
 
@@ -631,10 +560,6 @@ def _method_definitions(
 def _method_name_counts(class_node: ast.ClassDef) -> Counter[str]:
     """Count direct method definitions without collapsing duplicate names."""
     return Counter(node.name for node in _method_definitions(class_node))
-
-
-def _method_count(class_node: ast.ClassDef) -> int:
-    return len(_method_definitions(class_node))
 
 
 def _methods(path: Path, class_name: str) -> dict[str, ast.AST]:
@@ -718,45 +643,6 @@ def _resolved_default_signature(
         key=lambda item: (item[0], item[1].col_offset),
     )
     return _resolved_default_signature(initializer, method, line)
-
-
-def _assignment_signatures(
-    class_node: ast.ClassDef, attribute: str
-) -> set[tuple[object, ...]]:
-    signatures: set[tuple[object, ...]] = set()
-    for method in _methods_from_class(class_node).values():
-        for node in ast.walk(method):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-                continue
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(
-                isinstance(target, ast.Attribute)
-                and isinstance(target.value, ast.Name)
-                and target.value.id == "self"
-                and target.attr == attribute
-                for target in targets
-            ):
-                signatures.add(
-                    _resolved_default_signature(node.value, method, node.lineno)
-                )
-    return signatures
-
-
-def _getattr_default_signatures(
-    class_node: ast.ClassDef, attribute: str
-) -> set[tuple[object, ...]]:
-    return {
-        _default_signature(node.args[2])
-        for node in ast.walk(class_node)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "getattr"
-        and len(node.args) == 3
-        and isinstance(node.args[0], ast.Name)
-        and node.args[0].id == "self"
-        and isinstance(node.args[1], ast.Constant)
-        and node.args[1].value == attribute
-    }
 
 
 def _first_self_attribute_access(
@@ -848,23 +734,6 @@ def _assert_screen_reads_after_build(
     method: ast.AST, attribute: str, build_line: int
 ) -> None:
     assert all(line >= build_line for line in _screen_read_lines(method, attribute))
-
-
-def _has_external_default_none(base_methods: dict[str, ast.AST]) -> bool:
-    method = base_methods["_ensure_console_video_store"]
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "getattr"
-        and len(node.args) == 3
-        and isinstance(node.args[0], ast.Name)
-        and node.args[0].id == "self"
-        and isinstance(node.args[1], ast.Constant)
-        and node.args[1].value == EXTERNAL_COMPATIBILITY_NAME
-        and isinstance(node.args[2], ast.Constant)
-        and node.args[2].value is None
-        for node in ast.walk(method)
-    )
 
 
 def _assert_owner_is_wired(group: Wave6Group) -> None:
@@ -1198,39 +1067,15 @@ def _assert_descriptor_contract(
 
 
 @pytest.mark.unit
-def test_wave6_inventory_matches_the_implementation_base() -> None:
-    """Lock every reviewed definition to its implementation-base evidence.
+def test_wave6_families_have_one_owner_and_bounded_delegates() -> None:
+    """Give every reviewed definition one owner on the live tree.
 
-    Each definition retains an exact source span and one migration owner while
-    the current tree moves through the extraction phases.
+    TASK-39055 retired this node's frozen implementation-base reads (owner
+    decision, 2026-11-06); its live ownership checks stay, since no other
+    node runs them for the image and video families.
     """
-    base_source = _source_at_revision(IMPLEMENTATION_BASE, _SCREEN_PATH)
-    base_class = _class_node_from_source(base_source, "ChatScreen", _SCREEN_PATH)
-    base_methods = _methods_from_class(base_class)
-    post_image_source = _source_at_revision(
-        POST_IMAGE_IMPLEMENTATION_BASE, _SCREEN_PATH
-    )
-    post_image_class = _class_node_from_source(
-        post_image_source, "ChatScreen", _SCREEN_PATH
-    )
-    post_image_methods = _methods_from_class(post_image_class)
-    reviewed_methods = {
-        IMPLEMENTATION_BASE: base_methods,
-        POST_IMAGE_IMPLEMENTATION_BASE: post_image_methods,
-    }
-    screen_source, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
     screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
 
-    assert len(base_source.splitlines()) == BASELINE_LINES
-    assert _method_count(base_class) == BASELINE_METHODS
-    assert len(post_image_source.splitlines()) == POST_IMAGE_BASELINE_LINES
-    assert _method_count(post_image_class) == POST_IMAGE_BASELINE_METHODS
-    assert len(screen_source.splitlines()) <= LIVE_SCREEN_LINE_CEILING, (
-        POST_IMAGE_IMPLEMENTATION_BASE
-    )
-    assert _method_count(screen_class) <= LIVE_SCREEN_METHOD_CEILING, (
-        POST_IMAGE_IMPLEMENTATION_BASE
-    )
     assert set(WAVE6_GROUPS) == {
         "image",
         "video",
@@ -1270,12 +1115,6 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
         assert group.delegates <= screen_methods.keys()
         assert group.stays <= screen_methods.keys()
         assert not (group.deleted & target_owners.keys())
-
-        source_methods = reviewed_methods[group.source_revision]
-        assert group.raw_names <= source_methods.keys()
-        assert sum(_span(source_methods[item]) for item in group.raw_names) == (
-            group.raw_lines
-        )
 
         complete = not (group.moved & screen_methods.keys()) and not (
             group.deleted & screen_methods.keys()
@@ -1684,31 +1523,22 @@ def test_wave6_projection_clears_both_ratchet_overages() -> None:
 
 
 @pytest.mark.unit
-def test_wave6_compatibility_inventory_is_complete_and_phase_safe() -> None:
-    """Lock compatibility assignments across every extraction phase.
+def test_wave6_compatibility_descriptors_are_wired_and_fail_loud() -> None:
+    """Keep each moved family's compatibility names on its controller.
 
     Baseline assignments remain authoritative until an entire family moves;
     afterward, descriptors must preserve the reviewed controller contract.
+    TASK-39055 retired this node's frozen implementation-base reads (owner
+    decision, 2026-11-06); no other node runs these live checks.
     """
-    base_source = _source_at_revision(IMPLEMENTATION_BASE, _SCREEN_PATH)
-    base_class = _class_node_from_source(base_source, "ChatScreen", _SCREEN_PATH)
-    base_methods = _methods_from_class(base_class)
     _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
     screen_methods = _methods_from_class(screen_class)
     compatibility_names = frozenset().union(*COMPATIBILITY_TARGETS.values())
-    base_assigned_names = _self_assignments(base_class) & compatibility_names
     assigned_names = _self_assignments(screen_class) & compatibility_names
     descriptors = _class_assignments(screen_class) & compatibility_names
 
     assert len(compatibility_names) == 31
     assert set(BASELINE_DEFAULTS) == compatibility_names
-    assert base_assigned_names == compatibility_names - {EXTERNAL_COMPATIBILITY_NAME}
-    for state_name in base_assigned_names:
-        observed_defaults = _assignment_signatures(
-            base_class, state_name
-        ) | _getattr_default_signatures(base_class, state_name)
-        assert BASELINE_DEFAULTS[state_name] in observed_defaults
-    assert _has_external_default_none(base_methods)
     assert all(
         _assigns_attribute(_REPO_ROOT / path, EXTERNAL_COMPATIBILITY_NAME)
         for path in EXTERNAL_WRITE_SOURCES
@@ -2111,119 +1941,6 @@ def test_first_chat_controller_has_only_named_non_dom_dependencies() -> None:
 
 
 @pytest.mark.unit
-def test_first_chat_task_ratchet_is_earned() -> None:
-    """Require immutable design/Task 0 provenance and the earned move ceiling."""
-    group = WAVE6_GROUPS["first_chat"]
-    design_source = _source_at_revision(TASK_3070_9_DESIGN_BASE, _SCREEN_PATH)
-    design_class = _class_node_from_source(
-        design_source,
-        "ChatScreen",
-        _SCREEN_PATH,
-    )
-    task0_source = _source_at_revision(
-        TASK_3070_9_TASK0_IMPLEMENTATION_BASE,
-        _SCREEN_PATH,
-    )
-    task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
-    final_base_source = _source_at_revision(
-        TASK_3070_9_FINAL_DELIVERY_BASE,
-        _SCREEN_PATH,
-    )
-    final_base_class = _class_node_from_source(
-        final_base_source,
-        "ChatScreen",
-        _SCREEN_PATH,
-    )
-    current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
-
-    def family_nodes(
-        owner: ast.ClassDef,
-    ) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
-        return [
-            node
-            for node in owner.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name in group.moved
-        ]
-
-    design_family = family_nodes(design_class)
-    task0_family = family_nodes(task0_class)
-    final_base_family = family_nodes(final_base_class)
-    design_counts = _method_name_counts(design_class)
-    task0_counts = _method_name_counts(task0_class)
-    final_base_counts = _method_name_counts(final_base_class)
-    current_counts = _method_name_counts(current_class)
-    design_normalized = [
-        ast.dump(node, include_attributes=False) for node in design_family
-    ]
-    task0_normalized = [
-        ast.dump(node, include_attributes=False) for node in task0_family
-    ]
-    final_base_normalized = [
-        ast.dump(node, include_attributes=False) for node in final_base_family
-    ]
-    design_digest = hashlib.sha256("\n".join(design_normalized).encode()).hexdigest()
-    task0_digest = hashlib.sha256("\n".join(task0_normalized).encode()).hexdigest()
-    final_base_digest = hashlib.sha256(
-        "\n".join(final_base_normalized).encode()
-    ).hexdigest()
-
-    assert group.source_revision == POST_IMAGE_IMPLEMENTATION_BASE
-    assert group.raw_lines == TASK_3070_9_DEFINITION_LINES
-    assert frozenset(TASK_3070_9_FAMILY_NAMES) == group.moved
-    assert tuple(node.name for node in design_family) == TASK_3070_9_FAMILY_NAMES
-    assert tuple(node.name for node in task0_family) == TASK_3070_9_FAMILY_NAMES
-    assert tuple(node.name for node in final_base_family) == TASK_3070_9_FAMILY_NAMES
-    assert all(
-        design_counts[name] == task0_counts[name] == final_base_counts[name] == 1
-        for name in group.moved
-    )
-    assert sum(_span(node) for node in design_family) == TASK_3070_9_DEFINITION_LINES
-    assert sum(_span(node) for node in task0_family) == TASK_3070_9_DEFINITION_LINES
-    assert (
-        sum(_span(node) for node in final_base_family)
-        == TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES
-    )
-    assert design_normalized == task0_normalized == final_base_normalized
-    assert (
-        design_digest == task0_digest == final_base_digest == TASK_3070_9_FAMILY_SHA256
-    )
-    assert len(design_source.splitlines()) == TASK_3070_9_TASK0_BASE_SCREEN_LINES
-    assert _method_count(design_class) == TASK_3070_9_TASK0_BASE_METHODS
-    assert len(task0_source.splitlines()) == TASK_3070_9_TASK0_BASE_SCREEN_LINES
-    assert _method_count(task0_class) == TASK_3070_9_TASK0_BASE_METHODS
-    assert TASK_3070_9_TASK0_MAX_SCREEN_LINES == (
-        TASK_3070_9_TASK0_BASE_SCREEN_LINES - TASK_3070_9_DEFINITION_LINES
-    )
-    assert TASK_3070_9_TASK0_MAX_METHODS == (
-        TASK_3070_9_TASK0_BASE_METHODS - len(TASK_3070_9_FAMILY_NAMES)
-    )
-    assert (
-        len(final_base_source.splitlines())
-        == TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES
-    )
-    assert _method_count(final_base_class) == TASK_3070_9_FINAL_DELIVERY_BASE_METHODS
-    assert TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES == (
-        TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES
-        - TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES
-    )
-    assert TASK_3070_9_FINAL_DELIVERY_MAX_METHODS == (
-        TASK_3070_9_FINAL_DELIVERY_BASE_METHODS - len(TASK_3070_9_FAMILY_NAMES)
-    )
-    assert (
-        TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES - TASK_3070_9_TASK0_MAX_SCREEN_LINES
-        == 255
-    )
-    assert TASK_3070_9_FINAL_DELIVERY_MAX_METHODS - TASK_3070_9_TASK0_MAX_METHODS == 1
-    assert not any(current_counts[name] for name in group.moved), (
-        "first-chat task methods returned to ChatScreen: "
-        f"{sorted(name for name in group.moved if current_counts[name])}"
-    )
-    assert len(current_source.splitlines()) <= LIVE_SCREEN_LINE_CEILING
-    assert _method_count(current_class) <= LIVE_SCREEN_METHOD_CEILING
-
-
-@pytest.mark.unit
 def test_first_chat_move_oracles_are_non_vacuous() -> None:
     """Prove every first-chat ownership and boundary oracle rejects a mutant."""
     target_source = "class ConsoleSessionController:\n" + "".join(
@@ -2511,76 +2228,6 @@ def test_fleet_controller_has_only_named_non_dom_dependencies() -> None:
     _, controller = _class_node(_REPO_ROOT / group.target_path, group.target_class)
 
     _assert_fleet_controller_boundary(controller)
-
-
-@pytest.mark.unit
-def test_fleet_task_ratchet_is_earned() -> None:
-    """Require the immutable Task 0 and frozen final-rebase ratchets."""
-    group = WAVE6_GROUPS["fleet"]
-    task0_source = _source_at_revision(FLEET_TASK0_IMPLEMENTATION_BASE, _SCREEN_PATH)
-    task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
-    task0_methods = _methods_from_class(task0_class)
-    task0_counts = _method_name_counts(task0_class)
-    final_source = _source_at_revision(FLEET_FINAL_REBASE_BASE, _SCREEN_PATH)
-    final_class = _class_node_from_source(final_source, "ChatScreen", _SCREEN_PATH)
-    final_methods = _methods_from_class(final_class)
-    final_counts = _method_name_counts(final_class)
-    current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
-    current_counts = _method_name_counts(current_class)
-
-    assert len(task0_source.splitlines()) == FLEET_TASK0_BASE_SCREEN_LINES
-    assert _method_count(task0_class) == FLEET_TASK0_BASE_METHODS
-    assert group.moved <= task0_methods.keys()
-    assert sum(_span(task0_methods[name]) for name in group.moved) == (
-        FLEET_TASK0_DEFINITION_LINES
-    )
-    assert len(group.moved) == 16
-
-    assert len(final_source.splitlines()) == FLEET_FINAL_REBASE_BASE_SCREEN_LINES
-    assert _method_count(final_class) == FLEET_FINAL_REBASE_BASE_METHODS
-    assert group.moved <= final_methods.keys()
-    assert sum(_span(final_methods[name]) for name in group.moved) == (
-        FLEET_FINAL_REBASE_DEFINITION_LINES
-    )
-    assert all(task0_counts[name] == final_counts[name] == 1 for name in group.moved)
-    multiplicity_delta = {
-        name: final_counts[name] - task0_counts[name]
-        for name in task0_counts.keys() | final_counts.keys()
-        if final_counts[name] != task0_counts[name]
-    }
-    assert multiplicity_delta == {
-        name: 1 for name in FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS
-    }
-    assert [
-        ast.dump(task0_methods[name], include_attributes=False)
-        for name in sorted(group.moved)
-    ] == [
-        ast.dump(final_methods[name], include_attributes=False)
-        for name in sorted(group.moved)
-    ]
-
-    assert FLEET_TASK0_MAX_SCREEN_LINES == (
-        FLEET_TASK0_BASE_SCREEN_LINES - FLEET_TASK0_DEFINITION_LINES
-    )
-    assert FLEET_TASK0_MAX_METHODS == FLEET_TASK0_BASE_METHODS - len(group.moved)
-    assert FLEET_FINAL_REBASE_MAX_SCREEN_LINES == (
-        FLEET_FINAL_REBASE_BASE_SCREEN_LINES - FLEET_FINAL_REBASE_DEFINITION_LINES
-    )
-    assert FLEET_FINAL_REBASE_MAX_METHODS == (
-        FLEET_FINAL_REBASE_BASE_METHODS - len(group.moved)
-    )
-    assert not any(current_counts[name] for name in group.moved), (
-        "fleet task methods returned to ChatScreen: "
-        f"{sorted(name for name in group.moved if current_counts[name])}"
-    )
-    assert len(current_source.splitlines()) <= LIVE_SCREEN_LINE_CEILING, (
-        "fleet task screen-line ratchet remains RED: "
-        f"{len(current_source.splitlines())} > {LIVE_SCREEN_LINE_CEILING}"
-    )
-    assert _method_count(current_class) <= LIVE_SCREEN_METHOD_CEILING, (
-        "fleet task method ratchet remains RED: "
-        f"{_method_count(current_class)} > {LIVE_SCREEN_METHOD_CEILING}"
-    )
 
 
 @pytest.mark.unit

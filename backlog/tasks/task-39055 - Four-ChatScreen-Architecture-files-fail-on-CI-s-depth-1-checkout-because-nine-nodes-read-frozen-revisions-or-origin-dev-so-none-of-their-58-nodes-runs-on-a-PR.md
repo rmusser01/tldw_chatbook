@@ -1,8 +1,11 @@
 ---
 id: TASK-39055
 title: "Four ChatScreen Architecture files fail on CI's depth-1 checkout because nine nodes read frozen revisions or origin/dev, so none of their 58 nodes runs on a PR lane"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 10:09
+updated_date: 2026-11-06 15:01
 labels:
 - follow-up
 - tests
@@ -61,3 +64,13 @@ That is 23 distinct revisions, all ancestors of origin/dev, so `fetch-depth: 0` 
 - [ ] #2 Under a depth-1 checkout (the `GIT_DIR` simulation, or a CI run) no laned node fails for a missing revision; before the change 9 of 58 fail
 - [ ] #3 The laned nodes run on a PR lane (never the fast PR contract), and that lane's command is timed three times with them
 <!-- AC:END -->
+
+## Implementation Plan
+
+Owner decision (2026-11-06): lane the 49 shallow-safe nodes, retire the 9 history nodes.
+
+1. Reproduce the depth-1 failure with the `GIT_DIR` simulation (a depth-1 bare clone of HEAD): 9 of 58 fail; with full history 58 pass.
+2. Retire the history reads. Seven of the nine nodes hold only frozen-revision or `origin/dev` facts plus checks other nodes already run, so they go whole. Two (`test_wave6_inventory_matches_the_implementation_base` and `test_wave6_compatibility_inventory_is_complete_and_phase_safe`) also hold live ownership and descriptor checks that no other node runs (the image and video families, every family's delegate contract, and every owner's compatibility descriptors). For those two, delete only the frozen-revision reads and keep the live checks, under names that say what they check.
+3. Remove every helper, constant and import that only the retired code used (iterate an AST dead-name scan to a fixed point), including oracle lines that only exercised a removed helper.
+4. Prove AC#2 with the same simulation: 0 laned nodes fail at depth 1.
+5. Append the four files to the Architecture guards step and `ARCHITECTURE_GUARD_TARGETS`, update the job comment, and time the job command three times.

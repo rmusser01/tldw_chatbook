@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -13,7 +12,6 @@ from Tests.Architecture.test_screen_size_ratchet import _BUDGETS as _SCREEN_SIZE
 
 from Tests.Architecture.test_console_wave6_closeout_inventory import (
     REALTIME_DELEGATE_METHODS,
-    REALTIME_METHODS,
     REALTIME_MOVE_METHODS,
     REALTIME_STAY_METHODS,
 )
@@ -23,22 +21,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_SCREEN_PATH = REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py"
 REALTIME_PATH = REPO_ROOT / "tldw_chatbook/UI/Console_Modules/realtime.py"
 WIRING_PATH = REPO_ROOT / "tldw_chatbook/UI/Console_Modules/wiring.py"
-SCREEN_RELATIVE_PATH = "tldw_chatbook/UI/Screens/chat_screen.py"
-GIT_TIMEOUT_SECONDS = 10
-EXTRACTION_LINES = 1_978
-EXTRACTION_METHODS = 56
-PROJECTED_LINE_CEILING = 18_076
-PROJECTED_METHOD_CEILING = 577
-# Delivery rebase 794ae11521 added 56 unrelated ChatScreen lines after the
-# reviewed base. This allowance applies only to the still-pre-extraction base;
-# the implemented screen remains held to PROJECTED_LINE_CEILING below.
-REVIEWED_DELIVERY_BASE_LINE_DRIFT = 56
 #: 2026-11-06, TASK-38988 (owner size waiver): the live ChatScreen ceiling is
 #: the screen-size ratchet's own ChatScreen row (24,616 / 741 on that day),
 #: read from that file rather than re-pinned here. A pin at the measured
 #: 24,604 would go red unseen whenever the row is raised by a dated waiver
-#: (review r10a-rev1). The reviewed projection above still pins the
-#: pre-extraction base.
+#: (review r10a-rev1). TASK-39055 retired the frozen-revision projection.
 _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
     "tldw_chatbook/UI/Screens/chat_screen.py"
 ]
@@ -126,11 +113,6 @@ def _direct_method_nodes(owner: ast.ClassDef) -> list[FunctionNode]:
 def _direct_method_counts(owner: ast.ClassDef) -> Counter[str]:
     """Count every direct method node, including duplicate definitions."""
     return Counter(node.name for node in _direct_method_nodes(owner))
-
-
-def _definition_span(node: FunctionNode) -> int:
-    """Return a method's physical span, excluding decorator lines."""
-    return node.end_lineno - node.lineno + 1
 
 
 def _self_writes(method: FunctionNode, names: set[str]) -> set[str]:
@@ -366,65 +348,6 @@ def _forbidden_realtime_module_references(tree: ast.Module) -> set[str]:
     return found
 
 
-def _source_at_revision(revision: str, relative_path: str) -> str:
-    """Read an arbitrary repository path at a revision with a bounded subprocess."""
-    return subprocess.run(
-        ["git", "show", f"{revision}:{relative_path}"],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=GIT_TIMEOUT_SECONDS,
-    ).stdout
-
-
-def _optional_source_at_revision(revision: str, relative_path: str) -> str | None:
-    """Read a revision path, returning ``None`` only when that path is absent."""
-    try:
-        return _source_at_revision(revision, relative_path)
-    except subprocess.CalledProcessError as error:
-        if (
-            "does not exist" in error.stderr
-            or "exists on disk, but not in" in error.stderr
-        ):
-            return None
-        raise
-
-
-def _class_from_source(source: str, class_name: str) -> ast.ClassDef:
-    """Return a named top-level class from source text."""
-    classes = [
-        node
-        for node in ast.parse(source).body
-        if isinstance(node, ast.ClassDef) and node.name == class_name
-    ]
-    assert len(classes) == 1, f"source must define one direct {class_name} class"
-    return classes[0]
-
-
-def _assert_final_origin_dev_ownership(
-    screen_source: str, realtime_source: str
-) -> None:
-    """Assert the exact extracted 56/0/1 ownership when origin/dev has it."""
-    screen = _class_from_source(screen_source, "ChatScreen")
-    realtime_tree = ast.parse(realtime_source)
-    controllers = [
-        node
-        for node in realtime_tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "ConsoleRealtimeController"
-    ]
-    assert len(controllers) == 1
-    controller = controllers[0]
-    screen_counts = _direct_method_counts(screen)
-    controller_counts = _direct_method_counts(controller)
-    assert all(controller_counts[name] == 1 for name in REALTIME_MOVE_METHODS)
-    assert all(screen_counts[name] == 0 for name in REALTIME_MOVE_METHODS)
-    assert all(screen_counts[name] == 1 for name in REALTIME_STAY_METHODS)
-    assert all(controller_counts[name] == 0 for name in REALTIME_STAY_METHODS)
-    assert all(screen_counts[name] == 0 for name in REALTIME_DELEGATE_METHODS)
-    assert all(controller_counts[name] == 0 for name in REALTIME_DELEGATE_METHODS)
-
-
 @pytest.mark.unit
 def test_realtime_controller_path_and_exact_method_ownership() -> None:
     """The dedicated controller owns exactly the reviewed move set."""
@@ -607,46 +530,3 @@ def test_chat_screen_remains_within_the_reviewed_projection_ceiling() -> None:
     screen = _class_node(CHAT_SCREEN_PATH, "ChatScreen")
     assert len(source.splitlines()) <= LIVE_SCREEN_LINE_CEILING
     assert len(_direct_method_nodes(screen)) <= LIVE_SCREEN_METHOD_CEILING
-
-
-@pytest.mark.unit
-def test_origin_dev_realtime_family_and_projection_still_match_review() -> None:
-    """The live origin/dev base is either exact pre- or post-extraction state."""
-    source = _source_at_revision("origin/dev", SCREEN_RELATIVE_PATH)
-    realtime_source = _optional_source_at_revision(
-        "origin/dev", "tldw_chatbook/UI/Console_Modules/realtime.py"
-    )
-    if realtime_source is not None:
-        _assert_final_origin_dev_ownership(source, realtime_source)
-        return
-
-    screen = _class_from_source(source, "ChatScreen")
-    method_nodes = _direct_method_nodes(screen)
-    methods = _direct_methods(screen)
-    realtime_methods = {name for name in methods if "console_realtime" in name}
-
-    assert realtime_methods == REALTIME_METHODS
-    assert (
-        len(REALTIME_MOVE_METHODS),
-        len(REALTIME_DELEGATE_METHODS),
-        len(REALTIME_STAY_METHODS),
-    ) == (56, 0, 1)
-    assert sum(_definition_span(methods[name]) for name in REALTIME_METHODS) == 1_997
-    assert sum(_definition_span(methods[name]) for name in REALTIME_STAY_METHODS) == 19
-
-    projected = (
-        len(source.splitlines()) - EXTRACTION_LINES,
-        len(method_nodes) - EXTRACTION_METHODS,
-    )
-    assert (
-        projected[0] <= PROJECTED_LINE_CEILING + REVIEWED_DELIVERY_BASE_LINE_DRIFT
-        and projected[1] <= PROJECTED_METHOD_CEILING
-    ), (
-        "origin/dev projection drifted beyond the reviewed delivery amendment: "
-        f"{projected} > "
-        f"{(PROJECTED_LINE_CEILING + REVIEWED_DELIVERY_BASE_LINE_DRIFT, PROJECTED_METHOD_CEILING)}"
-    )
-    current_source = CHAT_SCREEN_PATH.read_text(encoding="utf-8")
-    current_screen = _class_node(CHAT_SCREEN_PATH, "ChatScreen")
-    assert len(current_source.splitlines()) <= PROJECTED_LINE_CEILING
-    assert len(_direct_method_nodes(current_screen)) <= PROJECTED_METHOD_CEILING
