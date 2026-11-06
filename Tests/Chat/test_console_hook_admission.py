@@ -233,21 +233,9 @@ async def test_hooks_added_after_acceptance_retain_the_durable_recovery_owner(
     raw["hooks"]["enabled"] = False
     hook_file.write_text(toml.dumps(raw))
     owner = HookPermissions()
-    from types import SimpleNamespace
-
     from Tests.Chat.test_console_chat_controller import FakePersistence
 
-    class MixinFakePersistence(FakePersistence):
-        # TASK-38718: since 7970fbcada (2026-11-01) a persisted chat's turn
-        # saves its mix-in attempt before the provider, and a persistence
-        # without that save refuses the send ("Mix-in attempt could not be
-        # saved"), so the resumed turn never reached the gateway.
-        db = SimpleNamespace(is_memory_db=True)
-
-        def save_conversation_mixin_attempt(self, conversation_id, **_kwargs):
-            del conversation_id
-
-    store = ConsoleChatStore(persistence=MixinFakePersistence())
+    store = ConsoleChatStore(persistence=FakePersistence())
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
         store=store, provider_gateway=gateway, hook_permissions_accessor=lambda: owner

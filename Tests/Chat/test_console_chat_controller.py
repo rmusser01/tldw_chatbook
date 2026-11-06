@@ -518,14 +518,45 @@ def _last_failed_assistant(store, session_id=None):
 
 
 class FakePersistence:
+    # Since 7970fbcada (2026-11-01) a persisted chat's turn saves its mix-in
+    # attempt before the provider, and refuses the send when the persistence
+    # has no save or no ``db`` (TASK-38718, TASK-38947). A memory ``db`` keeps
+    # the save and the retry read inline, as the native commit does.
+    db = SimpleNamespace(is_memory_db=True)
+
     def __init__(self):
         self.created_conversations = []
         self.created_messages = []
         self.updated_messages = []
+        self.mixin_attempts = {}
         self.console_library_policy_repository = SimpleNamespace(read=self._read_policy)
         self.console_dispatch_repository = self
         self._policy_snapshot = None
         self._checkpoint = None
+
+    def save_conversation_mixin_attempt(
+        self, conversation_id, *, batch, native_message_ids, pending_assistant=None
+    ):
+        del pending_assistant
+        self.mixin_attempts[batch.attempt_id] = (
+            conversation_id,
+            native_message_ids[batch.assistant_message_id],
+            batch.snapshot,
+        )
+
+    def get_conversation_mixin_attempt(
+        self, conversation_id, *, assistant_message_id, attempt_id=None
+    ):
+        from tldw_chatbook.Chat.console_prompt_mixin_models import MixinReplayRead
+
+        saved = self.mixin_attempts.get(attempt_id)
+        if saved is None:
+            return MixinReplayRead(
+                "legacy" if attempt_id is None else "unavailable", None
+            )
+        if saved[:2] != (conversation_id, assistant_message_id):
+            return MixinReplayRead("unavailable", None)
+        return MixinReplayRead("recorded", saved[2])
 
     def _read_policy(self, conversation_id):
         del conversation_id

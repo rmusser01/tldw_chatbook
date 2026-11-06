@@ -1,8 +1,11 @@
 ---
 id: TASK-38947
 title: "The shared Console FakePersistence predates prompt mix-in attempts, so eight controller, hook and library-preparation tests are red on dev"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-05 21:35
+updated_date: 2026-11-06 04:55
 labels:
 - follow-up
 - console
@@ -44,7 +47,42 @@ TASK-38718's notes say it did not check the fake's other users. No lane runs the
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The shared fake saves and returns mix-in attempts; the eight nodes pass 10 of 10 runs alone and in their files at -n 4, and TASK-38718's local MixinFakePersistence subclass is folded into the shared fake
+- [x] #1 The shared fake saves and returns mix-in attempts; the eight nodes pass 10 of 10 runs alone and in their files at -n 4, and TASK-38718's local MixinFakePersistence subclass is folded into the shared fake
 - [ ] #2 With the save removed from the shared fake, the eight go red again, and that negative control is recorded in the notes
-- [ ] #3 The notes record why the library-preparation case hangs until the 300 s timeout instead of failing when the mix-in save is refused, and whether a refused save can leave a queued reclaim waiting in the product
+- [x] #3 The notes record why the library-preparation case hangs until the 300 s timeout instead of failing when the mix-in save is refused, and whether a refused save can leave a queued reclaim waiting in the product
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Re-run the 13 fake-user nodes at base e8eeae7db9 to confirm which are red and why.
+2. Fold TASK-38718's `MixinFakePersistence` into the shared `FakePersistence`: an in-memory `db` marker, a `save_conversation_mixin_attempt` that records each attempt, and a `get_conversation_mixin_attempt` that returns the recorded attempt as a `MixinReplayRead`; drop the local subclass.
+3. Run the eight nodes 10x alone and 10x in their files at -n 4 (with uptime), plus the other users of the fake.
+4. Negative control: remove the save from the shared fake, show the eight red.
+5. Trace why the library-preparation reclaim case hangs instead of failing when the save is refused, and whether the product can leave a queued reclaim waiting; record it.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Fake.** The shared `FakePersistence` now carries TASK-38718's memory `db` marker, a `save_conversation_mixin_attempt` that records each attempt (conversation, native assistant id, snapshot), and a `get_conversation_mixin_attempt` that returns the recorded attempt as a `MixinReplayRead`. An unknown attempt id reads "unavailable"; an unmarked turn (no attempt id) reads "legacy". TASK-38718's local `MixinFakePersistence` subclass, and its now-unused import, are gone from `test_console_hook_admission.py`.
+
+**Base check (e8eeae7db9).** The 13 nodes plus the fleet file at `-n 4` gave 10 failed and 37 passed. The extra two reds are `TestUserPromptSubmitHooks::test_block_rejects_send_without_assistant_row` and `test_stdout_injected_as_hook_origin_system_row`. Their whole class is red at base, including the three tests that do not use the fake: hook admission's `read_hooks_config_snapshot()` raises `RecoveryRequired('raw_source_selection_changed')` in the per-test sandbox (shown by printing the swallowed exception), the TASK-38111 class. They are out of scope.
+
+**Two of the eight never touch the fake's mix-in surface.** The same `RecoveryRequired` refusal at hook admission ("Hooks unavailable; review or disable hooks before sending.") is the whole base red of `test_blocked_send_persists_no_durable_record` and `test_accepted_send_persists_the_deferred_user_echo`. Under a temporary `@private_profile_test` marker, both pass with the base fake: the blocked send stops before acceptance, and the accepted send's echo is written at durable acceptance, before the mix-in save. The other two controller nodes (`..._marks_assistant_failed_when_stream_errors`, `test_retry_failed_message_streams_replacement_from_original_turn`) need both the private profile and the fake: they are red under the marker with the base fake, and green with the new one.
+
+**AC#1.** The four plain controller nodes ran under a temporary `@private_profile_test` marker (BRIEF-RULES' recipe for the RecoveryRequired trap), removed before commit:
+- Alone, the eight nodes at `-n 4`: 10 of 10 runs passed (8 passed each, 12-15 s), at load 18-27.
+- In their files (`test_console_chat_controller.py`, `test_console_run_hooks_regressions.py`, `test_console_automatic_library_preparation.py`, `test_console_hook_admission.py`, `test_console_fleet_wake_safety.py`), whole at `-n 4`: none of the eight, and no hook-admission node, failed in 10 of 10 runs (5.5-9.5 min each), at load 15-63. Eight runs failed the same 207 nodes: base's 215 minus the eight, all of them the files' other plain tests, which hit the same RecoveryRequired. Two runs each added one load flake that does not touch the fake. In run 8, `test_console_fleet_wake_safety.py::test_second_wake_progresses_while_first_waits_for_real_approval` hung 315 s at its `gather(*wake._delivery_tasks)` (the file imports the fake but never builds one). In run 10, `test_a_wedged_bootstrap_does_not_park_a_second_worker` measured 0.011 s against its 10 ms wall-clock bound.
+- Without the marker, the four controller nodes are still red locally, from RecoveryRequired only (TASK-38111).
+
+**AC#2 (not met as written).** With the save removed from the shared fake (the method renamed), 6 of the 8 went red: both hook-regression nodes, both library-preparation params (each at the 60 s `--timeout`), and the stream-error and retry controller nodes (`_last_failed_assistant` found no failed row). `test_blocked_send_persists_no_durable_record` and `test_accepted_send_persists_the_deferred_user_echo` stayed green, because they never reach the mix-in save. No edit to the fake can turn them red; their filed red was TASK-38111's. Left unticked for the coordinator to amend.
+
+**AC#3. Why the library-preparation case hangs.** `_paused_queued_send` starts `run_prompt_chain("owner")` and then awaits `gateway.started.wait()` with no bound. Only the gateway's `stream_chat` sets that event. With the save refused, the owner turn is retained before provider entry (`mixin_persistence_unavailable`, then `_block_context_preflight`). The chain task finishes, but nothing awaits it, so the test waits until pytest-timeout. A probe that bounded `Event.wait` at 5 s put the TimeoutError at `_paused_queued_send` line 649, `await gateway.started.wait()`, with 0 provider calls.
+
+**AC#3. Can a refused save leave a queued reclaim waiting in the product?** Yes, by design until the user acts, and not stranded. A probe on real SQLite (`ChatPersistenceService`, the save raising once during `retry_library_preparation`) found:
+- The reclaim returns "Accepted turn is retained for recovery." (BLOCKED). Its assistant row stays pending, and a "Mix-in attempt could not be saved" system row is added.
+- The queue is PAUSED, with the later entry waiting. The session sits in `_dispatch_recoveries`, so `accepted_live_turn` is True, and `resume_prompt_queue` refuses with "Finish or discard the pending response first."
+- The recovery card offers Retry response and Discard. `retry_dispatch_recovery` completed the turn, settled the queue owner and drained the later entry (3 provider calls, queue empty, no live turn).
+- One trap for anyone probing this: calling `resume_durable_postcommit` directly completes the turn but skips `_settle_recovered_queue_owner`. The queue then stays paused behind a stale recovery owner. Only the card's own action settles it.
+
+Files: `Tests/Chat/test_console_chat_controller.py`, `Tests/Chat/test_console_hook_admission.py`.
+<!-- SECTION:NOTES:END -->
