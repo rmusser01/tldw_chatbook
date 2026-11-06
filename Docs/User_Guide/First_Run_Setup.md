@@ -349,8 +349,9 @@ as Settings ▸ Domain Defaults ▸ RAG ▸ New Console conversations. New Conso
 conversations follow it. It also shows, read-only, the embedding model RAG
 uses ("all-MiniLM-L6-v2 · on this computer"), with Settings' privacy sentence
 when the model is a cloud one; change the model in Settings. If that model
-isn't on this computer yet, the first automatic search downloads it, and that
-first message may wait for it.
+isn't on this computer yet, the first automatic search downloads it: that first
+message may wait for it, or on a slow connection stop at "Library search timed
+out" until you choose **Retry**.
 
 Without the optional search extras the control is still there, but its
 second choice reads **Search my Library automatically — unavailable** and

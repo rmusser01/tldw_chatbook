@@ -534,6 +534,9 @@ async def test_choosing_automatic_says_the_first_search_may_download_a_local_mod
         assert note.display
         text = str(note.render())
     assert "all-MiniLM-L6-v2" in text and "downloads it" in text
+    # Review G13-R1-02: a download longer than Console's 60 s start-up budget
+    # pauses the send (library_retrieval_timeout) with Retry -- not only a wait.
+    assert '"Library search timed out"' in text and "Retry" in text
 
 
 def test_a_cloud_model_has_no_download_note() -> None:
