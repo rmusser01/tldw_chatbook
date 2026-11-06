@@ -4,7 +4,7 @@ title: The Settings snapshot Save took over 5 s in a UI Fast Lane run, with its 
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-06 00:25
+updated_date: 2026-11-06 01:00
 created_date: 2026-10-24 00:26
 labels:
 - follow-up
@@ -119,6 +119,23 @@ Phases were recorded by a temporary out-of-test plugin through `PYTEST_PLUGINS`,
 The wait after Enter took 0.093-0.296 s, median 0.135 s. The 5 s bound stays: it is 17 times the local maximum, and still about 5 times that maximum if a CI core runs 2-3 times slower.
 
 **Pre-existing reds.** The 13 plain (non-private-profile) tests in this file fail locally with `RecoveryRequired` (TASK-38111). The same 13 nodes fail at base 29592ecc9b with the same command.
+
+**Sibling waits (second commit, at the coordinator's request).** `test_f9_save_preserves_new_edits_while_persistence_waits` and `test_f9_snapshot_draft_uses_category_save_offthread_and_reverts` also polled a real save with `pilot.pause(0.01)`. Both now wait through `_until`, which re-checks a predicate between `asyncio.sleep(0.01)` calls and does not walk the DOM; their assertions are unchanged. The off-thread test now also waits for the save worker to finish. Before, the next Save could return early while the worker still ran, which made the rejected-`0` check vacuous.
+
+Both are plain-profile tests and hit `RecoveryRequired` locally (TASK-38111), so they were verified under a temporary `@private_profile_test` marker, removed afterwards.
+
+Negative controls, each a temporary source edit, then reverted:
+- Saving on the event loop (no `asyncio.to_thread`): the off-thread test failed at `assert threads and all(... != threading.get_ident())`.
+- Dropping the visible-value check before canonicalizing: the preserve test failed with `assert '27' == '32'`.
+
+Serial runs, 10 of each test:
+
+| Round | Preserve test | Off-thread test | Load average (18 cores) |
+|---|---|---|---|
+| First | 9/10 | 10/10 | 12.1-18.8 |
+| Second | 10/10 | 10/10 | 6.8-13.4 |
+
+The one failure, in the preserve test, was `_provider_draft()` None at the last assertion, on the staged model draft. I did not find its cause. A probe that logged every pop of that draft caught no pop in 136 runs. Unprobed parallel runs passed 56/56. In an alternating hunt, the old `pilot.pause` wait passed 48/48. That is about 1 failure in 240 runs of the new wait, which does not tell me whether the change caused it.
 
 **Files:** `Tests/UI/test_llamacpp_snapshot_settings.py`, `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->

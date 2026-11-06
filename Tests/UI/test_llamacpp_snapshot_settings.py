@@ -36,6 +36,17 @@ def _cpu_seconds(thread):
     return None
 
 
+async def _until(predicate, timeout=5):
+    """Wait for a save thread's outcome without walking the DOM (TASK-36530).
+
+    ``pilot.pause()`` walks every Settings node on the event loop, and a busy
+    loop starves the save thread of the GIL; a bare sleep keeps the loop idle.
+    """
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
 class _SaveTimeline:
     """Where the keyboard Save's time went, for its timeout note (TASK-36530).
 
@@ -306,17 +317,13 @@ async def test_f9_save_preserves_new_edits_while_persistence_waits(
         monkeypatch.setattr(screen, "action_settings_save_category", action)
         original_action(allow_text_entry_focus=True)
         try:
-            async with asyncio.timeout(5):
-                while not entered.is_set():
-                    await pilot.pause(0.01)
+            await _until(entered.is_set)
             # Model the interval before delivery of the newer Input.Changed.
             with screen.prevent(Input.Changed):
                 field.value = "32"
                 assert screen._snapshot_preferences_raw[1] == "027"
                 release.set()
-                async with asyncio.timeout(5):
-                    while screen._snapshot_preferences_saving:
-                        await pilot.pause(0.01)
+                await _until(lambda: not screen._snapshot_preferences_saving)
             assert field.value == "32"
             assert continuations == []
             field.post_message(Input.Changed(field, "32"))
@@ -362,9 +369,11 @@ async def test_f9_snapshot_draft_uses_category_save_offthread_and_reverts(monkey
             preferences.load_snapshot_preferences() == preferences.SnapshotPreferences()
         )
         screen.action_settings_save_category(allow_text_entry_focus=True)
-        async with asyncio.timeout(5):
-            while preferences.load_snapshot_preferences().keep_count != 27:
-                await pilot.pause(0.01)
+        # The worker too, or the next Save returns early while it still runs.
+        await _until(
+            lambda: preferences.load_snapshot_preferences().keep_count == 27
+            and not screen._snapshot_preferences_saving
+        )
         assert threads and all(value != threading.get_ident() for value in threads)
         field.value = "0"
         await pilot.pause()
