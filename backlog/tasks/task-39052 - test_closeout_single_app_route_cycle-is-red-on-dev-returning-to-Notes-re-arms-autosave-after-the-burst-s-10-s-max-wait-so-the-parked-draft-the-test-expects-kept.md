@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 16:24
+updated_date: 2026-11-06 22:10
 labels:
 - follow-up
 - library
@@ -86,6 +86,17 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
   - A fourth run of the same targets with `--durations` took 604.2 s at load 40-66. The new node took 90.3 s of it.
   - The two runs over the brief's 12-minute mark ran at load 40-60 on 18 CPUs. The node itself costs 29-40 s alone, so it is not what took them past 12 minutes. CI ran this step in 253 s.
   - `Tests/CI` at `-n 4`: 1215 passed, 1 skipped.
+- **Review r11l-rev1, item 3: robust under load.** On the required lane, the reviewer's runs with the step's flags at load 50-95 passed 0 of 6. Four failed in `_open_destination` with "Shared Library choice did not restore after conversations", and two hit the 180 s timeout. My profile at load 60-80 found the same: 125-196 s of call time, and one timeout.
+  - **Trimmed.** Each of the cycle's 11 visits after Media used to reopen the closed shared Library pane, press the rail row, then close the pane again and wait for that choice to persist. That was a grip press with a wait, then a grip press with a durable config write and its wait. No assertion depends on these round trips. They only existed so the hidden rail could be pressed.
+  - With `keep_library_closed=True` (the default for other callers is unchanged), `_open_destination` instead hands the hidden rail row's `Pressed` to the rail's own handler, `handle_library_rail_row`, and never reopens the pane.
+    - A first cut that called `_select_library_rail_row` directly failed: the Conversations rows never mounted, because the rail handler also starts the Conversations page recovery. So the handler itself is used.
+    - The closed shared choice now stands for the whole cycle, and the second loop still asserts it on every return.
+  - **Waits.** Every wait in `_open_destination`, `_focus_closeout_work_via_f6` and the cycle is now `_route_wait` / `_route_selector`: a 60 s wall-clock deadline, with conditions polled every 50 ms rather than 20 ms, since each `pilot.pause` walks the whole screen. A slow machine slows the journey instead of failing it.
+  - **One point read became a wait.** The second loop's `shell.work.display` check used to be a point read. The old grip round trip hid a race there: a destination's reader can paint a frame after its item lands, and a work pane with no item yet is hidden at zero width (TASK-38981). The check now waits for the pane, re-queries the shell and asserts as before. No assertion was removed.
+  - **Evidence.**
+    - With the step's flags (serial, `--storage-lease-guard --timeout=180`), 5 of 5 passed: 91.5, 133.3, 122.5, 101.6 and 88.0 s of call time (99.9-145.9 s per pytest), at load 54-89 on 18 CPUs.
+    - Both negative controls are red again on the reworked test, through an in-memory mutation harness outside the tree: `Returning to Notes did not save the parked draft at once: saves=[]`.
+    - The whole closeout file at `-n 4` (load 64-80) passed, except `test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-50]`. That node failed on base too at load 80, and it passed on a rerun here. `Tests/CI` at `-n 4`: 1215 passed, 1 skipped. Preflight passes.
 - **Not changed.** The frozen task-23019 evidence runner (`Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py`) still encodes the old "Notes draft retained without save" receipt. No lane runs it, and it requires its own pinned subject revision. `Tests/Live/test_library_adaptive_reader_closeout.py` names only the node id, which is unchanged.
 - **Lesson.** `backlog/docs/lessons-testing-evidence.md`: a `-p` repeat plugin cannot reach a `@private_profile_test` child. The first 10-repeat run here "failed" 10 of 10 in 15 s with `not found` in each child's log.
 - Files: `Tests/UI/test_library_adaptive_reader_closeout.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`, `backlog/docs/lessons-testing-evidence.md`.

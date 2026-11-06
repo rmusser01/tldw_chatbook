@@ -384,7 +384,41 @@ async def _seed_closeout_app(root: Path):
     return app, prompt_db
 
 
-async def _open_destination(screen, pilot, destination: str):
+#: TASK-39052: the route cycle runs on a required lane, on runners that can be
+#: loaded; its waits are deadlines long enough for that, so a slow machine
+#: slows these journeys rather than failing them. Polled every 50 ms, so a wait
+#: does not walk the whole screen every 20 ms (each ``pilot.pause`` does).
+_ROUTE_WAIT_SECONDS = 60.0
+
+
+async def _route_wait(pilot, predicate, *, message) -> None:
+    await _wait_for_condition(
+        pilot,
+        predicate,
+        timeout=_ROUTE_WAIT_SECONDS,
+        interval=0.05,
+        message=message,
+    )
+
+
+async def _route_selector(screen, pilot, selector: str):
+    return await _wait_for_selector(
+        screen, pilot, selector, timeout=_ROUTE_WAIT_SECONDS
+    )
+
+
+async def _open_destination(
+    screen, pilot, destination: str, *, keep_library_closed: bool = False
+):
+    """Open ``destination`` from the rail and select its second item.
+
+    With the shared Library pane closed, the rail is hidden, so by default
+    this reopens the pane, presses the rail row, and closes the pane again
+    (waiting for that choice to persist). ``keep_library_closed`` (TASK-39052)
+    instead hands the hidden rail row's ``Pressed`` to the rail's own handler,
+    ``handle_library_rail_row`` (the code a press runs), and never reopens the
+    pane: the shared closed choice then stands for the whole visit.
+    """
     rail, shell_selector, second_selector, _preferences, _layout = DESTINATION_CONTRACT[
         destination
     ]
@@ -415,9 +449,14 @@ async def _open_destination(screen, pilot, destination: str):
         }
         == {False}
     )
-    if restore_closed_library:
+    if restore_closed_library and keep_library_closed:
+        await screen.handle_library_rail_row(
+            Button.Pressed(screen.query_one(rail, Button))
+        )
+        restore_closed_library = False
+    elif restore_closed_library:
         mounted_shells[0].library_grip.press()
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 {
@@ -429,12 +468,14 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message=f"Library restore grip did not expose {destination}",
         )
-    screen.query_one(rail, Button).press()
-    shell = await _wait_for_selector(screen, pilot, shell_selector)
+        screen.query_one(rail, Button).press()
+    else:
+        screen.query_one(rail, Button).press()
+    shell = await _route_selector(screen, pilot, shell_selector)
     if destination == "prompts":
         await _open_prompts_list(screen, pilot)
-        shell = await _wait_for_selector(screen, pilot, shell_selector)
-    second = await _wait_for_selector(screen, pilot, second_selector)
+        shell = await _route_selector(screen, pilot, shell_selector)
+    second = await _route_selector(screen, pilot, second_selector)
     if destination == "prompts":
         rows = list(screen.query(".library-prompt-row"))
         assert len(rows) >= 2
@@ -484,7 +525,7 @@ async def _open_destination(screen, pilot, destination: str):
     if not already_selected():
         second.press()
     if destination == "media":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._media_state.reader_session.selected_id == expected
@@ -493,13 +534,13 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Media second selection did not settle",
         )
-        await _wait_for_selector(
+        await _route_selector(
             screen,
             pilot,
             (f"#library-media-reader-mode-{screen._media_state.reader_session.mode}"),
         )
     elif destination == "collections":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._library_collections_capture_controller.state.selected_identity
@@ -512,9 +553,9 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Collections second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-collections-reader-title")
+        await _route_selector(screen, pilot, "#library-collections-reader-title")
     elif destination == "conversations":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._conversations_state.reader_state.selected_id == expected
@@ -523,9 +564,9 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Conversation second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-conversation-reader-info")
+        await _route_selector(screen, pilot, "#library-conversation-reader-info")
     elif destination == "notes":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._notes_state.selected_note_id == expected
@@ -535,10 +576,10 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Note second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-note-title")
-        await _wait_for_selector(screen, pilot, "#library-note-preview")
+        await _route_selector(screen, pilot, "#library-note-title")
+        await _route_selector(screen, pilot, "#library-note-preview")
     elif destination == "prompts":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 str(screen._prompts_state.selected_prompt_id) == expected
@@ -548,10 +589,10 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Prompt second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-prompt-name")
-        await _wait_for_selector(screen, pilot, "#library-prompt-mode-info")
+        await _route_selector(screen, pilot, "#library-prompt-name")
+        await _route_selector(screen, pilot, "#library-prompt-mode-info")
     else:
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._skills_state.selected_skill_name == expected
@@ -561,21 +602,21 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Skill second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-skill-mode-overview")
+        await _route_selector(screen, pilot, "#library-skill-mode-overview")
     if restore_closed_library:
         # Collections repaints its reader while page/detail settlement lands;
         # always operate on the current shell after that transition.
         shell = screen.query_one(shell_selector)
         if not shell.effective_layout.library_open:
             shell.library_grip.press()
-            await _wait_for_condition(
+            await _route_wait(
                 pilot,
                 lambda: shell.effective_layout.library_open,
                 message=f"Library pane did not reopen after {destination}",
             )
         generation = screen._library_reader_persistence_generations["library"]
         shell.library_grip.press()
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 {
@@ -855,7 +896,7 @@ async def _focus_closeout_work_via_f6(
             )
         )
 
-    await _wait_for_condition(
+    await _route_wait(
         pilot,
         _work_target_ready,
         message=lambda: (
@@ -1200,12 +1241,14 @@ async def _exercise_closeout_single_app_route_cycle(
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             for destination in DESTINATIONS:
-                shell = await _open_destination(screen, pilot, destination)
+                shell = await _open_destination(
+                    screen, pilot, destination, keep_library_closed=True
+                )
                 if destination == "media":
                     screen.query_one(
                         "#library-media-reader-select-info", Button
                     ).press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: screen._media_state.reader_session.mode == "info",
                         message="Media route mode did not settle",
@@ -1214,7 +1257,7 @@ async def _exercise_closeout_single_app_route_cycle(
                         "library"
                     ]
                     shell.library_grip.press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: (
                             all(
@@ -1233,7 +1276,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     )
                 elif destination == "collections":
                     screen.query_one("#library-collections-mode-info", Button).press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: screen._collections_state.reader_mode == "info",
                         message="Collections Info mode did not settle",
@@ -1245,27 +1288,27 @@ async def _exercise_closeout_single_app_route_cycle(
                 elif destination == "prompts":
                     name = screen.query_one("#library-prompt-name", Input)
                     name.value = f"{name.value} route draft"
-                    await _wait_for_selector(
+                    await _route_selector(
                         screen,
                         pilot,
                         "#library-prompt-mode-info",
                     )
                     screen.query_one("#library-prompt-mode-info", Button).press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: screen._prompts_state.editor_mode == "info",
                         message="Prompt Info mode did not settle",
                     )
                 elif destination == "skills":
                     screen.query_one("#library-skill-mode-edit", Button).press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: screen._skills_state.reader_mode == "edit",
                         message="Skills Edit mode did not settle",
                     )
                 if destination == "notes":
                     shell.items_grip.press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: not screen._notes_state.reader_preferences.items_open,
                         message="Notes Items preference did not close",
@@ -1293,7 +1336,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     rows = list(screen.query(".library-conversation-row"))
                     assert len(rows) >= 2
                     rows[0].press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         stale_service.first_started.is_set,
                         message="Stale Conversation A worker did not start",
@@ -1304,7 +1347,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     # (TASK-32386: observed as a transient `assert 0 >= 2`
                     # under a cold event loop). Wait the rows back rather
                     # than point-reading the transient.
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: (
                             len(list(screen.query(".library-conversation-row"))) >= 2
@@ -1316,7 +1359,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     current_rows[1].press()
                     second_id = str(current_rows[1].conversation_id)
                     stale_target_id = second_id
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: (
                             screen._conversations_state.reader_state.selected_id
@@ -1346,16 +1389,18 @@ async def _exercise_closeout_single_app_route_cycle(
             burst_clock[0] += _ROUTE_CYCLE_AUTOSAVE_NEVER + 1.0
 
             for destination in DESTINATIONS:
-                shell = await _open_destination(screen, pilot, destination)
+                shell = await _open_destination(
+                    screen, pilot, destination, keep_library_closed=True
+                )
                 if destination == "notes" and stale_service is not None:
                     stale_service.release_first.set()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         stale_first_receipt.is_set,
                         message="Stale Conversation A service receipt did not settle",
                     )
                     await screen.workers.wait_for_complete()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: (
                             stale_target_id is not None
@@ -1371,7 +1416,7 @@ async def _exercise_closeout_single_app_route_cycle(
                 if destination == "notes":
                     # The return saves the parked draft at once: the debounce
                     # it would otherwise wait is an hour here.
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: (
                             len(app.notes_scope_service.save_calls) == 1
@@ -1393,6 +1438,15 @@ async def _exercise_closeout_single_app_route_cycle(
                     )
                     == 1
                 )
+                # The reader can paint a frame after its item lands (a work
+                # pane with no item yet is hidden at zero width, TASK-38981).
+                shell_selector = DESTINATION_CONTRACT[destination][1]
+                await _route_wait(
+                    pilot,
+                    lambda: screen.query_one(shell_selector).work.display,
+                    message=f"{destination} work pane did not show on return",
+                )
+                shell = screen.query_one(shell_selector)
                 assert shell.work.is_mounted and shell.work.display
                 assert {
                     operator.attrgetter(contract[3])(screen).library_open
@@ -1461,7 +1515,8 @@ async def _exercise_closeout_single_app_route_cycle(
             notes_after = tuple(dict(note) for note in app.notes_scope_service.notes)
             assert notes_after[0] == notes_before[0]
             assert {
-                key: notes_after[1][key] for key in ("id", "title", "content", "version")
+                key: notes_after[1][key]
+                for key in ("id", "title", "content", "version")
             } == {
                 "id": "n-2",
                 "title": "Reading list",
