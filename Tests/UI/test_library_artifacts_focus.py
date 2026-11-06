@@ -204,3 +204,47 @@ async def test_items_opened_beside_an_open_artifact_take_the_stage(
                 region.x, clip.x, 0
             )
             assert cells > 0, (size, focused.id, cells, controller.layout)
+
+
+def _visible_cells(screen, widget) -> int:
+    """The cells of ``widget`` inside its compositor clip (lessons-textual)."""
+    clip = screen.find_widget(widget).clip
+    region = widget.region
+    return min(region.right, clip.right, screen.size.width) - max(
+        region.x, clip.x, 0
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 24), (50, 25)])
+@private_profile_test
+async def test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control(
+    tmp_path, request, size
+):
+    """TASK-39062: with no artifact to open, the narrow stage gives the list the
+    whole width (``reader_width`` 0). The reader stayed displayed, because
+    focusing one of its controls reveals it, but with nothing selected there
+    was nothing to reveal: Tab from the list walked Back, Preview, Details and
+    the body at -1 to -21 visible cells."""
+    async with artifact_library(tmp_path, size=size, reports=0) as (screen, pilot):
+        controller = screen._artifacts_controller
+        assert controller.page is not None and not controller.page.items
+        assert controller.selected is None
+        controller.focus_items()
+        await pilot.pause()
+        rows = screen.query_one("#library-artifacts-list")
+        assert screen.focused is rows
+        assert controller.layout.items_open
+        assert controller.layout.reader_width == 0, controller.layout
+        stops = []
+        for _ in range(40):  # one whole lap of the screen's focus chain
+            await pilot.press("tab")
+            await pilot.pause()
+            focused = screen.focused
+            assert focused is not None
+            if focused is rows:
+                break
+            stops.append((focused.id, _visible_cells(screen, focused)))
+        assert focused is rows, stops
+        unseen = [(widget_id, cells) for widget_id, cells in stops if cells <= 0]
+        assert unseen == [], (size, stops)

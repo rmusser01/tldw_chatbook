@@ -2531,3 +2531,8 @@ Tests/UI/test_library_notes_w5_session_git_layout.py
 # Notes and in Folder files (about 5-10 s each). Appended at the tail.
 Tests/UI/test_library_file_notes_workspace.py::test_database_notes_click_between_compact_restores_is_kept
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_click_between_compact_restores_is_kept
+# TASK-39062 (2026-11-06): with no artifact to open, Tab from the Artifacts
+# list never rests on a reader control painted at zero or negative width
+# (60x24 and 50x25; about 11 s each). Appended at the tail.
+Tests/UI/test_library_artifacts_focus.py::test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control[size0]
+Tests/UI/test_library_artifacts_focus.py::test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control[size1]

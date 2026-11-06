@@ -860,6 +860,9 @@ MINIMUM_FILES = 1749
 # (Database Notes, Folder files) at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 1751
+# TASK-39062 (2026-11-06): append the two empty narrow Artifacts stage Tab
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1753
 
 
 def read_census(path: Path) -> list[str]:
