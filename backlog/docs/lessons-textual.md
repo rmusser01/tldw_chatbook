@@ -2509,3 +2509,11 @@ The first overflow probe reported no overflow at all. `Strip.cell_length` gave t
 - When you queue the screen's tick ahead of a change, also make sure a screen layout is pending (`screen.refresh(layout=True)`), unless the code under test sets one itself. Check that the unfixed build goes red before you trust a green result.
 - Judge each recorded frame against what the widget holds when it paints (`section.rows`, `browser.state`), not against the settled end state.
 - `CONSOLE_RAIL_PRIOR_DISPLAY` exists only on descendants that were present when the collapse cascade ran. A widget that mounts later inside a collapsed rail is not "hidden by the rail". Do not let a fix depend on that mark, and stress the test under parallel load before you call it fixed.
+
+## A Static with no width takes its whole row, and a button pushed past the row's clip still takes Tab (TASK-38757, 2026-11-05)
+
+**Incident.** The File Notes navigator's header is a `Horizontal` holding the "Folder files" `Static` and the **New** button. The Static sets no width, so it took the full row, and Button's default `min-width: 16` put New just past the row's right edge. Its region was 16 cells wide at x=33 at 40 columns, x=59 at 120 and x=94 at 211 in the real Library screen, and its clip ended exactly where it began. New painted nothing at any width, but it stayed in `screen.focus_chain`, so Tab could focus it. The existing tests asserted `new.region.width > 0` and `new.display`, and both pass for a button nobody can see. It came to light only when TASK-38757's width sweep checked each focusable widget's visible cells against its clip.
+
+**What to do.**
+- In a `Horizontal` that pairs a title with controls, give the title `width: 1fr`, and give each control a width that fits (`width: auto; min-width: 0`, or the compact group the pane already uses).
+- To check that a control can be seen, measure the cells of its region inside its compositor clip: `clip = screen.find_widget(w).clip`, then `min(region.right, clip.right) - max(region.x, clip.x) > 0`. `region.width > 0`, `display` and `in focus_chain` do not show it is visible.

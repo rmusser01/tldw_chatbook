@@ -2677,6 +2677,49 @@ async def test_ready_status_without_rows_renders_explicit_empty_state() -> None:
         assert _text(empty) == "No current-session Git changes."
 
 
+@pytest.mark.asyncio
+async def test_fixed_region_copy_refits_when_a_child_scrollbar_narrows_it() -> None:
+    """TASK-38755: the list surface's scrollbar takes a cell from the
+    fixed-region lines without resizing the panel, so the panel's own
+    ``on_resize`` never refits them. The copy must still match its fit for the
+    new width on the next refresh, not keep the fit for the old one."""
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    detail = "Committed 2 session notes; unrelated changes were untouched. " * 3
+    # At 40x15 the empty state just fits the surface; three rows overflow it.
+    async with _PanelHarness(panel).run_test(size=(40, 15)) as pilot:
+        panel.render_status(_status())
+        panel.set_last_action(detail)
+        surface = panel.query_one("#file-notes-git-list-surface", VerticalScroll)
+        summary = panel.query_one("#file-notes-git-action-status", Static)
+        await _wait_until(
+            pilot,
+            lambda: _text(summary)
+            == git_panel_module._fit_two_line_copy(
+                detail, summary.content_region.width
+            ),
+            "summary was never fitted",
+        )
+        assert not surface.show_vertical_scrollbar
+        before = summary.content_region.width
+
+        panel.render_status(
+            _status(*(_row("unstaged", group_id=index) for index in range(1, 4)))
+        )
+        await _wait_until(
+            pilot,
+            lambda: summary.content_region.width < before,
+            "the list surface's scrollbar never narrowed the summary",
+        )
+        assert panel.content_region.width == 40
+        after = summary.content_region.width
+        assert git_panel_module._fit_two_line_copy(
+            detail, after
+        ) != git_panel_module._fit_two_line_copy(detail, before)
+        await pilot.pause()
+        assert _text(summary) == git_panel_module._fit_two_line_copy(detail, after)
+
+
 _ROW_REASONS: dict[SessionGitRowState, str] = {
     "conflict": "conflict",
     "unsupported": "skip-worktree",

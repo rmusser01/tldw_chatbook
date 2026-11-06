@@ -30,6 +30,8 @@ from Tests.UI.consolidated_css import (
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.errors import NoWidget
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea, Tree
 
 import Tests.UI._optional_module_stubs  # noqa: F401
@@ -357,6 +359,21 @@ def _painted_style_of_text(app: App, region, needle: str):
                 return segment.style
             x += len(segment.text)
     return None
+
+
+def _seen_cells(widget: Widget) -> int:
+    """Columns of ``widget`` inside its compositor clip and the screen.
+
+    TASK-38757: ``region.width > 0`` holds for a widget laid out wholly past
+    its parent's clip, so it cannot show a control is visible.
+    """
+    screen = widget.screen
+    try:
+        clip = screen.find_widget(widget).clip
+    except NoWidget:
+        return 0
+    region = widget.region
+    return min(region.right, clip.right, screen.size.width) - max(region.x, clip.x, 0)
 
 
 def _painted_text_in_region(app: App, region) -> str:
@@ -6989,6 +7006,407 @@ async def test_poll_and_narrow_navigation_retain_the_text_area(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["navigator", "editor", "after-back"])
+async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
+    tmp_path: Path,
+    phase: str,
+) -> None:
+    """TASK-38757: the narrow navigator gave the work pane what the Files
+    pane and both 5-cell grips left (2 cells at 44, none at 42), and Tab
+    reached its controls off screen. In the navigator view the work pane is
+    hidden or at least ``_NARROW_WORK_MIN_WIDTH`` cells wide (what 60
+    columns leaves it), no focusable widget is outside its clip, Tab never
+    lands outside the screen, and the editor view still shows and focuses
+    the work pane."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    (root / "two.md").write_text("second", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(79, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.narrow,
+            "workspace did not choose narrow mode from its width",
+        )
+        shell = workspace.query_one(LibraryAdaptiveReaderShell)
+        screen = workspace.screen
+
+        async def resize(width: int) -> None:
+            await pilot.resize_terminal(width, 24)
+
+            def settled() -> bool:
+                layout = shell.effective_layout
+                total = (
+                    layout.library_width
+                    + layout.items_width
+                    + layout.reader_width
+                    + 2 * layout.grip_width
+                )
+                return (
+                    shell.region.width == width
+                    and total == width
+                    and (
+                        not layout.items_open
+                        or shell.items.region.width == layout.items_width
+                    )
+                )
+
+            await _wait_until(pilot, settled, f"layout did not settle at {width}")
+            await pilot.pause()
+
+        def off_screen() -> list[tuple[str | None, int, int]]:
+            return [
+                (widget.id, widget.region.x, widget.region.width)
+                for widget in screen.focus_chain
+                if _seen_cells(widget) <= 0
+            ]
+
+        async def sweep_navigator() -> None:
+            tree = workspace.query_one("#file-notes-tree", Tree)
+            for width in range(40, 80):
+                await resize(width)
+                assert workspace.navigator_visible, width
+                work = shell.work
+                assert not work.display or (
+                    work.region.width >= workspace_module._NARROW_WORK_MIN_WIDTH
+                ), (
+                    width,
+                    work.region.width,
+                )
+                assert not off_screen(), (width, off_screen())
+                tree.focus()
+                await pilot.press("tab")
+                await pilot.pause()
+                landing = screen.focused
+                assert landing is not None, width
+                assert _seen_cells(landing) > 0, (width, landing.id)
+
+        async def sweep_editor(widths: range | tuple[int, ...]) -> None:
+            back = workspace.query_one("#file-notes-back", Button)
+            for width in widths:
+                await resize(width)
+                assert workspace.editor_visible, width
+                assert shell.work.display, width
+                assert shell.work.region.width == width - 10, width
+                assert back.display and back in screen.focus_chain, width
+                assert not off_screen(), (width, off_screen())
+            back.focus()
+            await pilot.pause()
+            assert back.has_focus
+
+        if phase == "navigator":
+            await sweep_navigator()
+        elif phase == "editor":
+            assert await workspace.open_path("one.md")
+            await sweep_editor(range(40, 80))
+        else:
+            assert await workspace.open_path("one.md")
+            workspace.query_one("#file-notes-back", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: workspace.navigator_visible and not workspace.editor_visible,
+                "Back did not return to the navigator",
+            )
+            await sweep_navigator()
+            # The editor case sweeps every width; after Back, both ends.
+            assert await workspace.open_path("two.md")
+            await sweep_editor((79, 40))
+    await workspace.shutdown()
+    replica.close()
+
+
+@asynccontextmanager
+async def _library_folder_files(tmp_path: Path, size: tuple[int, int]):
+    """Open Library ▸ Notes ▸ Folder files on the real screen at ``size``.
+
+    Yields ``(pilot, screen, workspace, shell)`` once the workspace has
+    mounted, with ``one.md`` and ``gone.md`` in the linked folder.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    (root / "gone.md").write_text("gone", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    async with LibraryHarness(app, screen=screen).run_test(size=size) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        shell = workspace.query_one(
+            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+        yield pilot, screen, workspace, shell
+    await workspace.shutdown()
+
+
+_NEW_CASES = ("new", "new-create", "new-cancel", "new-escape", "new-cancel-open")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "deleted",
+        "open-error",
+        "save-error",
+        "new",
+        "new-create",
+        "new-cancel",
+        "new-escape",
+        "new-cancel-open",
+        "resize-failure",
+    ],
+)
+@pytest.mark.asyncio
+async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    """TASK-38757 review: at 50 columns the navigator hides the work pane, and
+    the Library screen owns the shell's layout. Selecting a deleted note, an
+    open that fails, an autosave that fails after Back, and New (whose path
+    form is in the work pane) each write to the work pane, so each must bring
+    it forward: Restore visible and focusable, "Open failed" and "Save
+    failed" painted, the path field painted and focused. Creating the file
+    keeps the editor view; cancelling that New (button or Escape, with or
+    without a file open) returns to the navigator with New focused. A failure
+    shown beside the navigator at 65 columns stays shown after a resize to
+    55; ‹ Files then still reaches the navigator, and opening another file is
+    refused and brings the failure forward again."""
+
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        raise PermissionError("permission denied")
+
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        new = workspace.query_one("#file-notes-new", Button)
+
+        async def back_to_navigator(*, work_shown: bool) -> None:
+            workspace.query_one("#file-notes-back", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.navigator_visible and shell.work.display is work_shown
+                ),
+                f"Back did not show the navigator (work pane shown: {work_shown})",
+            )
+
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
+        service = workspace._service
+        assert service is not None
+        if case == "deleted":
+            assert service.delete_file("gone.md").status == "ok"
+            assert await workspace.refresh_files()
+            assert workspace.select_deleted("gone.md")
+            target = workspace.query_one("#file-notes-restore", Button)
+            expected = "Restore"
+        elif case == "open-error":
+            monkeypatch.setattr(service, "open_file", refuse)
+            assert not await workspace.open_path("one.md")
+            target = workspace.query_one("#file-notes-action-status", Static)
+            expected = "Open failed"
+        elif case in {"save-error", "resize-failure"}:
+            if case == "resize-failure":
+                await pilot.resize_terminal(65, 24)
+            assert await workspace.open_path("one.md")
+            _replace_editor_text(workspace._editor_widget, "draft after Back")
+            await back_to_navigator(work_shown=case == "resize-failure")
+            assert workspace.save_state == "dirty"
+            monkeypatch.setattr(service, "save_file", refuse)
+            workspace._start_autosave()  # what the autosave timer runs
+            target = workspace.query_one("#file-notes-save-status", Static)
+            expected = "Save failed"
+            if case == "resize-failure":
+                # At 65 the failure shows beside the navigator; 55 would hide
+                # the work pane, so the failure keeps it in view instead.
+                await _wait_until(
+                    pilot,
+                    lambda: (
+                        workspace.navigator_visible
+                        and expected
+                        in _painted_text_in_region(pilot.app, target.region)
+                    ),
+                    "the failure did not show beside the 65-column navigator",
+                )
+                await pilot.resize_terminal(55, 24)
+        else:
+            if case == "new-cancel-open":
+                assert await workspace.open_path("one.md")
+                await back_to_navigator(work_shown=False)
+            new.press()
+            target = workspace.query_one("#file-notes-path", Input)
+            expected = "relative/path.md"
+
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.editor_visible
+                and shell.work.display
+                and _seen_cells(target) > 0
+                and expected in _painted_text_in_region(pilot.app, target.region)
+            ),
+            f"{case}: {expected!r} did not come forward",
+        )
+        if case == "resize-failure":
+            # TASK-38757 re-review: an explicit ‹ Files still wins; the
+            # failure stays reachable because another open is refused and
+            # brings it forward again.
+            await back_to_navigator(work_shown=False)
+            assert not await workspace.open_path("gone.md")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.editor_visible
+                    and shell.work.display
+                    and expected in _painted_text_in_region(pilot.app, target.region)
+                ),
+                "a refused open did not bring the standing failure forward",
+            )
+        if case == "deleted":
+            assert target in screen.focus_chain
+            target.focus()
+            await pilot.pause()
+            assert target.has_focus
+        elif case in _NEW_CASES:
+            await _wait_until(
+                pilot, lambda: target.has_focus, "New did not focus its path field"
+            )
+        if case == "new-create":
+            target.value = "made.md"
+            workspace.query_one("#file-notes-path-submit", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.current_path == "made.md"
+                    and workspace.path_task == "none"
+                    and workspace.editor_visible
+                    and shell.work.display
+                ),
+                "a created file did not stay in the editor view",
+            )
+        if case in {"new-cancel", "new-cancel-open"}:
+            workspace.query_one("#file-notes-path-cancel", Button).press()
+        elif case == "new-escape":
+            await pilot.press("escape")
+        if case in {"new-cancel", "new-escape", "new-cancel-open"}:
+            # TASK-38757 re-review: the cancel goes back to the navigator the
+            # New came from, with New focused, not to an empty work pane.
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.path_task == "none"
+                    and workspace.navigator_visible
+                    and not shell.work.display
+                    and new.has_focus
+                    and _seen_cells(new) > 0
+                ),
+                f"{case}: cancelling New did not return to the navigator",
+            )
+            if case == "new-cancel-open":
+                assert workspace.current_path == "one.md"
+
+
+@pytest.mark.parametrize("case", ["offline-back", "grip-from-editor"])
+@pytest.mark.asyncio
+async def test_file_notes_narrow_navigator_choice_wins_on_the_library_screen(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    """TASK-38757 re-review: at 50 columns an explicit navigator choice wins.
+    ‹ Files reaches the navigator during a failure with no way out in the
+    editor (the folder renamed away under a draft), and the Folder files grip
+    pressed in the editor view gives the navigator the stage instead of
+    reopening it beside an 8-cell work pane."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        assert await workspace.open_path("one.md")
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.editor_visible
+                and shell.work.display
+                and not shell.effective_layout.items_open
+            ),
+            "opening a file did not show the narrow editor",
+        )
+        if case == "offline-back":
+            _replace_editor_text(workspace._editor_widget, "draft before offline")
+            await _wait_until(
+                pilot,
+                lambda: workspace.save_state == "dirty",
+                "the edit did not mark the draft dirty",
+            )
+            root = workspace.root
+            assert root is not None
+            root.rename(tmp_path / "renamed away")
+            workspace._start_autosave()  # what the autosave timer runs
+            await _wait_until(
+                pilot,
+                lambda: workspace.save_state in {"error", "conflict"},
+                "saving into the renamed-away folder did not fail",
+            )
+            workspace.query_one("#file-notes-back", Button).press()
+        else:
+            shell.items_grip.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.navigator_visible
+                and not shell.work.display
+                and shell.items.region.width == 50 - 2 * shell.items_grip.grip_width
+            ),
+            f"{case}: the navigator did not take the narrow stage",
+        )
+        unseen = [
+            widget.id
+            for widget in screen.focus_chain
+            if workspace in widget.ancestors and _seen_cells(widget) <= 0
+        ]
+        assert not unseen, unseen
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(40, 20), (120, 40), (160, 45)])
 async def test_library_notes_source_choices_render_and_switch_by_keyboard(
     tmp_path: Path,
@@ -8498,7 +8916,7 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
     replica.close()
 
 
-@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.parametrize("size", ((120, 40), (40, 20), (211, 44), (235, 52)))
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_file_notes_delete_is_spatially_separated_from_new(
@@ -8548,10 +8966,12 @@ async def test_file_notes_delete_is_spatially_separated_from_new(
         assert new.display and delete.display
         assert str(new.label) == "New"
         assert delete.render_line(0).text.strip() == "Delete"
-        if size[0] == 120:
+        if size[0] >= 120:
             assert not workspace.has_class("-stack-editor-actions")
             assert spacer.display
-            assert new.region.width > 0
+            # TASK-38757 review: every cell of New inside its header row's clip.
+            assert new.region.width >= len("New")
+            assert _seen_cells(new) == new.region.width
             assert delete.region.width > 0
             assert not new.region.overlaps(delete.region)
         else:

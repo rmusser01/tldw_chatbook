@@ -2393,3 +2393,47 @@ Tests/UI/test_console_send_resend_guard.py::test_an_enter_never_resends_a_draft_
 # TASK-38745: the pending-fragment display-owner refusals, after a rail sync
 # that rendered (the setup retries a deferred one); ~20-26 s serially.
 Tests/UI/test_console_pending_display_owner_controls.py
+# TASK-38755 (2026-11-05): the File Notes git panel's fixed-region copy refits
+# when the list surface's scrollbar narrows it and the panel keeps its size
+# (3 s). Appended at the tail.
+Tests/UI/test_library_file_notes_git.py::test_fixed_region_copy_refits_when_a_child_scrollbar_narrows_it
+# TASK-38757 (2026-11-05): the File Notes narrow views at every width 40-79.
+# The navigator hides a work-pane sliver, nothing focusable sits outside its
+# clip, and the editor view still shows and focuses the work pane (6-12 s
+# each at load 23 on 18 CPUs). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[navigator]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[editor]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[after-back]
+# TASK-38719 (2026-11-05): the File Notes history and workflow run wide-tier
+# rules load with their modal's split sheet and stay off the boot bundle
+# (the hook review's too). Static text checks, well under 1 s. Appended at
+# the tail.
+Tests/UI/test_modal_wide_tier.py::test_split_modal_tier_rules_stay_off_the_boot_bundle
+# TASK-38741 (2026-11-05): the 40x20 case of the Notes source choices keyboard
+# test. TASK-38757 took the hidden work-pane sliver's controls out of the 40x20
+# focus chain, so its Tab walks went from 32.6-33.7 s to 4.9-5.3 s (call,
+# serial, three runs at load 7-8). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_library_notes_source_choices_render_and_switch_by_keyboard[size0]
+# TASK-38757 review (2026-11-05): on the real Library screen at 50 columns the
+# hidden work pane comes forward for a selected deleted note, a failed open, an
+# autosave that fails after Back, and New (5-6 s each at load 30). Appended at
+# the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[deleted]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[open-error]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[save-error]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new]
+# TASK-38757 re-review (2026-11-05): at 50 columns on the Library screen a
+# created file stays in the editor, a cancelled New (button, Escape, or with a
+# file open) returns to the navigator with New focused, and a failure shown at
+# 65 columns stays in view after a resize to 55 (3-6 s each at load 8).
+# Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-create]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-cancel]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-escape]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-cancel-open]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[resize-failure]
+# TASK-38757 rev3 (2026-11-05): at 50 columns on the Library screen an
+# explicit navigator choice wins: ‹ Files during a failure with no way out,
+# and the Files grip from the narrow editor (3-7 s each). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[offline-back]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[grip-from-editor]

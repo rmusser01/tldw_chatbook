@@ -4311,11 +4311,6 @@ App.-wide-viewport .portrait-regions-dialog {
   max-width: $ds-size-170;
 }
 
-App.-wide-viewport .workflow-run-dialog {
-  width: $ds-percent-85;
-  max-width: $ds-size-170;
-}
-
 
 App.-wide-viewport #personal-context-review-modal {
   width: $ds-percent-85;
@@ -4393,10 +4388,6 @@ App.-wide-viewport #prompt-collection-manager {
 }
 
 App.-wide-viewport ConsoleGoalStatus > .goal-dialog-panel {
-  width: $ds-percent-85;
-  max-width: $ds-size-150;
-}
-App.-wide-viewport #file-notes-history-dialog {
   width: $ds-percent-85;
   max-width: $ds-size-150;
 }

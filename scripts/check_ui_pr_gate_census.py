@@ -802,6 +802,28 @@ MINIMUM_FILES = 1682
 # TASK-38745 (2026-11-05): append the pending display-owner controls file at
 # the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1683
+# TASK-38755 (2026-11-05): append the git panel fixed-region refit node at
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1684
+# TASK-38757 (2026-11-05): append the File Notes narrow-view sweep's three
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1687
+# TASK-38719 (2026-11-05): append the split modal tier-rule pin at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1688
+# TASK-38741 (2026-11-05): append the 40x20 Notes source choices keyboard
+# case at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1689
+# TASK-38757 review (2026-11-05): append the four Library-screen nodes for
+# the hidden work pane coming forward at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 1693
+# TASK-38757 re-review (2026-11-05): append the five New-cancel, create and
+# resize-failure nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1698
+# TASK-38757 rev3 (2026-11-05): append the two navigator-choice nodes at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1700
 
 
 def read_census(path: Path) -> list[str]:

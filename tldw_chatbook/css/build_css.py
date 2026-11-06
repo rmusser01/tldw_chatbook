@@ -541,10 +541,12 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # Exact-token consumer audit (2026-09-15, repo-relative paths): moved
     # tokens occur only in UI/Workflows_Modules/ and workflows_screen.py;
     # a no-owner negative control detects the same consumer hits.
+    # TASK-38719: `-wide-viewport` is claimed as the Settings split claims
+    # it, so the run dialogs' wide-tier rule loads with their base rule.
     ScreenOwnedSplit(
         modules=("features/_workflows.tcss",),
         sheets={"workflows": "screen_feature_workflows.tcss"},
-        prefixes={"workflows": ("workflow", "workflows")},
+        prefixes={"workflows": ("workflow", "workflows", "-wide-viewport")},
         pinned=frozenset(),
     ),
     # Roleplay frame B1 (spec R18, G18): Roleplay's rules load on the first
@@ -644,10 +646,12 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # button (`#file-notes-history`, same file, LibraryFileNotesWorkspace):
     # it matches the prefix but is on screen whenever File Notes is, so a
     # rule naming it must ride the bundle.
+    # TASK-38719: `-wide-viewport` is claimed too, so the dialog's wide-tier
+    # rule loads with the rest of its sheet.
     ScreenOwnedSplit(
         modules=("features/_notes.tcss",),
         sheets={"file_notes_history": "screen_modal_file_notes_history.tcss"},
-        prefixes={"file_notes_history": ("file-notes-history",)},
+        prefixes={"file_notes_history": ("file-notes-history", "-wide-viewport")},
         pinned=frozenset({"file-notes-history"}),
     ),
     ScreenOwnedSplit(

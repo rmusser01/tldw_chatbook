@@ -336,6 +336,13 @@ FILE_NOTES_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: pair of widths that alternated would otherwise re-arm each other forever.
 _PATH_FIT_ATTEMPT_LIMIT = 4
 
+#: TASK-38757: the narrowest work pane the narrow navigator keeps: what it
+#: leaves at 60 columns, where the save and recovery status is pinned to paint
+#: whole (the 60x20 authority tests). Below it (2 cells at 44, none at 42) the
+#: pane is a sliver whose controls Tab reached off screen, so it is hidden and
+#: the Files pane takes its columns.
+_NARROW_WORK_MIN_WIDTH = 18
+
 
 #: task-11: poll backoff for the reconcile timer. The vault signature gate
 #: makes quiet ticks nearly free (walk stats only), but the cadence itself
@@ -773,8 +780,8 @@ class FileNotesHistoryDialog(
 
     TASK-36386 / ADR-097: the ``file-notes-history*`` rules in ``features/_notes.tcss``
     leave the boot path: ``build_css.py`` splits them into the sheet this ``CSS_PATH``
-    loads on first open. Its ``App.-wide-viewport`` tier rule still rides the boot
-    bundle, with the rest of the tier block (``components/_agentic_terminal.tcss``).
+    loads on first open. Its ``App.-wide-viewport`` tier rule goes with them
+    (TASK-38719).
     """
 
     BINDINGS = [("escape", "request_safe_cancel", "Close")]
@@ -1225,6 +1232,13 @@ class LibraryFileNotesWorkspace(Vertical):
         min-height: 1;
     }
 
+    /* TASK-38757: the title took the whole row and Button's 16-cell floor
+       pushed New past the row's clip at every width, so Tab focused a
+       control nobody could see. */
+    #file-notes-tree-header .destination-section {
+        width: 1fr;
+    }
+
     #file-notes-search-row,
     #file-notes-search,
     #file-notes-path {
@@ -1405,6 +1419,7 @@ class LibraryFileNotesWorkspace(Vertical):
        a 4-cell column made that 0: Rich's fold raised and the app exited.
        Truncation is defined at every width. */
     .file-notes-toolbar Button,
+    #file-notes-new,
     #file-notes-back,
     #file-notes-session-changes {
         width: auto;
@@ -1657,6 +1672,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_offline: bool | None = None
         self._narrow = False
         self._narrow_view: Literal["navigator", "editor"] = "navigator"
+        # TASK-38757: the user chose the narrow navigator (Back or the Files
+        # grip) since the save state last changed, so a standing failure does
+        # not pull the work pane back over that choice.
+        self._navigator_chosen = False
         self._navigator_mode: Literal["files", "search", "git"] = "files"
         self._navigator_mode_before_git: Literal["files", "search"] = "files"
         self._editor_action_layout_sync_scheduled = False
@@ -1675,6 +1694,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._path_task: FileNotesPathTask = "none"
         self._path_task_opener_id = ""
         self._path_task_editor_lease: _EditorReadOnlyLease | None = None
+        self._path_task_brought_work_forward = False
         self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
         # task-11: the owner's session revision as of the last session
         # refresh. None forces the first refresh after every binding reset.
@@ -2032,6 +2052,34 @@ class LibraryFileNotesWorkspace(Vertical):
         manual_reopen: PaneName | None = None,
     ) -> None:
         """Patch the mounted shared shell without recomposing its roles."""
+        if (
+            self._narrow
+            and self._narrow_view == "editor"
+            and layout.items_open
+            and layout.reader_width < _NARROW_WORK_MIN_WIDTH
+        ):
+            # TASK-38757 re-review: the Files grip reopened the navigator from
+            # the narrow editor. That is the navigator view, chosen as Back
+            # chooses it, so the work pane hides instead of keeping a sliver.
+            self._narrow_view = "navigator"
+            self._navigator_chosen = True
+            self.query_one("#file-notes-back", Button).display = False
+        if (
+            self._navigator_hides_work(layout)
+            and self._save_state in {"conflict", "error"}
+            and not self._navigator_chosen
+        ):
+            # TASK-38757 re-review: a resize must not hide a failure; show the
+            # work pane through the editor view (this re-resolves the layout).
+            # An explicit navigator choice (Back, the Files grip) still wins.
+            self._set_narrow_view("editor")
+            return
+        if self._navigator_hides_work(layout):
+            layout = replace(
+                layout,
+                items_width=layout.items_width + layout.reader_width,
+                reader_width=0,
+            )
         self._reader_layout = layout
         shell = self._reader_shell
         if shell is not None:
@@ -2042,6 +2090,58 @@ class LibraryFileNotesWorkspace(Vertical):
             # paint the file panes back into the empty state.
             self._sync_body_panes()
         self._schedule_editor_action_layout()
+
+    def _navigator_hides_work(self, layout: AdaptiveReaderEffectiveLayout) -> bool:
+        """Whether the narrow navigator's work pane would be a sliver."""
+        return (
+            self._narrow
+            and self._narrow_view == "navigator"
+            and layout.items_open
+            and layout.reader_width < _NARROW_WORK_MIN_WIDTH
+        )
+
+    def _set_narrow_view(self, view: Literal["navigator", "editor"]) -> None:
+        """Switch the narrow view and re-lay out whichever shell owns it.
+
+        The Library screen resolves an external shell's layout, so it is
+        asked to re-resolve: ``_apply_responsive_layout`` alone does not reach
+        it (TASK-38757 review: a selected deleted note stayed hidden).
+        """
+        self._narrow_view = view
+        if view == "editor":
+            self._navigator_chosen = False
+        self._apply_responsive_layout(self.size.width)
+        if self._reader_shell_external:
+            self._sync_body_panes()
+            self.post_message(AdaptiveReaderShellResized())
+
+    def _bring_work_forward(self) -> bool:
+        """Show a hidden narrow work pane whose content must be seen.
+
+        TASK-38757 review: below 60 columns the navigator hides the work pane,
+        so a failure, a refusal or a path task written there showed nowhere.
+
+        Returns:
+            Whether the pane was hidden and is now brought forward.
+        """
+        if not self._navigator_hides_work(self._reader_layout):
+            return False
+        self._set_narrow_view("editor")
+        return True
+
+    def _focus_once_shown(self, widget: Widget, attempts: int = 20) -> None:
+        """Focus ``widget`` once its pane shows again.
+
+        The Library screen re-lays out an external shell a message later, so
+        the navigator a cancelled New returns to is not displayed yet.
+        """
+        if not self._active or not self.is_mounted:
+            return
+        shown = all(node.display for node in widget.ancestors_with_self)
+        if widget.focusable and shown:
+            widget.focus()
+        elif attempts:
+            self.call_after_refresh(self._focus_once_shown, widget, attempts - 1)
 
     def _ensure_standalone_reader_shell(self) -> LibraryAdaptiveReaderShell:
         """Supply the shared structure for direct workspace harnesses."""
@@ -2246,7 +2346,7 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> bool:
         """Open one guarded target-path task and remember its focus origin."""
         if task == "none":
-            self._close_path_task()
+            self._close_path_task(cancelled=True)
             return True
         if task not in {"new", "move", "save_copy"}:
             raise ValueError(f"Unsupported File Notes path task: {task}")
@@ -2301,13 +2401,22 @@ class LibraryFileNotesWorkspace(Vertical):
         self._path_task_editor_lease = path_task_lease
         path = self.query_one("#file-notes-path", Input)
         path.value = self._current_path if task == "move" else ""
+        # New opens from the navigator; its form is in the work pane.
+        self._path_task_brought_work_forward = self._bring_work_forward()
         self._sync_path_task_surface(focus_target=True)
         return True
 
-    def _close_path_task(self, *, restore_focus: bool = True) -> None:
+    def _close_path_task(
+        self,
+        *,
+        restore_focus: bool = True,
+        cancelled: bool = False,
+    ) -> None:
         """Close the named task and restore its actual invoking control."""
         closed_task = self._path_task
         opener_id = self._path_task_opener_id
+        brought_forward = self._path_task_brought_work_forward
+        self._path_task_brought_work_forward = False
         self._path_task = "none"
         self._path_task_opener_id = ""
         path_task_lease = self._path_task_editor_lease
@@ -2315,6 +2424,17 @@ class LibraryFileNotesWorkspace(Vertical):
         if path_task_lease is not None:
             path_task_lease.release()
         self._sync_path_task_surface()
+        returned = (
+            cancelled
+            and brought_forward
+            and self._active
+            and self._narrow
+            and self._narrow_view == "editor"
+        )
+        if returned:
+            # TASK-38757 re-review: the task brought the hidden work pane
+            # forward from the navigator, so a cancel goes back there.
+            self._set_narrow_view("navigator")
         if (
             not restore_focus
             or not opener_id
@@ -2326,6 +2446,9 @@ class LibraryFileNotesWorkspace(Vertical):
         if not matches:
             return
         opener = matches.first(Button)
+        if returned:
+            self.call_after_refresh(self._focus_once_shown, opener)
+            return
         opener_is_visible = opener.display and all(
             ancestor.display for ancestor in opener.ancestors if ancestor is not self
         )
@@ -2351,7 +2474,7 @@ class LibraryFileNotesWorkspace(Vertical):
         """Cancel a visible path task for the screen-level guarded Escape path."""
         if self._path_task == "none":
             return False
-        self._close_path_task(restore_focus=True)
+        self._close_path_task(restore_focus=True, cancelled=True)
         return True
 
     async def _submit_path_task(self) -> bool:
@@ -3321,7 +3444,9 @@ class LibraryFileNotesWorkspace(Vertical):
             shell.items.display = linked and shell.effective_layout.items_open
             shell.items_grip.display = linked
             shell.library_grip.display = linked
-            shell.work.display = linked
+            shell.work.display = linked and not self._navigator_hides_work(
+                shell.effective_layout
+            )
         try:
             body = self.query_one("#file-notes-body")
         except NoMatches:
@@ -3606,6 +3731,8 @@ class LibraryFileNotesWorkspace(Vertical):
             # document. Transition-only on purpose: while ALREADY narrow,
             # Back's explicit navigator choice must keep winning.
             self._narrow_view = "editor"
+            if self._reader_shell_external:
+                self.post_message(AdaptiveReaderShellResized())
         back = self.query_one("#file-notes-back", Button)
         back.display = self._narrow and self._narrow_view == "editor"
         if not self._reader_shell_external:
@@ -5653,6 +5780,9 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_git_refresh()
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
+        entering_failure = state in {"conflict", "error"} and state != self._save_state
+        if state != self._save_state:
+            self._navigator_chosen = False
         self._save_state = state
         self._save_detail = detail
         if state != "conflict":
@@ -5663,6 +5793,8 @@ class LibraryFileNotesWorkspace(Vertical):
             status.set_class(state == "error", "-error")
             self._render_status_channels()
             self._update_controls()
+            if entering_failure:
+                self._bring_work_forward()
 
     def _set_action_status(self, text: str) -> None:
         self._action_detail = text
@@ -6539,6 +6671,9 @@ class LibraryFileNotesWorkspace(Vertical):
         ):
             return False
         if self._opened is not None and not await self.flush_pending_work():
+            # The refusal's reason (a failed save, a conflict) is in the work
+            # pane; show it rather than ignore the open (TASK-38757 review).
+            self._bring_work_forward()
             return False
         if (
             not self._active
@@ -6550,6 +6685,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         with self._hold_path_transition() as transition:
             if transition is None:
+                self._bring_work_forward()
                 return False
             try:
                 opened = await asyncio.to_thread(
@@ -6558,6 +6694,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
             except Exception as error:
                 self._set_action_status(f"Open failed: {error}")
+                self._bring_work_forward()
                 return False
             if (
                 not self._active
@@ -6604,10 +6741,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_action_reason = ""
             self._update_root_surface()
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
-            if self._reader_shell_external:
-                self.post_message(AdaptiveReaderShellResized())
+            self._set_narrow_view("editor")
         self._update_controls()
         self._sync_work_mode()
         if announce_editable and opened.editable:
@@ -6664,8 +6798,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._fit_path_surfaces()
         self._set_action_status("Ready to restore.")
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
+            self._set_narrow_view("editor")
         self._update_controls()
         return True
 
@@ -7653,10 +7786,8 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-back")
     def _back_to_navigator(self, event: Button.Pressed) -> None:
         event.stop()
-        self._narrow_view = "navigator"
-        self._apply_responsive_layout(self.size.width)
-        if self._reader_shell_external:
-            self.post_message(AdaptiveReaderShellResized())
+        self._navigator_chosen = True
+        self._set_narrow_view("navigator")
 
     @on(Button.Pressed, "#file-notes-session-changes")
     def _session_git_pressed(self, event: Button.Pressed) -> None:
@@ -8960,7 +9091,7 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-path-cancel")
     def _cancel_named_path_task(self, event: Button.Pressed) -> None:
         event.stop()
-        self._close_path_task(restore_focus=True)
+        self._close_path_task(restore_focus=True, cancelled=True)
 
     @on(Button.Pressed, "#file-notes-edit")
     def _show_edit_mode(self, event: Button.Pressed) -> None:
@@ -8975,10 +9106,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._work_mode = "manage"
         self._sync_work_mode()
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
-            if self._reader_shell_external:
-                self.post_message(AdaptiveReaderShellResized())
+            self._set_narrow_view("editor")
 
     @on(Button.Pressed, "#file-notes-maintenance-toggle")
     def _toggle_maintenance_actions(self) -> None:

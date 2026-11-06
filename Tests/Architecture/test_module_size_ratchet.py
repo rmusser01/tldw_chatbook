@@ -796,7 +796,17 @@ _BUDGETS: dict[str, int] = {
     # A rehydrate after Back from a failed observer attaches a new one.
     # TASK-38715 review, 2026-11-05: 9676 -> 9674 (-2). The app tier owns the
     # Save failed fill; the widget rule keeps only its bold.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9674,
+    # TASK-38757, 2026-11-05 (same waiver): 9674 -> 9706 (+32). The narrow
+    # navigator hides a work-pane sliver, and New fits its header row.
+    # TASK-38757 review, 2026-11-05 (same waiver): 9706 -> 9730 (+24). Narrow
+    # view switches re-resolve the screen-owned shell too, and a failure,
+    # refusal or New brings the hidden work pane forward.
+    # TASK-38757 re-review, 2026-11-05 (same waiver): 9730 -> 9779 (+49). A
+    # cancelled New returns to the navigator and focuses New, and a standing
+    # failure keeps the work pane in view through a resize.
+    # TASK-38757 rev3, 2026-11-05 (same waiver): 9779 -> 9802 (+23). An
+    # explicit navigator choice (Back, the Files grip) wins over a failure.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9802,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
@@ -954,7 +964,9 @@ _BUDGETS: dict[str, int] = {
     # Round 4, same waiver: each guard records its phase first: 4253 -> 4259.
     # TASK-38710 review fold, 2026-11-04 (same waiver): 4259 -> 4265 (+6).
     # One-row Session Git buttons truncate instead of wrapping at width 0.
-    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4265,
+    # TASK-38755, 2026-11-05 (same waiver): 4265 -> 4278 (+13). Fixed-region
+    # lines refit on their own Resize when a child scrollbar narrows them.
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4278,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
     "tldw_chatbook/DB/private_sqlite.py": 4030,

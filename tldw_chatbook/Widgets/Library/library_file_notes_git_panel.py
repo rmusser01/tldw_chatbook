@@ -626,6 +626,33 @@ class _CommitIncludedNoteListItem(ListItem):
             copy.update(self._copy(width))
 
 
+class _FixedRegionLine(Static):
+    """One fixed-region line whose copy stays fitted to its own width.
+
+    TASK-38755: the list surface's scrollbar can take a cell from this line
+    without resizing the panel, so the panel's ``on_resize`` alone left the
+    old fit showing. The line refits on its own ``Resize`` too.
+    """
+
+    def __init__(self, copy: str, *, id: str) -> None:
+        super().__init__(copy, id=id, markup=False)
+        self._copy = copy
+        self._complete = False
+
+    def show_copy(self, text: str, *, complete: bool, fallback_width: int) -> None:
+        """Keep ``text`` as this line's copy and fit it to the current width."""
+        self._copy = text
+        self._complete = complete
+        self.set_class(complete, "-complete-copy")
+        width = self.content_region.width or fallback_width
+        self.update(text if complete or width <= 0 else _fit_two_line_copy(text, width))
+
+    def on_resize(self, _event: Resize) -> None:
+        width = self.content_region.width
+        if width > 0 and not self._complete:
+            self.update(_fit_two_line_copy(self._copy, width))
+
+
 class _WorkflowScroll(VerticalScroll):
     """Keyboard-scrollable focus target for constrained workflow states."""
 
@@ -1264,10 +1291,8 @@ class LibraryFileNotesGitPanel(Vertical):
                 id="file-notes-git-title",
                 markup=False,
             )
-            yield Static(
-                "Repository: not checked",
-                id="file-notes-git-repository",
-                markup=False,
+            yield _FixedRegionLine(
+                "Repository: not checked", id="file-notes-git-repository"
             )
             yield Static(
                 "Review and commit only notes changed during this Chatbook session.",
@@ -1285,21 +1310,9 @@ class LibraryFileNotesGitPanel(Vertical):
                 id="file-notes-git-empty",
                 markup=False,
             )
-            yield Static(
-                "Status: NOT CHECKED",
-                id="file-notes-git-status",
-                markup=False,
-            )
-            yield Static(
-                "",
-                id="file-notes-git-action-status",
-                markup=False,
-            )
-            yield Static(
-                "",
-                id="file-notes-git-selected-note",
-                markup=False,
-            )
+            yield _FixedRegionLine("Status: NOT CHECKED", id="file-notes-git-status")
+            yield _FixedRegionLine("", id="file-notes-git-action-status")
+            yield _FixedRegionLine("", id="file-notes-git-selected-note")
             with Horizontal(id="file-notes-git-selected-actions"):
                 yield Button(
                     "Stage",
@@ -1929,11 +1942,11 @@ class LibraryFileNotesGitPanel(Vertical):
             ),
             ("#file-notes-git-selected-note", self._selected_note_text, False),
         ):
-            widget = self.query_one(selector, Static)
-            widget.set_class(complete, "-complete-copy")
-            width = widget.content_region.width or self.content_region.width
-            fitted = text if complete or width <= 0 else _fit_two_line_copy(text, width)
-            widget.update(fitted)
+            self.query_one(selector, _FixedRegionLine).show_copy(
+                text,
+                complete=complete,
+                fallback_width=self.content_region.width,
+            )
 
     def _set_repository_text(self, text: str) -> None:
         self._repository_text = text

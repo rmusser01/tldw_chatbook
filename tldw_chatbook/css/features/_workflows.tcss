@@ -136,6 +136,8 @@ WorkflowRunPanel TextArea { height: $ds-size-6; min-height: $ds-textarea-min-hei
 .workflow-run-actions { height: $ds-control-height-compact; margin: $ds-space-0; }
 WorkflowRunSetup, WorkflowRunConfirmation { align: center middle; background: $background $ds-opacity-dim; }
 .workflow-run-dialog { width: $ds-percent-90; max-width: $ds-size-100; height: $ds-percent-90; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
+/* TASK-38719: the wide tier (viewport >= 150 columns, components/_agentic_terminal.tcss) for both run modals, split with this sheet so it stays off the boot parse. */
+App.-wide-viewport .workflow-run-dialog { width: $ds-percent-85; max-width: $ds-size-170; }
 .workflow-run-dialog VerticalScroll.workflow-run-scroll { height: $ds-height-fill; min-height: $ds-control-height; }
 .workflow-run-dialog Static.workflow-run-copy { height: auto; }
 .workflow-run-heading { color: $ds-action-focus; text-style: $ds-text-strong; }
