@@ -10,6 +10,9 @@ last reader migrates (ADR-250 section 4). Three things are pinned here:
   through its alias, or is on the exclusion list below;
 * the module imports only the standard library at module level (ADR-097).
 
+Only literal names are scanned: dynamic names such as ``getattr(app, name)`` are
+out of reach by design (ADR-250 section 2).
+
 The alias list and the exclusion list only shrink. A service added later goes
 into the bundle with no alias; one built after composition may join the
 exclusion list (ADR-250 section 2, Q3).
@@ -251,8 +254,10 @@ EXCLUDED: dict[str, str] = {
             "notes_organization_sync_service",
             "local_library_collections_db",
         ),
-        "rule 5: reset and rebuilt (collections capture reassigns the Library "
-        "collections database when it is not a LibraryCollectionsDB; Notes-sync wiring re-runs)",
+        "rule 5, replaced afterwards / reset and rebuilt: collections capture "
+        "reassigns local_library_collections_db when it is not a LibraryCollectionsDB "
+        "(app_collections_wiring.py, `self.local_library_collections_db = database` in "
+        "_wire_collections_capture_services); Notes-sync wiring re-runs on a source switch",
     ),
     **dict.fromkeys(
         ("server_outputs_scope_service", "server_sharing_scope_service"),
@@ -337,12 +342,9 @@ def test_app_services_imports_only_the_standard_library_at_module_level() -> Non
 pytestmark = [pytest.mark.bootstrap_profile]
 
 
-@private_profile_test
-def test_every_alias_is_the_bundle_field_after_construction(request) -> None:
-    from Tests.UI.app_factory import _build_test_app
+def _misaligned(app) -> list[str]:
     from tldw_chatbook.app_services import ApplicationServices
 
-    app = _build_test_app()
     assert isinstance(app.services, ApplicationServices)
     wrong = []
     for attr, path in ALIASES:
@@ -351,4 +353,22 @@ def test_every_alias_is_the_bundle_field_after_construction(request) -> None:
             field = getattr(field, part)
         if getattr(app, attr) is not field:
             wrong.append(f"app.{attr} is not services.{path}")
-    assert not wrong, wrong
+    return wrong
+
+
+@private_profile_test
+def test_every_alias_is_the_bundle_field_after_construction(request) -> None:
+    from Tests.UI.app_factory import _build_test_app
+
+    assert not _misaligned(_build_test_app())
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_every_alias_is_still_the_bundle_field_after_mount(request) -> None:
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    async with app.run_test(size=(180, 48)) as pilot:
+        await pilot.pause()
+        assert not _misaligned(app)
