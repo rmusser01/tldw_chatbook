@@ -77,3 +77,8 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
 - The module-size row goes 9802 -> 9835 under the owner's waiver. The node is appended at the census tail, floor 1701. The User Guide describes Retry save, the offline next step, and the refused folder change.
 - Files: `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`, `Tests/UI/test_library_file_notes_workspace.py`, `Tests/Architecture/test_module_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/library/file-notes.md`.
 
+### Review fixes (r10l-rev1)
+
+- **Test gap closed.** `test_file_notes_retry_after_the_file_changed_on_disk_ends_in_conflict`: a save fails, the file then changes on disk, and Retry save ends in Conflict. The disk keeps "changed on disk", the editor keeps the draft, and the conflict shows Save Copy and Reload without Retry.
+- **Evidence.** The test passes (4.1 s), since Retry already goes through the guarded save. Negative control: a Retry that adopts the disk hash before saving overwrote the file, and the test failed with "Retry did not end in Conflict (saved)". The source was restored. The node is appended at the census tail.
+

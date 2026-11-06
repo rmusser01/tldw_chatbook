@@ -8235,6 +8235,66 @@ async def test_file_notes_failed_save_names_a_working_step_and_retries_unchanged
 
 
 @pytest.mark.asyncio
+async def test_file_notes_retry_after_the_file_changed_on_disk_ends_in_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38983 review: Retry save re-runs the guarded save. When the file
+    changed on disk after the failed save, Retry ends in Conflict and writes
+    nothing; the conflict keeps Save Copy and Reload, without Retry."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    note = root / "one.md"
+    note.write_text("first", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("one.md")
+        _replace_editor_text(workspace._editor_widget, "draft kept")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "dirty", "edit was not dirty"
+        )
+        service = workspace._service
+        assert service is not None
+        healthy = service.save_file
+
+        def refuse(*_args: object, **_kwargs: object) -> object:
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr(service, "save_file", refuse)
+        workspace._start_autosave()  # what the autosave timer runs
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "error", "save did not fail"
+        )
+        monkeypatch.setattr(service, "save_file", healthy)
+        note.write_text("changed on disk", encoding="utf-8")
+
+        retry = workspace.query_one("#file-notes-recovery-retry", Button)
+        retry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "conflict",
+            f"Retry did not end in Conflict ({workspace.save_state})",
+        )
+        await pilot.pause()
+        assert note.read_text(encoding="utf-8") == "changed on disk"
+        assert workspace._editor_widget.text == "draft kept"
+        assert not retry.display
+        assert workspace.query_one("#file-notes-recovery-save-copy", Button).display
+        assert workspace.query_one("#file-notes-recovery-reload", Button).display
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_poll_completion_ignores_partially_detached_surface(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
