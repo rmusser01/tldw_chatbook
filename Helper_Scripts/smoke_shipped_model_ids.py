@@ -8,9 +8,10 @@ returned the 404 ("no longer available to new users"). This script makes one
 1-output-token call per shipped default model and per curated catalog id and
 reports any id the provider says is gone.
 
-It reads the shipped template straight out of ``tldw_chatbook/config.py``
-(parsed with ``ast`` -- nothing from the app is imported, so no profile,
-config file or keychain is touched) and the API keys from the environment:
+It reads the shipped template straight from
+``tldw_chatbook/Config_Files/default_config.toml`` (nothing from the app is
+imported, so no profile, config file or keychain is touched) and the API keys
+from the environment:
 
 * Google: ``GEMINI_API_KEY`` or ``GOOGLE_API_KEY``
 * OpenAI: ``OPENAI_API_KEY``
@@ -38,7 +39,6 @@ template-parse error.
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import os
 import sys
@@ -48,7 +48,14 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-_CONFIG_PY = Path(__file__).resolve().parents[1] / "tldw_chatbook" / "config.py"
+#: The shipped default config template: a packaged data file since
+#: TASK-36945.1 (it used to be config.py's ``CONFIG_TOML_CONTENT`` literal).
+_TEMPLATE_TOML = (
+    Path(__file__).resolve().parents[1]
+    / "tldw_chatbook"
+    / "Config_Files"
+    / "default_config.toml"
+)
 _TIMEOUT_SECONDS = 30
 #: Template section name -> ([providers] list key, env vars holding a key).
 _PROVIDERS = {
@@ -68,20 +75,12 @@ class Outcome:
 
 
 def shipped_template() -> dict:
-    """Parse ``CONFIG_TOML_CONTENT`` out of config.py without importing it."""
-    tree = ast.parse(_CONFIG_PY.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if (
-            isinstance(node, ast.Assign)
-            and getattr(node.targets[0], "id", "") == "CONFIG_TOML_CONTENT"
-            and isinstance(node.value, ast.Constant)
-        ):
-            text = str(node.value.value)
-            # Placeholders config.py substitutes at import time.
-            text = text.replace("__DEFAULT_TRANSCRIPTION_PROVIDER__", "auto")
-            text = text.replace("__DEFAULT_SPLASH_DURATION__", "1")
-            return tomllib.loads(text)
-    raise ValueError("CONFIG_TOML_CONTENT not found in config.py")
+    """Parse the shipped template (``Config_Files/default_config.toml``) without importing config.py."""
+    text = _TEMPLATE_TOML.read_bytes().decode("utf-8")
+    # Placeholders config.py substitutes at import time.
+    text = text.replace("__DEFAULT_TRANSCRIPTION_PROVIDER__", "auto")
+    text = text.replace("__DEFAULT_SPLASH_DURATION__", "1")
+    return tomllib.loads(text)
 
 
 def shipped_ids(template: dict, section: str) -> list[str]:

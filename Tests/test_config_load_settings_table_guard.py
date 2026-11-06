@@ -704,7 +704,15 @@ def test_propagation_follows_imports_not_names():
 # TASK-39147: pin the seven commented native workflow settings.
 # TASK-41145 (owner decision 2026-11-16): MLX-LM ships host and port, not an
 # unused api_url.
-_TEMPLATE_SHA256 = "3d4886ffbc173e93045fc448b48bdfa503eeee51992e3972e01570d5a9b62283"
+# TASK-34100.2 (2026-11-05, rebased onto dev 29592ecc9b; again 2026-11-12 onto
+# dev 4b90eb860b, over TASK-39147's workflow settings; again 2026-11-19 onto
+# dev a6df4d8d48, over TASK-41145's MLX-LM host and port): re-pinned on purpose
+# for the template edits it carried in config.py's literal before the move --
+# the retired OpenAI/Anthropic/Google catalog ids and Google's model replaced
+# (AC#6, AC#17), the Gemini rolling-alias vision row, `template_sample = true`
+# on the placeholder local sections (AC#9) and `streaming = true` on Custom /
+# Custom 2 (AC#10).
+_TEMPLATE_SHA256 = "c8436a261230501f07840ac0d08fb39413b025094c756a32f89506ec00ca80cd"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
