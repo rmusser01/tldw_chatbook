@@ -53,7 +53,8 @@ _NEGATION = re.compile(r"\b(not|never|don.t|without)\b")
 _REVIEWER_RETRY = re.compile(
     r"(?:please\s+)?retry\s+(?:the\s+)?reviewer\s+(r[1-9]\d*)[.!]?", re.I
 )
-_RESUME_REVIEW = re.compile(r"resume\s+(?:(?:the|this)\s+)?review[.!]?", re.I)
+# Lowered text only, no re.I: it would case-fold "revıew" or "reſume" to a stage.
+_RESUME_REVIEW = re.compile(r"resume\s+(?:(?:the|this)\s+)?review[.!]?")
 
 
 def _explicit_stages(text: str, trusted_skill_bindings=()) -> frozenset[str]:
