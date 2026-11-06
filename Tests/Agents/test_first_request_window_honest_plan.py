@@ -20,6 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_runtime import render_tool_protocol
 from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogEntry,
@@ -314,7 +315,6 @@ def test_service_keeps_the_planned_surface_with_a_live_progress_inbox(
     from Tests.Agents.test_agent_service import ScriptedChat, fence
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.fleet_messages import MessageStore
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     # The plain arm plans a 384-token input budget. TASK-34100.5.3 plans
     # within the Console gateway's ceiling (window - reply - max(512,
@@ -334,7 +334,7 @@ def test_service_keeps_the_planned_surface_with_a_live_progress_inbox(
         else []
     ) + ["done"]
     chat = ScriptedChat(replies)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-plan")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="compact-plan")
     service = AgentService(
         db=db,
         registry=plan.registry,
@@ -376,9 +376,9 @@ def test_compact_discovery_does_not_load_a_schema_beyond_its_input_budget(
     tmp_path, monkeypatch, native
 ):
     from dataclasses import replace
+
     from Tests.Agents.test_agent_service import ScriptedChat, fence, native_call
     from tldw_chatbook.Agents.agent_service import AgentService
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     original = _BuiltinLikeProvider.load_schema
 
@@ -403,7 +403,7 @@ def test_compact_discovery_does_not_load_a_schema_beyond_its_input_budget(
         else fence("load_tools", {"ids": ["notes_tool_0"]})
     )
     chat = ScriptedChat([call, "done"])
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-budget")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="compact-budget")
     try:
         service = AgentService(db=db, registry=plan.registry, chat_call=chat)
         _, outcome = service.run_turn(
@@ -428,13 +428,12 @@ def test_compact_request_budget_survives_runtime_context_additions(
 ):
     from dataclasses import replace
     from hashlib import sha256
+
     from Tests.Agents.test_agent_service import ScriptedChat
     from Tests.Chat.test_console_agent_project_instructions import _candidate
     from tldw_chatbook.Agents.agent_service import AgentService, ModelRequest
     from tldw_chatbook.Agents.fleet_messages import MessageStore
     from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
-
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     provider = "openai" if native else "llama_cpp"
     message = (
@@ -478,7 +477,7 @@ def test_compact_request_budget_survives_runtime_context_additions(
             ),
         )
     chat = ScriptedChat(["done"])
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-additions")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="compact-additions")
     service = AgentService(
         db=db,
         registry=plan.registry,

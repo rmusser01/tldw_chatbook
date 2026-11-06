@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_fleet_runtime import (
     FLEET_CFG,
     fence,
@@ -16,7 +17,6 @@ from tldw_chatbook.Agents.activation import worker_guard
 from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME, WAIT_AGENTS_TOOL_NAME
 from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
 from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -26,7 +26,7 @@ pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 async def test_child_narrowing_and_post_context_use_real_owner(
     tmp_path, monkeypatch, fleet
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="h4")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="h4")
     observed = tmp_path / "start.json"
     start = command(
         "import json,sys;from pathlib import Path;event=json.load(sys.stdin);"
@@ -93,7 +93,7 @@ async def test_child_narrowing_and_post_context_use_real_owner(
 async def test_child_refusal_creates_no_child_but_spawn_tool_settles(
     tmp_path, monkeypatch, fleet
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="h4-deny")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="h4-deny")
     hook = command("raise SystemExit(1)", name="SubagentStart", effects=["deny"])
     engine = HookEngine((hook,), lambda *_: True, HookBudgetOwner())
     replies = [fence(SPAWN_TOOL_NAME, {"task": "child"}), "done"]
@@ -125,7 +125,7 @@ async def test_child_refusal_creates_no_child_but_spawn_tool_settles(
 async def test_required_child_stop_holds_actual_parent_after_child_is_durable(
     tmp_path, monkeypatch, fleet
 ):
-    db = AgentRunsDB(tmp_path / "race.db", client_id="h4-race")
+    db = owned_agent_runs_db(tmp_path / "race.db", client_id="h4-race")
     entered = tmp_path / "child-post-entered"
     release = tmp_path / "child-post-release"
     hook = command(
@@ -190,7 +190,7 @@ async def test_required_child_stop_holds_actual_parent_after_child_is_durable(
 async def test_late_child_settlement_cannot_attach_to_a_new_parent(tmp_path):
     from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
 
-    db = AgentRunsDB(tmp_path / "late.db", client_id="h4-late")
+    db = owned_agent_runs_db(tmp_path / "late.db", client_id="h4-late")
     parent = db.create_run(conversation_id="c", agent_kind="primary")
     child = db.create_run(
         conversation_id="c", agent_kind="subagent", parent_run_id=parent
@@ -252,7 +252,7 @@ async def test_resume_cannot_skip_actual_subagent_start(tmp_path, deny_resume):
         lambda *_: True,
         HookBudgetOwner(),
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="review")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="review")
     holder = {}
 
     def resume():

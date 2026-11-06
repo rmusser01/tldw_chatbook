@@ -50,6 +50,19 @@ def chat_call_impl(
         {"apply_safety_window": False} if review_admission is not None else {}
     )
     attributed = getattr(self._thread_loop, "run_scope", None)
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+    from tldw_chatbook.Agents.run_context import current_model_run_cancellation
+
+    native_cancellation = current_model_run_cancellation()
+    automatic_work = (
+        current_automatic_work() if native_cancellation is not None else None
+    )
+    if native_cancellation is None:
+        should_cancel = self._should_cancel
+    else:
+        if attributed is not None and attributed != native_cancellation[:2]:
+            raise ValueError("model_run_cancellation_unavailable")
+        should_cancel = native_cancellation[2]
     usage_sequence = getattr(self._thread_loop, "live_usage_sequence", None)
     if attributed is not None:
         usage_run_id, usage_agent_kind = attributed
@@ -143,10 +156,15 @@ def chat_call_impl(
     # truncate its turn with no redirect entry in ITS mailbox to
     # explain it. Never wired into LoopDeps.should_cancel: aborting
     # is not cancelling.
+    primary_stream = (
+        not is_subagent
+        if native_cancellation is None
+        else native_cancellation[1] == "primary"
+    )
     stream_cut = (
-        self._should_cancel
-        if is_subagent
-        else (lambda: self._should_cancel() or self._primary_stream_abort())
+        (lambda: should_cancel() or self._primary_stream_abort())
+        if primary_stream
+        else should_cancel
     )
     request_count = int(getattr(self._thread_loop, "request_count", 0))
     self._thread_loop.request_count = request_count + 1
@@ -228,8 +246,7 @@ def chat_call_impl(
         call_signals = aggregate_signals.new_usage_call()
         gateway_signals = call_signals
 
-    @bridge.agent_async_worker_guard(self)
-    async def _consume() -> None:
+    async def _consume_body() -> None:
         nonlocal \
             any_streamed, \
             terminal_metadata, \
@@ -499,7 +516,7 @@ def chat_call_impl(
             # after a Stop, and the app's exit joins that thread. The
             # plain cancel, not stream_cut: a redirect is not a cancel
             # and still waits for the next chunk (TASK-28227).
-            should_stop=self._should_cancel,
+            should_stop=should_cancel,
         ):
             received_item = True
             synthetic = emission_synthetic is True
@@ -642,6 +659,18 @@ def chat_call_impl(
     # TURN's loop can no longer strand a child mid-call -- the case the
     # timeout above was the last line of defence against.
     from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
+
+    @bridge.agent_async_worker_guard(self)
+    async def _consume() -> None:
+        if automatic_work is None:
+            await _consume_body()
+            return
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        # This finite coroutine owns only handles it opens on its physical loop.
+        # Goal checks retain their existing nested Core/Runs/Workspace ownership.
+        with operation_owned_connection(automatic_work.ledger._db):
+            await _consume_body()
 
     future = bridge.asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
     _stall_session_id = self._store.session_id_for_message(self._assistant_message_id)

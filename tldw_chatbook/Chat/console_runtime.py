@@ -122,7 +122,7 @@ import os
 import threading
 import sys as _maintenance_source_sys
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, replace  # noqa: F401 -- live custody owner dependency
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, RLock, get_ident
@@ -135,11 +135,10 @@ from loguru import logger
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     ConsoleLifecycleRevisionChanged,
-    ConsoleRunStatus,
+    ConsoleRunStatus,  # noqa: F401 -- live custody owner dependency
     ConsoleSubmissionOrigin,
 )
 from tldw_chatbook.Chat.console_display_state import console_sent_source_count
-from tldw_chatbook.Chat.console_hook_review import HookReviewResult
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
@@ -155,6 +154,7 @@ from . import console_attention_preparation as _attention_preparation
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+    from tldw_chatbook.Chat.console_hook_review import HookReviewResult
     from tldw_chatbook.Chat.console_voice_promotion import (
         VoicePromotionOwner,
         VoicePromotionQuitPermit,
@@ -165,7 +165,6 @@ if TYPE_CHECKING:
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Provider_Contract.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.config import coerce_bool_setting
-from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -177,6 +176,19 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_worktree_recovery import ConsoleWorktreeRecovery
+
+
+def __getattr__(name: str) -> Any:
+    if name == "HookReviewResult":
+        from .console_hook_review import HookReviewResult
+
+        return HookReviewResult
+    if name == "runtime_capture_policy":
+        from .console_capture_policy import runtime_capture_policy
+
+        return runtime_capture_policy
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 #: The app attribute this module's helpers read and write. Named once so a
 #: test can assert on the protocol rather than on a string literal.
@@ -1145,9 +1157,12 @@ class ConsoleRuntime:
         self._response_rule_usage: dict[str, Any] = {}
         self._agent_bridge: Any | None = None
         self._worktree_recovery = None
+        self._execution_owner = None
+        self._remote_projection = None
+        self._remote_receipts = None
         self._agent_runs_db: Any | None = None
         self._activity_receipts: Any | None = None
-        self._activity_receipts_lock = Lock()
+        self._activity_receipts_lock = RLock()
         self._receipt_owner_thread_id = get_ident()
         self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
@@ -2045,6 +2060,9 @@ class ConsoleRuntime:
             self._retire_response_rules()
             self._response_rules = None
         self._chat_store = value
+        if value is not None:
+            value.on_persisted_identity = self.register_saved_conversation
+
         if value is not None and hasattr(value, "on_active_session_changed"):
             value.on_active_session_changed = self._on_active_session_changed
 
@@ -2469,6 +2487,141 @@ class ConsoleRuntime:
         sessions = store.sessions() if store is not None else ()
         return any(session.id == session_id for session in sessions)
 
+    def register_saved_conversation(self, session_id: str, conversation_id: str | None) -> None:
+        """Publish committed native identity without replacing a live reservation."""
+        identities = getattr(self, "_remote_saved_sessions", None)
+        if identities is None:
+            identities = self._remote_saved_sessions = {}
+        for saved, native in tuple(identities.items()):
+            if native == session_id and saved != conversation_id:
+                identities.pop(saved, None)
+        if conversation_id:
+            identities.setdefault(conversation_id, session_id)
+
+    async def open_remote_conversation(self, conversation_id: str):
+        """Open the one ready native saved owner, independently of desktop scope."""
+        from .console_conversation_hydration import (
+            _hydrate_console_session,
+            hydrate_console_generation_settings,
+            load_console_conversation_tree,
+        )
+        from .console_launch_wake import _ensure_launch_runtime
+
+        self._raise_if_disposed_or_session_fenced(None)
+        controller = _ensure_launch_runtime(self._app)
+        if controller is None:
+            raise RuntimeError("Console owner is unavailable.")
+        store = controller.store
+
+        async def hydrate(operation):
+            tree = await load_console_conversation_tree(self._app, conversation_id)
+            self._raise_if_disposed_or_session_fenced(None)
+            if tree is None:
+                raise ValueError("Saved conversation is unavailable.")
+            conversation = tree["conversation"]
+            try:
+                app_config = self._app.app_config
+            except AttributeError:
+                app_config = {}
+            settings = hydrate_console_generation_settings(
+                app_config or {}, conversation
+            )
+            session = await _hydrate_console_session(
+                app=self._app,
+                store=store,
+                conversation_id=conversation_id,
+                tree=tree,
+                settings=settings.settings,
+                generation_durable_snapshot=settings.durable_snapshot,
+                generation_metadata_status=settings.metadata_status,
+                target_scope_type="workspace"
+                if conversation.get("workspace_id")
+                else "global",
+                target_workspace_id=conversation.get("workspace_id"),
+                activate=False,
+                _operation=operation,
+            )
+            self.register_saved_conversation(session.id, conversation_id)
+            return session
+
+        return await store.resolve_saved_session(conversation_id, hydrate)
+
+    def ensure_remote_projection(self, host_identity):
+        """Bind private served projection to the authenticated parent incarnation."""
+        from tldw_chatbook.Chat.console_remote_models import ConsoleEventBuffer
+
+        from .console_remote_projection import ConsoleRemoteProjection
+
+        if self._disposed:
+            raise RuntimeError("Console owner is shutting down.")
+        if self._remote_projection is None:
+            self._remote_projection = ConsoleRemoteProjection(
+                self, host_identity, ConsoleEventBuffer()
+            )
+        elif self._remote_projection.host_identity != host_identity:
+            raise ValueError("Console host identity changed.")
+        return self._remote_projection
+
+    def ensure_remote_receipts(
+        self, host_identity, *, configuration_metadata_loader: Callable[[], object]
+    ):
+        """Use the canonical native run store after its normal lazy admission."""
+        from .console_remote_commands import ConsoleRemoteCommands
+        from .console_remote_receipts import ConsoleRemoteReceipts
+
+        if self._disposed or self._agent_runs_db is None:
+            raise RuntimeError("Console receipt owner is unavailable.")
+        self._agent_runs_db._require_execution_owner()
+        if self._remote_receipts is None:
+            self._remote_receipts = ConsoleRemoteReceipts(
+                ConsoleRemoteCommands(
+                    self,
+                    host_identity,
+                    configuration_metadata_loader=configuration_metadata_loader,
+                ),
+                self._agent_runs_db.command_receipts,
+                host_identity,
+            )
+        elif self._remote_receipts.host_identity != host_identity:
+            raise ValueError("Console host identity changed.")
+        return self._remote_receipts
+
+    def _observe_remote_custody(self, turn_id, *, state, native_id=None, reason=None):
+        receipts = self._remote_receipts
+        if receipts is None:
+            return
+        try:
+            receipts.observe(turn_id, state=state, native_id=native_id, reason=reason)
+            if self._remote_projection is not None:
+                sequence = self._remote_projection.events.publish("console.changed", {})
+                self._remote_projection.events.note_changed(sequence)
+        except Exception as error:  # noqa: BLE001 - a failed observer cannot retract native acceptance.
+            logger.warning(
+                "Console receipt observation failed (exception_type={})",
+                type(error).__name__,
+            )
+
+    def remote_project_decisions(self, session_id: str) -> tuple[dict, ...]:
+        """Expose retained reviews that require the terminal without leaking bodies."""
+        with self._project_decision_lock:
+            return tuple(
+                {
+                    "kind": kind,
+                    "round_id": decision.decision_id,
+                    "run_id": None,
+                    "supported": False,
+                    "answerable": False,
+                    "reason": "Open terminal to review project instructions.",
+                    "action": "open_terminal",
+                }
+                for kind, decisions in (
+                    ("project_instruction_binding", self._project_binding_decisions),
+                    ("project_instruction_dispatch", self._project_dispatch_decisions),
+                )
+                for decision in decisions.values()
+                if decision.session_id == session_id and not decision.completed.is_set()
+            )
+
     def resolve_project_instruction_binding(
         self, decision_id: str, action: str, binding_id: str | None
     ) -> bool:
@@ -2835,43 +2988,17 @@ class ConsoleRuntime:
         received_intent: Any = None,
     ) -> _ConsoleTurnCustodyRecord:
         """Retain one request before its task may begin running."""
-        identity = request if request is not None else received_intent
-        if identity.turn_id in self._turn_custody:
-            raise RuntimeError("Console turn is already in runtime custody.")
-        record = _ConsoleTurnCustodyRecord(
-            turn_id=identity.turn_id,
-            session_id=identity.session_id,
-            request=request,
-            store=store if store is not None else self._chat_store,
+        from . import console_runtime_custody
+
+        return console_runtime_custody._register_custody(
+            self,
+            request,
+            attachments,
+            staged_evidence_revision,
+            store=store,
             received_claim=received_claim,
             received_intent=received_intent,
-            inputs=_ConsoleTurnCustodyInputs(
-                attachments=attachments,
-                staged_evidence_revision=staged_evidence_revision,
-            ),
         )
-        self._turn_custody[record.turn_id] = record
-        self._clear_staged_evidence_receipt(record.session_id)
-        if self._app is not None and self._chat_store is not None:
-            session = next(
-                (
-                    item
-                    for item in self._chat_store.sessions()
-                    if item.id == identity.session_id
-                ),
-                None,
-            )
-            record.archive_conversation_id = (
-                session.persisted_conversation_id if session is not None else None
-            )
-            if record.archive_conversation_id:
-                reservations = getattr(self._app, "_conversation_send_inflight", None)
-                if reservations is None:
-                    reservations = self._app._conversation_send_inflight = {}
-                reservations[record.archive_conversation_id] = (
-                    reservations.get(record.archive_conversation_id, 0) + 1
-                )
-        return record
 
     def has_custodied_turns(self, session_id: str | None = None) -> bool:
         """Whether accepted work is in custody, even before its run starts.
@@ -2888,33 +3015,17 @@ class ConsoleRuntime:
             record.session_id == session_id for record in self._turn_custody.values()
         )
 
-    def _release_custody(self, turn_id: str) -> None:
-        """Drop the runtime's final references to an accepted turn."""
-        record = self._turn_custody.pop(turn_id, None)
-        if record is not None:
-            if (record.store is not None and record.received_claim is not None) and (
-                record.store.release_received_turn(record.received_claim)
-            ):
-                self._note_received_admission_changed(record.store, record.session_id)
-            record.store = None
-            record.received_claim = None
-            record.received_intent = None
-            if record.archive_conversation_id:
-                reservations = self._app._conversation_send_inflight
-                remaining = reservations.get(record.archive_conversation_id, 1) - 1
-                if remaining:
-                    reservations[record.archive_conversation_id] = remaining
-                else:
-                    reservations.pop(record.archive_conversation_id, None)
-                record.archive_conversation_id = None
-            if self._archive_recovery is not None and record.request is not None:
-                self._archive_recovery.release_user_proof(
-                    record.request.configuration.recovery_user_origin
-                )
-            record.request = None
-            record.inputs.attachments = ()
-            record.inputs.staged_evidence_revision = None
-            record.task = None
+    def _release_custody(
+        self, turn_id: str, *, user_proof_transferred: bool = False
+    ) -> None:
+        """Release turn inputs, preserving provenance already owned by the queue."""
+        from . import console_runtime_custody
+
+        return console_runtime_custody._release_custody(
+            self,
+            turn_id,
+            user_proof_transferred=user_proof_transferred,
+        )
 
     def _note_received_admission_changed(self, store, session_id: str) -> None:
         """Publish activity revision without copying the store's admission state."""
@@ -2922,7 +3033,6 @@ class ConsoleRuntime:
         changed = getattr(controller, "_note_controller_activity_changed", None)
         if getattr(controller, "store", None) is store and callable(changed):
             changed(session_id)
-
 
     def _require_received_custody_current(self, record, controller) -> None:
         from .console_received_dispatch import require_received_custody_current
@@ -2948,6 +3058,11 @@ class ConsoleRuntime:
         store = self._chat_store
         if store is None:
             raise RuntimeError("Console chat store is unavailable.")
+        if request.input_origin == "command" and (
+            request.command_inputs is None
+            or not store.session_inputs_are_current(request.command_inputs)
+        ):
+            raise RuntimeError("Console command target configuration changed.")
         pressed = request._pressed_inputs
         if pressed is not None:
             from .console_received_intent import ConsoleSessionInputSnapshot
@@ -3058,7 +3173,6 @@ class ConsoleRuntime:
             for record in self._turn_custody.values()
         )
 
-
     def cancel_received_intents(self, session_id: str | None = None) -> bool:
         """Cancel intake custody that is not yet durably accepted (TASK-33621.22)."""
         cancelled = False
@@ -3147,149 +3261,20 @@ class ConsoleRuntime:
         raise_on_refusal: bool,
         hook_read: Any = None,
     ) -> Any:
-        """Run one screen-free turn using only its frozen custody record.
+        """Run one screen-free turn using only its frozen custody record."""
+        from . import console_runtime_custody
 
-        ``hook_read`` is the received intent's one full hook authority read
-        (``ConsoleHookAttemptRead``); it goes, as an argument, only to this
-        record's own initial submission (ADR-230 decision 3).
-        """
-        request = record.request
-        controller = self._chat_controller
-        if request is None or controller is None:
-            raise RuntimeError("Console controller is unavailable for runtime custody.")
-
-        def require_received():
-            self._require_received_custody_current(record, controller)
-
-        require_received()
-        if self._archive_recovery is not None and record.received_intent is not None:
-            self._archive_recovery.accept_user_proof(
-                request.configuration.recovery_user_origin,
-                request.session_id,
-                request.turn_id,
-            )
-        if self._archive_recovery is not None and origin in {
-            ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED
-        }:
-            await self._archive_recovery.prepare_for_admission(request.session_id)
-            require_received()
-        if record.archive_conversation_id:
-            from tldw_chatbook.Chat.conversation_archive_actions import (
-                conversation_send_refusal,
-            )
-
-            refusal = await conversation_send_refusal(
-                self._app, record.archive_conversation_id
-            )
-            if refusal:
-                notify = getattr(self._app, "notify", None)
-                if callable(notify):
-                    notify(refusal, severity="warning")
-                # TASK-33621.2: the parked turn's shelf entry states this
-                # refusal too, like a controller refusal's below.
-                raise _ConsoleTurnRefusedError(
-                    "Console conversation is unavailable for submission.",
-                    reason=refusal,
-                )
-
-        def mark_durable_acceptance() -> None:
-            from .console_received_dispatch import publish_received_acceptance
-
-            publish_received_acceptance(self, record, controller)
-
-        async def submit() -> Any:
-            require_received()
-            controller.prompt_queue_coordinator.bind_turn_request(
-                request, origin=origin
-            )
-            from .console_received_turn import bind_received_turn_claim
-
-            from .console_chat_controller import ConsoleChatController
-            shared = ({"_hook_read": hook_read} if hook_read is not None
-                and getattr(controller.submit_draft, "__func__", None)
-                is ConsoleChatController.submit_draft else {})
-            issuing_store, issuing_claim = record.store, record.received_claim
-            try:
-                with bind_received_turn_claim(issuing_store, issuing_claim):
-                    return await controller.submit_draft(
-                        request.draft,
-                        session_id=request.session_id,
-                        origin=origin,
-                        queue_entry_id=queue_entry_id,
-                        queue_authorization=queue_authorization,
-                        wake_authorization=wake_authorization,
-                        goal_authorization=goal_authorization,
-                        configuration=replace(
-                            request.configuration,
-                            skill_context_maximum={
-                                **request.configuration.skill_context_maximum,
-                                "plugin_turn_id": request.turn_id,
-                            },
-                        ),
-                        accepted_attachments=record.inputs.attachments,
-                        captured_one_shot_prefill=request.one_shot_prefill,
-                        captured_one_shot_prefill_revision=(request.one_shot_prefill_revision),
-                        staged_evidence_launch=request.staged_evidence_launch,
-                        staged_evidence_capture=self._capture_frozen_console_staged_rag,
-                        staged_evidence_release=functools.partial(
-                            self.release_console_staged_evidence,
-                            revision=record.inputs.staged_evidence_revision,
-                            session_id=record.session_id,
-                        ),
-                        custody_acceptance_hook=mark_durable_acceptance,
-                        **shared,
-                    )
-            finally:
-                # Nonpromoting routes release after physical submit completion,
-                # before the enclosing prompt chain admits its next request.
-                if issuing_store.release_received_turn(issuing_claim):
-                    self._note_received_admission_changed(issuing_store, request.session_id)
-
-        result = (
-            await submit()
-            if origin
-            in {
-                ConsoleSubmissionOrigin.AGENT_WAKE,
-                ConsoleSubmissionOrigin.GOAL_ITERATION,
-            }
-            else await controller.run_prompt_chain(
-                session_id=request.session_id,
-                initial_turn=submit,
-            )
+        return await console_runtime_custody._run_custodied_turn(
+            self,
+            record,
+            origin=origin,
+            queue_entry_id=queue_entry_id,
+            queue_authorization=queue_authorization,
+            wake_authorization=wake_authorization,
+            goal_authorization=goal_authorization,
+            raise_on_refusal=raise_on_refusal,
+            hook_read=hook_read,
         )
-        held_preparation_id = getattr(result, "preparation_id", None)
-        if (
-            not bool(getattr(result, "accepted", False))
-            and not record.inputs.durable_accepted
-            and raise_on_refusal
-            # TASK-34350: a send held at the compaction threshold is waiting
-            # on the user's answer in its own card, not refused; recording it
-            # as a turn recovery too showed one send on two surfaces.
-            and not (
-                held_preparation_id is not None
-                and controller.context_compaction_hold(held_preparation_id)
-                is not None
-            )
-        ):
-            from .console_unsent_turn import card_holds_refusal
-
-            raise _ConsoleTurnRefusedError(
-                "Console turn was refused before durable acceptance.",
-                reason=str(getattr(result, "visible_copy", "") or ""),
-                preparation_id=held_preparation_id,
-                card_held=card_holds_refusal(controller, held_preparation_id),
-            )
-        run_state_for = getattr(controller, "run_state_for", None)
-        run_state = (
-            run_state_for(request.session_id) if callable(run_state_for) else None
-        )
-        if (
-            origin is ConsoleSubmissionOrigin.MANUAL
-            and bool(getattr(result, "accepted", False))
-            and getattr(run_state, "status", None) is ConsoleRunStatus.COMPLETED
-        ):
-            await self._record_successful_first_send()
-        return result
 
     async def _record_successful_first_send(self) -> None:
         """Record terminal first-send success without retaining a view."""
@@ -3646,60 +3631,15 @@ class ConsoleRuntime:
         terminal_callback: Callable[[bool], None] | None,
     ) -> None:
         """Consume a task result and release its retained sensitive inputs."""
-        record = self._turn_custody.get(turn_id)
-        if record is not None and record.task is not task:
-            record = None
-        accepted = False
-        try:
-            result = task.result()
-            accepted = bool(getattr(result, "accepted", False))
-        except asyncio.CancelledError:
-            if (
-                record is not None
-                and recover_before_acceptance
-                and not record.inputs.durable_accepted
-                and self._chat_store is not None
-                and any(
-                    item.id == record.session_id for item in self._chat_store.sessions()
-                )
-            ):
-                self._record_turn_recovery(record)
-        except BaseException as exc:
-            if (
-                record is not None
-                and recover_before_acceptance
-                and not record.inputs.durable_accepted
-            ):
-                refused = isinstance(exc, _ConsoleTurnRefusedError)
-                self._record_turn_recovery(
-                    record,
-                    reason=exc.reason if refused else "",
-                    preparation_id=exc.preparation_id if refused else None,
-                    card_held=refused and exc.card_held,
-                )
-            logger.warning(
-                "Console runtime turn ended with exception_type={}",
-                type(exc).__name__,
-            )
-        finally:
-            accepted = accepted or bool(
-                record is not None and record.inputs.durable_accepted
-            )
-            if record is not None:
-                self._release_custody(record.turn_id)
-            if terminal_callback is not None:
-                try:
-                    terminal_callback(accepted)
-                except Exception as exc:  # noqa: BLE001 -- terminal cleanup is final
-                    logger.warning(
-                        "Console runtime terminal callback failed "
-                        "(exception_type={})",
-                        type(exc).__name__,
-                    )
-            # Terminal rows and their exact unseen marks are committed by the
-            # store before the controller returns. Recompute once per turn,
-            # never from streaming/token callbacks.
-            self.request_console_attention_refresh()
+        from . import console_runtime_custody
+
+        return console_runtime_custody._finish_custodied_turn(
+            self,
+            task,
+            turn_id=turn_id,
+            recover_before_acceptance=recover_before_acceptance,
+            terminal_callback=terminal_callback,
+        )
 
     def _ensure_canvas_profile_snapshot(self) -> Any:
         """Share one lazy process owner with an early served-child handshake."""
@@ -3854,6 +3794,7 @@ class ConsoleRuntime:
         return CanvasScope(
             session_id=session_id,
             conversation_id=session.persisted_conversation_id or session_id,
+            ephemeral=session.ephemeral,
             active_message_ids=active_ids,
             selected_canvas_id=None,
             selected_revision_id=None,
@@ -4684,6 +4625,7 @@ class ConsoleRuntime:
         """
         if self._chat_store is not None or self._disposed:
             return self._chat_store
+        console_runtime = _maintenance_source_sys.modules[__name__]
         from tldw_chatbook.Chat.chat_persistence_service import (
             ChatPersistenceService,
         )
@@ -4789,10 +4731,10 @@ class ConsoleRuntime:
                         read_normalized_calls if legacy_normalization_enabled else None
                     ),
                     normalized_reads_enabled=lambda: (
-                        runtime_capture_policy().normalized_reads_enabled
+                        console_runtime.runtime_capture_policy().normalized_reads_enabled
                     ),
                     normalized_writes_enabled=lambda: (
-                        runtime_capture_policy().normalized_writes_enabled
+                        console_runtime.runtime_capture_policy().normalized_writes_enabled
                     ),
                     compatibility_metrics=self.trace_compatibility_metrics,
                 )
@@ -4908,6 +4850,7 @@ class ConsoleRuntime:
         if callable(factory):
             self._provider_gateway = factory()
         else:
+            console_runtime = _maintenance_source_sys.modules[__name__]
             from tldw_chatbook.Chat.console_provider_gateway import (
                 ConsoleProviderGateway,
             )
@@ -4935,11 +4878,26 @@ class ConsoleRuntime:
                 ),
                 trace_call_boundary_factory=trace_call_boundary_factory,
                 normalized_writes_enabled=lambda: (
-                    runtime_capture_policy().normalized_writes_enabled
+                    console_runtime.runtime_capture_policy().normalized_writes_enabled
                 ),
                 trace_compatibility_metrics=self.trace_compatibility_metrics,
             )
         return self._provider_gateway
+
+    def ensure_execution_owner(self, run_store: Path):
+        """Lazily own execution for the canonical sibling run store."""
+        from tldw_chatbook.DB.console_execution_owner import (
+            ConsoleExecutionOwner,
+            ConsoleExecutionUnavailable,
+        )
+
+        with self._activity_receipts_lock:
+            if self._disposed:
+                raise ConsoleExecutionUnavailable("runtime_disposed")
+            if self._execution_owner is None:
+                self._execution_owner = ConsoleExecutionOwner.acquire(run_store)
+            self._execution_owner.require_current(run_store)
+            return self._execution_owner
 
     def ensure_activity_receipt_service(self) -> Any | None:
         """Create local result storage without constructing Console or a provider.
@@ -4961,9 +4919,21 @@ class ConsoleRuntime:
             db_path = getattr(db, "db_path", None) if db is not None else None
             if not db_path or str(db_path) == ":memory:":
                 return None
+            from tldw_chatbook.config import preflight_selected_console_stores
             from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-            runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+            try:
+                workspace_db = self._app.local_workspace_db
+            except AttributeError:
+                workspace_db = None
+            preflight_selected_console_stores(
+                chat_path=db_path,
+                workspace_path=getattr(workspace_db, "db_path", None),
+            )
+            run_store = Path(db_path).parent / "agent_runs.db"
+            runs_db = AgentRunsDB(
+                run_store, execution_owner=self.ensure_execution_owner(run_store)
+            )
             try:
                 service = _LazyConsoleActivityReceiptService(
                     runs_db,
@@ -5158,7 +5128,6 @@ class ConsoleRuntime:
         self._activity_hydration_task = task
         return task
 
-
     async def _drain_activity_hydration(self) -> bool:
         """Join the exact hydration owner, retaining cancellation until it settles."""
         task = self._activity_hydration_task
@@ -5325,7 +5294,6 @@ class ConsoleRuntime:
         )
         return await asyncio.shield(answer)
 
-
     def _hook_review_presentation_current(
         self,
         review_id: str,
@@ -5349,7 +5317,6 @@ class ConsoleRuntime:
             and projection.attachment_generation == self._attached_generation
         )
 
-
     @staticmethod
     async def _await_hook_review_work(task):
         """Retain the original finite producer through repeated waiter cancellation."""
@@ -5366,7 +5333,6 @@ class ConsoleRuntime:
                 task.exception()
             raise cancelled
         return task.result()
-
 
     async def _execute_hook_review_operation(self, host, operation, expected, keys):
         snapshot = None
@@ -5424,7 +5390,6 @@ class ConsoleRuntime:
                     snapshot = producer.result()
             host.finish_hook_review_operation(operation, snapshot, error=error)
 
-
     def _start_hook_review_operation(self, host, operation, expected, keys):
         coroutine = self._execute_hook_review_operation(host, operation, expected, keys)
         try:
@@ -5448,7 +5413,6 @@ class ConsoleRuntime:
 
         task.add_done_callback(finished)
         return task
-
 
     async def apply_hook_review_action(
         self,
@@ -5480,7 +5444,6 @@ class ConsoleRuntime:
         task = self._start_hook_review_operation(host, operation, expected, keys)
         return await self._await_hook_review_work(task)
 
-
     def resolve_initial_hook_review(
         self,
         review_id: str,
@@ -5507,7 +5470,6 @@ class ConsoleRuntime:
             review_id, generation, result, presentation_token=presentation_token
         )
 
-
     async def _drain_hook_review_operations(self, session_id=None) -> bool:
         controller = self._chat_controller
         host = getattr(controller, "_interrupt_host", None)
@@ -5526,7 +5488,6 @@ class ConsoleRuntime:
                         ) from None
                     cancelled = True
         return cancelled
-
 
     def ensure_hook_permissions(self) -> HookPermissions:
         """Return the app-owned consent owner, independent of any view."""
@@ -6454,13 +6415,26 @@ class ConsoleRuntime:
         refuses work through its permanently-set cancellation Event, which
         is exactly the right answer at exit.
         """
+        saved_cancelled = False
+        if self._chat_store is not None:
+            self._disposed = True
+            try:
+                await self._chat_store.close_saved_session_operations()
+            except asyncio.CancelledError:
+                saved_cancelled = True
+        if self._remote_projection is not None:
+            self._remote_projection.close()
         controller = self._chat_controller
         recovery_owner = None
         try:
             # Capture only the installed stock field; custom facade getters
             # and optional presentation methods remain outside this cleanup.
             try:
-                namespace = object.__getattribute__(controller, "__dict__") if controller is not None else {}
+                namespace = (
+                    object.__getattribute__(controller, "__dict__")
+                    if controller is not None
+                    else {}
+                )
             except (AttributeError, TypeError):
                 namespace = {}
             candidate = namespace.get("_fleet_wake")
@@ -6475,7 +6449,7 @@ class ConsoleRuntime:
                 _recovery_owner=recovery_owner,
             )
         finally:
-            cancelled = False
+            cancelled = saved_cancelled
             if recovery_owner is not None:
                 cancelled |= await recovery_owner.drain_recovery()
             if controller is not None:
@@ -6487,7 +6461,6 @@ class ConsoleRuntime:
             cancelled |= await self._drain_activity_hydration()
             if cancelled:
                 raise asyncio.CancelledError
-
 
     async def _dispose_owned(
         self,
@@ -6807,9 +6780,10 @@ class ConsoleRuntime:
         # coordinator. Only after every trusted producer is tombstoned may
         # the shared Buddy sink release its remaining owner tokens.
         self._persona_buddy_sink.dispose()
+        coordinator_retired = coordinator is None
         if coordinator is not None:
             try:
-                await asyncio.to_thread(coordinator.shutdown, 2.0)
+                coordinator_retired = await asyncio.to_thread(coordinator.shutdown, 2.0)
             except Exception:  # noqa: BLE001 - quit must not die on teardown
                 logger.opt(exception=True).warning(
                     "Console runtime: Change Review shutdown failed at dispose."
@@ -6827,30 +6801,34 @@ class ConsoleRuntime:
                     "Console runtime: AgentRunsDB close failed at dispose."
                 )
 
-        async def dispose_scratch() -> None:
+        async def dispose_scratch() -> bool:
             try:
-                await asyncio.to_thread(self._scratch_spaces.dispose)
+                return await asyncio.to_thread(self._scratch_spaces.dispose) is True
             except Exception as exc:  # noqa: BLE001 - quit must continue
                 logger.warning(
                     "Console runtime: scratch cleanup failed at dispose category={}",
                     type(exc).__name__,
                 )
+                return False
 
-        async def close_gateway() -> None:
+        async def close_gateway() -> bool:
             close = getattr(gateway, "aclose", None)
             if not callable(close):
-                return
+                return True
             try:
                 if inspect.iscoroutinefunction(close):
-                    await close()
-                    return
-                result = await asyncio.to_thread(close)
-                if inspect.isawaitable(result):
-                    await result
+                    result = await close()
+                else:
+                    result = await asyncio.to_thread(close)
+                    if inspect.isawaitable(result):
+                        result = await result
+                return result is not False
             except Exception:  # noqa: BLE001 - quit must continue
                 logger.opt(exception=True).warning(
                     "Console runtime: provider gateway close failed at dispose."
                 )
+                return False
+
         try:
             totals = self.trace_compatibility_snapshot()
             logger.info(
@@ -6888,6 +6866,27 @@ class ConsoleRuntime:
         for task in cleanup_pending:
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
+        # A bounded timeout is not proof that a thread/provider callback retired.
+        # Uncertain owners stay strongly retained until process exit (ADR-244).
+        if (
+            self._execution_owner is not None
+            and not pending
+            and not cleanup_pending
+            and coordinator_retired
+            and all(
+                not task.cancelled()
+                and task.exception() is None
+                and task.result() is True
+                for task in cleanup_tasks
+            )
+            and all(
+                not task.cancelled()
+                and task.exception() is None
+                and task.result() is not False
+                for task in drain_tasks
+            )
+        ):
+            self._execution_owner.close()
         if cancel_requested or asyncio.current_task().cancelling():
             raise asyncio.CancelledError
 

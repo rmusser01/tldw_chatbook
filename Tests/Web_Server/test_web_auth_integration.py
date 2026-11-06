@@ -28,7 +28,9 @@ from tldw_chatbook.Web_Server.session_store import WebSessionStore
 from tldw_chatbook.Web_Server.webauthn_service import WebAuthnService
 from tldw_chatbook.Web_Server.webauthn_store import WebAuthnCredentialStore
 
+# These tests read guarded source-bound config; retain its admitted private profile.
 pytestmark = [
+    pytest.mark.bootstrap_profile,
     pytest.mark.skipif(
         not serve.check_web_server_available(),
         reason="web server optional dependencies are unavailable",

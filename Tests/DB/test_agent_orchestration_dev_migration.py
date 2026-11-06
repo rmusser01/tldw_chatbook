@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -39,7 +40,7 @@ db.close()
 
 
 def _upstream_v15_database(path):
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     run_id = db.create_run(
         conversation_id="conversation",
         agent_kind="subagent",
@@ -57,6 +58,14 @@ def _upstream_v15_database(path):
         run_id=run_id,
     )
     with db.transaction() as conn:
+        # Remove only empty v26/v27 additions before reconstructing older storage.
+        for table in (
+            "console_command_receipts",
+            "mobile_consolidation_batches",
+            "mobile_import_authority_holds",
+        ):
+            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            conn.execute(f"DROP TABLE {table}")
         # Remove later feature shape as well as version rows: this fixture
         # must actually enter the v19/v20 upgrade path when reopened.
         # v24 Goal triggers depend on wake tables that this v15 fixture removes.
@@ -139,7 +148,7 @@ def test_v15_upgrade_preserves_upstream_records_and_authority(tmp_path, standalo
                     == version
                 )
     for _ in range(2):
-        db = AgentRunsDB(path)
+        db = owned_agent_runs_db(path)
         try:
             row = db.get_run(run_id)
             assert row["status"] == "done"
@@ -186,7 +195,7 @@ def test_v15_upgrade_preserves_upstream_records_and_authority(tmp_path, standalo
 def test_terminal_budget_is_atomic_with_upstream_lifecycle_and_visible_in_metadata(
     tmp_path,
 ):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     try:
         chain_id = db.automatic_work.create_chain("c", root_submission_id="root")
         run_id = db.create_run(

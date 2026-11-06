@@ -14,6 +14,7 @@ from textual.app import App
 from textual.screen import Screen
 from textual.worker import WorkerState
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 from Tests.private_profile import private_profile_test
 
@@ -33,7 +34,7 @@ async def test_original_subagent_count_worker_retires_before_host_drain(
         drain_console_view_workers,
     )
 
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     conversation_id = "original-count-conversation"
     row_ids = frozenset({conversation_id})
     host, screen = App(), Screen()

@@ -21,6 +21,19 @@ _SCHEMA = (
             "CREATE TABLE indexed_items (\n            item_id TEXT NOT NULL,\n            item_type TEXT NOT NULL,\n            last_indexed DATETIME NOT NULL,\n            last_modified DATETIME NOT NULL,\n            chunk_count INTEGER DEFAULT 0,\n            metadata TEXT,\n            PRIMARY KEY (item_id, item_type)\n        )",
         ),
     ),
+    # ADR-223 adds the native cache without a version chain; retain legacy zero.
+    (
+        0,
+        (
+            "CREATE INDEX idx_embedding_cache_created\n        ON embedding_cache(created_at)",
+            "CREATE INDEX idx_indexed_items_indexed \n        ON indexed_items(last_indexed)",
+            "CREATE INDEX idx_indexed_items_modified \n        ON indexed_items(last_modified)",
+            "CREATE INDEX idx_indexed_items_type \n        ON indexed_items(item_type)",
+            "CREATE TABLE collection_state (\n            collection_name TEXT PRIMARY KEY,\n            last_full_index DATETIME,\n            total_items INTEGER DEFAULT 0,\n            indexed_items INTEGER DEFAULT 0,\n            metadata TEXT\n        )",
+            "CREATE TABLE embedding_cache (\n            model_id TEXT NOT NULL,\n            content_hash TEXT NOT NULL,\n            vector BLOB NOT NULL,\n            created_at TEXT NOT NULL,\n            PRIMARY KEY (model_id, content_hash)\n        )",
+            "CREATE TABLE indexed_items (\n            item_id TEXT NOT NULL,\n            item_type TEXT NOT NULL,\n            last_indexed DATETIME NOT NULL,\n            last_modified DATETIME NOT NULL,\n            chunk_count INTEGER DEFAULT 0,\n            metadata TEXT,\n            PRIMARY KEY (item_id, item_type)\n        )",
+        ),
+    ),
 )
 
 

@@ -320,7 +320,14 @@ def _item_validator(adapter, item):
 
 
 def _capture_under_maintenance(
-    session, config_paths, approved_scope, destination, *, options, cancel
+    session,
+    config_paths,
+    approved_scope,
+    destination,
+    *,
+    options,
+    cancel,
+    _mobile_partition=None,
 ):
     """Stage under the caller's native-owning thread; never obtain runtime admission.
 
@@ -343,17 +350,33 @@ def _capture_under_maintenance(
     from .owner_registry import registered
     from .space import require_capacity
     from .sqlite_validation import validated_schema_version
-    from .storage_admission import MaintenanceSession
+    from .storage_admission import (
+        MaintenanceSession,
+        _local,
+        _mobile_admission,
+        _mobile_coordinator_budget,
+    )
 
     if type(session) is not MaintenanceSession:
         raise ValueError("native_maintenance_required")
     session._check()
     reader._check(cancel)
+    coordinator = (
+        _mobile_coordinator_budget(session)
+        if _mobile_partition is not None
+        and _mobile_admission(session)[4] is not None
+        and getattr(_local, "mobile_sqlite_scope", None) is None
+        else None
+    )
     options, selections, limits, budget = _capture_options(options)
     mode, encrypted = options["credential_mode"], options["encrypted"]
     adapters = {adapter.owner_id: adapter for adapter in registered()}
-    with session._discovery_reads():
-        current = discover(config_paths, selections=selections)
+    with session._discovery_reads(
+        private_sqlite=_mobile_partition is not None, _read_budget=coordinator
+    ):
+        current = discover(
+            config_paths, selections=selections, _read_budget=coordinator
+        )
     if current.scope_digest != approved_scope:
         raise CaptureReviewRequired(("scope_changed",))
     external = any(
@@ -369,6 +392,15 @@ def _capture_under_maintenance(
             current.issues
             or (("partial_archive",) if external else ("incomplete_inventory",))
         )
+    if _mobile_partition is not None:
+        from .mobile_consolidation_apply import _MobileCapturePartition
+
+        if type(_mobile_partition) is not _MobileCapturePartition:
+            raise ValueError("mobile_native_partition_required")
+        with session._discovery_reads(
+            private_sqlite=_mobile_partition is not None, _read_budget=coordinator
+        ):
+            current = _mobile_partition.project(session, current)
     entries = tuple(item for item in current.items if item.status == "included")
     if not entries or any(
         item.path is None or item.owner not in adapters for item in entries
@@ -388,7 +420,11 @@ def _capture_under_maintenance(
         (),
     )
     final_inventory = replace(current, items=(*current.items, control))
-    _output(CaptureResult(stage, final_inventory, b""), Path(destination))
+    _output(
+        CaptureResult(stage, final_inventory, b""),
+        Path(destination),
+        _mobile_capture=_mobile_partition,
+    )
     require_capacity(
         {parent: estimate * 2, Path(destination): estimate * (5 if encrypted else 3)}
     )
@@ -508,7 +544,22 @@ def _capture_under_maintenance(
                 encrypted=encrypted,
                 profile_scopes=profile_credential_scopes(current),
             )
+            if mode != "exclude" and (not issues or _mobile_partition is not None):
+                from .credentials import _material, validate_citation_coverage
+
+                validate_citation_coverage(
+                    stage,
+                    (
+                        (item.owner, item.path)
+                        for item in rebound.items
+                        if item.path is not None and item.status == "included"
+                    ),
+                    _material(stage),
+                    _mobile_partition=_mobile_partition,
+                )
             acknowledged = options.get("acknowledged_credential_issues", ())
+            if _mobile_partition is not None:
+                _mobile_partition.validate_credentials(stage, issues, acknowledged)
             if (
                 type(acknowledged) is not tuple
                 or mode == "exclude"
@@ -528,13 +579,25 @@ def _capture_under_maintenance(
                     "recovery.credentials", "credentials", material, "included", ()
                 )
                 staged.append((material_item, target))
-            with session._discovery_reads():
-                observed_inventory = discover(config_paths, selections=selections)
+            with session._discovery_reads(
+                private_sqlite=_mobile_partition is not None, _read_budget=coordinator
+            ):
+                observed_inventory = discover(
+                    config_paths, selections=selections, _read_budget=coordinator
+                )
             if (
                 observed_inventory.scope_digest != approved_scope
                 or tuple(adapters.values()) != registered()
             ):
                 raise CaptureReviewRequired(("scope_changed",))
+            if _mobile_partition is not None:
+                with session._discovery_reads(
+                    private_sqlite=_mobile_partition is not None,
+                    _read_budget=coordinator,
+                ):
+                    observed_inventory = _mobile_partition.project(
+                        session, observed_inventory
+                    )
             if {
                 item.logical_id
                 for item in observed_inventory.items

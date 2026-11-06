@@ -27,26 +27,11 @@ from unicodedata import category as unicode_category
 # `config` from here instead is the direction every other Chat submodule
 # already takes, and cannot cycle back: `config.py`'s own top-level
 # imports (`DB.*`, `Utils.*`) never reach into `Chat`.
-from ..config import (
-    ProviderSettingsError,
-    is_encrypted_config_value,
-    is_valid_provider_api_key,
-    normalize_provider_config_key,
-    provider_settings_for_key,
-)
-from ..config import (
-    resolve_provider_api_key as _valid_api_key,
-)
-from ..provider_registry import (  # noqa: F401 - names re-exported for readiness callers
+from ..provider_registry import (  # noqa: F401 - compatibility readiness exports
     KEYLESS_PROVIDER_KEYS,
     PROVIDERS_REQUIRING_API_KEY_KEYS,
     PROVIDERS_REQUIRING_BASE_URL_KEYS,
     default_api_key_env_var,
-)
-from ..Utils.input_validation import (
-    sanitize_string,
-    validate_navigation_context_text,
-    validate_text_input,
 )
 from ..Provider_Contract import ChatConfigurationError
 from .provider_test_evidence import (
@@ -84,6 +69,13 @@ SUBSCRIPTION_SOURCE = "subscription:claude_code"
 #: previously-working Run button went permanently disabled with copy that
 #: named no remedy.
 KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
+
+
+def is_valid_provider_api_key(value: object) -> bool:
+    """Keep the public validator lazy and share config's credential policy."""
+    from ..config import is_valid_provider_api_key as validate
+
+    return validate(value)
 
 
 def is_self_hosted_provider(provider: str | None) -> bool:
@@ -270,6 +262,8 @@ class ProviderReadiness:
 
     def __post_init__(self) -> None:
         """Reject legacy boolean states that contradict their structured truth."""
+        from ..config import is_valid_provider_api_key
+
         if type(self.ready) is not bool or type(self.requires_api_key) is not bool:
             raise ValueError("Provider readiness flags are invalid.")
         _validate_safe_text(
@@ -432,6 +426,8 @@ class ProviderReadiness:
 
 def provider_config_key(provider: str | None) -> str:
     """Return the normalized key used under ``api_settings``."""
+    from ..config import normalize_provider_config_key
+
     return normalize_provider_config_key(provider)
 
 
@@ -548,6 +544,7 @@ def resolve_provider_credential(
     environ: Mapping[str, str],
 ) -> tuple[str | None, str | None, str | None]:
     """Resolve the selected credential without overriding an explicit auth mode."""
+    from ..config import resolve_provider_api_key as _valid_api_key
 
     selected_source = configured_provider_credential_source(provider_settings)
     configured_key = _valid_api_key(provider_settings.get("api_key"))
@@ -605,6 +602,8 @@ def provider_credential_source(
     Returns:
         ``"config:api_settings.<key>.api_key"``, ``"env:<VAR>"``, or ``None``.
     """
+    from ..config import ProviderSettingsError, provider_settings_for_key
+
     provider_key = provider_config_key((provider or "").strip())
     try:
         _validate_provider_key(provider_key)
@@ -756,6 +755,12 @@ def get_provider_readiness(
         Readiness state. If a key is found, it is returned for call wiring but
         never included in ``user_message``.
     """
+    from ..config import (
+        ProviderSettingsError,
+        is_encrypted_config_value,
+        provider_settings_for_key,
+    )
+
     provider_name = (provider or "").strip()
     provider_key = provider_config_key(provider_name)
     env = environ if environ is not None else os.environ
@@ -1057,6 +1062,8 @@ def chat_api_key_value_to_persist(
     Returns:
         The stripped value to persist, or None to skip the write.
     """
+    from ..config import is_valid_provider_api_key
+
     if not field_state.can_persist:
         return None
     candidate = new_value.strip() if isinstance(new_value, str) else ""
@@ -1094,6 +1101,8 @@ def validate_navigation_provider_key(value: object) -> str:
         ValueError: If the provider cannot be represented by the key contract.
     """
 
+    from ..Utils.input_validation import validate_navigation_context_text
+
     raw_provider = validate_navigation_context_text(
         value,
         name="provider",
@@ -1124,6 +1133,9 @@ def provider_api_key_validation_error(
     Returns:
         A user-facing validation error, or None when the value is acceptable.
     """
+    from ..config import is_valid_provider_api_key
+    from ..Utils.input_validation import sanitize_string, validate_text_input
+
     key = str(api_key or "")
     if not key:
         return None

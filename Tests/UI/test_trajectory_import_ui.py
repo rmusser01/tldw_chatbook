@@ -16,15 +16,15 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Static
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Chat.test_trajectory_export import _seed_conversation
+from Tests.UI.test_trajectory_screen import _record_key_for_seq, base_snapshot
 from tldw_chatbook.Chat.trajectory_export import (
     build_trajectory_export,
     write_trajectory_export,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
-from Tests.Chat.test_trajectory_export import _seed_conversation
-from Tests.UI.test_trajectory_screen import base_snapshot, _record_key_for_seq
 
 
 class _Harness(App[None]):
@@ -215,7 +215,7 @@ async def test_import_through_the_screen_never_writes_the_db(tmp_path) -> None:
     db = CharactersRAGDB(tmp_path / "local-app.db", client_id="local")
     _seed_conversation(db)  # local app data the import must not touch
     agent_runs_path = tmp_path / "local-agent-runs.db"
-    agent_runs = AgentRunsDB(agent_runs_path, client_id="local")
+    agent_runs = owned_agent_runs_db(agent_runs_path, client_id="local")
     agent_runs.close()
     trace = _build_trace(tmp_path)  # from its own separate source DB
     before = _row_counts(db)

@@ -17,6 +17,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.css import build_css
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_review_provider import (
@@ -65,7 +66,7 @@ def notes_fixture(tmp_path):
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id=CONV_ID, agent_kind="primary")
 
     def mutate():
@@ -794,7 +795,7 @@ async def test_two_windows_same_root_path_note_scoped_to_its_own_hunk_header(
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id=CONV_ID, agent_kind="primary")
 
     def _record_window(kind: str, mutate) -> None:
@@ -951,7 +952,7 @@ async def test_two_windows_same_hunk_header_note_scoped_by_snapshot_id(tmp_path)
 
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id=CONV_ID, agent_kind="primary")
 
     def _record_window(kind: str, mutate) -> None:

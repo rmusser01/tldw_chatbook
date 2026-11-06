@@ -484,7 +484,9 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         model_open=coerce_bool_flag(raw.get("model_open"), defaults.model_open),
         details_open=coerce_bool_flag(raw.get("details_open"), defaults.details_open),
         agent_open=coerce_bool_flag(raw.get("agent_open"), defaults.agent_open),
-        character_open=coerce_bool_flag(raw.get("character_open"), defaults.character_open),
+        character_open=coerce_bool_flag(
+            raw.get("character_open"), defaults.character_open
+        ),
         inspector_more_open=coerce_bool_flag(
             raw.get("inspector_more_open"), defaults.inspector_more_open
         ),
@@ -1093,3 +1095,26 @@ def build_console_rail_state(
         environment_open=preferences.environment_open,
         tasks_open=preferences.tasks_open,
     )
+
+
+def _tools_ready_text(effective_tool_count: int) -> str:
+    """Return the shared Tools copy for both the chip and the Inspector row.
+
+    TASK-1843: these two surfaces sit in the same panel and previously derived
+    their number independently, so one said "0 ready" while the other said
+    "12 ready". One function, one wording, both callers -- fixing it per-site
+    is exactly how it recurred after the first fix.
+
+    Args:
+        effective_tool_count: Built-in count plus MCP catalog size.
+
+    Returns:
+        "—" at zero -- a neutral placeholder, since this app never
+        distinguishes "definitely zero" from "not counted yet" (and "0
+        ready" reads as "no tools available" when built-ins are always
+        registered). TASK-2154.12 (TX-04): "not loaded" exposed a
+        lazy-loading implementation detail, so the chip now HIDES at zero
+        and this row-level dash is all the Inspector shows. Otherwise
+        "<n> ready".
+    """
+    return "—" if effective_tool_count == 0 else f"{effective_tool_count} ready"

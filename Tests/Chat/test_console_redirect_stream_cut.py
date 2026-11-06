@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
+
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT
 from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -67,6 +69,7 @@ def _shutdown(loop):
     loop.call_soon_threadsafe(loop.stop)
 
 
+@pytest.mark.bootstrap_profile
 def test_redirect_cut_returns_the_partial_and_separates_the_row():
     emitted: list[str] = []
 
@@ -102,6 +105,7 @@ def test_redirect_cut_returns_the_partial_and_separates_the_row():
     assert row[:-2] == content, f"row {row!r} vs partial {content!r}"
 
 
+@pytest.mark.bootstrap_profile
 def test_a_subagent_stream_is_never_cut_by_the_primary_abort():
     adapter, store, message_id, loop, _emitted = _adapter_harness(lambda: True)
     try:
@@ -120,6 +124,7 @@ def test_a_subagent_stream_is_never_cut_by_the_primary_abort():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_an_uncut_primary_stream_gets_no_separator():
     adapter, store, message_id, loop, _emitted = _adapter_harness(lambda: False)
     try:
@@ -134,3 +139,63 @@ def test_an_uncut_primary_stream_gets_no_separator():
 
     row = store.get_message(message_id).content
     assert not row.endswith("\n\n"), f"spurious separator on a normal turn: {row!r}"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("kind", ["primary", "subagent"])
+def test_native_redirect_classification_ignores_opposite_prompt_label(kind):
+    from tldw_chatbook.Agents.run_context import (
+        CurrentRunActor,
+        use_model_run_cancellation,
+        use_run_actor,
+    )
+
+    adapter, _store, _message_id, loop, _emitted = _adapter_harness(lambda: True)
+    actor = CurrentRunActor(kind, "exact-native-run", None)
+    prompt = SUBAGENT_SYSTEM_PROMPT if kind == "primary" else "primary console agent"
+    try:
+        with (
+            use_run_actor(actor),
+            use_model_run_cancellation(lambda: False),
+            adapter.run_scope(actor.run_id, actor.kind),
+        ):
+            result = adapter.chat_call(
+                messages_payload=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": "analyze"},
+                ]
+            )
+        text = result["choices"][0]["message"]["content"]
+        assert text == (
+            "Looking at "
+            if kind == "primary"
+            else "Looking at the JSON parser, the rest"
+        )
+    finally:
+        _shutdown(loop)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("missing", [True, False])
+def test_partial_or_mismatched_native_cancel_context_refuses_before_provider(missing):
+    from contextlib import nullcontext
+
+    from tldw_chatbook.Agents.run_context import (
+        CurrentRunActor,
+        use_model_run_cancellation,
+        use_run_actor,
+    )
+
+    adapter, _store, _message_id, loop, emitted = _adapter_harness(lambda: False)
+    actor = CurrentRunActor("primary", "native-run", None)
+    try:
+        with (
+            use_run_actor(actor),
+            nullcontext() if missing else use_model_run_cancellation(lambda: False),
+            adapter.run_scope("wrong-native-run", "primary"),
+            pytest.raises(ValueError, match="model_run_cancellation_unavailable"),
+        ):
+            adapter.chat_call(messages_payload=[{"role": "user", "content": "hi"}])
+        assert emitted == []
+    finally:
+        _shutdown(loop)

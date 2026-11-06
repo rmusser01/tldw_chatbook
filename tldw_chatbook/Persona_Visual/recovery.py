@@ -75,7 +75,19 @@ class _Assets(_Definition):
         with closing(
             connect_private_sqlite("recovery.files.persona", candidate, read_only=True)
         ) as connection:
+            from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+                connection_budget,
+                table_cost,
+            )
+
+            budget = connection_budget(connection)
             if self.owner_id == "persona.assets":
+                table_cost(
+                    connection,
+                    "persona_visual_assets",
+                    ("storage_relpath", "bytes", "sha256"),
+                    copies=3,
+                )
                 references = []
                 for row in connection.execute(
                     "SELECT storage_relpath,bytes,sha256 FROM persona_visual_assets"
@@ -90,6 +102,17 @@ class _Assets(_Definition):
                 if self.owner_id == "persona.visual_identity_builtin"
                 else "manual"
             )
+            if budget is not None:
+                budget.reserve(2048)
+                count, size = connection.execute(
+                    "SELECT count(*),coalesce(sum(coalesce(length(CAST(a.storage_relpath AS BLOB)),0)+"
+                    "coalesce(length(CAST(a.sha256 AS BLOB)),0)+coalesce(length(CAST(a.preview_relpath AS BLOB)),0)+"
+                    "coalesce(length(CAST(p.source_kind AS BLOB)),0)),0) FROM visual_identity_assets a "
+                    "JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id"
+                ).fetchone()
+                if count > 100_000:
+                    raise ValueError("asset_reference_limit")
+                budget.reserve(256 + 1024 * count + 16 * size)
             rows = connection.execute(
                 "SELECT a.storage_relpath,a.bytes,a.sha256,a.preview_relpath,p.source_kind FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id"
             )

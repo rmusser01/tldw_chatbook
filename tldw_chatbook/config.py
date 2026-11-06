@@ -7746,41 +7746,10 @@ _USER_DATA_DIR_MEMO_LOCK = _threading.Lock()
 
 
 def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
-    """The memo key and every path whose posture the resolution depends on.
-
-    Returns:
-        ``(key, stamped_paths)``. The key starts with the config cache object
-        (compared by identity) and its generation, so any reload or write
-        invalidates the memo; then the settings the resolution reads and the
-        default data base, which follows HOME. The stamped paths are every
-        component of each candidate user directory's chain plus the entries
-        the default-root selection reads (conventional root, fallback root,
-        root lock file).
-    """
-    from tldw_chatbook.Backup_Recovery.storage_admission import _chain
-
-    user_folder = get_user_folder_name()
-    configured_data_dir = get_cli_setting("paths", "data_dir", None)
-    if configured_data_dir is None:
-        configured_data_dir = get_cli_setting("Paths", "data_dir", None)
-    if configured_data_dir:
-        candidates = (lexical_path(configured_data_dir) / user_folder,)
-        entries: tuple[Path, ...] = ()
-        # Expanded, not as written: a relative value follows the working dir.
-        base = str(candidates[0].parent)
-    else:
-        conventional = _default_base_data_dir()
-        fallback = conventional.parents[2] / _DEFAULT_DATA_FALLBACK_DIRECTORY
-        candidates = (conventional / user_folder, fallback / user_folder)
-        entries = (
-            conventional,
-            fallback,
-            conventional.parents[2] / profile_paths.DATA_ROOT_LOCK_NAME,
-        )
-        base = str(conventional)
-    key = (_CONFIG_CACHE, _CONFIG_GENERATION, _CONFIG_CACHE_SOURCE, user_folder, base)
-    paths = (*(p for c in candidates for p in _chain(c)), *entries)
-    return key, tuple(dict.fromkeys(paths))
+    """The memo key and every path whose posture the resolution depends on."""
+    return profile_paths._user_data_dir_inputs(
+        source_globals=globals(),
+    )
 
 
 def _bind_user_data_dir_stamps():
@@ -8475,6 +8444,18 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
     return db
 
 
+def preflight_selected_console_stores(
+    *,
+    chat_path: str | Path | None = None,
+    workspace_path: str | Path | None = None,
+) -> None:
+    """Check one authoritative selection, retaining explicit native owner paths."""
+    snapshot = get_atomic_config_snapshot()
+    profile_paths.preflight_selected_console_stores(
+        snapshot.values, chat_path=chat_path, workspace_path=workspace_path
+    )
+
+
 # --- Database Initialization Function (remains largely the same) ---
 def initialize_all_databases():
     global chachanotes_db, prompts_db, media_db
@@ -8482,6 +8463,7 @@ def initialize_all_databases():
     logger.info("Initializing CLI databases...")
     # ChaChaNotes DB
     chachanotes_path = get_chachanotes_db_path()
+    preflight_selected_console_stores(chat_path=chachanotes_path)
     logger.info(f"Attempting to initialize ChaChaNotes_DB at: {chachanotes_path}")
     try:
         chachanotes_db = CharactersRAGDB(
@@ -8527,6 +8509,7 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
     global chachanotes_db
     if chachanotes_db is None:
         chachanotes_path = get_chachanotes_db_path()
+        preflight_selected_console_stores(chat_path=chachanotes_path)
         logger.info(f"Lazy-initializing ChaChaNotes_DB at: {chachanotes_path}")
         try:
             # Get integrity check configuration

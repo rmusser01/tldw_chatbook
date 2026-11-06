@@ -73,6 +73,23 @@ def _journal(control_root: Path, operation_id: str) -> Journal:
 def _copy_evidence(journal: Journal):
     with journal._locked(exclusive=False) as parent:
         records = journal._records(parent)
+    if records and records[0].event == "mobile_prepared":
+        from .mobile_canonical_copy import _canonical_copy
+
+        proof = _canonical_copy(journal)
+        if proof is None:
+            return None
+        path = Path(proof.ciphertext.path)
+        try:
+            os.stat(path, follow_symlinks=False)
+        except FileNotFoundError:
+            status = "missing"
+        else:
+            status = "verified" if _matches(proof.ciphertext, str(path)) else "changed"
+        # Member coverage requires authenticated archive access, not a guessed map.
+        return RecoveryCopy(
+            journal.operation_id, path, proof.ciphertext.size, (), status, proof.pending
+        ), proof
     rollback = next((row for row in records if row.event == "rollback_verified"), None)
     if rollback is None:
         return None
@@ -196,6 +213,10 @@ def delete_recovery_copy(
         proof,
         stream,
     ):
+        from .mobile_canonical_copy import _CanonicalCopy
+
+        if type(proof) is _CanonicalCopy:
+            raise ValueError("mobile_canonical_copy_retained")
         if not deletion_allowed(
             pending_operation=entry.pending_operation,
             active_hold=False,

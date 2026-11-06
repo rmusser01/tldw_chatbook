@@ -15,6 +15,7 @@ import zipfile
 import httpx
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Skills_Interop.skill_package_inspection import (
     FRAMEWORK_MESSAGE,
@@ -1252,7 +1253,6 @@ def test_e2e_agent_install_skill_confirm_allow(tmp_path, monkeypatch):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
     from tldw_chatbook.Skills_Interop.skill_trust_store import (
@@ -1307,7 +1307,7 @@ def test_e2e_agent_install_skill_confirm_allow(tmp_path, monkeypatch):
 
     monkeypatch.setattr(srf, "fetch_zip_bytes", _fake_fetch)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="install it")
@@ -1361,7 +1361,6 @@ def test_e2e_agent_install_skill_confirm_deny(tmp_path, monkeypatch):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
     from tldw_chatbook.Skills_Interop.skill_trust_store import (
@@ -1402,7 +1401,7 @@ def test_e2e_agent_install_skill_confirm_deny(tmp_path, monkeypatch):
 
     monkeypatch.setattr(srf, "fetch_zip_bytes", _boom)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="install it")

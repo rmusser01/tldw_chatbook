@@ -147,7 +147,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 backlog owner size waiver: explicit URL source handoff.
     # TASK-38714 Qodo fold, 2026-11-05 (same waiver): 5020 -> 5021 (+1). The
     # held-job scan's UI-thread note records its measured startup cost.
-    "tldw_chatbook/app_ingest_queue.py": 5021,
+    # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+    "tldw_chatbook/app_ingest_queue.py": 5020,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
@@ -218,7 +219,7 @@ _BUDGETS: dict[str, int] = {
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29173,
+    "tldw_chatbook/Chat/console_chat_controller.py": 28943,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -527,7 +528,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-23, TASK-36381 (owner decision 2026-10-04: "expand the limits,
     # don't modify other code to make it fit"): Tools & MCP gets the
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35669,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35642,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -573,7 +574,7 @@ _BUDGETS: dict[str, int] = {
     # refresh), as first-run setup does.
     # 2026-11-05, TASK-36516 review (owner waiver): koboldcpp's Endpoint
     # guidance names its /api/v1/generate address (+3): 2,398 -> 2,401.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2401,
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2398,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
@@ -806,11 +807,12 @@ _BUDGETS: dict[str, int] = {
     # failure keeps the work pane in view through a resize.
     # TASK-38757 rev3, 2026-11-05 (same waiver): 9779 -> 9802 (+23). An
     # explicit navigator choice (Back, the Files grip) wins over a failure.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9802,
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9674,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9436,
+    # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9429,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -822,7 +824,8 @@ _BUDGETS: dict[str, int] = {
     # Three scope docstrings name the control-bar syncs as openers (+7 lines).
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 8942 -> 8961 (+19).
     # The control-bar syncs' shared build reads the registry live.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8961,
+    # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8935,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -856,7 +859,8 @@ _BUDGETS: dict[str, int] = {
     # watcher restyles the bar and its draft text, not its subtree: +9 lines.
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 7198 -> 7202 (+4).
     # The focus watcher's docstring gains its Args section.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7202,
+    # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7189,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
@@ -898,7 +902,7 @@ _BUDGETS: dict[str, int] = {
     # live row count (dead sequences inside the range count too).
     # 2026-10-31, PR3298 user size waiver: +31 to select the completed proof
     # by exact descriptors and its permitted start before full validation.
-    "tldw_chatbook/Chat/console_trace_service.py": 6587,
+    "tldw_chatbook/Chat/console_trace_service.py": 6494,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
@@ -966,7 +970,7 @@ _BUDGETS: dict[str, int] = {
     # One-row Session Git buttons truncate instead of wrapping at width 0.
     # TASK-38755, 2026-11-05 (same waiver): 4265 -> 4278 (+13). Fixed-region
     # lines refit on their own Resize when a child scrollbar narrows them.
-    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4278,
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4265,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
     "tldw_chatbook/DB/private_sqlite.py": 4030,

@@ -13,6 +13,7 @@ from tldw_chatbook.Widgets.Console import ConsoleWorkspaceSwitcherModal
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_alt_w_opens_workspace_switcher() -> None:
     """The switcher must be reachable without the mouse."""
     app = _build_test_app()

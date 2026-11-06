@@ -21,9 +21,6 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     adapter_api_base_url,
     meaningful_adapter_base_url,
 )
-from tldw_chatbook.Chat.console_provider_support import (
-    CUSTOM_OPENAI_EXECUTION_KEYS,
-)
 from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
     OmittedTraceProvenance,
@@ -960,6 +957,8 @@ def reconstruct_provider_gateway_kwargs(
     request: object,
 ) -> dict[str, object]:
     """Independently reconstruct the exact generic gateway boundary values."""
+
+    from tldw_chatbook.Chat.console_provider_support import CUSTOM_OPENAI_EXECUTION_KEYS
 
     execution_key = getattr(resolution, "execution_key")
     base_url = adapter_api_base_url(execution_key, getattr(resolution, "base_url"))

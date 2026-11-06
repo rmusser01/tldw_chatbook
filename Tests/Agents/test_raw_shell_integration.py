@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     AgentConfig,
@@ -20,10 +21,8 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_raw_shell_review_hook,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import RawCliRequest, RawCliResult
-
 
 ASK = EffectiveToolState(state="ask", origin="global_default")
 OFF = EffectiveToolState(state="deny", origin="tool_override")
@@ -290,7 +289,7 @@ def test_agent_service_executes_raw_shell_as_an_ordinary_tool_result(
             "The raw command completed.",
         ]
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     service = AgentService(
         db=db,
         registry=registry,
@@ -371,7 +370,7 @@ def test_duplicate_native_call_ids_keep_raw_shell_approvals_independent(
             "The approved command completed.",
         ]
     )
-    db = AgentRunsDB(tmp_path / "duplicate-runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "duplicate-runs.db", client_id="test")
     service = AgentService(
         db=db,
         registry=registry,
@@ -439,7 +438,7 @@ def test_duplicate_native_ids_cannot_collide_with_model_supplied_suffixes(
         ]
     )
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "suffix-runs.db", client_id="test"),
+        db=owned_agent_runs_db(tmp_path / "suffix-runs.db", client_id="test"),
         registry=registry,
         chat_call=chat,
         review_tool_calls=build_raw_shell_review_hook(provider, approve_only_third),
@@ -492,7 +491,7 @@ def test_provider_generated_native_id_cannot_collide_with_model_supplied_id(
         ]
     )
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "idless-runs.db", client_id="test"),
+        db=owned_agent_runs_db(tmp_path / "idless-runs.db", client_id="test"),
         registry=registry,
         chat_call=chat,
         review_tool_calls=build_raw_shell_review_hook(provider, approve_only_idless),

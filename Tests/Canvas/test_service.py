@@ -70,6 +70,7 @@ def _scope(
         selected_canvas_id=selected_canvas_id,
         selected_revision_id=selected_revision_id,
         run_id=run_id,
+        ephemeral=False,
     )
 
 

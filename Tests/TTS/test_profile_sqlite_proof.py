@@ -74,7 +74,7 @@ def test_fixed_child_proves_closed_store_and_preserves_validation_errors(
                 assert reply["identity"]["shm"] is None
             else:
                 assert reply == {
-                    "version": 1,
+                    "version": 2,
                     "operation": "tts_exact_current",
                     "status": "tts_error",
                     "reason": expected,
@@ -534,7 +534,7 @@ runpy.run_path(sys.argv[0],run_name='__main__')
             with substituted_proof_namespace(path, target):
                 refused = lease.request("tts_recheck", deadline=deadline)
                 assert refused == {
-                    "version": 1,
+                    "version": 2,
                     "operation": "tts_recheck",
                     "status": "tts_error",
                     "reason": "operation_failed",
@@ -633,14 +633,15 @@ def test_failed_initializer_exits_without_accepting_queued_control_frame(tmp_pat
     protocol = module("DB.private_sqlite_protocol")
     process = module("DB.private_sqlite_process")
     request = {
-        "version": 1,
+        "version": 2,
         "operation": "tts_exact_current",
         "path": str(path),
         "writable": False,
         "create_if_missing": False,
         "preserve_source_mode": False,
+        "require_private_mode": False,
     }
-    control = {"version": 1, "operation": "tts_recheck"}
+    control = {"version": 2, "operation": "tts_recheck"}
     entry = os.path.join(
         os.path.dirname(process.__file__), "private_sqlite_helper_entry.py"
     )
@@ -655,7 +656,7 @@ def test_failed_initializer_exits_without_accepting_queued_control_frame(tmp_pat
     assert result.returncode == 0 and result.stderr == b""
     # Decoding exactly one frame also refuses any attempted control reply.
     assert protocol.decode_frame(result.stdout) == {
-        "version": 1,
+        "version": 2,
         "operation": "tts_exact_current",
         "status": "tts_error",
         "reason": "schema_corrupt",
@@ -686,7 +687,7 @@ def test_actual_first_pin_nofollow_refusal_restores_absent_then_complete_cohort(
         wal.symlink_to(path)
         try:
             assert lease.request("tts_pin_sidecars", deadline=deadline) == {
-                "version": 1,
+                "version": 2,
                 "operation": "tts_pin_sidecars",
                 "status": "tts_error",
                 "reason": "operation_failed",
@@ -771,7 +772,7 @@ runpy.run_path(sys.argv[0],run_name='__main__')
         wal.touch(mode=0o600)
         shm.symlink_to(path)
         refusal = {
-            "version": 1,
+            "version": 2,
             "operation": "tts_pin_sidecars",
             "status": "tts_error",
             "reason": "operation_failed",
@@ -906,7 +907,7 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                 lease.request("tts_recheck", deadline=deadline)
         else:
             assert lease.request("tts_pin_sidecars", deadline=deadline) == {
-                "version": 1,
+                "version": 2,
                 "operation": "tts_pin_sidecars",
                 "status": "tts_error",
                 "reason": "operation_failed",
@@ -939,7 +940,7 @@ def test_actual_capture_privacy_refusal_never_remints_acquired_shm(tmp_path):
         shm.chmod(0o644)
         original_shm = shm.stat().st_ino
         refusal = {
-            "version": 1,
+            "version": 2,
             "operation": "tts_pin_sidecars",
             "status": "tts_error",
             "reason": "operation_failed",
@@ -980,7 +981,7 @@ def test_actual_initial_unsafe_parent_keeps_private_path_classification(tmp_path
                 deadline=deadline,
             )
             assert lease.initial_response == {
-                "version": 1,
+                "version": 2,
                 "operation": "tts_exact_current",
                 "status": "private_path_error",
                 "privacy_status": "unsafe_parent",
@@ -1053,7 +1054,7 @@ runpy.run_path(sys.argv[0],run_name='__main__')
         response = lease.request(operation, deadline=deadline)
         if recoverable:
             assert response == {
-                "version": 1,
+                "version": 2,
                 "operation": operation,
                 "status": "tts_error",
                 "reason": "operation_failed",
@@ -1062,7 +1063,7 @@ runpy.run_path(sys.argv[0],run_name='__main__')
             assert lease.request("tts_recheck", deadline=deadline)["status"] == "ok"
         else:
             assert response == {
-                "version": 1,
+                "version": 2,
                 "operation": operation,
                 "status": "private_path_error",
                 "privacy_status": status,

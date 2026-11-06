@@ -252,6 +252,8 @@ jobs:
     # step alone (plus the ~0.8 min of setup) the same 90 runs replay at
     # median 16.1 / max 20.8 min, 14 min under the cap. Add a job (a shard),
     # not minutes, when either nears its cap again.
+    # PR #3345 (2026-11-05): job127394826830 reached this unchanged cap.
+    # MCP workbench cases now run once across the existing UI shards.
     timeout-minutes: 35  # B1 (TASK-33910.2): owner decision 2026-10-09, raised 30 -> 35 to fit B1's mounted Roleplay suites (27m46s worst case at the merge-time re-read: worst run 23m40s + B1's files 4m06s)
 
     steps:
@@ -291,7 +293,6 @@ jobs:
             Tests/DB/test_automatic_wake_attempts.py \
             Tests/Model_Artifacts/test_operation_leases.py \
             Tests/Model_Artifacts/test_operation_leases_process.py \
-            Tests/UI/test_mcp_workbench.py \
             Tests/UI/test_mcp_tools_mode.py \
             Tests/Widgets/test_detach_safe_text_area.py \
             Tests/Web_Server/test_served_tab_isolation.py \
@@ -931,6 +932,11 @@ jobs:
     # finished. In the two runs cancelled at the cap they alone took ~17.5
     # (a failing run) and ~16.1 min with setup: about 4 min of headroom at
     # worst, not 6.
+    # 2026-11-04 (TASK-36769): job126501087681 exhausted this unchanged
+    # 20-minute cap at 98% after 7m16 sandboxed + 12m04 admission. Its
+    # 21 conversation-row sweep cases (145.26 s) now run exactly once in
+    # existing UI shards 31/32, under their stricter 180 s per-case ceiling.
+    # The other P0 targets, order, profile split and timeouts are unchanged.
     name: Console P0 regression gate
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -1005,8 +1011,6 @@ jobs:
             Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compaction_records_reason_and_discloses_spend \
             Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_says_nothing_changed \
             Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes \
-            Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant \
-            Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app \
             Tests/Wizards/test_first_run_provider_catalog.py::test_wizard_provider_list_is_the_settings_picker_set \
             Tests/Wizards/test_first_run_provider_catalog.py::test_arrowing_through_every_listed_row_keeps_the_step_live \
             Tests/Wizards/test_first_run_provider_catalog.py::test_a_raising_step_handler_keeps_the_step_and_the_keyboard \

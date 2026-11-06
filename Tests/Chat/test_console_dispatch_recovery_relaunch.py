@@ -51,6 +51,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleDispatchRecoveryActionId,
     ConsoleDispatchRecoveryKind,
     ConsoleMessageRole,
 )
@@ -306,17 +307,12 @@ async def test_relaunched_legacy_continuation_owner_is_normalized_before_actions
 
 @pytest.mark.asyncio
 async def test_a_second_open_of_the_same_chat_never_settles_the_first_ones_reply(
-    tmp_path, databases
+    tmp_path, databases, monkeypatch
 ):
-    """The owner keeps its persisted id in the FIRST session only.
-
-    A second session restoring the same conversation in the same store gets
-    fresh ids for the owner too. Its card must refuse instead of claiming the
-    first session's node through the shared message index.
-    """
+    """Canonical reuse and a foreign recovery cannot steal the first owner."""
     first = await _crash_mid_reply(tmp_path, databases)
     conversation_id = first.store._sessions[first.session_id].persisted_conversation_id
-    second_session = await hydrate_console_session(
+    reopened = await hydrate_console_session(
         app=SimpleNamespace(chachanotes_db=first.db),
         store=first.store,
         conversation_id=conversation_id,
@@ -325,7 +321,46 @@ async def test_a_second_open_of_the_same_chat_never_settles_the_first_ones_reply
         ),
         settings=ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
     )
+    assert reopened is first.store._sessions[first.session_id]
+    original_recovery = first.store.dispatch_recovery_for_session(first.session_id)
+    nodes_before = dict(first.store._message_session_index)
+    with pytest.raises(ValueError, match="Conflicting native saved-session identity"):
+        await hydrate_console_session(
+            app=SimpleNamespace(chachanotes_db=first.db),
+            store=first.store,
+            conversation_id=conversation_id,
+            tree=ChatConversationService(first.db).get_conversation_tree(
+                conversation_id, root_limit=100, depth_cap=100
+            ),
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
+            session_id="conflicting-open",
+        )
+    assert first.store._message_session_index == nodes_before
+    assert (
+        first.store.dispatch_recovery_for_session(first.session_id) is original_recovery
+    )
+
+    # A legacy/foreign card must reach the own-tree check, not the no-card guard.
+    second_session = first.store.create_session(title="Foreign recovery")
+    foreign_recovery = replace(original_recovery)
+    monkeypatch.setitem(
+        first.store._dispatch_recoveries_by_session, second_session.id, foreign_recovery
+    )
     owner = _path(first)[-1]
+    assert (
+        first.store.dispatch_recovery_for_session(second_session.id) is foreign_recovery
+    )
+    assert foreign_recovery.recovery_needed and not foreign_recovery.in_flight
+    assert all(action.enabled for action in foreign_recovery.actions)
+    assert first.store.get_message(foreign_recovery.assistant_message_id).id == owner.id
+    assert owner.id not in first.store._nodes_by_session[second_session.id]
+    assert first.store._message_session_index[owner.id] == first.session_id
+    assert (
+        first.store.claim_dispatch_recovery_action(
+            second_session.id, ConsoleDispatchRecoveryActionId.DISCARD
+        )
+        is None
+    )
 
     refused = await first.controller.discard_dispatch_recovery(second_session.id)
 

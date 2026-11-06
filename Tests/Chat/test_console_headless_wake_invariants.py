@@ -38,12 +38,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_fleet_wake import (
-    _FakeWakeBridge,
-    _RecordingWakeGateway,
     _controller_rig,
     _drain,
+    _FakeWakeBridge,
     _quiet,
+    _RecordingWakeGateway,
     _settle,
     _survivor,
     _terminal_subagent_run,
@@ -407,7 +408,7 @@ async def test_legacy_crash_result_is_visible_but_cannot_borrow_a_new_chain(
         # Restart: the sweep guard is per-PROCESS, so drop this path from it
         # the way `Tests/DB/test_agent_runs_db.py` does to model a new one.
         AgentRunsDB._swept_paths.discard(runs_db.db_path_str)
-        swept_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        swept_db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         assert (swept_db.get_run(crashed) or {}).get("status") == "error", (
             "harness precondition: the restart must reconcile the orphan"
         )

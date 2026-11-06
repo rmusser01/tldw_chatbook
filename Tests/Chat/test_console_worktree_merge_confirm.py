@@ -30,6 +30,8 @@ from typing import Any, Callable
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import persisted_console_store
 from tldw_chatbook.Agents.agent_service import AgentService as _RealAgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -38,8 +40,6 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from Tests.console_provider_doubles import persisted_console_store
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
@@ -374,7 +374,7 @@ def _capture_run_turn_kwargs(
         console_agent_bridge_module, "AgentService", _CapturingAgentService
     )
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = persisted_console_store()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -460,7 +460,7 @@ def _capture_first_request_plan_kwargs(
         _capturing_build_plan,
     )
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = persisted_console_store()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")

@@ -13,6 +13,7 @@ import threading
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Chat.test_console_agent_bridge import (
     _fence,
@@ -65,7 +66,7 @@ class _GatedSiblingsGateway(_FleetTwoChildGateway):
 
 def _bridge(tmp_path, *, fail_fast=False, db_class=AgentRunsDB):
     gateway = _GatedSiblingsGateway(fail_fast=fail_fast)
-    db = db_class(tmp_path / "runs.db", client_id="individual-settlement-test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="individual-settlement-test", _db_class=db_class)
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")

@@ -7,15 +7,15 @@ reach the model's system prompt on every turn -- on native AND fence-protocol
 endpoints -- while the default-workspace empty string adds nothing.
 """
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def _service(tmp_path, capture):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     return AgentService(db, registry, chat_call=capture)

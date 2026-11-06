@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import threading
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_child_run_scope_ordering import _survivor_bridge
 from Tests.Chat.test_console_agent_bridge import (
     _fence,
@@ -50,7 +51,6 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def _install_drain_recorder(bridge, db, name="test-recorder"):
@@ -346,7 +346,7 @@ def test_a_consumer_registered_once_fires_once_per_drain_across_turns(
         gate=gate,
         needed=1,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")

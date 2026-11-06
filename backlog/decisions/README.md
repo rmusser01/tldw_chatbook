@@ -160,6 +160,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-232](232-console-learned-response-rules.md) | Accepted | Learn native Chat-scoped response rules, assess permitted execution evidence, and admit bounded correction through current Console custody; preserves source ADR-219 provenance. |
 | [ADR-242](242-console-radio-portrait-performance.md) | Accepted (design only) | Add reviewed local six-pose character performances and output-timed TTS presentation within the existing Console rail; preserve moods, motion preferences and portable artwork formats. |
 
+| [ADR-244](244-shared-console-ownership-and-mobile-supervision.md) | Accepted (design only) | Replace mobile-specific storage/execution with canonical Console ownership, retained served hosts, explicit mobile controls and recoverable history consolidation; supersedes ADR-234's split and amends ADR-236. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.
@@ -235,3 +237,5 @@ Do not reuse numbers.
 
 | [ADR-282: Opt-in Console OS notification dispatch](282-console-os-notification-dispatch.md) | Accepted | Separate default-off desktop channel with fixed argv, bounded literal identity, content-free diagnostics, and timeout ownership through orderly process exit. |
 | [ADR-286](286-console-prompt-mix-ins.md) | Accepted | Add literal Before/After Mix-in library artifacts through the existing composer Prompts button, with chat-owned selections, exact retry snapshots and current-send-only caching semantics. |
+
+| [ADR-354](354-windows-textual-timer-waits-use-the-event-loop.md) | Accepted | Keep Windows Textual timer waits and cancellation off the shared default worker pool, retaining native Timer behavior and unchanged worker limits. |

@@ -1713,6 +1713,7 @@ async def test_import_retains_well_formed_unknown_runtime_profile_inertly(
         selected_canvas_id=None,
         selected_revision_id=None,
         run_id="profile-read",
+        ephemeral=False,
     )
     authority = NativeConsoleCanvasAuthority(
         scope_resolver=lambda _session: scope,

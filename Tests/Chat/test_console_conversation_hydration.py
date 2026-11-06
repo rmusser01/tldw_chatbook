@@ -538,10 +538,10 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
     )
     assert launch_session.character_name == "Alraune"
     assert launch_session.settings.character_label == "Alraune"
-    assert launch_session.id != screen_session.id, (
-        "session ids are per-session uuids; equal ids would mean the two "
-        "stores are the same object and this test is not comparing two callers"
-    )
+    assert launch_store is not screen_store
+    assert launch_session is not screen_session
+    assert launch_session.id == screen_session.id == CONVERSATION_ID
+    assert launch_session.incarnation_id != screen_session.incarnation_id
 
 
 @pytest.mark.asyncio

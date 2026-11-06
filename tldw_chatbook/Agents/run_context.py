@@ -66,10 +66,11 @@ the providers, which are all deliberately dependency-light.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Literal
 
 
 #: task-31382: a sub-agent display label is cut here so a card title or a
@@ -204,3 +205,68 @@ def use_tool_call_id(call_id: str) -> Iterator[None]:
         yield
     finally:
         _CURRENT_TOOL_CALL_ID.reset(token)
+
+
+_MODEL_RUN_CANCELLATION: ContextVar[tuple[str, str, Callable[[], bool]] | None] = (
+    ContextVar("model_run_cancellation", default=None)
+)
+
+
+@contextmanager
+def use_model_run_cancellation(predicate: Callable[[], bool]) -> Iterator[None]:
+    """Carry the native rejection probe and reset its context token on exit.
+
+    Args:
+        predicate: The current native run's unchanged LoopDeps.should_cancel.
+
+    Yields:
+        None while the exact actor and predicate are bound to this context.
+
+    Raises:
+        ValueError: The native actor or callable predicate is missing or invalid.
+    """
+    actor = current_run_actor()
+    if (
+        actor is None
+        or type(actor.run_id) is not str
+        or not actor.run_id
+        or type(actor.kind) is not str
+        or actor.kind not in {"primary", "subagent"}
+        or not callable(predicate)
+    ):
+        raise ValueError("model_run_cancellation_unavailable")
+    token = _MODEL_RUN_CANCELLATION.set((actor.run_id, actor.kind, predicate))
+    try:
+        yield
+    finally:
+        _MODEL_RUN_CANCELLATION.reset(token)
+
+
+def current_model_run_cancellation() -> tuple[str, str, Callable[[], bool]] | None:
+    """Return the rejection probe belonging to the exact current native actor.
+
+    Returns:
+        The run ID, kind and original callable; None only for unbound legacy use.
+
+    Raises:
+        ValueError: Native state is partial, invalid, noncallable or mismatched.
+    """
+    actor = current_run_actor()
+    bound = _MODEL_RUN_CANCELLATION.get()
+    if actor is None and bound is None:
+        return None
+    if (
+        actor is None
+        or type(actor.run_id) is not str
+        or not actor.run_id
+        or type(actor.kind) is not str
+        or actor.kind not in {"primary", "subagent"}
+        or type(bound) is not tuple
+        or len(bound) != 3
+        or type(bound[0]) is not str
+        or type(bound[1]) is not str
+        or not callable(bound[2])
+        or (actor.run_id, actor.kind) != bound[:2]
+    ):
+        raise ValueError("model_run_cancellation_unavailable")
+    return bound

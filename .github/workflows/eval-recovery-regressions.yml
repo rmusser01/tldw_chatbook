@@ -7,6 +7,10 @@ on:
       - 'tldw_chatbook/Evals/**'
       - 'tldw_chatbook/Backup_Recovery/**'
       - 'Tests/Backup_Recovery/**'
+      - 'Tests/Evals/test_orchestrator_offloop_writes.py'
+      - 'tldw_chatbook/RAG_Search/simplified/db_connection_pool.py'
+      - 'tldw_chatbook/RAG_Search/simplified/rag_service.py'
+      - 'Tests/RAG_Search/test_keyword_leg_db_resolution.py'
       - 'Tests/windows_private_fixture_runner.py'
       - 'Tests/Backup_Recovery/test_pending_directory_durability.py'
       - 'Tests/subprocess_pipes.py'
@@ -92,7 +96,11 @@ jobs:
           Tests/Backup_Recovery/test_profile_launch_environment.py
           Tests/test_subprocess_pipes.py
           Tests/Backup_Recovery/test_eval_retained_definitions.py
+          Tests/Backup_Recovery/test_eval_maintenance.py
+          Tests/Backup_Recovery/test_rag_manager_maintenance.py
+          Tests/Evals/test_orchestrator_offloop_writes.py
           Tests/Backup_Recovery/test_eval_restore_diagnostics.py
+          Tests/Backup_Recovery/test_schema_policy_work.py
           Tests/Backup_Recovery/test_eval_selective_retention.py
           Tests/Backup_Recovery/test_eval_rollback_retention.py
           Tests/Backup_Recovery/test_eval_later_snapshot.py

@@ -21,6 +21,10 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     _summarize_row_arguments,
 )
 
+# Exact BASE768925f160 reproduces raw_source_selection_changed at fixture setup.
+# These pure rendering controls need the existing isolated admitted bootstrap owner.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.unit
 def test_the_destination_survives_a_huge_leading_content_argument():
@@ -178,3 +182,14 @@ def test_a_non_string_argument_key_never_crashes_rendering():
 
     assert "/x" in rendered, rendered
     assert isinstance(rendered, str)
+
+
+def test_shared_summary_extraction_preserves_native_public_exports():
+    from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
+    from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card
+
+    assert (
+        chat_approval_card.TOOL_DESCRIPTION_CAPTURE_CAP == TOOL_DESCRIPTION_CAPTURE_CAP
+    )
+    assert chat_approval_card._is_destination_key("file_path")
+    assert chat_approval_card._snake_case("filePath") == "file_path"

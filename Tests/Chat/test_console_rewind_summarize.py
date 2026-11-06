@@ -11,6 +11,8 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Chat import console_context_compaction as context_compaction
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -19,15 +21,16 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleVariantSet,
     MessageAttachment,
 )
-from tldw_chatbook.Chat.console_context_policy import (
-    ConsoleContextPolicyOverrides,
-    ContextCompactionMode,
-)
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     DurableMessageSnapshot,
     prefix_digest,
     select_effective_memory,
+)
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
 )
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleMemoryRecord,
@@ -37,7 +40,6 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryOriginKind,
     MemorySelectionKind,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_prepared_request import (
     PreparedConsoleRequest,
     PreparedProviderRequest,
@@ -51,7 +53,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationResult,
@@ -59,13 +61,12 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ThinkingEnvelope,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.console_provider_doubles import provider_resolution
 
 
 class SummaryGateway:
@@ -2163,11 +2164,10 @@ def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
         StartupInstructionCandidate,
     )
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     calls = []
     service = AgentService(
-        AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        owned_agent_runs_db(tmp_path / "runs.db", client_id="test"),
         ToolCatalogRegistry(),
         chat_call=lambda **kwargs: (
             calls.append(kwargs) or {"choices": [{"message": {"content": "done"}}]}

@@ -2,6 +2,7 @@
 
 Date: 2026-10-16
 Status: Accepted (implements spec Docs/superpowers/specs/2026-10-15-served-mode-auth-and-mobile-surface-design.md §4.3 stated-v1-limit removal + §5 Phase 2; extends ADR-233/ADR-234)
+Amended by: [ADR-244](244-shared-console-ownership-and-mobile-supervision.md) for runtime-owned decisions, retained hosts and Canvas-independent control (design only; implementation pending)
 
 ## Context
 

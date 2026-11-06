@@ -85,12 +85,10 @@ from ...Utils.input_validation import (
     validate_text_input,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ...Widgets.Console import (
-    ConsoleWorkspaceContextTray,
-    ConsoleWorkspaceRenameModal,
-    ConsoleWorkspaceSwitcherModal,
-)
-from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
+from ...Widgets import Console as console_widgets
+from ...Widgets.Console import ConsoleWorkspaceContextTray
+
+__getattr__ = console_widgets.__getattr__
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
@@ -153,6 +151,7 @@ if TYPE_CHECKING:
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Screens.chat_screen import ChatScreen
 
+__getattr__ = console_widgets.__getattr__
 logger = logger.bind(module="ChatScreen")
 
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 10.0
@@ -549,36 +548,18 @@ class _ConsoleRegistryDisplayReads:
 
 
 class ConsoleTickWorkspaceBuilds:
-    """One run tick's shared workspace-context build (TASK-22201).
+    """Share one fingerprint-validated context build within its owning task.
 
-    ``_sync_native_console_chat_ui`` used to build
-    ``_build_console_workspace_context_state()`` SIX times per 0.2 s tick
-    (measured with a stack probe): the two rail-state legs, the
-    workspace-context push, the control bar's and the agent section's
-    inspector legs, and the settings summary's rail read. This object is
-    created fresh for ONE tick by ``tick_workspace_build_scope`` and serves
-    every build the tick's own task performs; each read revalidates the
-    controller's volatile-input fingerprint, so:
+    Ticks and control-bar syncs opt in through the workspace build scopes. A
+    settled scope builds once; session activation changes the fingerprint and
+    rebuilds before publication (PR #660). A missing fingerprint or another
+    task always builds live, including handlers interleaved across awaits.
+    Re-entrant builds bypass reuse. Inputs outside the fingerprint repaint on
+    the next tick, within its existing 0.2-second cadence.
 
-    * a settled tick pays for exactly one build;
-    * the PR #660 freshness ruling holds -- a session created/activated by
-      ``_sync_console_native_session_tabs`` mid-tick changes the store
-      fingerprint, and the workspace-context push and the visibility check
-      rebuild rather than reuse the pre-await snapshot;
-    * a ``None`` fingerprint (reduced doubles, any component failure) means
-      every read builds live, exactly the pre-cache behavior.
-
-    Task-scoped and never shared across ticks: ``accepts_current_task``
-    admits only the coroutine task that opened the scope, so workers,
-    message handlers, and search settles interleaving during the tick's
-    awaits keep building live -- a mutation followed by a push can never be
-    masked. Inputs outside the fingerprint changing DURING one tick are
-    repainted by the next tick, at most 0.2 s later -- the same cadence
-    every other tick-driven surface repaints at. TASK-36511.2:
-    ``_sync_console_control_bar`` and ``_sync_console_rail_and_controls``
-    open the scope too (``live_workspace_build_scope``), so one such sync
-    pays for one build, for that sync, read live (``stale_reads=False``).
-    """
+    Run ticks may use registry display snapshots; user-triggered control-bar
+    syncs use live reads (TASK-36511.2). The outermost scope creates and clears its cache,
+    including on failure; no cache crosses scopes."""
 
     __slots__ = (
         "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads"
@@ -951,6 +932,7 @@ class ConsoleWorkspaceController:
                 revalidate=self._revalidate_character_conversation_target,
                 open_target=self._open_character_conversation_activation,
                 rollback_opened_target=self._rollback_character_conversation_activation,
+                commit_opened_target=self._commit_character_conversation_activation,
                 restore_state=self._restore_character_conversation_prior_session,
                 exact_target_visible=self._character_conversation_target_visible,
                 mutation_lock=getattr(
@@ -4991,6 +4973,8 @@ class ConsoleWorkspaceController:
                         workspace_id, rename=action == "restore_as"
                     )
 
+            from .workspace import ConsoleWorkspaceSwitcherModal
+
             self.push_screen(
                 ConsoleWorkspaceSwitcherModal(
                     workspaces=workspaces,
@@ -5116,6 +5100,8 @@ class ConsoleWorkspaceController:
                 return
             selected_record = record
             if rename:
+                from .workspace import ConsoleWorkspaceRenameModal
+
                 self.push_screen(
                     ConsoleWorkspaceRenameModal(
                         current_name=record.name, restoring=True
@@ -5170,6 +5156,8 @@ class ConsoleWorkspaceController:
             self.app_instance.notify(
                 f"Renamed workspace to {renamed.name}.", severity="information"
             )
+
+        from .workspace import ConsoleWorkspaceRenameModal
 
         self.push_screen(
             ConsoleWorkspaceRenameModal(current_name=record.name),
@@ -5518,6 +5506,7 @@ class ConsoleWorkspaceController:
         row_key: str = "",
         target_workspace_id: str | None = None,
         resume_if: Callable[[], bool] | None = None,
+        restore_cleanup_owner: object | None = None,
     ) -> bool | None:
         """Open a saved conversation while its optional resume claim is current.
 
@@ -5577,6 +5566,7 @@ class ConsoleWorkspaceController:
                         else target_workspace_id
                     ),
                     resume_if=resume_if,
+                    restore_cleanup_owner=restore_cleanup_owner,
                 )
             finally:
                 try:
@@ -5603,6 +5593,11 @@ class ConsoleWorkspaceController:
             return False
         controller = self._ensure_chat_controller_fn()
         store = controller.store
+        candidate = next(row for row in store.sessions() if row.id == session_id)
+        if candidate.persisted_conversation_id is not None:
+            await store.resolve_saved_session(
+                candidate.persisted_conversation_id, cleanup_owner=restore_cleanup_owner
+            )
         prior_active_session_id = store.active_session_id
         visit = (
             await self._begin_manual_read_visit(session_id)
@@ -5720,6 +5715,8 @@ class ConsoleWorkspaceController:
             initial = None
 
         target_label = f"workspace '{active_workspace.name}'"
+        from .workspace import ConsoleScopePickerModal
+
         media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
 
         def _on_save(scope: Optional[RagScope]) -> None:
@@ -6442,6 +6439,8 @@ class ConsoleWorkspaceController:
                 ):
                     if finalize_visible is not None:
                         await finalize_visible()
+                    if owned_runtime is not None:
+                        self._commit_character_conversation_activation(owned_runtime)
                     return ConsoleConversationActivationResult(
                         ConsoleActivationResultKind.OPENED,
                         request.target,
@@ -6520,72 +6519,31 @@ class ConsoleWorkspaceController:
         | CharacterConversationActivationRequest,
     ) -> ConsoleActivationCommit:
         """Open a target and capture only a runtime session created by this call."""
-        from ...Chat.console_conversation_activation import (
-            CharacterConversationActivationRequest,
-            ConsoleActivationCommit,
-        )
+        from . import workspace_activation
 
-        target = (
-            request.target
-            if isinstance(request, CharacterConversationActivationRequest)
-            else request
+        return await workspace_activation._open_character_conversation_activation(
+            self,
+            request,
         )
-        store = self._ensure_console_chat_store()
-        before = {session.id: session for session in store.sessions()}
-        opened = bool(
-            await self.open_console_workspace_conversation(target.conversation_id)
-        )
-        owned = next(
-            (
-                session
-                for session in store.sessions()
-                if session.id not in before
-                and str(session.persisted_conversation_id or "")
-                == target.conversation_id
-            ),
-            None,
-        )
-        if opened:
-            # Widget.focus() is queued by Textual. This committed Character
-            # boundary must establish focus before the immediate exact-visible
-            # proof, including when activation began in a Context row.
-            try:
-                # A whole-Console sync may coalesce into an already-running
-                # pass. Publish this target before the exact-ready proof.
-                await self._screen._sync_native_console_transcript()
-                self._screen.set_focus(
-                    self._screen.query_one("#console-native-composer")
-                )
-            except asyncio.CancelledError:
-                # The caller has not received ownership yet. Settle only this
-                # exact cold runtime synchronously, then let it restore prior UI.
-                if owned is not None:
-                    store.rollback_restored_session(
-                        owned.id,
-                        expected_session=owned,
-                        prior_active_session_id=None,
-                    )
-                raise
-            except Exception:  # noqa: BLE001 - preserve the owned token for rollback
-                logger.opt(exception=True).warning(
-                    "Could not focus the committed character conversation"
-                )
-                opened = False
-        return ConsoleActivationCommit(opened=opened, owned_runtime_token=owned)
 
     async def _rollback_character_conversation_activation(
         self, owned_runtime: object
     ) -> bool:
         """Remove only the exact hydrated runtime owned by this activation."""
+        from . import workspace_activation
 
-        session_id = getattr(owned_runtime, "id", None)
-        if not isinstance(session_id, str) or not session_id:
-            return False
-        store = self._ensure_console_chat_store()
-        return store.rollback_restored_session(
-            session_id,
-            expected_session=owned_runtime,
-            prior_active_session_id=None,
+        return await workspace_activation._rollback_character_conversation_activation(
+            self,
+            owned_runtime,
+        )
+
+    def _commit_character_conversation_activation(self, owned_runtime: object) -> None:
+        """Publish only after the outer exact visibility/focus attempt commits."""
+        from . import workspace_activation
+
+        return workspace_activation._commit_character_conversation_activation(
+            self,
+            owned_runtime,
         )
 
     async def _restore_character_conversation_prior_session(
@@ -6737,6 +6695,7 @@ class ConsoleWorkspaceController:
         reuse_existing: bool = True,
         preserve_persisted_scope: bool = False,
         resume_if: Callable[[], bool] | None = None,
+        restore_cleanup_owner: object | None = None,
     ) -> bool | None:
         """Load a persisted saved conversation into a native Console session.
 
@@ -6841,6 +6800,9 @@ class ConsoleWorkspaceController:
                 target_workspace_id = conversation.get("workspace_id") or None
                 target_scope_type = "workspace" if target_workspace_id else "global"
             session = None
+            cleanup_owner = (
+                restore_cleanup_owner if restore_cleanup_owner is not None else object()
+            )
             hydration = self._console_session_settings_for_resume(conversation)
             if not isinstance(hydration, ConsoleGenerationSettingsHydration):
                 raise TypeError(
@@ -6858,6 +6820,7 @@ class ConsoleWorkspaceController:
                     target_scope_type=target_scope_type,
                     target_workspace_id=target_workspace_id,
                     activate=False,
+                    cleanup_owner=cleanup_owner,
                 )
                 # Re-derive display-only agent TOOL markers from AgentRunsDB and
                 # overlay them onto the restored active-path view.
@@ -6913,6 +6876,7 @@ class ConsoleWorkspaceController:
                         session.id,
                         expected_session=session,
                         prior_active_session_id=prior_active_session_id,
+                        cleanup_owner=cleanup_owner,
                     )
                     return None
                 store.switch_session(session.id)
@@ -6933,6 +6897,7 @@ class ConsoleWorkspaceController:
                         session.id,
                         expected_session=session,
                         prior_active_session_id=prior_active_session_id,
+                        cleanup_owner=cleanup_owner,
                     )
                 await self._restore_console_session_after_failed_open(
                     store, prior_active_session_id
@@ -6947,6 +6912,7 @@ class ConsoleWorkspaceController:
                         session.id,
                         expected_session=session,
                         prior_active_session_id=prior_active_session_id,
+                        cleanup_owner=cleanup_owner,
                     )
                 await self._restore_console_session_after_failed_open(
                     store, prior_active_session_id
@@ -6957,6 +6923,8 @@ class ConsoleWorkspaceController:
                     timeout=15,
                 )
                 return None
+            if restore_cleanup_owner is None:
+                store.publish_restored_session(session, cleanup_owner=cleanup_owner)
             if self._complete_manual_read_visit:
                 self._complete_manual_read_visit(visit, session.id)
             return True
@@ -6971,26 +6939,14 @@ class ConsoleWorkspaceController:
 
     @contextmanager
     def tick_workspace_build_scope(self, *, stale_reads: bool = True):
-        """Share ONE fingerprint-validated context build across a run tick.
+        """Share the owning task's build; nested scopes retain the outer cache.
 
-        Opened by ``_sync_native_console_chat_ui`` around its sync body
-        (TASK-22201): every ``_build_console_workspace_context_state`` call
-        the tick's own asyncio task performs -- directly or through the
-        inspector/control-bar/agent-section legs -- is served from one
-        :class:`ConsoleTickWorkspaceBuilds` cache. Deliberately opt-in and
-        scoped, like the screen's ``_console_derivation_scope``
-        (task-15452): outside a ``with`` block, and for any OTHER task
-        interleaving during the tick's awaits, every build is live exactly
-        as before. Re-entrant (an inner scope keeps the outer cache) and
-        always torn down, so a raising tick cannot leave a stale build
-        cached for the next one. ``config_sync.settle_stopped_poll`` opens
-        it for one synchronous pass.
+        Native run ticks and settle_stopped_poll opt in; cleanup also runs on error.
+        See ConsoleTickWorkspaceBuilds for fingerprint and interleaving rules.
 
         Args:
-            stale_reads: Serve the build's registry display reads from their
-                last snapshot while the run poll ticks (TASK-33620.15.4).
-                False reads them live.
-        """
+            stale_reads: Use registry display snapshots during run ticks; False
+                reads them live for user-triggered syncs (TASK-33620.15.4)."""
         if getattr(self, "_console_tick_builds", None) is not None:
             yield
             return
@@ -7001,13 +6957,10 @@ class ConsoleWorkspaceController:
             self._console_tick_builds = None
 
     def live_workspace_build_scope(self):
-        """One shared context build for a user-triggered sync, read live.
+        """Share one live context build across a control-bar sync's Inspector and rail.
 
-        TASK-36511.2: the control-bar syncs share one build across their
-        Inspector and rail-state legs. Unlike a run tick's build, it never
-        serves a stale registry snapshot, so a workspace change the user just
-        made shows in the sync that follows it (TASK-36511.2 review).
-        """
+        User workspace changes appear in this sync, without a stale registry read.
+        TASK-36511.2; run-tick scopes retain their separate snapshot policy."""
         return self.tick_workspace_build_scope(stale_reads=False)
 
     #: TASK-33620.15.4: True only inside a run tick's shared context build.
@@ -7188,7 +7141,6 @@ class ConsoleWorkspaceController:
             value = getattr(self._screen, "__dict__", {}).get("_console_runtime_fallback")
         return value if isinstance(value, ConsoleRuntime) else None
 
-
     async def _read_owned_workspace_availability(self, registry, database, workspace_ids):
         """Retain the original callback's exact finite DB scopes through cancel."""
         from ...Backup_Recovery.participants import core_operation
@@ -7230,7 +7182,6 @@ class ConsoleWorkspaceController:
             observers=() if runtime is None else (runtime._preparation_reads,),
             require_current=current,
         )
-
 
     def _request_workspace_files_availability_refresh(
         self, workspace_ids: Sequence[str]
@@ -7283,7 +7234,6 @@ class ConsoleWorkspaceController:
             registry, workspace_ids
         )
 
-
     def _capture_workspace_files_availability_for_registry(
         self, registry: Any, workspace_ids: Sequence[str]
     ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
@@ -7293,7 +7243,6 @@ class ConsoleWorkspaceController:
             return self._read_workspace_files_availability(
                 registry, database, workspace_ids
             )
-
 
     def _read_workspace_files_availability(
         self, registry: Any, database: object, workspace_ids: Sequence[str]
@@ -7357,7 +7306,6 @@ class ConsoleWorkspaceController:
                 availability[workspace_id] = False
                 bindings_by_id[workspace_id] = ()
         return availability, bindings_by_id
-
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
         """Publish only the latest completed folder-availability generation."""
@@ -8918,7 +8866,12 @@ _CONSOLE_BROWSER_CONTROLLER_SOURCE = (
             name,
             inspect.getattr_static(ConsoleWorkspaceController, name),
         )
-        for name in ("__getattribute__", "__dict__", "_persisted_console_browser_rows", "_workspace_availability_runtime")
+        for name in (
+            "__getattribute__",
+            "__dict__",
+            "_persisted_console_browser_rows",
+            "_workspace_availability_runtime",
+        )
     ),
     (("ConsoleWorkspaceController", ConsoleWorkspaceController),),
     tuple(
@@ -8933,8 +8886,10 @@ _CONSOLE_BROWSER_CONTROLLER_SOURCE = (
             tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
             vars(function).get("__wrapped__"),
         )
-        for function in (ConsoleWorkspaceController._persisted_console_browser_rows,
-                         ConsoleWorkspaceController._workspace_availability_runtime)
+        for function in (
+            ConsoleWorkspaceController._persisted_console_browser_rows,
+            ConsoleWorkspaceController._workspace_availability_runtime,
+        )
     ),
 )
 

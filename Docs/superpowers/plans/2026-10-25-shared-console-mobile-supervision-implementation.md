@@ -1,0 +1,1490 @@
+# Shared Console Mobile Supervision Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Inspect and correct existing served Console agents from a phone over VPN, share ordinary chats and storage, and preserve accepted work across browser disconnection.
+
+**Architecture:** Keep execution in the existing App-owned Console runtime. Retain one served child per admitted canonical storage identity, make browsers revocable attachments, and route authenticated phone reads and commands to native owners. Consolidate legacy mobile history through the existing recovery subsystem before replacing its separate engine.
+
+**Tech Stack:** Python >=3.12, Textual >=8.0.0,<9, SQLite/FTS5, aiohttp/textual-serve, Pydantic, existing plain HTML/CSS/JavaScript, pytest and the existing Playwright served harness. No new runtime dependency.
+
+**Spec:** [Shared Console ownership and mobile agent supervision](../specs/2026-10-25-shared-console-mobile-supervision-design.md)
+
+**Decision:** [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
+
+**Planning task:** [TASK-38683](../../../backlog/tasks/task-38683%20-%20Plan-shared-served-Console-ownership-and-mobile-supervision-implementation.md)
+
+**Original planning baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15` recorded the approved specification and overflow correction before implementation. Later integration and qualification checkpoints are recorded below.
+
+**Status:** Rebased onto native dev `88af9f93`; tested source `46f0800c`. Populated rollback and edited-row SafetyCopy checks pass. Integration scoped review closed through `95b48a09`; later cancellation changes received source advice, root code review and targeted qualification. Final UAT: 14 passed, 1 failed in 784.03 seconds. Direct cold bootstrap remains unresolved. The 24 size-pin violations and UI-ready count 1044/1031 remain unwaived draft blockers. Tasks 8/11 stay In Progress; current-head GitHub review/CI and physical phone/VPN qualification remain open.
+
+```text
+ADR required: no
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Direct implementation of the accepted ownership, transport, migration
+        and mobile contracts. Update ADR-244 before any architectural deviation.
+```
+
+## Current-dev integration continuation (2026-11-01, before production)
+
+ADR required: yes — amend existing ADR244 and its ADR251 compatibility note; no duplicate ADR.
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: reconcile colliding native schema lineages and page-scoped authority with retained execution. Earlier source-bound evidence is retained, not relabeled.
+
+1. Keep original PR86c9f526/original52f7a354 and all evidence; integrate the published net feature onto pinned dev4a38b3d2 in the existing isolated checkout. Do not merge dev into the feature or reintroduce excluded radio planning; preserve current dev native functionality and authoritative ADR242.
+2. Apply R168 exact Core86/Workspaces11/Runs27 matrix and ADR244 source/default/refusal/preservation/witness semantics. R171 adds only Workspace-module-owned metadata preflight under its fixed READ_ONLY_URI policy, reuses Core/Runs read roles, and coordinates/repeats selected-owner rejection before schema setup; live-WAL visibility and native SHM coordination remain distinct from database writes. R172 composes those exact read roles with the active native mobile owner scope using actual strict read-only/must-exist/nonimmutable flags, matching path/repository/default factory and unchanged lease/retirement checks; no proof-token bypass. R173 recognizes SQLite-created zero-byte WAL/SHM read coordination while preserving main and pre-existing WAL data; retain files and strict capture proofs, with no acquisition-policy expansion or cleanup. Update migration SQL, exact recovery catalogs/authorizers, captured manifests/row plans/native writes/receipts/terminal verification, imported authority consumers, callers/tests/fixtures together. Preserve native16MiB/public4GiB/ordinary64MiB, two captures, custody/retirement and all native recovery contracts. Source portraits/review-boundary evidence and incompatible unmerged previews refuse before owner effects; populated canonical records are preserved.
+3. Apply R169 page-ID/authentication/Canvas protections around one retained host/current attachment, with generation-fenced teardown and post-await publication. Preserve dev pressed-input custody, Stop/search/setup behavior, archive/image/project-index drains, extracted helpers and native provider readiness. Tests retain dev security/lifetime assertions while adapting independent-child expectations to replacement.
+4. R167 corrects only mouse UAT geometry readiness, with a real native mixed-layout RED/GREEN and unchanged actual pointer/mouse/paste assertions. Integrate this reviewed correction; no arbitrary sleep/click retries or speculative production fix.
+5. Use targeted connected migration/rollback/quarantine/inventory and native Console/transport/browser checks, scoped static analysis and independent integration review. Record exact source epochs/failures/physical outcomes. Rerun the actual served UAT suite on final integrated source; old historical passes cannot qualify it. Update living/user/QA/task documentation truthfully.
+6. User explicitly authorizes updating draft PR3345 against dev, including necessary branch push with exact force-with-lease after verifying no auto-merge. Preserve prior local head refs and update draft title/body with current change/UAT results/limitations. No merge/auto-merge, full test sweep, real-profile operation, dependencies or cleanup.
+
+## Latest-dev compaction refresh (7b3b2371; before implementation)
+
+ADR required: no new ADR.
+ADR paths: existing ADR052 conversation memory/compaction, ADR230 Send/custody, and ADR244 exact phone input/native-policy preservation.
+Reason: Direct composition of newly accepted native behavior; no schema, configuration, service, dependency or new phone API.
+
+1. Preserve the tested4a38b3d2-based candidate and all original epoch/source evidence before rebasing its net feature commit onto dev7b3b2371c3141e6168726102496db1d71181adaf. Apply no source/HEAD/index changes during a running epoch. The60-path upstream delta has no schema/migration change, so86/11/27 stays; old passing epochs are not relabeled as combined7b evidence.
+2. Preserve upstream precommit Ask gates, exact action/skill context, `/compact` native command origin, strict manual-summary fences (exclude only pending plugin IDs), qualified desktop forecast and status priority. Phone Send remains MANUAL with immutable submitted text and preserve_composer=True, cardless refusal before durable acceptance, exact target and queued custody; desktop forecasts cannot authorize phone Send. No new phone compaction/recovery action or automatic mutation replay.
+3. Thread existing restore_draft option through exact-preparation cancellation (default True for current native callers). Cardless preserve-composer cancellation uses restore_draft=False, with no desktop read/restore round trip; current store6074–6137 and controller8506–8523 confirm the native contract. Keep exact preparation/state CAS, native-commit guard, echo cleanup and drop. Assert both text AND revision unchanged for empty, different, identical and concurrently edited desktop drafts, immediate/queued phone refusals, zero provider/durable user/assistant/Failed effect, and unrelated A hold/B phone target.
+4. Compose the existing opaque archive-recovery user proof at the validated authenticated phone Send producer, like native UI wiring’s runtime.ensure_archive_recovery().issue_user_proof(session_id); carry/release through exact immediate/queued native custody. This4a composition gap is separate from PR3328. Never synthesize a boolean, mint in generic capture/automatic producers, accept proof from client payload or relax native policy/answerability/hold checks. No new remotely answerable recovery surface. Source-backed proposal required if existing producer cannot serve an explicit owned target safely.
+5. Qualify current-native command/fence/forecast/manual gates, true phone captured-text vs desktop draft and exact refusal/receipt/custody/proof release, streaming/nonstreaming controls, unchanged Stop/lifecycle/pressed-input/hooks, UI-ready/diagnostic governance and scoped static checks. Preserve upstream known follow-ups as their own bounded limitations; do not claim inherited QA is current passing evidence or expand into automatic-wake/forecast repair. Then final independent whole-integration review and actual15-case served UAT on the new source.
+
+## Global Constraints
+
+These requirements apply to every task. Quoted requirements are copied from the spec.
+
+- "Start with `--serve`; native terminal attachment follows in a later phase."
+- "Remove frontend-specific database selection and the mobile-only controller/store/bridge construction."
+- "The executing process owns the fence: the served child for served execution, the native App process for native execution."
+- "Projection congestion must not close that channel or trigger this shutdown path."
+- "Draining and publication never wait on a browser subscriber."
+- "Phone transcript subscriptions do not resize the terminal."
+- "First-release phone Send has no attachments, one-shot prefill or staged RAG launch."
+- "No socket reconnect automatically resends a mutation."
+- "Do not persist drafts in browser localStorage or queue offline commands."
+- "Preserve original run statuses, results, accounting and truthful delivery stamps; never forge `wake_delivered_at` to suppress that work."
+- "No automatic deletion is part of this release."
+- "Upgrade/consolidation requires older app processes to quiesce before the new ownership contract applies."
+- "Run the full test suite only if the user opts in."
+- Preserve native hooks, permission stores, scratch/binding/exclusion authority, project-instruction consent, thinking/capture policy, and dispatch recovery. A projection, ticket or VPN connection grants no execution permission.
+- Use existing session admission/preparation, queues, interrupt-round resolvers and subagent mailboxes. Do not switch the desktop tab to perform phone work.
+- Keep the mobile-surface exposure flag, session/CSRF/origin protections, device revocation, TLS and trusted-proxy policy. Canvas disablement revokes Canvas capabilities without disabling Console control.
+- Read `backlog/docs/design-language.md` and `backlog/docs/component-patterns.md` before UI edits. Browser CSS uses documented semantic equivalents; do not paste TCSS tokens into browser CSS or edit the generated TCSS bundle.
+- Every task starts by reading its task file, setting it In Progress and adding its own Implementation Plan through Backlog. The To Do records intentionally contain outcomes and links, not premature Implementation Plan sections.
+- At execution time use an isolated checkout through the worktree skill; preserve existing dirty work. Commit only the task's named changes. Do not push, merge, migrate real user data or run an unrequested full sweep as part of this plan.
+
+## Delivery order and review boundaries
+
+This is one connected product change. Each row is a separate PR-sized deliverable and review gate. Tasks 1, 2 and 7 are independent foundations; the numbered order is the safe default for one executor.
+
+| Step | Backlog task | Earlier dependencies | Independently testable result |
+| --- | --- | --- | --- |
+| 1 | [TASK-36759](../../../backlog/tasks/task-36759%20-%20Fence-Console-execution-by-the-physical-agent-run-store.md) | Planning task | Native/run-store execution fencing and non-mutating inspection |
+| 2 | [TASK-36760](../../../backlog/tasks/task-36760%20-%20Keep-served-control-and-projection-draining-independent-of-phone-clients.md) | Planning task | Authenticated control and event draining without phone use |
+| 3 | [TASK-36761](../../../backlog/tasks/task-36761%20-%20Retain-served-Console-hosts-and-safely-reattach-terminal-browsers.md) | 1, 2 | Retained process and terminal reattachment |
+| 4 | [TASK-36762](../../../backlog/tasks/task-36762%20-%20Admit-phone-owned-Console-input-and-explicit-agent-commands.md) | 1, 2 | Command-owned Send and native exact-target commands |
+| 5 | [TASK-36763](../../../backlog/tasks/task-36763%20-%20Project-Console-chats-and-retained-decisions-from-runtime-owners.md) | 2, 4 | Runtime projections and background decisions |
+| 6 | [TASK-36764](../../../backlog/tasks/task-36764%20-%20Reconcile-mobile-command-tickets-and-durable-outcomes.md) | 2, 4, 5 | Expiring tickets and durable outcome reconciliation |
+| 7 | [TASK-36765](../../../backlog/tasks/task-36765%20-%20Preview-and-coherently-capture-legacy-mobile-history.md) | Planning task | Read-only migration preview and coherent capture coverage |
+| 8 | [TASK-36766](../../../backlog/tasks/task-36766%20-%20Consolidate-legacy-mobile-history-with-recoverable-ownership-and-quarantine.md) | 1, 6, 7 | Recoverable history import and inert imported authority |
+| 9 | [TASK-36767](../../../backlog/tasks/task-36767%20-%20Route-the-mobile-API-to-canonical-retained-Console-owners.md) | 3, 4, 5, 6, 8 | Canonical mobile API and retired mobile engine |
+| 10 | [TASK-36768](../../../backlog/tasks/task-36768%20-%20Build-the-Chats-first-shared-Console-phone-workflow.md) | 9 | Usable phone workflow |
+| 11 | [TASK-36769](../../../backlog/tasks/task-36769%20-%20Qualify-shared-served-Console-control-and-document-release-limits.md) | 10 | Real served/browser qualification and release documentation |
+
+No partial stage may be described as shared mobile Console while it still creates `mobile/chat.db`, `mobile/workspaces.db` or `mobile/runs.db`. Keep existing behavior behind the current API until Task 9's verified cutover gate is ready; do not introduce another user-facing mode or permanent compatibility engine.
+
+## Source map and verification discipline
+
+Read the living references in `Docs/Architecture/{console,agent-runtime,web-server,backup-recovery,database-layer,console-file-authority}.md` plus ADR-244. ADR-094 governs accepted turns, ADR-126 recovery, ADR-233 authentication, ADR-230 preparation, and ADR-150/161 visual language. ADR-234/236 apply only where ADR-244 has not replaced them.
+
+| Unit | Existing owner to extend | New focused source, where needed |
+| --- | --- | --- |
+| Physical execution fence | `ConsoleRuntime`, `AgentRunsDB`, existing recovery/writer callers | `Chat/console_execution_owner.py` |
+| Wire identity and projection pressure | `Canvas/control_protocol.py`, `app_served.py`, relay publisher | `Chat/console_remote_models.py`, `Web_Server/served_console_events.py` |
+| Retained host/terminal | `Web_Server/serve.py`, its AppService subclass, App composition | `Web_Server/served_console_hosts.py`, `Web_Server/console_web_driver.py` |
+| Native commands | Received-intent/dispatch mixins, controller and agent bridge | `Chat/console_remote_commands.py` |
+| Native reads/decisions | Store, runtime, `InterruptRoundHost`, relay publisher | `Chat/console_remote_projection.py` |
+| Command receipts | Existing `AgentRunsDB` transactions and recovery adapter | `DB/console_command_receipts.py`, `Chat/console_remote_receipts.py` |
+| Consolidation | Existing recovery inventory, service, CLI, journal and owner adapters | `Backup_Recovery/mobile_consolidation.py`, `mobile_consolidation_apply.py` |
+| Phone API/UI | Existing mobile service/API, Library read services and `/m` assets | Extend existing files; no second frontend or engine |
+
+Use `.venv/bin/python`, not the macOS system Python. Use real file-backed SQLite when worker threads must share a store; memory SQLite is appropriate for single-connection owner tests. Reuse `Tests/console_provider_doubles.py` and its typed provider destinations. Never make a provider test pass by omitting native persistence or permission checks.
+
+For each task: record a failing new behavior test, implement, run its listed targeted tests, run scoped syntax/lint/format checks and self-review, then commit. Re-run only failed/changed connected tests when new evidence warrants it. Do not count a skipped browser test or static source assertion as runtime qualification. A baseline failure must be reproduced against the same pre-change source before attributing it to this work.
+
+Use the existing Ruff qualification toolchain for changed Python: `python -m ruff check` and `python -m ruff format --check` on explicit changed paths. Do not reformat an entire legacy module to hide inherited debt. For Task 1's inherited runtime path, the existing ratchet commands are shown below; use the current task's exact paths and its own evidence file for subsequent tasks. Missing tooling or inherited failures are evidence gaps to report, not green checks. `python -m compileall -q` on touched Python, `node --check` on touched JS and `git diff --check` provide additional scoped checks.
+
+```bash
+.venv/bin/python scripts/terminal_qualification/format_ratchet.py snapshot --base HEAD --output Docs/superpowers/qa/2026-10-25-shared-console-mobile-supervision/task-36759-format.json --path tldw_chatbook/Chat/console_runtime.py
+.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline Docs/superpowers/qa/2026-10-25-shared-console-mobile-supervision/task-36759-format.json
+```
+
+### Task 1: Fence Console execution by the physical run store — TASK-36759
+
+**Files**
+
+- Create: `tldw_chatbook/Chat/console_execution_owner.py`.
+- Modify: `Chat/console_runtime.py::ensure_activity_receipt_service`, `DB/AgentRuns_DB.py::__init__/reconcile_orphaned_runs`, `DB/private_sqlite.py` owner policy; paths are under `tldw_chatbook/`.
+- Modify every production auxiliary opener: `Chat/console_worktree_recovery.py`, `Workspaces/change_retention.py`, `Widgets/settings_agents_panel.py`, and the temporary legacy `Web_Server/mobile_service.py` until its retirement.
+- Test: create `Tests/Chat/test_console_execution_owner.py`; extend `Tests/DB/test_agent_runs_db.py`, `Tests/Agents/test_agent_runs_db_connection_reuse.py`, `Tests/Chat/test_console_runtime_lifetime.py`, `Tests/Chat/test_console_runtime_shutdown.py` and affected opener fixtures.
+- Docs: `Docs/Architecture/console.md`, `database-layer.md`, `web-server.md`; link ADR-244 in implementation notes.
+
+**Interfaces**
+
+- Produces `ConsoleExecutionOwner.acquire(run_store: Path) -> ConsoleExecutionOwner`, `require_current(run_store: Path) -> None`, `close() -> None`, and context-manager support. Errors `ConsoleExecutionBusy` and `ConsoleExecutionUnavailable` distinguish a contender from failed/unsafe lock admission; both refuse execution.
+- Extend file-backed `AgentRunsDB` construction with `execution_owner: ConsoleExecutionOwner | None` and add `AgentRunsDB.open_read_only(db_path: Path) -> AgentRunsDB`. In-memory isolated DBs need no OS lease. Non-owning file reads skip schema initialization and reject every mutation/recovery entry.
+- Consumes existing `Utils.private_paths.open_private_lock_stream`, `verify_trusted_directory` and `Utils.platform_files.fcntl/os`. Keep execution ownership separate from maintenance admission and the warning-only `Utils/instance_lock.py` API.
+
+- [x] **Step 1: Add a real competing-process regression.** Place the complete test below in the new test file; import `Path`, `subprocess`, `sys` and the two owner symbols. The child imports only the dependency-light owner module and inherits the test's isolated environment.
+
+```python
+def test_other_process_cannot_execute_the_same_store(tmp_path):
+    path = tmp_path / 'agent_runs.db'
+    program = (
+        'import sys\n'
+        'from pathlib import Path\n'
+        'from tldw_chatbook.Chat.console_execution_owner import '
+        'ConsoleExecutionOwner, ConsoleExecutionBusy\n'
+        'try:\n'
+        '    ConsoleExecutionOwner.acquire(Path(sys.argv[1]))\n'
+        'except ConsoleExecutionBusy:\n'
+        '    raise SystemExit(19)\n'
+        'raise SystemExit(0)\n'
+    )
+    with ConsoleExecutionOwner.acquire(path):
+        result = subprocess.run(
+            [sys.executable, '-c', program, str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+    assert result.returncode == 19, result.stderr
+    with ConsoleExecutionOwner.acquire(path):
+        pass
+```
+
+- [x] **Step 2: Run the regression before adding the owner.** Run `.venv/bin/python -m pytest Tests/Chat/test_console_execution_owner.py -q`; the new owner import must fail. Then add variants for two chat filenames in one parent, safe creation before the DB exists, a surviving child after parent death, actual holder death, and alias/unsupported-lock refusal. Use IPC entry/exit barriers, not sleeps, to establish contention.
+- [x] **Step 3: Implement the retained OS lease and guard all disk execution opens.** Key by the secured physical parent plus fixed run-store leaf, verify the existing store when present, and reject aliases that do not preserve one authority. Use a stable private lock leaf beside that resource and never unlink it. Keep the acquired stream strongly referenced through physical teardown; lock-file/PID existence is informational only.
+
+```python
+from tldw_chatbook.Utils.platform_files import fcntl
+from tldw_chatbook.Utils.private_paths import open_private_lock_stream
+
+# Inside acquire, after native path/identity admission:
+stream = open_private_lock_stream(lock_path)
+try:
+    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BaseException:
+    stream.close()
+    raise
+```
+
+`lock_path` is derived only from that admitted resource. Translate genuine contention to Busy and all other lock/path failures to Unavailable. Do not copy the advisory helper's fail-open exception handling. Acquire before an execution-capable constructor, migration, orphan sweep or automatic recovery. `require_current` checks the original process and admitted identity; it is not a serializable boolean permission. Propagate that same owner into worktree recovery and retention writers. Do not release it while a retained worker/DB callback can still write.
+- [x] **Step 4: Add and use the sweep-free read path.** Add the private SQLite read policy for the actual AgentRuns owner, use read-only connection mode without initialization, and reject writes rather than silently upgrading to an execution owner.
+
+```python
+def _require_execution_owner(self):
+    if self.is_memory_db:
+        return
+    if self._read_only or self._execution_owner is None:
+        raise ConsoleExecutionUnavailable('execution_owner_required')
+    self._execution_owner.require_current(self.db_path)
+```
+
+Call this before constructor-side schema/reconciliation and explicit recovery/mutation paths. Audit `rg -n 'AgentRunsDB\(' tldw_chatbook Tests`; assign readers versus execution writers explicitly and update connected file-backed fixtures. Do not bypass the disk guard globally in conftest. The native App's empty runtime holder and ordinary saved-history reads do not acquire execution authority.
+- [x] **Step 5: Verify native compatibility and commit.** Run the new test plus the five listed connected modules, `Tests/Chat/test_console_worktree_recovery_lifetime.py`, `Tests/DB/test_private_sqlite.py` and `Tests/Backup_Recovery/test_agent_runs_recovery_schema.py`. Assert read-only opens leave file/schema/run rows unchanged, failed contenders perform no sweep, and owner release follows physical cleanup. Apply scoped static checks, update docs/task notes, and commit `fix: fence Console execution by physical run store` using explicit file paths.
+
+### Task 2: Independent control lifetime and bounded projection recovery — TASK-36760
+
+**Files**
+
+- Create: `tldw_chatbook/Chat/console_remote_models.py`, `tldw_chatbook/Web_Server/served_console_events.py`.
+- Modify: `Canvas/control_protocol.py`, `app_served.py`, App served-control construction in `app.py`, `Web_Server/serve.py::on_startup/_disable_canvas_runtime/_attach_mobile_relay`, `Web_Server/served_relay_publisher.py`, and the existing relay-consumer wiring in `Web_Server/mobile_service.py`.
+- Test: extend `Tests/Canvas/test_control_protocol.py`, `Tests/Web_Server/test_served_relay_publisher.py`; create `Tests/Web_Server/test_served_console_events.py`.
+- Docs: `Docs/Architecture/web-server.md`; preserve ADR-233 and amended ADR-236 scope rules.
+
+**Interfaces**
+
+- Produces frozen, extra-forbidden Pydantic `ConsoleHostIdentity(server_epoch: str, console_id: str)` and `ConsoleTarget` below. The Console ID is stable for one retained child; a replacement child receives a new ID even under the same server epoch. Apply existing `validate_opaque_identifier` to all non-null identity fields; reject raw paths and labels as identities.
+- Produces `ConsoleEventBuffer(limit: int = 64)`, `publish(kind: str, payload: dict) -> int`, `read(after_sequence: int) -> ConsoleEventBatch`, async `wait_changed(after_sequence: int) -> None`, `note_changed(sequence: int) -> None`, and `acknowledge_snapshot(sequence: int) -> None`. `ConsoleEventBatch` has `sequence: int`, `reset_required: bool`, `events: tuple[dict, ...]`.
+- The private protocol adds bounded `console.snapshot`, `console.events`, `console.ticket`, `console.command`, `console.receipt` request/response pairs and `console.changed` events. Each pair uses the existing `.request`/`.response` suffix convention. Later tasks supply their native handlers; unsupported handlers refuse rather than constructing an engine. Bump the private protocol from version 2 to 3 for both parent and child; reject old versions.
+
+```python
+from pydantic import BaseModel, ConfigDict
+
+class ConsoleHostIdentity(BaseModel):
+    model_config = ConfigDict(frozen=True, extra='forbid')
+    server_epoch: str
+    console_id: str
+
+class ConsoleTarget(ConsoleHostIdentity):
+    session_id: str
+    incarnation_id: str
+    turn_id: str | None = None
+    run_id: str | None = None
+    handle_id: str | None = None
+    round_id: str | None = None
+```
+
+- [x] **Step 1: Add a bounded-overflow test with no subscriber.** The new buffer's reset marker must survive trimming and clear only on a current snapshot acknowledgement.
+
+```python
+def test_unread_projection_overflow_requires_snapshot_not_disconnect():
+    from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+
+    buffer = ConsoleEventBuffer(limit=2)
+    for revision in range(7):
+        buffer.publish('chat_changed', {'session_id': 'chat-a', 'revision': revision})
+    batch = buffer.read(after_sequence=0)
+    assert batch.reset_required
+    assert len(batch.events) <= 2
+    buffer.acknowledge_snapshot(batch.sequence)
+    current = buffer.read(after_sequence=batch.sequence)
+    assert not current.reset_required
+```
+
+- [x] **Step 2: Run RED and add the transport integration cases.** Run `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_events.py -q`. Extend the existing broker/client loopback fixture with >64 child projection events before any mobile service exists, Canvas-disabled startup, mobile disabled, a paused subscriber and forged/old protocol envelopes. Assert the same authenticated connection survives projection overflow and command responses are still correlated.
+- [x] **Step 3: Implement the bounded projection branch.** Retain a sequence counter and sticky reset marker in `ConsoleEventBuffer`; the buffer never owns native outcomes. In the broker, route only replaceable Console projection events into this bounded path. On overflow, coalesce/drop projection history and mark reset; do not raise `event_backpressure` for that projection loss. Continue resolving response frames directly through the existing pending map. Preserve authenticated connection failure on malformed messages or revoked child authority.
+
+```python
+# In the dedicated Console projection-event branch:
+sequence = host_events.publish(message.message_type, dict(message.payload))
+host_events.note_changed(sequence)
+# Responses continue through the existing request-id resolver, not this buffer.
+```
+
+Add `note_changed(sequence: int) -> None` as the buffer's bounded wake signal: one set Event, no per-event task or unbounded queue. Existing Canvas events retain their feature semantics; if sharing a bounded carrier with Console projections, its overflow must also use a reset rather than destroying runtime control.
+- [x] **Step 4: Move drain lifetime to child registration.** Register the lifecycle drainer before starting child publication. It drains without waiting on phone sockets and outlives every browser subscription. Replace `MobileChatService.attach_relay`'s exclusive lazy broker drain with observation of the lifecycle-owned projection state; keep its existing API behavior until Task 9 retires the engine. Consumers of a lost projection show reset/unavailable state until native refresh, never stale approval authority. Keep the runtime broker alive when Canvas is disabled; revoke only Canvas capabilities/routes. Keep parent/child launch secrets out of representations and wire projections. Actual control-channel loss remains observable for Task 3's shutdown path, rather than being hidden by a fake reconnect success.
+- [x] **Step 5: Verify and commit.** Run `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_events.py Tests/Canvas/test_control_protocol.py Tests/Web_Server/test_served_relay_publisher.py Tests/Web_Server/test_web_auth_integration.py -q`. Verify bounded memory/reset state under overflow and current-child-only response routing. Apply scoped static checks and commit `fix: decouple Console control from projection subscribers` with explicit paths.
+
+### Task 3: Retained child hosts and terminal reattachment — TASK-36761
+
+**Files**
+
+- Create: `tldw_chatbook/Web_Server/served_console_hosts.py`, `tldw_chatbook/Web_Server/console_web_driver.py`.
+- Modify: `Web_Server/serve.py::handle_websocket/on_shutdown/build_chatbook_app_service_class`, `app_served.py`, the served driver selection in `app.py`, and attachment readiness handling in `Web_Server/static/served_shell.js`.
+- Test: create `Tests/Web_Server/test_served_console_hosts.py`, `Tests/Web_Server/test_console_web_driver.py`; extend `Tests/Canvas/browser/canvas_live_harness.py`, `test_canvas_served_flow.py`, `Tests/Web_Server/test_served_shell_browser.py`.
+- Docs: `Docs/Architecture/web-server.md`, `console.md`.
+
+**Interfaces**
+
+- Consumes Task 1's `ConsoleExecutionOwner` in the child and Task 2's identity/event contracts.
+- Produces `ServedConsoleHosts.get_or_start(storage_identity: str) -> ServedConsoleHost` (async, serialized per admitted identity) and `aclose() -> None` (async). Identity is derived from admitted server resources, never a browser path.
+- `ServedConsoleHost.attach_terminal(browser_session_id: str, width: int, height: int) -> TerminalAttachment` is async. Attachment exposes `generation: str`, async `send_bytes(data: bytes)`, `resize(width: int, height: int)`, `detach()`. Every method verifies the current attachment identity.
+- `ConsoleWebDriver` extends the installed `WebDriver.on_meta` seam and adds `reattach(width: int, height: int, generation: str) -> None` on the App thread. It restores modes and schedules a full repaint without starting another input thread.
+
+- [x] **Step 1: Add the stale-attachment regression.** In the new host test module, provide a local `RecordingAppService` with async `start/stop/send_bytes/send_meta/set_terminal_size`, an output callback and lists of received operations. Construct the host through a fixture `recording_host` using that service; this is a unit seam, not real-process qualification.
+
+```python
+async def test_old_attachment_cannot_resize_or_detach_successor(recording_host):
+    host, service = recording_host
+    first = await host.attach_terminal('browser-a', 80, 24)
+    second = await host.attach_terminal('browser-b', 100, 30)
+    with pytest.raises(StaleTerminalAttachment):
+        await first.resize(10, 10)
+    await first.detach()
+    await second.send_bytes(b'x')
+    assert service.input_bytes == [b'x']
+    assert service.stop_calls == 0
+    assert host.current_attachment is second
+```
+
+Declare `StaleTerminalAttachment` in `served_console_hosts.py`, and `current_attachment` as the host's read-only current-attachment property. Add concurrent `get_or_start` and slow/dead-socket tests. Run `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_hosts.py -q` and observe RED.
+- [x] **Step 2: Retain AppService and continuously drain output.** `handle_websocket` attaches to a host and its `finally` detaches only that exact attachment. Remove per-socket `AppService.stop`. AppService callbacks publish to a bounded attachment queue without awaiting a browser; queue pressure detaches/resets the terminal subscriber while the AppService continues draining. Reuse the existing subclass/environment seam and keep one child start task per admitted identity.
+
+```python
+# The WebSocket handler's ownership boundary:
+attachment = await host.attach_terminal(browser_session.id, width, height)
+try:
+    await self._process_attached_terminal(request, websocket, attachment)
+finally:
+    await attachment.detach()
+```
+
+Add `_process_attached_terminal(request, websocket, attachment) -> None` to the mixin as the existing authenticated input loop with generation-checked sends/resizes. Session revocation closes that browser's attachments/subscriptions and Canvas scopes, not the child. Reserve saved-conversation hydration under the host and register the persistent ID on save.
+- [x] **Step 3: Implement an explicit render boundary.** Send a `console_reattach` meta packet carrying generation and dimensions. The driver posts work to the App thread; emit `console_attachment_begin` before restoring alternate-screen/mouse/bracketed-paste/cursor/sync state, apply dimensions, force full compositor invalidation, then emit matching `console_attachment_ready` after paint. The parent drops stale/detached output until the matching begin boundary; input stays disabled until matching ready. Do not re-emit the startup `__GANGLION__` framing sentinel or call `start_application_mode` again.
+
+```python
+# On the owner thread, after validating the attachment generation:
+self.write_meta({'type': 'console_attachment_begin', 'generation': generation})
+self.write('\x1b[?1049h')
+self._enable_mouse_support()
+self.write('\x1b[?25l')
+self._enable_bracketed_paste()
+self._request_terminal_sync_mode_support()
+self.flush()
+```
+
+Route ordinary meta kinds through `super().on_meta`. Add a repo-owned driver subclass rather than editing `.venv` or vendor source. Test that input-thread start count stays one and that resize/repaint completion precedes readiness.
+- [x] **Step 4: Join the actual host lifecycle to native shutdown.** On genuine parent/control loss close new admission and automatic wakes, invoke the existing bounded runtime shutdown and retain the execution lease through physical retirement. A replacement must remain blocked if the child survives or hangs. Server shutdown iterates retained hosts; explicit session close and native Stop retain their separate scopes. Do not convert a timer into proof of owner death.
+- [x] **Step 5: Verify real retention and update changed old expectations.** Run the two new unit files plus `Tests/Chat/test_console_runtime_shutdown.py` and focused real-child cases in `Tests/Canvas/browser/test_canvas_served_flow.py`. Update the old tests named `test_terminal_websocket_echo_survives_private_control_channel_loss` and `test_hot_reload_branch_switch_exact_reopen_and_control_loss_keep_terminal`: genuine runtime-control loss now invokes bounded shutdown; disabling Canvas alone preserves runtime control. Replace two-browser/two-child assumptions with one terminal attachment plus independent phone clients while preserving Canvas cross-session refusal. Use the existing `start_live_served_stack` rather than a new server harness. Commit `feat: retain served Console hosts across browser disconnects` after scoped static checks.
+
+### Task 4: Command-owned phone input and native exact-target controls — TASK-36762
+
+**Files**
+
+- Create: `tldw_chatbook/Chat/console_remote_commands.py`.
+- Modify: `Chat/console_received_intent.py`, `console_received_dispatch.py`, `console_configuration_preparation.py`, `console_runtime.py`, `console_chat_controller.py`; extend `console_agent_bridge.py` only where its existing handle/run checks need an expected-run witness.
+- Test: extend `Tests/Chat/test_console_received_intent_inputs.py`, `test_console_received_intent_custody.py`, `test_console_received_intent_transitions.py`; create `Tests/Chat/test_console_remote_commands.py`.
+- Docs: `Docs/Architecture/console.md`, `agent-runtime.md`.
+
+**Interfaces**
+
+- Consumes Task 2's `ConsoleHostIdentity` and `ConsoleTarget` and Task 1's executing runtime owner.
+- Extend the existing frozen `ConsoleSessionInputSnapshot` with `input_origin: Literal['composer', 'command'] = 'composer'` and `command_id: str | None = None`. Do not replace `ConsoleReceivedTurnIntent` or add another admission slot.
+- Add `ConsoleChatStore.command_input_snapshot(session_id: str, *, text: str, command_id: str) -> ConsoleSessionInputSnapshot`; only the runtime command path constructs this origin. It captures session/configuration/binding witnesses, submitted text, empty attachments/prefill and no desktop staged evidence.
+- Produce `ConsoleRemoteCommands(runtime, host_identity)` with async `send(target: ConsoleTarget, text: str, command_id: str, *, expected_revisions: dict[str, int]) -> str` returning the existing custody turn ID, and async `execute(action: str, target: ConsoleHostIdentity | ConsoleTarget, payload: dict, command_id: str) -> dict`. Send payload has exactly `text` and `expected_revisions`; the revision map has `settings_revision`, `generation_settings_revision`, `context_policy_revision`, `identity_revision` and `conversation_binding_revision` from the last confirmed target snapshot. Require non-negative integers, excluding bool, and revalidate them before capture and native promotion. Initially support Send, main controls and subagent guidance/Stop; unsupported actions refuse. Task 5 adds decisions and Task 9 adds create/open through these same owners.
+- Add controller `steer_run(session_id: str, text: str, *, expected_run_id: str) -> str | None`, `redirect_run` with the same signature, and `stop_run(session_id: str, *, expected_run_id: str | None, expected_turn_id: str | None, record_user_stop: bool = True) -> bool`. Stop requires an exact existing turn or run; do not allow an untargeted remote Stop of whatever happens to be next. Existing active-tab methods derive the current native target and delegate.
+
+- [x] **Step 1: Add the independent-composition regression to the existing input fixture.** This complete test reuses that module's `input_store` and `_attachment` helpers.
+
+```python
+def test_command_inputs_ignore_desktop_composition_but_keep_native_scope(input_store):
+    store, session = input_store
+    store.set_session_draft(session.id, 'desktop first')
+    store.add_pending_attachment(session.id, _attachment('desktop-only'))
+    store.set_session_one_shot_prefill(session.id, 'desktop prefill')
+    snapshot = store.command_input_snapshot(
+        session.id, text='phone correction', command_id='command-a',
+    )
+    store.set_session_draft(session.id, 'desktop newer')
+    assert store.session_inputs_are_current(snapshot)
+    assert snapshot.draft == 'phone correction'
+    assert snapshot.attachments == ()
+    assert snapshot.one_shot_prefill is None
+    assert store.session_draft(session.id) == 'desktop newer'
+    assert session.pending_attachments[0].attachment_id == 'desktop-only'
+    assert session.one_shot_prefill == 'desktop prefill'
+```
+
+- [x] **Step 2: Run RED and add promotion/race cases.** Run `.venv/bin/python -m pytest Tests/Chat/test_console_received_intent_inputs.py -q`. Extend the real custody fixture so phone input reaches the existing prepared/queued send while desktop typing and active-tab switches occur. Gate actual preparation entry and mutate native settings/binding separately to prove those changes still refuse. Assert one exact phone echo, no desktop composition transfer, no global staged-RAG consumption and no early accepted/applied claim.
+- [x] **Step 3: Extend the existing input origin instead of editing the desktop draft.** Factor shared core witness checks within `session_inputs_are_current`; retain the original full composer comparison for composer snapshots. A command snapshot compares session/incarnation/settings/context/binding but has no authority over desktop input revisions. Keep `repr=False` on text-bearing fields.
+
+```python
+# In received admission, after session_inputs_are_current has checked its origin:
+claim = store.claim_received_turn(
+    intent.session_id,
+    intent.turn_id,
+    draft_revision=(
+        intent.inputs.draft_revision
+        if intent.inputs.input_origin == 'composer'
+        else None
+    ),
+)
+```
+
+The native claim already supports `draft_revision=None`; reuse it rather than adding a parallel claim API. In phone preparation skip only composer-owned draft transfer, attachment/prefill capture, view-generation coupling and global staged-evidence checks. Keep native source/configuration/currentness, permissions, hook policy, physical callback custody and atomic promotion. `commit_session_input_draft` remains a composer operation and is never called for phone input. This is manual origin for native hook/budget semantics, not automatic-work authority.
+- [x] **Step 4: Add target-based native controls.** Resolve the exact live session/incarnation before touching per-session maps, then check expected turn/run/handle under the native ownership fence. Extract the existing active control bodies into those explicit-session methods; active wrappers delegate without temporarily switching `store.active_session_id`. Include response-rule preparation, queued-continuation Stop and physical cancellation paths from the existing `stop_active_run`, not only streaming cancellation. Return native refusals unchanged. Subagents use `steer_subagent`/`cancel_subagent` and their conversation-owned mailbox; add no subagent Redirect.
+
+```python
+def steer_active_run(self, text: str) -> str | None:
+    session_id = self.store.active_session_id
+    if session_id is None:
+        return 'no active run to steer — plain messages queue for the next turn'
+    run_id = self._current_primary_run_id(session_id)
+    if run_id is None:
+        return 'no active run to steer — plain messages queue for the next turn'
+    return self.steer_run(session_id, text, expected_run_id=run_id)
+```
+
+Implement `_current_primary_run_id(session_id: str) -> str | None` from the bridge's existing live-primary lookup and session's durable conversation identity; do not select the newest historical row as proof of live execution. Runtime `send` captures checked target configuration via `capture_received_configuration_owned`, constructs the existing received intent with command origin and submits it under native custody. Its return means Preparing; acceptance is observed later by Task 6.
+- [x] **Step 5: Verify and commit.** Run the three existing input/custody files, `Tests/Chat/test_console_received_intent_saved_acceptance.py`, `Tests/Chat/test_console_remote_commands.py`, `Tests/Chat/test_console_runtime_shutdown.py`, and connected steering/subagent tests located by `rg -l 'steer_active_run|redirect_active_run|steer_subagent' Tests/Chat Tests/Agents`. Cover two concurrent chats, stale incarnation/run, worker completion during submission, queued-versus-consumed guidance and untouched desktop state. Commit `feat: add exact-target Console command input` after scoped static checks.
+
+### Task 5: Runtime projections and answerable decisions — TASK-36763
+
+**Files**
+
+- Create: `tldw_chatbook/Chat/console_remote_projection.py`.
+- Modify: `Chat/console_runtime.py`, `console_interrupt_rounds.py`, `console_remote_commands.py`, `Web_Server/served_relay_publisher.py`, child control-handler wiring in `app_served.py`.
+- Test: create `Tests/Chat/test_console_remote_projection.py`; extend `Tests/Chat/test_console_interrupt_rounds.py`, `Tests/Web_Server/test_served_relay_publisher.py`, `Tests/Chat/test_console_runtime_lifetime.py`.
+- Docs: `Docs/Architecture/console.md`, `web-server.md`.
+
+**Interfaces**
+
+- Consumes Task 2's event buffer/identities and Task 4's exact command dispatcher.
+- Produces `ConsoleRemoteProjection(runtime, host_identity, events)` with `snapshot(target: ConsoleTarget | None, *, cursor: str | None = None, limit: int = 50) -> dict`, `subscribe(after_sequence: int) -> ConsoleEventBatch`, and `set_answerable(client_id: str, target: ConsoleTarget, *, answerable: bool) -> None`.
+- Produce `InterruptRoundHost.remote_rounds(session_id: str) -> tuple[dict, ...]` and `resolve_remote_round(target: ConsoleTarget, *, kind: str, answer: dict) -> dict`, implemented through existing retained kind-specific resolvers. Remote snapshot rows include `supported`, a reason when unsupported, kind/round/run identities and current answerability, never widget references or automatic instruction bodies.
+- Snapshot DTO keys: `server_epoch`, `console_id`, `sequence`, `reset_required`, `chats`, `messages`, `next_cursor`, `fleet`, `decisions`, `recoveries`. Live chat rows include the five-field `expected_revisions` map consumed by Task 4, with no draft/attachment revisions. Scope every non-null target before reading. Existing per-page maximum remains 100; bound serialized projection pages to 64 KiB with cursor continuation within a large text message. Include content revision in cursors so replaced/swiped text forces a reset rather than corrupting append offsets.
+
+- [x] **Step 1: Add background-decision and privacy regressions.** Reuse `ConsoleChatStore` ephemeral sessions and native interrupt-round test setup. Add fixture `remote_round` returning `(projection, host, target)` for one real retained approval round in a background session; its finalizer stops that round through the existing native test cleanup. Attach no ChatScreen.
+
+```python
+def test_background_round_remains_answerable_for_the_other_phone(remote_round):
+    projection, host, target = remote_round
+    projection.set_answerable('phone-a', target, answerable=True)
+    projection.set_answerable('phone-b', target, answerable=True)
+    projection.set_answerable('phone-a', target, answerable=False)
+    rows = host.remote_rounds(target.session_id)
+    row = next(row for row in rows if row['round_id'] == target.round_id)
+    assert row['answerable']
+    assert row['supported']
+```
+
+In the same module, seed a literal automatic-instruction body and hidden thinking, take list/fleet/decision metadata snapshots, and assert those sentinel bodies never appear. Test allowed transcript content separately under current capture policy. Run the new module RED before adding projection hooks.
+- [x] **Step 2: Read native state and publish invalidations from runtime lifetime.** Move the relay source from mounted approval-card callbacks to retained runtime/round state. Reuse the existing publisher's bounded loop/thread handoff and cadence; a small `console.changed` event can name session/revision and cause a paginated authoritative read rather than retaining a full transcript per subscriber. Keep every published metadata field allowlisted.
+
+```python
+def set_answerable(self, client_id, target, *, answerable):
+    self._require_target(target)
+    key = (target.session_id, target.round_id)
+    clients = self._answerable_clients.setdefault(key, set())
+    if answerable:
+        clients.add(client_id)
+    else:
+        clients.discard(client_id)
+    self._publish_round_answerability(key, bool(clients))
+```
+
+Implement `_require_target` through the same runtime/current-incarnation checks as commands, and `_publish_round_answerability(key: tuple[str, str | None], answerable: bool) -> None` through the native round host. Bound client registrations by authenticated live subscriptions and delete them on disconnect/resolution. Do not pause or resume a native deadline based solely on a stale device row.
+- [x] **Step 3: Establish snapshot/event boundaries and byte limits.** Register a subscriber cursor before capture, obtain native snapshots under the owners' synchronization and return the matching sequence boundary. If any required event has been dropped or a cursor/message revision is stale, return `reset_required` and a current snapshot. Preserve the sticky reset until the current boundary is acknowledged. Chunk individual large text values as well as row pages; reject oversized control envelopes before attempting serialization. Read saved chat history through the canonical conversation service without hydration or starting a provider.
+- [x] **Step 4: Route supported decision answers through retained owners.** Map approvals, user questions and supported confirmations to their existing `resolve_pending_*` methods with exact kind/session/run/round validation. Include runtime-owned project-instruction dispatch confirmations when their admitted projection can express the native review; otherwise expose an unsupported pending decision with an Open terminal action. Never auto-approve, deny or fabricate a completed resolution to simplify the phone UI. One winner resolves the original round; subsequent answers read its current outcome.
+- [x] **Step 5: Verify and commit.** Run the new projection file, existing interrupt-round/publisher/runtime-lifetime modules and `Tests/Canvas/test_control_protocol.py`. Cover unmounted/background rounds, competing answers, two phone clients with one disconnect, Canvas disabled, sequence gaps, text replacement, byte-budget continuation and inert content. Commit `feat: project Console state from retained runtime owners` after scoped static checks.
+
+### Task 6: Expiring command tickets and durable outcome reconciliation — TASK-36764
+
+**Files**
+
+- Create: `tldw_chatbook/DB/console_command_receipts.py`, `tldw_chatbook/Chat/console_remote_receipts.py`, `tldw_chatbook/DB/migrations/agent_runs_v24_to_v25_console_command_receipts.sql`.
+- Modify: `DB/AgentRuns_DB.py` migration registry/property, `DB/recovery_operations.py`, `Chat/console_runtime.py` custody/acceptance observers, child control-handler wiring.
+- Test: create `Tests/Chat/test_console_remote_receipts.py`, `Tests/DB/test_console_command_receipts.py`; extend `Tests/Backup_Recovery/test_agent_runs_recovery_schema.py`.
+- Docs: `Docs/Architecture/database-layer.md`, `web-server.md`.
+
+**Interfaces**
+
+- Consumes `ConsoleRemoteCommands.execute`, native turn/queue/round outcome identities, Task 1's owner and Task 2's private request/response envelopes.
+- Produces `ConsoleCommandReceipt` with `command_id`, `server_epoch`, `console_id`, `action`, `target`, keyed `payload_fingerprint`, `state`, optional `native_id`/`reason`, issuance/expiry facts and timestamps. States are `pending`, `accepted`, `queued`, `applied`, `refused`, `outcome_unknown`; no text body is stored here.
+- `ConsoleCommandReceiptRepository(runs_db)` exposes `get(command_id: str) -> ConsoleCommandReceipt | None`, `claim(receipt: ConsoleCommandReceipt) -> ConsoleCommandClaim`, `transition(command_id: str, *, expected_state: str, state: str, native_id: str | None = None, reason: str | None = None) -> ConsoleCommandReceipt`, and `prune_invalid(owner_epoch: str, now_ns: int) -> int`. Frozen `ConsoleCommandClaim` contains `receipt: ConsoleCommandReceipt` and `inserted: bool`; only the inserter may issue the effect.
+- `ConsoleRemoteReceipts(commands, repository, host_identity, *, monotonic_ns=time.monotonic_ns)` exposes `issue(action: str, target: ConsoleHostIdentity | ConsoleTarget, payload: dict) -> ConsoleCommandTicket`, async `submit(ticket: str, payload: dict) -> ConsoleCommandReceipt`, and `query(command_id: str) -> ConsoleCommandReceipt | None`. Frozen `ConsoleCommandTicket` contains `token: str` and `command_id: str`; the latter lets the client retain a query identity before requesting the effect. Issue is a submission ticket, not permission to skip native admission.
+- Add repository `list_unresolved(*, cursor: str | None = None, limit: int = 50) -> ConsoleReceiptPage`; this frozen page contains `items: tuple[ConsoleCommandReceipt, ...]` and `next_cursor: str | None`. Add bounded `command_receipts` and `next_receipt_cursor` snapshot fields so a fresh page can discover pending/unknown outcomes after losing its in-memory command IDs. Scope reads to the admitted canonical profile; prior-epoch receipts remain reviewable but cannot be replayed.
+
+- [x] **Step 1: Write the duplicate and expiry regression.** Add a test-only `RecordingCommands` whose async `execute` increments `calls` and returns `{'state': 'applied', 'native_id': 'native-a'}`. In fixture `receipt_owner`, create a real tmp-path AgentRunsDB under Task 1's lease, its repository, a fixed host identity, a mutable monotonic clock and `ConsoleRemoteReceipts`; return `(owner, commands, advance_seconds)` and close DB/lease after the test. The callback `advance_seconds(value)` increments that clock by `int(value * 1_000_000_000)`.
+
+```python
+async def test_duplicate_submission_is_not_reissued_after_expiry(receipt_owner):
+    owner, commands, advance = receipt_owner
+    target = ConsoleTarget(
+        server_epoch='epoch-a', console_id='console-a',
+        session_id='chat-a', incarnation_id='incarnation-a',
+    )
+    payload = {'text': 'one exact correction'}
+    ticket = owner.issue('send', target, payload)
+    first = await owner.submit(ticket.token, payload)
+    assert (await owner.submit(ticket.token, payload)).command_id == first.command_id
+    advance(301)
+    assert owner.query(first.command_id) is not None
+    with pytest.raises(ExpiredConsoleCommand):
+        await owner.submit(ticket.token, payload)
+    assert commands.calls == 1
+```
+
+The recording dispatcher isolates receipt behavior from native turn execution; native target currentness remains covered by Task 4. Add `ExpiredConsoleCommand` to the receipt module. Test payload mismatch, HMAC/deadline tampering, prior epoch, full budget and native Stop with a full receipt table. Run both new files RED.
+- [x] **Step 2: Add the executed migration and strict repository.** At this baseline AgentRuns is v24; bump to v25 and execute the named SQL file through its installed migration registry. Use the existing AgentRuns transaction owner; do not create another DB. Include exact recovery schema catalog/read-authorizer changes and backup coverage. Core table shape:
+
+```sql
+CREATE TABLE console_command_receipts (
+    command_id TEXT PRIMARY KEY,
+    owner_epoch TEXT NOT NULL,
+    console_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_json TEXT NOT NULL,
+    payload_fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (
+        'pending', 'accepted', 'queued', 'applied', 'refused', 'outcome_unknown'
+    )),
+    issued_ns INTEGER NOT NULL,
+    expires_ns INTEGER NOT NULL CHECK (expires_ns > issued_ns),
+    native_id TEXT,
+    reason TEXT,
+    updated_at TEXT NOT NULL
+);
+```
+
+Every query is parameterized; cap retained live/unknown records at a fixed documented internal bound and refuse new non-idempotent effects before dispatch when capacity is exhausted. Never prune pending/unknown evidence because its TTL elapsed. Reuse referenced native recovery facts instead of copying bodies or creating a second recovery state machine.
+- [x] **Step 3: Issue authenticated immutable tickets and claim before effects.** Generate a random command ID and per-host secret, canonically encode action/target/payload fingerprint/host epochs and the monotonic deadline, and authenticate with stdlib HMAC and constant-time comparison. Store `owner_epoch` as the server-epoch/Console-ID pair, not the server epoch alone. The child verifies it even when no receipt exists; the browser cannot extend expiry. Do not reuse the browser CSRF token or expose a child launch secret as the ticket key. Return the token and command ID together; the API does not need to decode an opaque token to invent a query ID.
+
+```python
+expires_ns = issued_ns + 300 * 1_000_000_000
+if ticket_epoch != self.host_identity.server_epoch or now_ns >= expires_ns:
+    raise ExpiredConsoleCommand('command_expired')
+claim = self.repository.claim(pending_receipt)
+if not claim.inserted:
+    return claim.receipt
+```
+
+Consumers must use the explicit insertion result, never infer ownership from `state == pending`. Matching retries return/reconcile an existing receipt, and mismatched payload reuse refuses without effects. Expiry blocks new submission but permits query and does not cancel already accepted work.
+- [x] **Step 4: Couple state transitions to native custody.** `accept_received_intent` returns Preparing: keep the command pending until its existing custody acceptance callback reports actual accepted/queued status and native ID. Steering queued into a mailbox is accepted/queued, not consumed; Stop accepted is not proof the worker exited. Atomically store a receipt with native acceptance where the existing transaction allows it. Otherwise record an interrupted handoff as `outcome_unknown` and never replay it automatically. On owner loss invalidate old tickets and retain/query durable outcomes by canonical profile identity even if a live session no longer exists. Native exact-target Stop has an idempotent path under receipt capacity pressure; do not turn repeated Stop into unbounded rows or a new run.
+- [x] **Step 5: Verify and commit.** Run both new files, `Tests/Chat/test_console_received_intent_saved_acceptance.py`, `Tests/Chat/test_console_dispatch_recovery.py`, `Tests/Canvas/test_control_protocol.py`, `Tests/Backup_Recovery/test_agent_runs_recovery_schema.py`. Inject interruption before claim, after claim, after native acceptance and before acknowledgement; assert no duplicate effect and honest unknown outcomes. Test valid-ticket retention, querying/pruning after expiry, original-versus-tampered target/action, unresolved outcomes and Stop at capacity. Commit `feat: reconcile Console remote command outcomes` after exact-schema and scoped static checks.
+
+### Task 7: Read-only legacy preview and coherent capture — TASK-36765
+
+**Files**
+
+- Create: `tldw_chatbook/Backup_Recovery/mobile_consolidation.py`, `Tests/Backup_Recovery/mobile_consolidation_fixture.py`, `Tests/Backup_Recovery/test_mobile_consolidation_preview.py`.
+- Modify: `Backup_Recovery/inventory.py`, `participants.py`, `profile_paths.py`, `recovery_service.py`, `launcher.py`, and `DB/recovery_operations.py` for explicit legacy-store declarations.
+- Test: extend `Tests/Backup_Recovery/test_inventory.py`, `test_capture.py`, `test_agent_runs_recovery_schema.py`.
+- Docs: `Docs/Architecture/backup-recovery.md`, `Docs/Backup-and-Recovery.md`.
+
+**Interfaces**
+
+- Produces frozen `CanonicalConsoleStores(chat_path: Path, workspace_path: Path, run_path: Path)` with `identity: str` as a derived read-only property from the physical/admitted resources and existing profile/native path boundaries; it is metadata, not execution permission.
+- Produces `MobileConsolidationPreview` containing `source_dir`, `source_fingerprint`, `destination`, `has_data`, `needs_destination_review`, `issues`, schema identities, counts, mappings/dependency inventory and capture/rollback scope. It carries no live DB handles or captured bodies in metadata summaries.
+- `preview_mobile_consolidation(source_dir: Path, destination: CanonicalConsoleStores) -> MobileConsolidationPreview` performs read-only observation; `RecoveryService.preview_mobile_consolidation(source_config: Path, target_config: Path) -> MobileConsolidationPreview` resolves those paths through existing admitted config selection, never browser input.
+- Add recovery CLI `consolidate-mobile --source-config PATH --target-config PATH --preview`. It prints that reviewed inventory; mutation flags are added only with Task 8's apply/recovery support.
+
+- [x] **Step 1: Add the absent-source and no-constructor-write regressions.** The following test is complete without opening a user database.
+
+```python
+def test_absent_mobile_source_preview_does_not_create_databases(tmp_path):
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        CanonicalConsoleStores, preview_mobile_consolidation,
+    )
+
+    target = tmp_path / 'canonical'
+    target.mkdir(mode=0o700)
+    stores = CanonicalConsoleStores(
+        chat_path=target / 'chat.db',
+        workspace_path=target / 'workspaces.db',
+        run_path=target / 'agent_runs.db',
+    )
+    source = tmp_path / 'mobile'
+    preview = preview_mobile_consolidation(source, stores)
+    assert not preview.has_data
+    assert not source.exists()
+    assert not stores.chat_path.exists()
+    assert not stores.workspace_path.exists()
+    assert not stores.run_path.exists()
+```
+
+Run `.venv/bin/python -m pytest Tests/Backup_Recovery/test_mobile_consolidation_preview.py -q` RED. Add constructor traps around source inspection: patch legacy writer constructors to raise and prove preview never calls them.
+- [x] **Step 2: Build reusable isolated source fixtures with installed schemas.** In `mobile_consolidation_fixture.py`, provide `seed_legacy_mobile(source_dir: Path) -> dict` and `seed_canonical_console(destination: CanonicalConsoleStores) -> dict`. Use real `CharactersRAGDB`, `WorkspaceDB` and owned `AgentRunsDB` only to create isolated fixtures, then close every creator before read-only inspection. Return expected source IDs, branch/reference sets and byte fingerprints, not mocks. Seed a branched chat, Default and conflicting named workspaces, excluded paths, a completed parent/child with an undelivered result, an active but fully settled automatic chain, an unfinished claim, a Goal and a referenced artifact. Use existing public DB test builders for each native record shape. This fixture is consumed by Tasks 8 and 11.
+- [x] **Step 3: Admit exact physical sources and schema inventory.** Resolve legacy directories using current `profile_paths.user_data_dir`, independently resolve canonical DB overrides, group shared physical sources across candidate configs and set `needs_destination_review` when records cannot prove attribution. Follow existing private path/alias refusal rules. Inventory every populated source table against installed exact schema/owner policy; classify derived indexes separately and refuse unknown populated content. List message-parent, workspace, chain/run, definition, step, trace and artifact dependencies explicitly. Do not infer equivalence from titles or path strings.
+
+```python
+# Destination is explicit even when several configurations name one source.
+if len(candidate_destinations) > 1:
+    needs_destination_review = True
+    issues.add('mobile_destination_review_required')
+```
+
+This review issue blocks apply until a fresh explicit destination choice is bound; it is not a heuristic that assigns mixed history to the launching profile.
+- [x] **Step 4: Add explicit capture participants and preview-only CLI.** Extend existing inventory/owner declarations so `mobile/chat.db`, `mobile/workspaces.db`, `mobile/runs.db` and required referenced files are inside the normal capture scope. Reuse the installed exact schema adapters; introduce explicit legacy logical identities, not guessed filename globbing. Capture through `MaintenanceSession` and existing WAL-consistent SQLite capture, with affected canonical destination rollback coverage. Honor encrypted credential/capture policy. The preview CLI prints source, selected destination, preserved scope, unresolved issues and source identity without invoking the apply path.
+- [x] **Step 5: Verify and commit.** Run the new preview file and exact inventory/capture/schema modules touched by the declarations. Test WAL-visible source writes, missing dependencies, unsupported schema, unsafe aliases, two configs sharing `user_data_dir()/mobile` but overriding canonical DB paths, and empty source. Assert preview/capture do not reconcile source runs or mutate original bytes. Commit `feat: preview and capture legacy mobile Console data` after scoped static and schema checks.
+
+### Task 8: Journaled consolidation and imported-authority quarantine — TASK-36766
+
+Execution clarification (R122, before accounting policy changes): issue one fixed
+512 MiB public mobile-worker aggregate with the ORIGINAL shared 16 MiB native
+T/S/input/proof child, atomically charging both for child work. Ordinary defaults,
+status and cutover observer remain unchanged. Store the aggregate in a distinct
+native admission ledger slot; preserve slot 2 and all original child identities.
+New coordinator/frame/terminal/rollback work uses the aggregate explicitly; keep
+all pre-admission, native validation/custody and both-bound before-effect checks.
+Record actual phase deltas and qualify full populated/no-data/recovery paths plus
+original/default exhaustion and atomic refusal. The larger fixed envelope is not
+measured success; no reset, refund, hidden retry, caller limit or authority change.
+ADR244 and the immutable R122 snapshot/current checkpoint bind this correction.
+
+Execution clarification (R124, before capacity edit): supersede ONLY R122's
+public512MiB literal with fixed2GiB after actual measured prefix/capture exhaustion.
+Original native16MiB/ordinary16MiB, one genuine coupled pair and all current
+validation/independent limits remain. Preserve failed epochs; qualify five
+coupling controls then one fresh guarded populated start with unchanged-charge
+phase/child evidence and corrected isolated credential setup. No retained-operation
+continuation is authorized. ADR244 and the immutable R124 snapshot/checkpoint bind
+this change; engineering margin is not complete-path success or heap measurement.
+
+**Task8 execution clarification — R125:** implement fixed SourceClaim-owned
+ancestor physical custody after reciprocal reservation and before child EX,
+with full fresh raw/native validation and no nested ancestor locks/cache/third
+budget. Mobile retained-copy no-archive calls authenticate source evidence only;
+actual acquired archive/plan/staging/publication binding, Complete current review
+and new safety capture remain mandatory before effects. ADR244 R125 and its
+immutable snapshot/checkpoint precede code. Current successor and later-copy
+qualification are open;63574 is a private-fixture materialization refusal, while
+57976 is only the first-operation frame identity/pair proof.
+
+**Task8 execution clarification — R126:** after the actual successor budget
+refusal and unchanged-source diagnostic, use the existing native journal frame
+only for genuine public initial captured-input planning and reader retirement.
+Close it before history/owner/target effects; private native16 remains unframed.
+Keep every full verification and the same coupled2GiB/16MiB pair. ADR244 R126 and
+the supplemental checkpoint precede this sequencing edit; no budget increase or
+stopped verification optimization is authorized. Actual successor/private/default
+and post-retirement consumer qualification remains required.
+
+
+**Task8 execution clarification — R127:** use the existing public journal frame
+only inside the three fixed pure receipt/row/recovery-history verification
+bodies, closing before subsequent writes, commit/rollback or owner retirement.
+Preserve private unframed16MiB, the public coupled pair and every full native
+check. ADR244 R127 and the current checkpoint precede sequencing code. The
+source-bounded before-effect coordinator tail and genuine refusal test remain
+open independently of framed success; no cap or authority change is approved.
+
+Task 8 execution clarification R119: qualify the SAME completed target across an
+actual native theme save and a fresh ordinary process. Only the postterminal
+observer may accept current persisted native config binding with unchanged
+ancestors, routes, physical stores, reviewed cohort and per-row candidate
+membership. Recheck current observations and native registry/bindings after
+owner/journal reads under the same allowance. Pending/finish/rollback/successor
+proofs remain strict. Record direct-edit, redirect, new/joined candidate, unbound,
+ancestor, concurrent-publication and pending refusals. Integrated children install
+both normal guards; earlier narrower scripts remain historical evidence. ADR-244
+and the pre-edit native SHA/AST/status checkpoint govern this implementation.
+
+Execution clarification R120: fixed pre-cutover rollback continuation authenticates
+the original canonical archive with the supplied password and validates its exact
+fixed owner/member/schema/stage/move/metadata closure under actual native custody.
+Retain original claim/flock, strict selectors/pending and physical source-path
+witnesses; remove only the newly introduced live semantic source preview. The old
+fingerprint remains an immutable operation reference, not a fresh content claim.
+Import/finish/successor checks remain strict. Preserve all source/current/capture
+bytes and same-call budget/full verification/before-effect cost checks. ADR244 and
+the separate R120 pre-edit checkpoint govern this clarification; qualify the
+actual retained intended-only rename with both guards and honest epoch reporting.
+
+Execution clarification (R121, before reader-policy changes): price initial generic
+preview/discovery and both held re-reviews on the same early-issued allowance.
+Use actual existing PreviewScope/DiscoveryScope issuers, fixed prefetch/schema
+readers and bounded custody. Preserve the entire installed registry/inventory,
+Complete semantics, register-before-maintenance ordering and strict post-binding
+review. No unpriced adapter fallback, new role, caller records or allowance reset.
+Qualify actual unbound populated data, not only no-data or parameter presence;
+ADR244 and the R121 immutable snapshot/current checkpoint bind this clarification.
+
+Execution clarification (R118, before output-policy changes): allow the exact
+native live partition's default-service encrypted output through only the
+authenticated service-container overlap. Keep current journal intention, derived
+filename, original budget/custody, profile-root disjointness and physical identity
+checks at capture preflight and both writer checks. All other overlap guards stay
+in force. Qualify the default no-data operation and finite forged/retired/review/
+custom/unknown-child/profile-overlap/parent-change refusals; ADR244 and the R118
+snapshot/checkpoint bind this correction. Acceptance criteria remain unchanged.
+
+Execution clarification (R117, before enrollment behavior changes): explicit
+selected start may compose first native enrollment for missing source/target
+profiles only. Prove per-selector complete configured roots and fixed source claim
+parent; observe default config controls through installed exact exclusions without
+enrolling their enclosing parent. Register before native maintenance, then recheck
+and publish under unbound/all-overlap exclusion retained through import. Preserve
+existing bindings and the single early-issued budget/custody. Post-binding native
+review must be equivalent for all reviewed user scope; new sibling data yields
+fresh-review-required before preparation. Qualify ordinary unbound no-data and
+populated profiles plus refusal/interruption cases. ADR244 R117 and its source
+snapshot/checkpoint bind this clarification; acceptance criteria remain unchanged.
+
+Execution clarification (R116, before dependent no-data changes): preserve native
+capture completeness. For an uninitialized required canonical target, qualify an
+explicit ordinary app `--config PATH` startup and physical retirement, followed by
+a fresh preview/capture; do not synthesize original absence or initialize inside
+the importer. Refuse incomplete inventory before preparation/pending/claim. Prove
+full no-data cutover on that same initialized target, with any supported optional
+Runs creation journaled, no legacy constructors and ordinary post-retirement reads.
+The rollback image covers the actual post-initialization pre-import state. The
+R115 terminal/rollback/lineage requirements and ADR-244 remain otherwise unchanged.
+
+**Execution dependency notes (R98/R99; original Task8 AC/status/BASE retained).** Complete R/I/C/T/S pure planning is independently approved through `01f42ea55592296224f69b5964449b3fd3bc91b4`; this is not owning-write or cutover approval. Before the pure A-runs foundation, support the actual pre-feature `81/8/24` source alongside existing `81/8/25`, keeping canonical AgentRuns26 unchanged, captured24 bytes/schema intact and ONLY authenticated native24 `console_command_receipts` absence. Amend ADR244 and preserve contemporary before-code evidence for this fixed compatibility prerequisite; independently review it. Then derive complete PURE Run/Goal transformations and ALL-owner supported-content/reference/artifact preflight before native Chat/Workspace writer activation. The foundation has no imported DB/file/hold/receipt/dispatch/cutover effects and does not make pending `require_complete()` succeed. Subsequent real same-operation owner writes must obtain complete actual all-owner preflight before the first file publication or data batch, preserve native legal lifecycle and atomic rows/maps/holds/receipts, and resume from actual receipts. Actual runtime quarantine/history consumers, all-owner closure, public B recovery/cutover/full original Task8 review, Tasks9–11 and the root whole-branch gate remain mandatory.
+
+**Files**
+
+- Create: `tldw_chatbook/Backup_Recovery/mobile_consolidation_apply.py`, `Tests/Backup_Recovery/test_mobile_consolidation_apply.py`, `test_mobile_consolidation_recovery.py`.
+- Create migrations: `DB/migrations/chachanotes_v81_to_v82_mobile_consolidation.sql`, `workspaces_v8_to_v9_mobile_consolidation.sql`, `agent_runs_v25_to_v26_mobile_consolidation.sql`, under `tldw_chatbook/`. Task 6 owns v25; rebase/re-number if another accepted migration advances any owner first.
+- Modify: `Backup_Recovery/mobile_consolidation.py`, `journal.py`, `recovery_service.py`, `launcher.py`, `storage_admission.py`, relevant owner migrations in `DB/{ChaChaNotes_DB,Workspace_DB,AgentRuns_DB}.py`, `DB/{recovery_core_schema,recovery_operations,sql_validation}.py`.
+- Modify authority consumers: `DB/automatic_work.py`, `Chat/console_fleet_wake.py`, `console_launch_wake.py`, `console_goal_runs.py`, and `Workspaces/registry_service.py`.
+- Test: extend `Tests/Chat/test_automatic_wake_recovery.py`, `test_automatic_launch_recovery.py`, `test_console_goal_recovery.py`, `Tests/DB/test_automatic_work_migration.py`, relevant Workspace authority tests and exact recovery schema tests.
+
+**Interfaces**
+
+- Consumes Task 7's immutable preview/physical destination and capture scopes, Task 1's run-store authority and Task 6's schema ceiling.
+- Produces `RecoveryService.start_mobile_consolidation(preview: MobileConsolidationPreview, *, destination_confirmed: bool, rollback_password: bytes | None) -> str` returning an operation ID; no `False` confirmation fallback. Resume/rollback use existing `start_recovery(operation_id, action=...)` and typed recovery CLI.
+- `require_mobile_cutover(source_dir: Path, destination: CanonicalConsoleStores) -> None` in `mobile_consolidation.py` verifies the completed source/destination receipt or refuses writes. It does not create/import data merely because an API request arrives.
+- Native AgentRuns methods `hold_imported_authority(cursor, operation_id: str, authorities: tuple[tuple[str, str], ...]) -> None` and `imported_authority_allowed(kind: str, authority_id: str) -> bool` gate exact imported chain/run/Goal/wake/chat-start identities. They do not gate unrelated new native work by a broad conversation flag.
+- Workspace imported-binding holds use the same owner transaction and existing registry resolution. Imported roots remain unavailable to tools until exact native review; historical binding/exclusion records retain their original meaning. Unsupported release remains paused. Sending a manual turn never clears these holds.
+
+- [ ] **Step 1: Add a crash-after-commit regression through real owner transactions.** Define fixture `consolidation_case` in `test_mobile_consolidation_recovery.py` using Task 7's seed helpers. It returns a case with `preview`, `service`, `destination`, `fail_after_batch: str | None`, `expected_counts: dict[str, int]`, and a `read_counts() -> dict[str, int]` helper reading real stores without reconciliation. The adapter exposes a test-only fault callback after each committed owner batch, passed as a constructor test seam rather than a production configuration option. The callback raises local `InjectedImportCrash` when the committed batch equals `fail_after_batch`.
+
+```python
+def test_resume_after_chat_commit_does_not_duplicate_history(consolidation_case):
+    case = consolidation_case
+    case.fail_after_batch = 'chat'
+    operation = case.service.start_mobile_consolidation(
+        case.preview, destination_confirmed=True, rollback_password=b'test-only',
+    )
+    failed = case.service.wait(operation, timeout=10)
+    assert failed['state'] == 'failed'
+    first = case.read_counts()
+    assert first['chat'] == case.expected_counts['chat']
+    case.fail_after_batch = None
+    resumed = case.service.start_recovery(operation, action='finish')
+    case.service.wait(resumed, timeout=10)
+    assert case.read_counts() == case.expected_counts
+    require_mobile_cutover(case.preview.source_dir, case.destination)
+```
+
+Use the production dependency order: committed prefix counts remain complete while later batches are finished, not duplicated. Add a repeat-after-completed case and verify full mapped reference/identity closure separately; counts alone are insufficient. Run the new recovery file RED and add SQL-level hold/delivery-stamp assertions.
+- [ ] **Step 2: Claim the source once under source-addressed coordination.** Use a stable private lock/claim beside the secured legacy source, visible regardless of destination config/control root. Never unlink the lock. Require affected legacy/older app writers to quiesce and physically retire; if that cannot be established, refuse with a close-old-instance instruction rather than treating the advisory instance lock or absent heartbeat as proof. Under maintenance admission, revalidate source fingerprint, destination resources and explicit review, then journal the operation and persist its source claim before the first import batch. Store operation/control locator and reviewed destination identities in the bounded claim, validate that locator through existing recovery control-root rules, and let another config only resume/review that same operation, never redirect it. An absent-source cutover uses safe creation identity for its admitted source location and does not create legacy DBs.
+
+```python
+if existing_claim is not None:
+    if existing_claim.destination_identity != preview.destination.identity:
+        raise MobileConsolidationRefused('mobile_source_already_claimed')
+    return resume_or_verify(existing_claim.operation_id)
+```
+
+Declare `MobileConsolidationRefused` in `mobile_consolidation.py`. `resume_or_verify(operation_id: str) -> str` is the service's existing-operation branch: inspect the stored journal and either return completed verification or enter explicit recovery; it never starts a second import. A changed fingerprint requires a new reviewed operation, not mutation of the old claim.
+- [ ] **Step 3: Execute per-owner migrations and batch receipts.** Add `mobile_consolidation_batches(operation_id, source_fingerprint, batch_key, mapping_json, committed_at)` to each participating owner with primary key `(operation_id, batch_key)`. Add run authority holds and Workspace binding holds in their respective owners. Increment actual installed versions and execute the SQL files; update exact recovery catalogs and the ChaChaNotes table allowlist. Deterministic UUID mappings are suitable for UUID identities; allocate numeric identities and persist their mapping in the same owner transaction. Never guess that a UUID string can be inserted into an integer key.
+
+```python
+with destination_db.transaction() as cursor:
+    existing = read_batch_receipt(cursor, operation_id, batch_key)
+    if existing is None:
+        apply_mapped_rows(cursor, mapping)
+        insert_batch_receipt(cursor, operation_id, batch_key, mapping)
+```
+
+Implement those three adapter-local functions with fixed table/column policy and parameterized values. No cursor carries a transaction across DB owners. Re-read committed batch receipts before journal resume; journal progress alone is not proof a DB batch committed. Choose dependency order from the inventoried references, allowing only registered rewrite/deferral rules for cross-owner references. Reconcile Default through native invariant; preserve conflicting named workspaces and restrictions as distinct records.
+- [ ] **Step 4: Quarantine authority atomically with imported records.** Record exact holds in the same transaction as the corresponding authority rows; mark imported automatic chains review-required without falsifying run status, accounting or `wake_delivered_at`. Hold terminal undelivered child run IDs even when no active unfinished reservation exists or a chain is absent. Gate native automatic admission, recovery seeding, wake result eligibility, Goal/chat-start dispatch and imported binding advertisement through these holds.
+
+```sql
+CREATE TABLE mobile_import_authority_holds (
+    operation_id TEXT NOT NULL,
+    authority_kind TEXT NOT NULL,
+    authority_id TEXT NOT NULL,
+    reviewed_at TEXT,
+    PRIMARY KEY (authority_kind, authority_id)
+);
+```
+
+Do not copy permission-store grants or activate imported folders. Exact reviewed release must use native current scope/consent; if no supported release exists, surface the hold and leave it in place. A new manual turn may obtain its own fresh native authority without releasing any old imported chain.
+- [ ] **Step 5: Verify closure, publish cutover and support reviewed recovery.** Verify mapped identities/message trees/settings/workspace restrictions/run parentage/steps/artifact bytes and unknown-data coverage under the same admission fence. Publish completed cutover only after all owner receipts and verification are durable. Retain original stores/captures. Before cutover, rollback restores affected originals through existing recovery ownership; after canonical writes begin, route later rollback through the existing reviewed recovery flow, never automatic pre-import overwrite. Extend the CLI to preview, type-confirm destination and start the operation; errors expose the same operation ID and explicit recovery actions.
+- [ ] **Step 6: Verify and commit.** Run the three consolidation test modules, exact affected core/Workspace/AgentRuns schema tests, automatic wake/launch/Goal recovery tests and connected binding/exclusion tests. Inject faults at source claim, capture, mapping, before/after each DB commit, verification and cutover. Cover populated destinations, duplicate IDs, branches, Default conflict, unsupported/unknown content, empty sources, second-config claim, repeated cutover and stale-backup rollback. Require zero automatic provider/tool calls for imported completed undelivered results and settled active chains through recovery/resume/manual-turn controls. Commit `feat: consolidate legacy mobile history with recovery fences` after scoped static and catalog checks.
+
+R128 execution clarification (ADR244): exactly two fixed public owner transaction
+frames begin after construction and close before retirement/publication. Three
+pure verifiers require the exact current frame; private16MiB and public2GiB stay.
+Before-effect capacity and restored-generation observer decisions remain open.
+Precode SHA/AST/status supplement saved before wrapper/helper/tests.
+
+R129 execution clarification (ADR244): ordinary observer only supports the exact
+direct native restoration of this mobile canonical copy, with positive current
+activation, receipt-bound native installed chain and same-generation physical/schema
+proof. Original source-once/pending/execution restrictions remain; no fake census.
+Distinct precode checkpoint saved; actual data/config-write and tamper proof required.
+
+R130 execution clarification (ADR244): exact early terminal pricing, per-allocation
+late refusal/recovery, stronger complete rollback preflight; no generalized future
+SQL estimator. Fixed public4GiB replaces2GiB after actual8599 frontier, native16
+and ordinary16 unchanged. Precode checkpoint saved; qualification remains required.
+Execution status: automatic review rejected the R129 observer edit and R130
+capacity/early-pricing edit before execution. Both await explicit human
+authorization; current production remains2GiB and the original restored-target
+refusal remains. Precode decisions above are not implementation-success claims.
+
+Task 8 cold-import correction: preserve the Subscription owner's public getter
+name through a lazy exact forwarder, with guarded cold class/schema proof and
+existing threshold precedence tests. Actual settings use keeps native admission.
+No fixture startup-shutdown bypass or rejected R129/R130 edit is part of this fix.
+
+R131 execution clarification (ADR244): preserve only exact unchanged installed
+builtin members under native mobile-copy/current-target provenance. New accounting
+is optional on existing native copy/digest loops, one genuine-or-ordinary16 lexical
+allowance, with every read/view/slice charged before allocation. Package files are
+never restored or modified; native dependency validation and public pending gates
+remain mandatory. Changed selector/package/history shapes still refuse.
+
+R133 execution correction (ADR244) supersedes R132's false capture-entry
+assumption: Core's dependency method is not called by mobile capture/import.
+Restore R115 actual linked-note capture/import/marker qualification; first a
+genuine nonconflicting capture control, then concrete guarded App bodies for
+controller inspection before runtime. No new generic capture guard, source owner,
+source stripping, fabricated marker or automatic file authority. Preserve the
+R132 snapshots as chronology; actual support/refusal remains runtime-unqualified.
+
+R131 execution update: explicit human approval now covers the reviewed bundled
+artwork code and isolated tests. Resume its native accounting and exact ordinary
+builtin composition through normal tool review; original rejection retained,
+qualification still open, R129/R130 unaffected and still stopped.
+
+R134 execution clarification (ADR244): acquire actual complete reviewed native capture names before maintenance for existing profiles too, preserving their bindings unchanged. Fixed authenticated mobile-copy package acquisition uses native source namespaces; generic replacement checks remain. Same allowance/custody and all alias/current-review checks apply. Precode SHA/AST/status saved before production edits; full existing-bound/SafetyCopy replacement and stage16 fit are pending. R129/R130 remain stopped.
+
+R134 authorization update: the user explicitly approved the exact native backup-source namespace registration/holding code and isolated tests for already-bound profiles. The earlier automatic-review rejection remains recorded. Implementation proceeds through normal review with unchanged profile records, agent permissions, public2GiB/native16MiB limits and existing physical admission checks. R129/R130 remain awaiting separate authorization.
+
+R135 execution clarification (ADR244, ADR082, ADR126): compose only actual native Console scratch writer/manager leases with unchanged persistent profile/source admission. Authenticate every affected writer callback and fixed worker handoff; independent workers own real leases through retirement, no copied-context grant or persistent temporary registry. Three stock writer acquire sites use the same exact current private association or original ordinary storage fallback. Save precode identities/caller supplement; targeted identity/refusal/cancellation/default controls precede one fresh mounted manual proof. R129/R130 remain stopped; no user-data action.
+
+R135 qualification update: explicit human approval followed the preserved rejection. Actual native bound/default, callback identity, independent worker/cancellation/fork and default controls pass. Fresh mounted45390 completes a new manual turn on its public-produced target, drains and reopens, retaining imported identity-scoped authority/accounting; exactly one scripted provider generation and no tool dispatches. Character-estimate fallback only; no real-provider/hardware/main-entrypoint claim.
+
+R136 execution clarification (ADR126/244): validate the complete fixed native Notes lock representation as excluded device state, with bounded no-follow inventory, exact private empty-lock shape and current custody/accounting. Preserve malformed-content refusal; qualify actual lock release/closed handle and Complete/refusal controls before fresh PRESENT startup. No marker or imported execution authority changes. Precode identities saved before implementation.
+
+
+
+R134 held-preview accounting clarification: the fixed authenticated mobile canonical-copy path carries one original ordinary16MiB allowance explicitly through its new source-prefix, selector/mapping, bootstrap/journal and framed-observation representations, and its already budgeted package read/copy/view/slice work. The actual native `_capture_bound_sources` context remains the sole source-read authority; generic capture admission is unchanged. No PreviewScope may be issued during maintenance, no scope fields or generic role are added, and nested fixed callbacks reuse this exact allowance without reset. Original generic verify_sealed/plaintext and encrypted hash passes, Zip/config/native planner internals retain their existing ArchiveLimits and behavior; this counter is not a whole-engine or RSS bound. Factor the existing authenticated candidate prefix and preserve positive current nonpackage profile bindings, complete target/member/selector/store checks, cancellation and physical retirement. Optional private forwarding defaults preserve existing callers; component identity/refusal/cancel/exhaustion/default checks precede another full replacement. R129/R130 remain blocked separately.
+
+R137 execution clarification (ADR059/073/244): current-marker startup reviews only receipt-backed imported canonical note IDs unrepresented by any existing binding. Native evidence adds only new disjoint paused roots with transactional complete-root/binding rechecks; invalid/overlapping evidence surfaces a separate body-free warning while current roots retain normal behavior. Both start gates preserve zero-profile/no-receipt behavior; native SELECT-only Core lifetime and original16 receipt bound remain. No absent migration/schema/activation change. Saved precode identities precede code; finite controls precede another PRESENT App flow. R129/R130 remain independently pending.
+
+R138 execution clarification (ADR244): one native-owned current journal read only in the existing accounted fixed-mobile branch; preserve no-current/None generic/mobile reads and budget defaults. At the adjacent planner boundary remove exactly one duplicate fixed-mobile source/archive verification, dispatching on actual native proof; generic double verification/hash counts and fresh entry/plan/exit predicates remain. No new authority/cache/issuer/cap or fit claim. Saved source/AST/full-status checkpoint precedes implementation; focused native call-count/refusal/default/custody controls precede another held-prefix attempt.
+
+R139 execution clarification (ADR244): reuse one prepaid local <=64KiB buffer only for existing explicit-budget digest/noncollect reads lacking a native scope budget. Retain every verification, per-loop price, actual scope/lease/identity/cancel/EOF/growth/retirement check and default/native-buffer/copy/collect/fallback behavior. No new API/field/helper/authority/cache/cap/reset; ordinary/native16 and public2GiB unchanged. Precode+finite native controls precede another held-preview release; source arithmetic is not a fit claim. R129/R130 stay pending.
+
+R140 execution clarification (ADR244): only the fixed canonical preview entry performs source-only native verification then the immediately adjacent full acquired-archive verification using its returned actual proof. Planner/exit remain full checks; canonical archive count4→3 and verify_sealed6→5, source reads/original matches3 unchanged. The fixed caller changes for explicit and outer-None budgets; all outside generic/default source dispatch stays unchanged. Preserve every predicate, original limits/custody/cancel and separate temporal-sampling caveat; no cache/API/cap/reset/fit claim. Save precode, focused unit RED/GREEN and static report before a fresh sentinel. Bounded finally metadata labels source_context_exit_before_staging; R129/R130 stay pending.
+
+R141 execution clarification (ADR126/244): add only one private byte workspace to the existing native CaptureScope, with same-budget full66,560 prepayment before first eligible allocation and clearing in existing retirement finally before unchanged cleanup. Every file/pass retains fresh hash/admission/identity/cancel/EOF/custody checks. Ordinary adaptive/default/native Preview/Discovery behavior remains; first tiny-file earlier refusal is explicit. No budget/API/helper/evidence cache/role/cap change. Actual two-file multipass, scope isolation, defaults and fault/FD controls plus static report precede any new sentinel; no predicted fit. R129/R130 stay pending.
+
+R142 execution clarification (existing ADR126/244; no new ADR): apply the reviewed fixed SafetyCopy alternative only after original profile containment fails for an included preserved installed builtin. Reprove committed original source/archive/new prepared receipt and exact unchanged members at all three native boundaries; allow current held exact or broader native namespace geometry with pinned identity, never a profile/permission grant. Issue one distinct original16MiB phase allowance only after actual stage retirement; retain original generic limits/accounting and tracked physical custody/quarantine. Save precode/callers/AST/status before code, then finite real source, geometry, default, cancellation, budget and custody tests plus component review before a fresh full integration. No retained98188 continuation; R129/R130 remain pending.
+
+R143 execution clarification (existing ADR126/244): retain R142 failed57145 and original same16MiB/three-check contract. Apply only reviewed local parent grouping with genuine registered custody; every member leaf/stat/frame remains, current parent reopens while original FD stays held, and cancellation precedes new reopen pricing/IO. All original source/archive/overlap predicates remain. Precode/ADR before code; finite native local-mechanics RED/GREEN then one fresh exact component, one combined genuine geometry variant only if exact passes, and root report before any full replacement. No retained fixture continuation or R129/R130 scope.
+
+#### R142 remaining refusal controls after R143 geometry refusal
+
+ADR required: no new ADR; test-only qualification under ADR126/244 and R142/R143. Save source/precode before new tests. Add cheap local guard controls for source/receipt/self-lock, current namespace and native leaf predicates; clearly label mocked upstream prefix as unit mechanisms, never positive committed authority. Use actual temporary handles/session retirement for physical identities and existing native generic prepared fixture for nonpackage refusal. Preserve earlier lower-level mapping/cipher/default evidence rather than repeating producers. Record any unisolated predicates honestly. Prepare only an UNAPPLIED source alternative for duplicate write-path overlap work, with precise observation-count and timing changes; no production edit, cap/reset, path shortening, retained continuation or full integration is released.
+
+#### R144 — distinct lexical write-path validation
+
+ADR required: no new ADR; clarify ADR244 before code. Apply only the reviewed eight-line local set/lookup/growth change in `_mobile_safety_members`, preserving all logical mappings, native units and every distinct-path overlap predicate. Record reduced repeated observation timing explicitly. First finite RED/GREEN controls forwarding actual native overlap (ordering, equal-repeat vs alias, immediate refusal, fresh second call, capacity/cancel/retirement), then scoped static. Only after those pass, one fresh unchanged broader/unprefixed/multi-root three-check component; stop on actual failure. No retained continuation or full replacement before root gate.
+
+R144 full-run oracle correction (ADR required: no; test-only under existing ADR244): preserve 97088 actual replacement/SafetyCopy success and final expected-refusal exception-family failure. Change only the existing postrestore assertion to exact `bootstrap.RecoveryRequired` matching `^mobile_object_changed$`, then one genuinely fresh full integration to execute its skipped final source/package/guard footer. No R129 behavior or production change; native/public limits unchanged. Save exact precode/diff/AST and closed outcome, stop at any new failure.
+
+### Task 9: Canonical mobile API and legacy engine retirement — TASK-36767
+
+**Files**
+
+- Modify: `tldw_chatbook/Web_Server/mobile_service.py`, `mobile_api.py`, `serve.py`, `Chat/console_remote_commands.py`, child command/read wiring in `app_served.py`.
+- Modify native create/open integration in `Chat/console_runtime.py` using existing `console_conversation_hydration.py` and canonical conversation services.
+- Test: extend `Tests/Web_Server/test_mobile_service.py`, `test_mobile_api.py`, `test_mobile_page.py`, `test_web_auth_integration.py`; create `Tests/Web_Server/test_mobile_shared_console.py`.
+- Docs: `Docs/Architecture/web-server.md`, `console.md`, `tldw_chatbook/Web_Server/README.md`.
+
+**Interfaces**
+
+- Consumes `ServedConsoleHosts`, `ConsoleRemoteProjection`, `ConsoleRemoteReceipts` and `require_mobile_cutover` from Tasks 3/5/6/8.
+- Keep `MobileChatService` as the existing API-facing adapter, now initialized with the admitted host registry/canonical read services/cutover gate. Remove `data_dir`/provider-gateway engine construction, `HeadlessAppContext`, `_Engine` and the private controller/store/bridge graph. Parent Library reads stay on their existing canonical read services.
+- Add native `ConsoleRemoteCommands.create_chat(workspace_id: str, command_id: str) -> ConsoleTarget` and async `open_chat(conversation_id: str, command_id: str) -> ConsoleTarget`. Host-level create/open tickets use `ConsoleHostIdentity`; per-session actions require `ConsoleTarget`. Reserve the canonical saved identity before hydration; all concurrent opens return the same live incarnation. Register the persisted identity when an unsaved session commits.
+- Retain `/api/v1/mobile/stream` with its authenticated WebSocket and extend the v1 route family with `GET /console/snapshot`, `POST /commands/tickets`, `POST /commands`, `GET /commands/{command_id}` beneath `/api/v1/mobile`. Existing Library routes remain. Reject obsolete mutation envelopes rather than invoking the retired engine.
+- Ticket request JSON is `{protocol_version: 1, action, target, payload}`; response is `{ticket, command_id}`. Command JSON is `{protocol_version: 1, ticket, payload}`; require version 1 and return the native receipt and HTTP 202 for pending/accepted/queued. Query uses canonical profile receipt lookup, not only a live registry. Snapshot query scopes the host/session/cursor; parse with strict Pydantic models and existing body bounds. Keep the HTTP v1 contract distinct from private control version 3; stale clients receive a reload-required refusal before effects.
+
+- [ ] **Step 1: Add a constructor-retirement trap.** In the new shared-service test, instantiate the adapter with a recording host registry/canonical read service and a verified cutover fixture. Monkeypatch the old engine factories to raise while they still exist, then list/open/create/send/read through the API. After deleting those symbols, retain a fixture spy on the DB constructors to prove no `mobile/` DB open occurs. The recording registry exposes the exact Task 3 `get_or_start/aclose` interface and counts starts; its command/read responses use Task 5/6 DTOs.
+
+```python
+async def test_two_clients_open_one_saved_console_owner(shared_mobile_case):
+    case = shared_mobile_case
+    first, second = await asyncio.gather(
+        case.open_from_client('phone-a', case.conversation_id),
+        case.open_from_client('phone-b', case.conversation_id),
+    )
+    assert first['session_id'] == second['session_id']
+    assert first['incarnation_id'] == second['incarnation_id']
+    assert case.host_start_count == 1
+    assert case.mobile_db_opens == []
+```
+
+Define test helper `open_from_client(client_id: str, conversation_id: str) -> dict` to issue an explicit `open` ticket through that authenticated client, submit it once, query its outcome, refresh the host snapshot and return the row matching the receipt's native session ID. Do not add a hidden service path that creates fresh tickets during retry. `shared_mobile_case` uses isolated canonical SQLite, Task 8's verified cutover and the recording host factory; include a real retained-child variant for final qualification. Run `.venv/bin/python -m pytest Tests/Web_Server/test_mobile_shared_console.py -q` RED.
+- [ ] **Step 2: Replace the engine graph with owner routing.** Derive storage identity from admitted canonical paths and wait for child ownership admission. Phone-only first use starts the same retained App at default dimensions without a terminal subscriber. Saved-history GETs do not hydrate, reconcile or start an agent; explicit open/create uses the native runtime/hydration services and ownership reservation. Do not restore saved history from legacy stores after completed cutover.
+- [ ] **Step 3: Gate new writes on verified consolidation.** Run `require_mobile_cutover` before enabling new canonical mobile mutation routes. A verified empty source is valid; an ambiguous/incomplete/conflicting migration yields a recoverable status with the operation/review path and no new engine. Never silently run migration from an HTTP read or start a competing native process. Delete mobile-only model/hook/project-instruction exceptions; use the same canonical configuration capture and permission owners as terminal Console.
+- [ ] **Step 4: Preserve authentication and bounded streams.** Reuse middleware session/CSRF/same-origin checks, WebSocket subprotocol proof, signed-in device management, expiry and TLS/proxy policy. Scope every command and query to the admitted host/profile. Revocation unregisters that client's answerability/subscriptions/terminal scope only. Subscriber overflow returns reset/current snapshot; it cannot propagate socket pressure into the private control channel. Stream reconnection sends an outcome query and snapshot request, never a queued mutation.
+
+```python
+# Existing authenticated route, after strict JSON parsing:
+receipt = await service.submit_command(body.ticket, body.payload)
+status = 202 if receipt.state in {'pending', 'accepted', 'queued'} else 200
+return web.json_response(receipt.model_dump(mode='json'), status=status)
+```
+
+Add async adapter `submit_command(ticket: str, payload: dict) -> ConsoleCommandReceipt` and `issue_command_ticket(action: str, target: ConsoleHostIdentity | ConsoleTarget, payload: dict) -> dict`, forwarding to the owning child and serializing `ConsoleCommandTicket` as `{ticket: value.token, command_id: value.command_id}`. A timed-out response is unknown/queryable rather than successful. Owner/epoch mismatch, expiry, unknown target and unavailable execution use stable existing error status conventions, preserving distinct expired-auth versus network behavior.
+- [ ] **Step 5: Update callers/fixtures, verify and commit.** Replace tests that asserted mobile-only engine behavior with shared-owner tests while preserving their agent-tool/approval evidence through the real runtime. Update all `MobileChatService(data_dir=...)` callers/fixtures found by `rg`, API fakes and page wire contracts. Run the new shared-service file and the four named existing API/service/page/auth modules; include Library notes/media/conversations regression node IDs in those modules. Commit `refactor: route mobile Console through canonical owners` after scoped checks. This is the public cutover gate; no earlier task claims engine retirement.
+
+### Task 10: Chats-first phone interaction — TASK-36768
+
+**Files**
+
+- Modify: `tldw_chatbook/Web_Server/static/mobile/{index.html,app.js,app.css}`, `static/served_shell.html`, `static/served_shell.css` only for the existing phone discovery/terminal link, and `Web_Server/README.md` for semantic browser equivalents.
+- Test: extend `Tests/Web_Server/test_mobile_page.py`; create `Tests/Web_Server/test_mobile_console_ui.py` with actual Chromium execution of the served mobile assets.
+- R149: extend existing `Chat/console_remote_projection.py` and focused `Tests/Chat/test_console_remote_projection.py` only for bounded workspace/activity metadata required by the Chats view; no new service, database graph or execution authority.
+- R150: extend the same projection with pending-decision counts and pure live-fleet display fields; extend existing `Web_Server/{mobile_service.py,mobile_api.py}` canonical read seams, `DB/AgentRuns_DB.py` and focused API/DB tests for bounded finished-worker header/result pages. No raw full-run/steps read, schema, service or DB-owner addition.
+- Read first: `backlog/docs/design-language.md`, `component-patterns.md`, especially action, status, navigation and message patterns. Keep the existing manifest/icons and no-service-worker posture.
+
+**Interfaces**
+
+- Consumes Task 9's snapshot/ticket/command/receipt routes and authenticated stream. `console.changed` invalidates the affected view; refresh a bounded projection rather than rendering an event as execution authority.
+- R149: native live/discovery chat rows expose bounded `scope_type`, `workspace_id`, `workspace_name` and `last_modified` from the actual session/canonical saved row and already-initialized native workspace registry. Keep Global distinct from named Default. Missing registry/name is an honest unavailable label, never desktop-selected membership. Reads do not construct/migrate/reconcile/write stores; source body metadata remains excluded. Preserve byte/cursor/reset bounds and invalidate the existing projection when these display facts change; add focused metadata/nonstarting/bounds controls.
+- Keep page state inside the existing JS closure: `selectedTarget`, `drafts: Map`, `outstandingCommands: Map`, `connectionState` and last-confirmed update. No localStorage and no offline work queue.
+- Define local JS `draftKey(target)`, `captureSubmission(target, draft, expectedRevisions)`, `clearAcceptedDraft(submission)` and `applySnapshot(snapshot)`. Existing `showView` handles Chats/chat/agent panels and local Back; it never asks the terminal to switch sessions.
+- R150: published live chat rows add `pending_decision_count` for supported and unsupported pending decisions without answerability side effects. Do not fetch every chat transcript to compute attention. Pure fleet rows may expose bounded native names/task display summaries, timestamps, terminal activity and queued/undelivered guidance counts; avoid `live_snapshot` observer pruning. Finished rows have no live-control authority.
+- R150 canonical GETs: `/api/v1/mobile/conversations/{conversation_id}/workers` uses existing bounded keyset headers (20-row pages with explicit continuation), and `/api/v1/mobile/conversations/{conversation_id}/workers/{run_id}` returns result text only on explicit selection, with code-point `char_start`, `max_chars<=2000` and continuation/completion. Reuse canonical `AgentRunsDB.open_read_only`/finite-worker ownership used by receipt reads. A small native parameterized reader selects only allowlisted scalar fields and `substr(result)`, binds conversation/run/`agent_kind=subagent`, and never hydrates steps/config/budget/prompt/metadata. Require canonical conversation availability; missing/removed result is honestly unavailable. Keep response bounds/auth/nonstarting behavior and historical controls disabled; live state outranks lagging DB status. Include real SQLite cross-conversation/kind refusal, absence/inert/privacy/Unicode paging/no-write controls and actual-browser history/attention checks.
+- R151: projection and unresolved-receipt pages finish independently. While one has more pages, the completed side carries a valid end-position cursor in its existing slot (native row end with current revision, saved-history EOF with current epoch, or receipt keyset last-seen ID); it yields no duplicated body and still detects stale/replaced content. Only both-complete returns `next_cursor=None` and `next_receipt_cursor=None` and acknowledges capture. The UI follows each returned pair together. Preserve bounded parent/native sequence domains and make same-pair read retries/two readers idempotent in the existing boundary cache. Place chat/fleet/decision/recovery metadata before bulk messages. Add native and real-asset browser cases for unequal3/2 pages in both directions, saved EOF, finite bounded progress, no premature ACK, changed revision/reset and continuation retry/two readers. No cycling workaround, new owner/registry/query mode or protocol version.
+- R152: live-target confirmation is independent of bulk history completion. Disconnect/reset immediately invalidates it and disables mutation. A fresh native first-page row may restore confirmation only for matching host/session/incarnation, current run/turn, admitted published execution and exact revisions, with required receipt/duplicate reconciliation preserved. Keep current Stop/correction responsive while historical text is still loading/changing; show partial history honestly. Native commands still revalidate current facts, stale drafts never retarget, and R151 ACK still requires both EOF. Add real-asset controls for changing long-body pagination with prompt exact Stop, delayed metadata after reset/disconnect, stale identities and no duplicate replay. No new permission or server mode.
+- R153: target snapshots include a separate explicit-content `latest_message` tail so old/changing history cannot starve current output. Use the existing native active-assistant anchor when it remains eligible, otherwise latest normally visible user/assistant/tool message; apply identical publication/visibility/quarantine guards. Include message ID/role/status/code-point offset and at most2000 code points, with total serialized window at most8KiB accounted before ordinary64KiB frame packing (including receipt/metadata bounds). No bodies in chat discovery. Preserve chronological full-history cursors; plain client renders an inert labelled partial latest-output excerpt during backfill and removes it only when coherent full history contains that exact window, with no stale-target merge or duplicated message. Cover real native220k old history plus4changing reads, >64KiB current reply, active assistant followed by tools, nonBMP/inert content and byte-budget/metadata progress. No new cache/owner/service or execution authority.
+- DOM contracts for browser checks: `#view-chats`, `#chat-list`, `#view-chat`, `#chat-transcript`, `#agent-list`, `#target-label`, `#chat-draft`, `#send-command`, `#stop-command`, `#connection-state`. Use real labels, semantic buttons and `aria-live` for connection/decision status. A selected worker always has visible chat and worker labels.
+
+- [ ] **Step 1: Add the late-acknowledgement regression against real assets.** Create an aiohttp browser-test fixture by reusing the existing page server/auth scaffolding in `test_mobile_page.py` and injecting an API recording service with a delayed command receipt. Expose fixture `mobile_browser_case` with `page`, async `open_chat(session_id)`, async `release_receipt(state)` and recorded `commands`. Its constructor loads the actual `/m` HTML/JS/CSS in an authenticated Playwright Chromium context at a phone viewport; only API responses are controlled here. This is UI behavior evidence, separate from Task 11's actual child.
+
+```python
+async def test_late_receipt_cannot_clear_a_newer_phone_draft(mobile_browser_case):
+    case = mobile_browser_case
+    await case.open_chat('chat-a')
+    await case.page.locator('#chat-draft').fill('first correction')
+    await case.page.locator('#send-command').click()
+    await case.page.locator('#chat-draft').fill('newer unsent correction')
+    await case.release_receipt('accepted')
+    await expect(case.page.locator('#chat-draft')).to_have_value(
+        'newer unsent correction'
+    )
+    assert case.commands[0]['payload']['text'] == 'first correction'
+```
+
+Import `expect` from `playwright.async_api`. The fixture signals actual recorded submission before returning from the click path; do not release a receipt after an arbitrary sleep. Add navigation between two chats and a worker, connection-loss disabled state, unsupported pending decision, escaped tool/provider HTML and no-duplicate reconnect cases. Run the new UI file RED; an absent browser is reported as an unmet check, not PASS.
+- [ ] **Step 2: Keep each submitted input immutable and clear by exact revision.** Use chat/incarnation for main drafts and add handle/run for worker drafts. Retain unsent text while disconnected; when an owner/incarnation changes, keep the old draft visibly associated with its unavailable original target until the user explicitly chooses a current target. Do not silently retarget text.
+
+```javascript
+function draftKey(target) {
+  return JSON.stringify([
+    target.server_epoch, target.console_id, target.session_id,
+    target.incarnation_id, target.handle_id || null,
+    target.handle_id ? target.run_id : null
+  ]);
+}
+
+function captureSubmission(target, draft, expectedRevisions) {
+  return Object.freeze({
+    key: draftKey(target), revision: draft.revision, text: draft.text,
+    target: Object.freeze({...target}),
+    expected_revisions: Object.freeze({...expectedRevisions})
+  });
+}
+
+function clearAcceptedDraft(submission) {
+  const current = state.drafts.get(submission.key);
+  if (current && current.revision === submission.revision &&
+      current.text === submission.text) {
+    state.drafts.set(submission.key, {text: '', revision: current.revision + 1});
+  }
+}
+```
+
+Issue a fresh ticket only for an explicit user submit, retain its command ID before the effect request, and suppress duplicate submits while that same submission is pending. A Preparing receipt does not clear text; clear only the exact accepted/queued input after native acceptance. A lost response queries its ID; reconnect never submits it again. A fresh page also reads bounded unresolved receipts from the snapshot. Apply explicit typed target/run/round data to each action and replace controls only after the new target is confirmed.
+- [ ] **Step 3: Render shared chat/agent/decision views and honest outcomes.** Default to Chats; merge saved/live identity rows from the API, show workspace/activity plus text statuses/attention markers, and distinguish unavailable from finished. Reuse transcript disclosure for tool activity and a compact Agents roster/detail. Main controls are Send/Steer/Redirect/Stop; workers expose guidance/Stop. Show queued guidance versus consumed state and requested Stop versus physical completion. Supported pending decisions use native choices; unsupported decisions stay visible with the existing Open terminal link. Use `textContent` or the admitted renderer for bodies, never raw `innerHTML` from tool/provider data.
+- [ ] **Step 4: Compose phone layout and accessibility from existing semantics.** Keep the existing single-column safe-area layout and semantic CSS variables; document status/focus/disabled/error equivalents in the existing Web Server README. Preserve separate rest/hover/focus/disabled states, visible Back/close controls, reachable touch targets and keyboard action names. The transcript owns scrolling; the soft keyboard/visual viewport must leave the composer and its action reachable. Contain long output in disclosure/scroll regions and preserve wrapping. Do not redesign unrelated Library pages or add a framework.
+- [ ] **Step 5: Verify and commit.** Run `.venv/bin/python -m pytest Tests/Web_Server/test_mobile_console_ui.py Tests/Web_Server/test_mobile_page.py Tests/Web_Server/test_mobile_api.py -q`, `node --check tldw_chatbook/Web_Server/static/mobile/app.js`, and scoped stylesheet/HTML checks exercised by those browser tests. Inspect 320px and 390px portrait, landscape, keyboard navigation and reduced-height soft-keyboard emulation with actual rendered controls. Record screenshots only as presentation evidence; assert command targets and draft/receipt behavior independently. Commit `feat: supervise shared Console chats from the phone` after scoped checks.
+
+### Task 11: Real served/browser qualification and release documentation — TASK-36769
+
+**Files**
+
+- Create: `Tests/Web_Server/test_mobile_served_console_browser.py`, `Docs/superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md`.
+- Extend: `Tests/Canvas/browser/canvas_live_harness.py`, `canvas_live_chatbook_child.py`, `test_canvas_served_flow.py` for reusable actual-App tooling and revised lifecycle assumptions. Keep existing Canvas assertions intact.
+- Docs: `Docs/Architecture/{console,agent-runtime,web-server,backup-recovery,database-layer}.md`, `Docs/Backup-and-Recovery.md`, `tldw_chatbook/Web_Server/README.md`, `Docs/User_Guide/console.md`, ADR-244's implementation/evidence status and the spec's review/delivery state.
+- R155 qualification repair scope: existing `Backup_Recovery/{credentials,mobile_captured_sqlite,mobile_consolidation_recovery,mobile_restored_observer,mobile_rollback_resume}.py`, existing module-owned SQLite helper seams `mobile_consolidation._open_preview_read` and `sqlite_validation._open_installed_candidate` per pre-code R156 (same restrictions/custody/cancel, no new role), `DB/private_sqlite.py` only if a code-backed necessary role/boundary proposal is reviewed before code, `Tests/DB/test_private_sqlite_inventory.py` and focused connected recovery tests, and `backlog/docs/sqlite-private-owner-inventory.md`. Resolve the exact five source diagnostics/two role omissions without broad inventory exemptions or authority expansion.
+- R157: repair the two adjacent raw Notes boot probes in `app_service_wiring.py` using existing read-only must-exist `NotesDeviceStateStore._connect`; focused `Tests/Notes/test_mobile_imported_note_candidates.py` and startup-evidence controls must retain exact query/error/no-write/no-schema/start policy.
+- R158: fix `Web_Server/serve.py::_canonical_console_selection` to use one authoritative atomic config snapshot for all native paths; focused selected-profile/path/cutover and genuine served command tests preserve existing locks, validators and ownership, with no global settings projection change.
+- R159: fix only `Utils/custom_tokenizers.py::custom_tokenizers_available` to avoid manager/storage creation for native-pinned definitely absent default mappings; preserve existing manager/error/admission/explicit writer behavior. Add focused absence/uncertainty/native pause controls and genuine fresh unseeded served Send; no enrollment scaffolds or parent-root widening.
+- R160: repair ordinary original/restored completion reads via one module-owned live read-only role in `DB/private_sqlite.py` and existing recovery readers, with an accounting-only context in `mobile_preview_budget.py`. Keep public preview/maintenance copies, source authority and original budgets unchanged; ordinary SQLite SHM coordination is explicit. Extend focused cutover-budget/live-WAL/schema/receipt/generation/physical-retirement tests, inventory/docs and actual cold phone Create→Send. No general preview/admission bypass.
+- R161 routine wire bug fix: omit unused float start/finish live-fleet fields in `Chat/console_remote_projection.py`; test the actual strict ControlMessage transport in `Tests/Chat/test_console_remote_projection.py` and actual fleet journey. No protocol/clock/type widening, timestamp format or new authority. Existing ADR-244 applies.
+- R162 cold host selection: repair `Web_Server/static/mobile/app.js` and extend `Tests/Web_Server/test_mobile_console_ui.py` so an explicit Create/Open intent follows only its original command receipt and exact same-owner live row after asynchronous refresh. Bind command ID, host epoch/Console and pre-dispatch selection revision; navigation, a newer host action or owner replacement cancels selection. Preserve normal target confirmation, page-memory drafts and ID-query-only recovery; no replay, synthetic target, persistent state, CSS change or global refresh redesign. Qualify deterministic delayed-list/receipt, navigation and owner-mismatch controls in both engines plus actual affected cold journeys.
+- R163 reset fixture qualification: adapt only the obsolete mobile browser case in `Tests/Web_Server/test_served_console_events.py` to the existing `test_mobile_console_ui.mobile_browser_case` canonical API/real stream helper. Prove an initially enabled native approval, then reset/invalidation immediately revokes controls/answerability while metadata is gated or unavailable, with no decision ticket/effect; fresh current metadata removes the obsolete round and alone can restore valid controls. Retain both browser engines and current owner/target checks; no production reset change, skip/delete, stale-authority waiver, duplicate harness or styling. Existing ADR-244/Task2 reset contract applies.
+- R164 fixture composition: in only `Tests/Chat/test_console_remote_receipts.py::test_private_child_ticket_submit_query_and_discovery`, bind the reused runtime to that test's already-created app before real projection requests. In only `Tests/Canvas/browser/test_canvas_served_flow.py::test_live_stack_setup_failure_rolls_back_owned_resources`, apply existing `bootstrap_profile` so guarded config reads retain their collection-bound private source. Keep real receipt/projection/protocol assertions and both actual injected TCPSite failure/physical rollback assertions. No production None fallback, global fixture/conftest/guard/config change, skipped assertion or new admission authority.
+- R165 AC6 census completion: reconcile only the existing documented B40 `DB/recovery_dreams_guardian._DreamsAdapter.capture` → `copy_private_sqlite` call in the exact `Tests/DB/test_private_sqlite_inventory.py` expected-call Counter. Its already-registered `recovery.operations.dreams` role and native checked capture are unchanged. This supersedes deferring that one inherited test mismatch because AC6 requires passing checks; retain exact census and all negative controls, no production authority/policy or broad exclusion.
+- R166 witnessed reset feedback: in only existing mobile `app.js`, deduplicate identical answerability advertisements by the actual WebSocket, exact current rendered-target signature and Boolean. First invalidation must still immediately withdraw answerability/disable controls; explicit old-target withdrawal resets the cache, and a new socket/current confirmed metadata must advertise afresh. Preserve native stale-round rejection, confirmation revisions, exact targeting and no mutation replay. Add deterministic stale-round rejection/reset with an original accepted receipt query in both existing engines, existing withheld-metadata reset controls, and the same strengthened fleet/cold/transport journeys. No server/role/permission change, offline queue, persistence or global refresh redesign.
+- Keep unrelated user changes in architecture/lessons files outside the task's commit. Record a lesson only if execution produces a concrete reusable trap.
+
+**Interfaces and fixture ownership**
+
+- Reuse existing async `start_live_served_stack(tmp_path, monkeypatch, *, access_token, child_module, trusted_proxy=False) -> LiveServedStack`. Its `aclose` reaps exact owned children and cleans temporary resources. Extend it for retained hosts; do not replace it with a mocked terminal server for this qualification.
+- Promote the existing login/readiness/terminal-input helpers from `test_canvas_served_flow.py` into `canvas_live_harness.py` when the second test module consumes them; update both callers. These remain test helpers, not product APIs.
+- Add an actual-Console script to `canvas_live_chatbook_child.py` using the existing provider-double seam: per-chat exact prompt/result markers, a barrier held after native acceptance, one real admitted local tool, a supported approval/question and two bounded subagents. Explicit entry/consumption/release signals establish the races; no real external provider is called.
+- New fixture `live_mobile_console` owns the TLS stack and two authenticated browser contexts plus helper methods `start_gated_chat`, `phone_send`, `release_agent`, `snapshot`, `close_terminal` and `reattach_terminal`. It returns observed canonical chat/run IDs, actual process PID, exact gateway call count and persisted transcript markers. Helpers must act through production routes; assertions may inspect isolated DB evidence after controlled close.
+
+- [ ] **Step 1: Prove retention with an actual child before adding more journeys.** Use the existing isolated profile and controlled gateway, not a subprocess that merely echoes WebSocket packets. Capture the PID/turn/run and provider entry barrier before closing the terminal.
+
+```python
+async def test_phone_reconnect_keeps_the_same_console_run(live_mobile_console):
+    case = live_mobile_console
+    before = await case.start_gated_chat('EXACT_SHARED_PROMPT')
+    await case.close_terminal()
+    during = await case.snapshot()
+    assert during['pid'] == before['pid']
+    assert during['run_id'] == before['run_id']
+    await case.phone_send('EXACT_PHONE_FOLLOWUP')
+    await case.release_agent()
+    after = await case.reattach_terminal()
+    assert after['pid'] == before['pid']
+    assert after['session_id'] == before['session_id']
+    assert after['prompt_occurrences']['EXACT_SHARED_PROMPT'] == 1
+    assert after['prompt_occurrences']['EXACT_PHONE_FOLLOWUP'] == 1
+```
+
+The phone follow-up above is an explicit Send queued through native policy, not guidance assumed consumed. Read exact persisted prompt/reply rows and native acceptance markers before declaring this test qualified. Run `.venv/bin/python -m pytest Tests/Web_Server/test_mobile_served_console_browser.py -q` and require actual browser execution with no skipped core journey.
+- [ ] **Step 2: Exercise terminal interaction and independent phone targets.** R162 also requires explicit cold Create/Open to select its confirmed new live target despite coalesced refresh, without overriding subsequent phone navigation or owner changes. In the reattached terminal, click a real Console control, paste a multiline draft and resize the viewport; prove the input thread was not restarted. Run two chats and multiple workers; phone navigation/steer/redirect/Stop and subagent guidance must leave desktop selection/drafts and unrelated runs untouched. Resolve background and viewless decisions from one phone while another disconnects. Test an unsupported confirmation remains pending. Include browser-session takeover/revocation and stale old attachment input/cleanup.
+- [ ] **Step 3: Force transport failures at witnessed boundaries.** Drop the phone connection before admission, after native acceptance and after effect before response; query the original ticket/receipt without replay. Fill the private projection buffer before first phone use, with the mobile surface disabled and with a slow subscriber. Require the same child/run/fence and current snapshot convergence. Separately kill the actual parent process and confirm a surviving child retains the fence through bounded shutdown; a replacement cannot execute/reconcile during that interval. Verify genuine control loss, actual child crash and clean server shutdown separately. Never use a browser close or `tmux kill-server` as proof a process died.
+- [ ] **Step 4: Re-run connected migration/security checks on final code.** First prove and repair the five known SQLite seam qualifications and two role-doc omissions (R155) against original featureBASE, preserving native guards/custody/budgets; no broad checker waiver. A necessary new role/boundary requires source-backed review and an ADR amendment before code.  Run the new browser file, targeted control/host/input/receipt/API files and consolidation/automatic-recovery schema cases from Tasks 1-9. Use direct TLS and the existing trusted-proxy control; test unauthenticated, wrong-origin/CSRF, revoked and stale-epoch commands. Preserve no-provider/no-tool evidence before explicit imported-authority review. Verify Library read routes still use canonical stores. Record exact commit, commands, pass/skip/failure counts, child exit evidence and retained temporary artifacts for failures. Do not broaden to all repository tests without opt-in.
+- [ ] **Step 5: Document actual behavior and perform the separate phone/VPN check.** Update the named living/user docs after verified implementation, including migration preview/apply/recovery, one-terminal attachment policy, receipt uncertainty, the no-localStorage draft limit and the first-release exclusive native-or-served boundary. Publish a packet with separate automated, real served-browser, and actual phone/VPN sections. For the latter, connect the physical phone through its VPN, open authenticated `/m`, inspect the already-running chat, submit one exact correction, drop/rejoin VPN and reconnect to the same run, then check worker targeting and keyboard reachability. Record phone/browser/network details and observed identities; if hardware/network access is unavailable, mark that section unverified and do not call emulation physical qualification.
+- [ ] **Step 6: Review completion evidence and commit.** Self-review the connected implementation, check every task AC against current evidence, and resolve concrete failures without changing unrelated policies. Require executed migrations and real child identity evidence, not a version-label assertion or screenshot alone. Set each implementation task Done only when its own AC/docs/static/targeted checks are satisfied; unavailable mandatory checks stay open. Commit `test: qualify shared served Console mobile supervision` with the actual evidence/docs/tests; do not claim a push, merge or physical phone run unless it occurred.
+
+## Targeted command index
+
+These are the minimum connected GREEN runs for the named deliverables, after their RED tests and implementation. Add exact connected caller node IDs when that task changes another caller; do not substitute a full sweep. All paths below either exist at the baseline or are explicitly created by the preceding task section.
+
+| Task | Run from the executing checkout root |
+| --- | --- |
+| 1 | `.venv/bin/python -m pytest Tests/Chat/test_console_execution_owner.py Tests/DB/test_agent_runs_db.py Tests/Agents/test_agent_runs_db_connection_reuse.py Tests/Chat/test_console_runtime_lifetime.py Tests/Chat/test_console_runtime_shutdown.py Tests/Chat/test_console_worktree_recovery_lifetime.py Tests/DB/test_private_sqlite.py Tests/Backup_Recovery/test_agent_runs_recovery_schema.py -q` |
+| 2 | `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_events.py Tests/Canvas/test_control_protocol.py Tests/Web_Server/test_served_relay_publisher.py Tests/Web_Server/test_web_auth_integration.py Tests/Web_Server/test_mobile_service.py -q` |
+| 3 | `.venv/bin/python -m pytest Tests/Web_Server/test_served_console_hosts.py Tests/Web_Server/test_console_web_driver.py Tests/Web_Server/test_served_shell_browser.py Tests/Chat/test_console_runtime_shutdown.py Tests/Canvas/browser/test_canvas_served_flow.py -q` |
+| 4 | `.venv/bin/python -m pytest Tests/Chat/test_console_received_intent_inputs.py Tests/Chat/test_console_received_intent_custody.py Tests/Chat/test_console_received_intent_transitions.py Tests/Chat/test_console_received_intent_saved_acceptance.py Tests/Chat/test_console_remote_commands.py Tests/Chat/test_console_runtime_shutdown.py -q` |
+| 5 | `.venv/bin/python -m pytest Tests/Chat/test_console_remote_projection.py Tests/Chat/test_console_interrupt_rounds.py Tests/Web_Server/test_served_relay_publisher.py Tests/Chat/test_console_runtime_lifetime.py Tests/Canvas/test_control_protocol.py -q` |
+| 6 | `.venv/bin/python -m pytest Tests/Chat/test_console_remote_receipts.py Tests/DB/test_console_command_receipts.py Tests/Chat/test_console_received_intent_saved_acceptance.py Tests/Chat/test_console_dispatch_recovery.py Tests/Canvas/test_control_protocol.py Tests/Backup_Recovery/test_agent_runs_recovery_schema.py -q` |
+| 7 | `.venv/bin/python -m pytest Tests/Backup_Recovery/test_mobile_consolidation_preview.py Tests/Backup_Recovery/test_inventory.py Tests/Backup_Recovery/test_capture.py Tests/Backup_Recovery/test_capture_service.py Tests/Backup_Recovery/test_agent_runs_recovery_schema.py -q` |
+| 8 | `.venv/bin/python -m pytest Tests/Backup_Recovery/test_mobile_consolidation_apply.py Tests/Backup_Recovery/test_mobile_consolidation_recovery.py Tests/Backup_Recovery/test_mobile_consolidation_preview.py Tests/Backup_Recovery/test_agent_runs_recovery_schema.py Tests/Chat/test_automatic_wake_recovery.py Tests/Chat/test_automatic_launch_recovery.py Tests/Chat/test_console_goal_recovery.py Tests/DB/test_automatic_work_migration.py -q` |
+| 9 | `.venv/bin/python -m pytest Tests/Web_Server/test_mobile_shared_console.py Tests/Web_Server/test_mobile_service.py Tests/Web_Server/test_mobile_api.py Tests/Web_Server/test_mobile_page.py Tests/Web_Server/test_web_auth_integration.py -q` |
+| 10 | `.venv/bin/python -m pytest Tests/Web_Server/test_mobile_console_ui.py Tests/Web_Server/test_mobile_page.py Tests/Web_Server/test_mobile_api.py -q` |
+| 11 | `.venv/bin/python -m pytest Tests/Web_Server/test_mobile_served_console_browser.py Tests/Canvas/browser/test_canvas_served_flow.py Tests/Web_Server/test_mobile_shared_console.py Tests/Backup_Recovery/test_mobile_consolidation_recovery.py -q` plus the exact final-code caller/schema/automatic-authority cases recorded in Task 11 Step 4. |
+
+## Spec coverage map
+
+| Approved contract | Implementation tasks | Evidence gate |
+| --- | --- | --- |
+| Spec 1/2: same Console/runtime, served first | 1-6, 9 | Actual child and canonical DB identity; no mobile engine constructors |
+| Spec 3: physical execution ownership, canonical identities, native limit | 1, 3, 8, 9 | Real contender/survivor/crash tests and read-only no-sweep checks |
+| Spec 4: retained lifetime, terminal modes, one current attachment | 2, 3, 11 | Same PID/run after disconnect plus actual click/paste/resize |
+| Spec 5: authenticated reads, exact commands, input ownership | 2, 4-6, 9 | Native custody and current-target/permission/CSRF race controls |
+| Spec 5: five-minute tickets, bounded receipts, unknown outcomes | 6, 9-11 | Expiry/tampering/capacity/lost-ack/query tests with no repeated effects |
+| Spec 6: Chats, agents, decisions, independent drafts and accessible phone UI | 5, 9-11 | Actual assets/browser behavior and separate phone/VPN receipt |
+| Spec 7: physical source review, capture, mapping, quarantine, recoverable cutover | 7-9, 11 | Per-owner batch/crash/reference closure and zero imported automatic calls |
+| Spec 8/9: domain boundaries and failure behavior | All | No second engine/state machine; failure-specific ownership evidence |
+| Spec 10/11: qualification, governing decisions, truthful delivery state | All, 11 | Targeted evidence, exact schema catalogs, updated ADR/living docs |
+
+All seven review corrections have explicit owners: independent phone text (4), child-held physical fence (1/3), completed-result automatic quarantine (8), shared-source attribution (7/8), receipt expiry/dedupe (6), terminal modes (3/11), and projection overflow independent of host loss (2/3/11).
+
+## Handoff and stop conditions
+
+The plan/task records are the deliverable of planning. They do not mean the mobile storage split or retained-host behavior is implemented. At execution start read the spec and this plan together, then begin Task 1; Task 2 or 7 can be worked independently only in their own checkout with their declared interfaces respected.
+
+Stop dependent work when an admitted resource cannot be fenced, capture scope is incomplete, schema/authority mapping is unknown, or a mandatory qualification fails. Retain evidence and resolve the concrete issue through the native owner; never relax authentication, import quarantine or recovery fencing to pass a demonstration. Routine implementation details within these contracts do not require repeated user approval.
+
+Implementation can proceed using reviewed subagents per task or sequential execution in this session. Neither option authorizes real user-data migration, full-suite runs, publication or merging beyond the user's existing instructions.
+
+## Planning validation
+
+Self-review mapped all specification sections and seven review corrections to implementation tasks, reconciled ticket/query identity and native input-revision contracts, and checked existing source/test paths against this checkout. The 11 task records reference only already-created earlier dependencies. New implementation/test files are explicitly declared above; none has been created by planning.
+
+Document checks validate task frontmatter/owned sections, local links, task order/dependencies, absence of unfinished markers, Python example syntax, JavaScript syntax and the two SQL examples against isolated in-memory SQLite. These are documentation checks: no product test suite, real agent/provider call, user database, migration or phone/VPN journey has been run.
+
+The repository-wide task-ID guard reports pre-existing duplicates `34991` and `35028` from unrelated tracked/untracked files present before this work. None of the 12 new task IDs collides. Those files are preserved; this plan does not claim the entire checkout's Backlog guard is green.
+
+
+### R129/R130 explicit human approval and current-source rebase (2026-10-31)
+
+The human explicitly approved code and isolated tests for both existing decisions; the prior missing-authorization block is resolved (SDD `task-8-r129-r130-explicit-human-approval.md`). The old rejected drafts and failing epochs remain historical evidence. Implementation is pending root drift review, not yet applied or qualified. No new ADR/ruling is required.
+
+R129 remains an ordinary16-only direct restore of this mobile operation’s canonical copy: native committed replacement/receipt-bound plan/manifest/activation and current private-copy schema plus main-generation/ancestor continuity; original claim, retained encrypted captures/history, current selectors and pending fences remain checked. Ordinary imported-state census stays unchanged outside that authenticated transition. Ephemeral WAL/content timestamps are not permanent generation identity; every native copy and physical safety check still runs. No fabricated imported receipts, reimport, owner grant or activation bypass.
+
+R130 changes only the public cumulative envelope to4GiB and constructs/discards fixed maximum-width terminal representations before no-data owner creation or populated history/owner effects. Every actual late reservation remains; no escrow, refund, future-SQL estimator or universal-fit/RSS claim. Existing JSON sizing covers non-BMP escaping for every new serialization/hash. Private no-public calls still use their original16 and must be checked proportionally. Ordinary/native16, atomic pair coupling, independent archive/SQL limits and full rollback preflight remain unchanged. Current production stays2GiB until the reviewed delta is applied.
+
+Finite sequence: new local identity/manifest/Unicode/dimension controls plus existing five pair/default controls and affected capture-names debit; early refusal before first owner for populated/no-data; one proportional original private/preterminal native16 control; then one fresh direct-restore positive with native data/theme-save and tamper/refusal checks, and one fresh successor. Existing late-budget real-home two-process evidence is retained; any rerun is a new isolated fixture with unchanged reviewed harness, only if needed to qualify changed prepricing. No old-fixture continuation or accepted App/Notes/CLI repeats.
+
+
+R129/R130 component checkpoint: approved delta applied; local15P, genuine populated/no-data early-refusal2P and original-private16 preterminal3-receipt1P pass. Retain the earlier1F empty-tuple oracle epoch separately. `task-8-r129-r130-component-report.md` records exact scope/static/evidence; root integration gate precedes actual restored-generation/write/theme/tamper and4GiB successor runs. No wholeTask8 completion or new authority follows from this checkpoint.
+
+
+### R130 cold-resume implementation correction — original invocation reuse (2026-11-01)
+
+Existing ADR244/R130; no new ADR or accounting policy. The first changed-code real-home Workspace cold run failed its original16 allowance before stale-owner settlement. Its new early-pricing helper repeated native journal/prepared/pending work. The reviewed v2 correction uses pricing-only local references from the actual PRE-R130 entry preopen for no-data or post-reader preopen for populated, after original validation and retirement. Default callers still return None and retain their original call shape/checks. The new two-reference collector and shallow sizing views are prepaid and discarded before effects; no readiness, cache, native scope or authority is issued. All future original-record Ref encoding costs, fixed maximum terminal representations, actual final checks/hashes/charges and independent native16/public4 bounds remain. No new unbudgeted invocation replaces the deleted duplicate work.
+
+SDD `task-8-r130-cold-pricing-v2-reviewed-release.md` governs the exact two-file correction, affected local/default/codec controls, genuine populated/no-data refusal and private16 preterminal proof, then one fresh observed Workspace73→0. Actual fit remains unqualified until that run; the prior failed fixture and rejected v1 accounting rationale remain preserved. If green, the already released B–E integrations continue serially. No full Task8 completion follows from these components.
+
+### R130 Event tree accounting correction (2026-10-31)
+
+The cold3 native16 resume exhausted at final JSON scanning (requested256, remaining58). Before another runtime, the reviewed helper-only schedule replaces two coarse eight-text-copy Event-stage reservations with separate complete-tree reservations: the native terminal model dump, conservative Event evidence validation, and each of the two Event dumps. Constructor/model/field containers and a shallow six-field sizing view are prepaid separately. The first eight-copy `_MobileCommitted`/Path validation, existing pre-R130 input reuse, future Ref coverage, non-BMP serialization, record bound, JSON roundtrip, all final charges and native16/public4 limits remain unchanged. No authority or readiness value escapes. Pure retained-shape arithmetic is not a fit claim. Source contract and finite verification: `.superpowers/sdd/2026-10-25-shared-console-mobile-supervision-implementation/task-8-r130-event-tree-reviewed-release.md`; prior failed epochs remain preserved.
+
+### R145 - production recovery qualification scope (2026-10-31)
+
+Both production captured-consolidate entry points use a genuine public pair. Keep
+the current early prototype and every late check on all callers; no private
+exception or accounting change is made. The larger private Workspace cold4 fixture
+now legitimately exhausts original16 after early pricing, and remains a recorded
+failure rather than a parity or complete-path claim. R130 promises bounded
+refusal, not universal fit. Replace only the added private-success gate with the
+same committed Workspace/unmatched-owner graph through actual public start and
+fresh-process public finish, each genuine4GiB/16MiB pair. The smaller private
+three-receipt component retains its actual passing scope. Genuine restored-gate
+B and C-E may proceed independently; complete public crash/receipt/no-replay and
+all original Task8 qualification still precede Task9. Source contract: SDD
+`task-8-r145-public-recovery-gate.md`.
+
+
+R146 execution (ADR required: yes; existing ADR244 amendment): replace only ordinary cutover-call16 with fixed64MiB-minus512 issuance for BOTH branches; generic/private16 and public4/native16 remain. Apply exact two-source issuer/import-call delta after precode. Add finite noargument/identity/default/atomic exhaustion and before-first-read controls; preserve all native validators and default call shapes. B's finally records actual issued counter remaining on success and failure. Run one fresh B, conditional C/D/E only after green; first material failure stops. R145 public Workspace remains separately review-gated. Historical failures/limits are retained.
+
+R146 B3 fixture correction: B2 passed both restored/data-edit gates (13,610,208 remaining each), then config import refused actual data/shared intermediate directories at0755 (config_participants369), not a stale alias or failed profile association. For one fresh B fixture only, use saved/restored umask077 during genuine construction and assert owner/private mode before public start. No old fixture repair or native policy change; C–E remain conditional on B green.
+
+R146 B4 test-only cohort correction: B3 native theme save/binding/inode assertions passed, but later selecting the target changed the original effective-first selector cohort. Keep target selection stable after fixture close and obtain a genuinely fresh public target-target preview before start; no prepared witness or native guard changes. Preserve B3 failure and all scoped positives; one fresh affected B only, C–E conditional.
+
+
+### Original Task8 FIX1 — T8FULL-I1 / M1
+
+ADR required: no new ADR. ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md. Reason: correct accepted R146 same-coordinator propagation, without changing limits, roles or validation. Before code, review identified that ordinary original-generation owner verification entered an unbudgeted preview. Change only that call to forward the existing budget. Extend the genuine public-produced B target with real native scope/copy identity and same-counter source/copy scarcity checks; preserve all restored controls. Record RED/GREEN, physical native cleanup/source identity, focused static and one scoped local FIX1 commit. Carry M1's zero introduced/1,841 inherited Ruff, unassigned caller-scan warning origins and historical/runtime/hardware limits explicitly. Full task and Task9 stay held for fresh scoped re-review.
+
+
+### Task9 R147 explicit first-host bootstrap
+
+An authenticated, CSRF-protected `POST /api/v1/mobile/console/host` accepts only
+`{protocol_version: 1}`. After verified cutover it reuses the canonical registry,
+awaits connection and positively checks native run-store execution admission,
+then returns the exact `ConsoleHostIdentity`. It creates no native chat, provider
+request or ticket. An explicit Create/Open may bootstrap then issue one exact-host
+ticket; races refuse. Reads and reconnects never bootstrap, reticket or replay.
+
+
+### Task9 connected native project callback correction
+
+The first native remote Send reached durable persistence, then the unchanged
+project-provider composition invoked `project_authority_guard` on the controller
+loop. Its local `on_owning_loop` unconditionally used Textual `call_from_thread`,
+which refuses on that loop. Preserve the four original activation/authority/
+dispatch callers and every project/source/permission check: invoke directly only
+on a non-null matching controller owner loop; otherwise retain worker marshalling
+and the existing no-App fallback. Catch only absence of a running loop, never a
+callback exception. Original first-Send exception evidence is in Task9 agent10;
+qualify actual native Send plus owner-loop/worker/error/default routing controls.
+This is a routine shared bug fix under ADR244, with no new authority or API.
+
+
+### Task9 cold viewless source metadata dependency
+
+The un-warmed Library-mounted native first Send refused before execution because
+`_resident_skill_wiring()` had no resident `Widgets.compact_model_bar` source
+metadata. The existing cold stock catalog proof deliberately requires that
+module's original source capsule; a mounted Console normally imports it. Explicit
+remote Send loads this same dependency through `run_preparation_read`, observed by
+controller/runtime physical teardown, before unchanged received-configuration
+capture. Its import reads/compiles Textual parent source metadata, so it runs off
+the owner loop. Exact native target and all five revisions are rechecked after
+that await. No widget is mounted, trust/plugin getter invoked or cold/custom/
+memory/source/permission qualification relaxed. Preserve cold refusal evidence
+and qualify the actual un-warmed first Send plus no-retention negative control.
+
+
+### Task9 fix1 — shared saved-session readiness and cleanup custody
+
+ADR required: yes; this clarifies existing ADR244, with no new execution or file
+authority. F02–F07 use ONE store-owned saved-conversation operation, reserved
+before I/O/native creation's first durable commit. Every observer shields the
+owned task/future. A provisional row is not a usable published owner: readiness
+includes progress, native Library policy and membership reconciliation. Actual
+failure/owner shutdown retains physical retirement and rolls back exact
+provisional state once; observer loss alone cannot cancel another opener.
+
+Presentation callers receive explicit exact cleanup custody. Terminal workspace,
+Buddy and the outer Character activation retain it until their final successful
+commit. Another successful opener adopts/publishes the ready owner and revokes
+that cleanup capability. Failed solitary unpublished restores still roll back.
+No blanket rollback suppression, hidden duplicate session, or extra registry.
+Cold saved publication defaults to the durable ID to retain Goal's existing
+sealed attempt/session contract; never renumber a live first-persisted owner,
+and refuse conflicting explicit IDs. Remote scope comes from the durable row,
+including explicit global, independently of terminal selection.
+
+Native new_chat/fork reserve their preallocated durable ID in this same operation
+before commit/copy. Their intended settings, assistant identity, opening draft
+and existing new-session project controls must be durable before a phone can
+observe publication; direct native completion joins the same readiness. Do not
+overwrite an accepted phone turn or widen project/file/permission authority.
+Source-close/orphan cleanup remains exact. Native shutdown drains owned physical
+work and detached exceptions are consumed. Focused regressions cover mixed
+native/phone readiness, presentation/cancellation, Goal iteration in both orders,
+native create/fork publication races and close/reopen. F01 separately bounds the
+saved discovery DTO (including scope/activity); F08 refreshes only current
+nonstarting registry discovery and retains stale target refusal.
+
+Fix1 implementation qualification: the common operation also joins the existing
+first-identity reservations for manual Save and durable first Send; these already
+live owners stay controllable while saved-open observers await publication. Native
+new_chat controls commit through the existing project-context writer in the native
+atomic creation transaction; fork's first commit and copy share the reservation.
+Shutdown carries saved-read cancellation through existing physical native cleanup.
+Host discovery refresh does not move a running event subscription: register and
+disconnect use the exact child captured with its parent buffer.
+
+The new native new_chat reservation hop does not extend approval lifetime: exact
+source/approval is rechecked after that owner-loop hop and before initial SQL. A
+Close observed there refuses and settles the exact reservation without saving;
+native postcommit source-Close still retains its already-saved draft.
+
+
+Task9 fix2 clarification: a policy-ready restored presentation remains provisional
+until publication/adoption; remote snapshot and command resolution withhold that
+unpublished target. Metadata reads do not adopt. Existing already-live first-save
+owners remain published/controllable while saved-ID observers await persistence.
+Successful joined Character presentation carries the exact current owner handle
+to final publication; failure still requires the original creator cleanup proof.
+Staged saved-observer registration and producer terminal outcome/reservation
+removal share the existing preparation RLock. Record terminal failure even before
+an observer Future exists; deliver callbacks after releasing that lock. No native
+I/O, await or cross-loop blocking wait belongs in the atomic handoff.
+
+
+### Captured SQLite retirement after exhausted accounting (before code, 2026-11-01)
+
+ADR required: no new ADR. Existing ADR244's exact owning custody, finite accounting and conservative retirement contracts apply. This is an in-contract implementation correction, not a new owner, allowance or permission. Epoch37's actual exception chain proves that `_retire_staging` allocates a fresh512-byte descriptor custodian after the original native read allowance is exhausted. The outer maintenance hold is correct; it must not be dismissed to hide this allocation defect.
+
+Reuse the exact already-prepaid `_CapturedSQLite.custody` until every other reader/resource and witnessed private staging root retires. Retain its registration, exact scope/type and `close_failed` state; drain handles only through the existing native close methods and remove each handle only after successful close. Per-root captured cleanup must neither allocate a new custodian nor retire the shared one. Retire that same owner only after all roots succeed. Genuine ambiguous close or changed inode/uid/mode/type still retains exclusion; never retry through a fresh owner. Noncaptured rollback-resume callers and their existing budgeted enumeration/finally behavior remain unchanged. No budget reset/refund/increase, new object/API/cleanup of old evidence or generic absence acceptance.
+
+Move the initial custody allocation inside the existing try/finally. A genuinely failed initial reserve has no roots/resources and retires without manufacturing custody; later partial-state absence must refuse. Verify actual same-budget repeated exhaustion, initial-reserve refusal, both-root physical retirement, unchanged identity/cancellation controls, genuine ambiguous-close quarantine and noncaptured rollback-resume coverage. Original37 failure remains retained. Proposal: captured-sqlite-retirement-preflight-proposal.md in the integration evidence; implementation and final qualification are still pending.
+
+
+## R176 populated canonical rollback completion (before code)
+
+ADR required: amend existing ADR244/126. ADR paths: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md and backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: fixed empty native history preserve-only disposition under the existing authenticated mobile canonical replacement contract.
+
+Implement the complete ADR244 R176 and source-backed empty-history-container-rollback-proposal.md/native-trace supplement: exact native empty-container mapping and physical zero-entry proof; mobile-only source union with ordinary positive profile admission; private empty validation candidates; exact mobile dispatch before package-only return; two fixed dispositions with per-root held safety verification and exact observed owner. Preserve package exemption, generic/deferred/nonempty refusal, every native budget/cancel/custody/retirement/archive/plan guard. Do not substitute a different fixture root or omit safety history. Run the original unobserved populated import+public rollback and bounded mutation/ordinary-refusal/native-close controls, then final connected review/UAT. R176 is not qualified until those assertions complete.
+
+
+### R176 implementation correction: actual ordinary scoped-config selection (before code)
+
+Epoch49 proved the initial mapper used the supplied-stores branch of native `Agents/recovery.py` for an ordinary inventory that actually calls `discover(config)` with stores=None. An explicit Runs DB override therefore selected the wrong root. Native ordinary selection is `profile_paths.user_data_dir(config)/tool_sandbox`, with its existing paths/Paths precedence, users_name sanitization and durable default-root choice; preserve only when native tools.file_sandbox_root selection equals that default. Original fixture/source/root and ordinary refusal remain unchanged. This corrects R176 implementation under the user's explicit code-and-isolated-test approval; it creates no new ruling, permission, role, budget or API.
+
+Use existing `inventory.read_profile_config` with the SAME explicit original budget/custody: finite MAX_RECORD, no-follow regular/current-user/single-link, before/after FD and named identity and precharged native TOML parsing. Compare `mobile_consolidation._selector_observation` before/after to the exact matching authenticated proof.prepared.selector_review row and selected source/target config. Forward the freshly verified exact _CanonicalCopy at the three fixed mapping callers; no current-global config, supplied root/empty flag or proof cache. Price temporary config/path/descriptor work before allocation, including native path helpers when no ambient accounting scope exists.
+
+Public preview legitimately has explicit original accounting without ambient current() custody. Reuse the existing fixed precharged `_CaptureFileDescriptors(None)` composition already used by `_current_canonical_target`, with physical retirement in finally; never manufacture a fresh budget or file-source lease. Actual held paths retain their supplied exact registered custody and native profile/session checks. Add ordinary config/default/Paths/case/users_name/custom Runs/nondefault sandbox and selector-witness/mismatch/copied-proof/wrong-profile controls; qualify the original public populated import/rollback and six partial tuples without diagnostic observers. Prior47–49 and v4 artifacts remain source-bound historical evidence.
+
+
+### R176 implementation completion: publication preparation and directory-only observations (before code)
+
+Epoch53 reached native `publication._prepare` and refused `safety_scope_capability_unavailable`: its ordinary directory eligibility correctly covers only the existing persona owners. The initial R176 caller trace missed this gate. Keep that generic whitelist and all other status/schema/preserve/shared-group checks unchanged; only the already-approved fixed history candidate receives the complete native qualification below. User R176 code/isolated-test authorization covers this completion; no new ruling, role, permission, allowance or general preservation API.
+
+Forward the existing actual sealed source archive, original source budget/journal, live MaintenanceSession and cancellation through the two internal publication delegates from replacement only. Optional private defaults and ordinary call shape stay unchanged; isolated restore and ordinary tests receive no source grant. Reject every partial/wrong-type/expired/foreign tuple before new journal acquisition. Before a durable prepared append, build the same provisional _Prepared evidence with extra materialization precharged to the SAME budget, then run the existing COMPLETE _mobile_safety_members against the actual receipt/locked parent/original archive and journal/session. Keep its source/self-lock physical separation before original journal open, committed source proof, exact config/profile/root coverage, repeated emptiness/metadata/framing, native registered custody and all later checks. Every proposed history member must exactly match. No passed member set or Boolean proof is authority. Candidate/pending evidence on refusal remains recoverable; no owner replacement effects occur.
+
+Before provisional history observations, establish live native session and positive held selected physical-root/namespace/publication-root coverage. Use precharged descriptor custody registered in that session before acquisition. Observe DIRECTORY-ONLY metadata through pinned no-follow parents/root and fstat; reject file/symlink substitutions before any payload read. Compute the existing native directory-state/Object framing with physical retirement/uncertain-close quarantine; never call a file-reader fallback. The history member observation uses that same narrow operation with its existing custody.
+
+Connected shared matcher correction is also in scope: for an expected native _Object.kind directory, _safety_source_matches uses a directory-only observation. Legitimate directory metadata results and every file-source path remain unchanged; a directory replaced by a file already compared false, and now refuses before hashing its contents. This narrows I/O and adds no owner eligibility. Cover the five existing call sites (two finalization, installed validation, checked originals, originals proof), ordinary directory/file positives and actual directory-to-file/symlink zero-reader negatives. Generic _observe_safety_source behavior for other callers stays unchanged.
+
+Run actual prepare-call missing/partial/wrong-source/session controls before journal acquisition, generic all-None/ordinary/isolated preparation, root-to-file and late-substitution zero-file-reader cases, original package mutations and native close quarantine. Then the original populated public rollback including six checked-originals source-tuple controls must complete without diagnostics and under unchanged budgets. Prior53 and all failed evidence remain retained; no success is inferred from preview/staging.
+
+
+### R176 implementation correction: original source completion versus new pending (before code)
+
+Epoch64 reached the complete held source proof and found that the lower history config helper incorrectly treats _CanonicalCopy.pending as original-source incompletion. Native _canonical_evidence sets that scalar for either an incomplete original OR any overlapping pending operation, including the legitimate new replacement. Existing later_rollback._verify_snapshot_source already requires the original terminal mobile_committed independently and accepts its own new pending only under the actual held native path.
+
+Move the scalar pending refusal to the PUBLIC _mobile_preserved_members boundary, before its existing fresh _current_canonical_target no-pending check. Keep stageNames actual public no-pending check. Remove only that scalar from lower fixed config derivation; keep exact proof/model/selector/fingerprint/witness/config/custody/budget checks. Held sourceMembers still requires the full committed original journal/cipher/manifest/native live-session/root proof, with no flag or cached evidence replacing it. Public/new-operation overlap still refuses; original source not committed still refuses. This is faithful composition under existing user-approved R176, with no new ruling, authority, role, budget or reapproval.
+
+Move the synthetic pending-bit oracle to its actual public boundary and retain actual native pending/source-completion controls. The original public populated rollback must pass through the new pending with its committed source, complete all existing canonical/source/directory preservation assertions and six checked-originals source-tuple controls without diagnostics. Prior64 remains retained; no success follows from lower mapping alone.
+
+
+### R177 — Capture the empty-history rollback from its actual scope inventory (before code)
+
+ADR required: amend existing ADR244 and ADR126; no duplicate ADR. The source-only `budget-design-audit.md` and native69/70 failures establish that adding R176's full pre-Prepared proof to the three existing proofs exceeds the unchanged16MiB SafetyCopy source allowance. Four unchanged checks need21,916,353 bytes; overlap-only optimization cannot close the deficit. Do not raise/reset/split/refund any allowance, add decoded-record/proof caching, reduce accounting coefficients or introduce a new lock protocol.
+
+Only on the fixed mobile canonical replacement route containing a preserved included-directory `agents.history` item, replace the separate `capture_verify_rollback` entry proof with the existing full proof inside `MaintenanceSession._replacement_capture_scope`. Keep the complete pre-Prepared proof and post-capture proof: three independent fresh complete source authentications. Derive scheduling only from the existing complete archive/budget/original-journal tuple and exact RestorePlan/LocalSnapshotSource/Inventory safety/preserve membership. This local structural branch is never evidence of a previous proof or authority. Ordinary/all-None and mobile package-only paths retain their existing entry check, call shape and inventory behavior. Mixed history/package paths authenticate both fixed dispositions at every remaining boundary.
+
+Keep cheap strict plan/mode/target, complete actual source types, live-session and cancellation validation before new workspace effects. The capture scope retains and yields the exact `(prepared, inventory)` already returned by its own fresh `_checked_originals`; the history capture consumes that inventory for entries, capture, manifest and coverage, with no old inventory, caller result, readiness flag or returned proof token. Native `_CaptureScope` remains the sole source acquisition authority. Check candidate descriptor path immediately inside that scope, before any source payload copy/adapter capture. Keep all source predicates, before/after native journal locking, physical-source/cipher/archive/config/namespace/history checks, original empty-directory identity/emptiness, cancellation and conservative close/retirement.
+
+This explicitly supersedes R176's promise to retain all three later checks only at the separate function-entry sample for this exact route. It is a changed early-refusal guarantee: candidate validation IO and creation of private empty work/stage/payload directories may precede detection of a source change after Prepared append, and a transient hostile change visible only at the removed sample can go undetected. No supported writer is newly admitted, and no source capture, target publication, credential application or history installation precedes the full actual-scope proof. Retain the durable Prepared/pending evidence and any private artifacts on refusal; do not clean them to simulate the former ordering.
+
+Reuse the already-returned pair and move the existing entries comprehension; do not create a second inventory/list. Precharge1,024 bytes on the same original source allowance for new bounded local routing/result bookkeeping. Retained exact-fixture arithmetic is1,118,509 +3*5,199,077 +1,536 +1,024 =16,718,300, leaving58,916. The post-capture proof is the last consumer of this source allowance; generic later archive/journal/publication work keeps its existing separate accounting. This is a source-feasibility bound, not runtime qualification or a promise that larger profiles fit. New source readers/clones invalidate the bound and require investigation before trial.
+
+Implement only the two connected capture functions and their meaningful tests/fixtures. Required checks: actual history3/package-only3/ordinary call behavior; exact scope inventory consumption; partial/wrong/foreign source/session and malformed plan refusal before workspace effects; wrong candidate path before source payload; source/history/config/journal/root mutation after preparation or during workspace creation refusing before capture; actual close/retirement quarantine; unchanged source-budget object/limits and separate exhaustion negatives. The original populated native85 public import+rollback must complete unobserved with canonical portrait/archive/review/binding/witness data, SafetyCopy post-import edits, source bytes and default-directory identity asserted. Keep original failed epochs and current task In Progress until these and final review/UAT pass. Existing explicit user authorization covers code and isolated tests; no real-profile migration or data deletion is authorized.
+
+
+### Latest-dev typed refusal and per-chat evidence composition (before code; ab9459cc)
+
+ADR required: no new ADR; direct composition under ADR094/211/230/244 and existing native per-chat staging. Dev7b3b2371..ab9459cccc32a616a6d24c4de4e2af8d9b5c0714 adds PR3329/3330/3331,95paths, no storage/schema/migration/.github change. Root read the complete source audit `upstream-ab-runtime-audit.md` and connected actual received-source/runtime/trace-cancellation code. Preserve all accepted native typed blocker/provider/image facts, missing-trace-request exact preparation recovery, per-chat staged evidence/receipt/lifecycle and transient reply count behavior.
+
+Compose both rules in require_received_source: explicit snapshot_console_staged_evidence(record.session_id) AND the existing composer-only staging guard. Bind release/lease/capture to the actual received/request session at every changed caller, retaining hook_read, phone preserve_composer, no borrowed launch/attachments/prefill, exact native user-proof transfer/one-use/release and immutable target. Phone create/open remains activate=False; no cold-staging adoption, desktop selection change or release of unrelated/replacement staging. Native admission clears only the target chat's prior receipt, not its staged launch; close retirement uses ticket.session_id only after actual successful finalization.
+
+Native missing Capture-On trace request now enters exact MANUAL TRACE_CALL recovery with reservation_status=not_established; keep frozen continuation rebuild, identity/CAS/provider/unknown-contact rules and durable accepted facts. At _cancel_trace_recovery_preparation use captured continuation.prepared.preserve_composer to select restore_draft=False for phone input. Preserve desktop defaults, durable DISCARD settlement, native trace/CAS cleanup and conservative failures. This is the existing preservation contract, not new phone decision answerability, automatic replay or permission policy.
+
+Carry typed fields through their existing result/exception/queue/outcome/presentation/message-copy owners; do not infer causes from display text, persist transient data, or change provider contact/retry meaning. Preserve both evidence count producers before lease release, actual copy/restore/retry clearing, session-only fields and canonical citation persistence. Preserve source census/token/layout contracts and native diagnostics inventory against ab, including census minimum1316; no numeric ratchet waiver or unrelated upstream follow-up repair.
+
+After preserving the current source and proper rebase, run fresh candidate-bound selected native typed-failure/staged lifecycle and actual phone target/staging/proof controls, plus real phone missing-trace pause/Retry/Cancel preservation (text AND revision, empty/different/equal/late edits), no-provider/unknown-contact/stale-preparation and default desktop behavior. No historical pass aggregation or full suite. Root owns later whole integration review,15-case actual retained-native UAT and draftPR update. Storage R177 remains separate; no source work occurs during live epochs.
+
+
+### R176 installed selector lifecycle completion (before code)
+
+The original80 and bounded diagnostic81 both pass the complete R177 SafetyCopy source checks, then installed validation rejects mobile_canonical_selector_review_required and native publication reverses. The original mobile selector witnesses name the old config inode; native replacement publishes content-identical config at its recorded new inode. This is an implementation lifecycle mismatch under existing user-approved R176 and ADR126/244, not a new disposition, owner, role, permission, allowance, lock or phone API. R177 and strict original preview/staging/capture witnesses stay unchanged.
+
+Adopt ONLY V2 of r176-installed-selector-proposal.md (SHA256 2d6dd1773bdf0fe20a09b6e1fc708c16e3e703d68e594ad26e953b19bf0e35d1). The frozen V1 fresh-current-journal/FD forwarding is rejected: one current64-event203030-byte parse costs7207204 units; repeated per-selector reads waste the fixed bound. Use the native installed owner's EXISTING current EX-held journal/records, typed receipt/Prepared/descriptor/source proof and already verified private config copies. No new current-journal parse, returned witness map, success token, borrowed FD, callback, frame, source-proof rewrite or cache crosses the boundary.
+
+At that owner, uniquely match each needed real history config dependency and original selector row to actual restored logical ID/path, descriptor row, published artifact/progress and installed_paths. Keep original ancestor witnesses and content fingerprint exact. Observe the recorded new leaf identity with only native-supported mode: private0600 before metadata application or exact receipt-bound applied mode during an interrupted native metadata phase; an existing installed_validated record requires its exact unchanged metadata proof. Require stable full current mode/identity/content before and after reading ONLY the existing receipt-bound private config copy under this work directory, with no-follow private ownership/link/size/hash and actualFD/named-path continuity. Existing native verify() still surrounds preserved candidate production and metadata finalization. No payload read from an unbound original locator is added.
+
+Only finite immutable (config logical ID, exact bytes) data flows down for pure native default-root calculation. Recheck exact dependency/selector membership, bounded size and original fingerprint; parse through existing inventory._parse_profile_config and reuse native profile_paths rules without duplicate selection behavior. Byte data grants no source scope or evidence of publication. The installed producer owns physical transition validation; _mobile_source_members still freshly validates registry/bindings/selected profiles, and actual held source scope plus repeated empty-directory proofs remain. Ordinary None input keeps its original live selector witness path and existing call shape; public preview/staging/allthree SafetyCopy proofs never supply installed data.
+
+Move the ONE existing installed preservation budget and its existing registered metadata descriptor custodian up to cover these added byte/private-path/selector reads, forwarding that same budget/custody through supported fixed helpers. Reserve actual tuple/bytes/parse/model/path/hash resources BEFORE materialization; no extra issuance/reset/refund, global repricing or source-phase capacity change. Register before acquisition, retire/remove only after successful native close; ambiguous close retains hold and cannot retry through a fresh owner. Existing member capture scope/custodian stays native. Ordinary/package-only/default behavior remains. Four production files only: publication.py, later_rollback.py, mobile_builtin_preservation.py, mobile_empty_history.py, with meaningful tests.
+
+Require real installed transition and original-proof immutability, strict default same-byte inode substitution refusal, unique two-config handling, wrong/cross-profile copied data and current evidence, source/private-copy byte/inode/mode/ancestor/symlink/link/late mutation failures, private0600 versus applied-mode/revalidated-phase behavior and actual uncertain-close quarantine. Then original public populated operation must complete unobserved under unchanged limits. Previous failures remain failures and arithmetic is not qualification.
+
+Test-only AC4 completion also adopts r177-post-import-safety-row-control-proposal.md: preserve the original scenario; use a separate named scenario sharing its helper to write a real admitted post-import note before rollback preview. Assert live rollback removes that new note, and directly query the exact row/title/body/version from the retained encrypted SafetyCopy, selected by the actual returned journal operation ID. Use native _locked_copy/_acquire, bounded inert extraction into absent protected-root-safe private output, and actual readonly restricted copied-owner schema validation/query/physical close. No raw SQLite opener, live-profile validation-role loan, extra restore, ciphertext mutation or artifact cleanup. This is existing Task36766AC4 verification, not new product code or permission. Final whole integration review/UAT and real-profile exclusion remain.
+
+
+Test-only SafetyCopy precision before code: use native update_conversation on the existing canonical archived conversation with exact expected_version, after ALL original post-import assertions and immediately before target preview. Keep original/edited full rows; after rollback require original live row and edited full row in exact retained encrypted SafetyCopy. This supersedes the earlier add_note/absence alternative and directly proves preservation of an edit to existing data. Native locked acquire/inert extraction/read-only restricted copied-owner validation and all source/authority/root/budget/no-real-profile constraints stay unchanged.
+
+
+### Latest-dev physical speech preparation preservation (before rebase;2acbcd42)
+
+ADR required: no new ADR; preserve accepted native ADR284 and existing mobile ADR244. Devab9459cc→2acbcd42f3e7b07fd122f5f6dc6b22e7385f10c5 adds PR3332,26paths and no DB/Backup_Recovery/schema change. Root FULL-read upstream-2ac-runtime-audit.md and native ADR284; current three speech implementation files are byte-identical to ab. Preserve the additive model guard and all native service/controller/session callers on proper rebase. No phone speech API or change to runtime ownership is introduced.
+
+Keep the exact retained physical preparation daemon/service/transcriber/events and process-wide admission through native warmup, capture startup/publication or actual retirement. Logical Cancel/screen teardown never proves physical completion. Preserve capture cancellation checks, nonjoining release, actual maintenance_ready and failed-cleanup fencing. Propagate controller maintenance_ready through dictation session readiness before existing service readiness. Browser disconnect remains exact view/subscription detach; it never disposes this physical owner or retained runtime. Phone Stop remains exact turn/run control with truthful unconfirmed physical exit, not microphone/model control.
+
+Final upstream DOES NOT override HF_HUB_DISABLE_XET; preserve the user's environment. Existing production download_progress_probe returns None, so opaque loading has no automatic stall bound and can retain admission until process exit. Keep positive-artifact attribution, bounded plain failure/10-second markup=False toast and narrow lazy tqdm repair; no global transport/default change or unrelated native follow-up repair. Preserve historical native qualification limits and no numerical ratchet waiver.
+
+Merge native diagnostic entries with current feature entries (voice input42/digest527c446b948fe052faf5, model_download_guard1/digestc816a93c2246acba0b5a), then validate final actual source. After rebase run selected installed-stack private/no-download/no-microphone physical preparation/cancel/cleanup/readiness/source/diagnostic controls from the audit, plus existing phone detach/reconnect/exact Stop controls. Prior source audit is not runtime evidence. Final static/review/15UAT gates remain; no full sweep/dependency install or real profile.
+
+
+### Current-dev missing trace-request Retry composition (before code)
+
+ADR required: no new ADR; direct implementation correction under existing ADR094/230/244. The actual named-workspace phone/native gateway path rebuilds the frozen Capture-On request, then rejects the controller's retained missing-request error as if it were a gateway boundary. Source inspection and bounded post-outcome104 confirm: resume raises exact TraceCallPersistenceError(reservation_status=not_established) with boundary=None before gateway binding; the pause stores that object; successful _restore_missing_trace_request replaces its continuation without consuming that marker. Gateway correctly requires exact accepted-preparation ownership for every non-None recovery boundary.
+
+Only the current missing-request TRACE_CALL/Capture-On continuation may consume its exact controller refusal marker. Before rebuild require exact TraceCallPersistenceError, reservation_status not_established and boundary None from that preparation's existing map. Use unchanged frozen continuation/provider/destination validation and request builder. Under the existing durable preparation lock require original continuation identity AND the same marker identity, publish the rebuilt continuation, then remove ONLY that marker. Failed rebuild or missing/replaced/unknown/established/foreign marker refuses and retains the pause/current evidence. No gateway change, rearmed user proof, borrowed boundary, new token/admission, dispatch replay or retry policy; normal native fresh reservation follows. Genuine gateway construction_failure/unknown-contact/established-boundary verification remains unchanged.
+
+Add actual named-workspace phone Retry and failed-rebuild/Cancel draft-text+revision controls through the real gateway, exact-marker identity/status/missing/replaced negatives, and retain native desktop/unknown-contact boundaries. 102/104 are reached failure evidence; controlled setup is labeled. Native DISCARD on this first newly saved send removes its transient current-session user row and rebinds pre_send_conversation_id=None, so tests must follow that actual contract rather than demand retention; unrelated saved history is unaffected. Root source/proposal review precedes the edit; no new architectural ruling or permission is required within the authorized current-dev integration.
+
+
+## Final native dev62a preservation and numeric disposition (before rebase)
+
+ADR required: no new ADR.
+ADR paths: existing ADR244 and ADR097 boot budgets.
+Reason: direct preservation of accepted native video Stop behavior; unchanged numeric policies.
+
+Preserve native PR3333 typed remote cancellation outcomes and generation/Regenerate cleanup, draft restoration and honest billing copy. Phone Stop remains exact turn/run, with no new video endpoint or physical-exit promise. No storage/schema source delta. Merge native video and phone trace census additions (minimum1318), and retain the exact reviewed mobile/speech/video diagnostic entries. Properly rebase only after source/process freeze and checkpoint; use source identity to retain unchanged storage94/97 qualification, then run selected native recorded video controls and final15-case real retained-Console UAT. Source audit: upstream-62a-runtime-audit.md in the existing integration workspace.
+
+R178: retain absolute module-size and startup limits and disclose their actual failures as NON-GREEN draft-review blockers. The exact21-row audit distinguishes seven inherited breaches,20growing owners and one shrinking owner; differential attribution does not pass the absolute guard. A substantial size-only refactor of qualified storage/runtime owners is outside this finalization. No other-PR waiver transfers, numeric increase, new exemption or green/merge-readiness claim. Optional owner preference is pending and is not approval; without an explicit reply, limits stay unchanged. Continue product fixes, native dev sync, independent review, actual UAT and the authorized draftPR3345 update. Tasks stay In Progress while mandatory Done checks are unresolved.
+
+## Final review correction wave (before code)
+
+ADR required: no new ADR.
+ADR path: existing ADR244 physical owner retirement and native permission-preserving qualification.
+Reason: direct corrections of confirmed native lifecycle/default composition defects.
+
+Final independent review of62a→cdd37d99 requests FI-001 and FI-002. After all physical epochs close, fix control loss by preserving existing app/boot/view gates, synchronously fencing the already-installed controller through begin_shutdown, and requesting ordinary self.exit in finally. Remove early direct runtime disposal and partial Console-only drain; the native full app chain must retain/capture/drain recovered-image/view/project-index work before execution lease retirement. No lazy owner creation, substitute voice permit or new authority. Meaningful held native work/exclusion/admission tests and native lifecycle/parent-death UAT are required.
+
+Only the fleet private fixture explicitly opts into existing tools.full_agent_tools_enabled before startup/enrollment; all other scenarios keep defaults. Native permissions, approvals, imported holds and exact target assertions remain. UAT112 ran all15:12P3F766.49s/nativewait1/reaped/sourceunchanged. Two initial host503 failures are separate, still undiagnosed startup-stage failures; source-backed bounded post-outcome diagnosis precedes any correction, with no native verdict/guard changes. Preserve all packets. Combine confirmed corrections in one wave, then scoped independent rereview and final actual15-case UAT on frozen source. User explicitly keeps numeric limits as disclosed draft blockers; no merge-readiness/BacklogDone claim.
+
+R179 (test-only, before edit): diagnostic114 did not reproduce host503 and restored exact bytes; earlier native reasons remain unknown. Adopt the source-reviewed legal-pending-startup fixture contract in host503-readiness-source-disposition.md: exactly ONE host POST, locally accept only200 validated host or exact503 console_unavailable; shared command helper stays strict. Never re-POST or retry mutations. Preserve actual app-ready receipt, same sole process PID+creation identity and existing30s GET-only snapshot loop. Require HTTP200, execution_admitted is True and validated same native host; compare initial200 identity, derive allowed503 identity only from positive same-child snapshot. Persistent unavailable/unknown/auth/malformed/replaced owner fails within original bounds. This does not classify old503s or change production policy. Existing ADR244; no new ADR. Cost if wrong: fixture may delay surfacing startup latency/errors until its unchanged deadline; it still cannot grant execution without native positive proof. Include in the single FI001/002 correction wave, then fresh source-bound physical qualification and scoped rereview.
+
+
+### Latest-dev continuation before final UAT (2026-11-02)
+
+ADR required: no new ADR
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Preserve the approved shared ownership/canonical data contract while incorporating current upstream implementations; upstream SQLite kernel and native display scheduling contracts remain authoritative.
+
+After independently gating checkpoint5deaeb339aa856957d948b3d015fb219889f874c (14 named paths,122 exclusions,841 source/evidence bindings and1484 retained private entries), preserve a named backup and properly rebase the existing feature commits from62a169f906508ed02bd7546ab278d916638d1607 onto current dev88af9f937908b46e8c5f9f7fddd9e8748c917d46. Inspect actual conflicts and connected native delta; retain canonical schema86/11/27, new public managed_transaction_depth, native Dreams SQLiteStoreKernel admission/deadlines/ownership and per-send display-start accounting. Preserve both native and mobile census entries, never raise or waive this feature's numeric ceilings. Keep source/evidence and original branches; no merge/GC/cleanup/full suite. After source freeze, rerun the actual whole15 served acceptance file and minimum newly affected native send-start/heap/Dreams/transaction/rollback controls. Source-bind prior unchanged qualifications, and explicitly requalify affected public populated rollback/edited SafetyCopy rows because native DB implementation changed. The same final reviewer gets ONE scoped rereview of the existing correction wave plus concrete conflict resolutions/new integration breakage, not a second broad review. New125 Canvas temporary/durable composition defect remains separately held for precode proposal; no speculative production correction is released here.
+
+
+### R180 correction before final integrated acceptance (2026-11-02)
+
+ADR required: yes, amend existing ADR
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Existing canonical session IDs expose an incorrect temporary-storage inference; immutable native scope and bridge captures need the actual native session classification and matching revalidation.
+
+Within the single existing final correction wave, preserve canonical IDs and implement the reviewed explicit ephemeral fact at all four native CanvasScope factories. Data-only positional constructors may retain unknown state, but native authority must refuse missing/non-bool truth with no fallback. Retain the exact state in all three _Selection constructors and both native bridge constructors, partial scope/publication/import/render/controller/repair/prepare/apply guards and existing owner-proven promotion. Adapt only existing native-authority fixtures to their actual session or explicitly proven durable/temporary setup; do not stamp a blanket False or weaken native owners. Use original125 as functional RED, add meaningful real SQLite temporary import/promotion/canonical hydration/read/rename plus unknown/stale/same-ID incarnation controls, preserve all existing native promotion/branch/bridge/async tests, and pass the original served normal-False saved-load/F12/pinned/zero-provider/two-row/oldURL/physical-cleanup journey. No new architecture role, client field, transport schema, permission, path, fallback, dependency, budget or numeric exception. Root then independently gates the exact source/evidence manifest, normal commits and obtains the already planned ONE same-reviewer scoped rereview plus final whole15 UAT. No second broad review or full repository sweep.
+
+
+### R181 native cancellation correction after final acceptance132 (2026-11-02)
+
+ADR required: yes, amend existing ADR
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Carry the existing exact native run cancellation predicate across the service/model adapter boundary instead of borrowing the spawning primary's Event.
+
+Preserve13214P1F and its original source/physical/artifact/native-row evidence before editing. Source-only design advice from the same final reviewer supplements the final review cap; no new broad review or implementer seat. Within the existing single correction wave, bind exact final deps.should_cancel to native actor identity using the existing ContextVar pattern, with guaranteed nested/thread reset. Synchronously capture it before async lifeline scheduling, enforce native identity and fail-closed partial/missing state, retain outside-native-only legacy fallback, and use that same predicate for silent watchdog and chunk cuts; primary redirect uses native primary identity. Preserve child Events/configured inline/coupled behavior/automatic kill/deadline/nativephysical lifelines/permissions/budgets/retries. No new registry, policy, provider workaround, guard bypass, false cancellation default or new runtime. First demonstrate deterministic real native parent-Stop/survivor silent-stream RED, then exact-reply/done GREEN and independent exact child Stop/coupled inline/automatic/primary controls, source identity/concurrency/fallback negatives. Qualify the original isolated fleet case and then a root-released final whole15 on committed corrected source; root reviews actual minimal diff/source/evidence and records limits after the single scoped review cap. No whole repository sweep, extra observer, real profile or numeric waiver.
+
+
+R181 physical-caller disposition before code: synchronously capture the existing native AutomaticWorkContext only for a valid native cancellation binding. Its actual ledger AgentRunsDB uses existing operation_owned_connection for the finite provider coroutine on the provider-loop thread; borrow pre-existing registered handles and retire newly acquired/replaced handles on that same caller before its model future completes. The scope adds no SQL transaction across an await. Existing Goal check/owned_goal_storage still retires Core/Runs/Workspace acquisitions per probe; nested ownership defers the same Runs handle to the outer finite caller. Admission remains in the original agent_async_worker_guard. Physical close failure propagates through native custody/held leases and never becomes False or a fresh acquisition retry. The original captured deps callback is delegated without replacing automatic checks or caching success. Do not repeatedly reopen a fresh SQLite handle per received chunk. No fourth production module or new lifetime registry is required. Real accepted automatic/Goal kill or deadline plus provider-thread handle retirement is mandatory qualification, not inferred from callback identity.
+
+
+## Historical publication qualification (epoch141, 2026-11-02)
+
+ADR required: no new ADR
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Documentation-only publication of the existing R168–R181 implementation and its actual acceptance evidence.
+
+Tested source `46f0800c` is properly rebased onto native dev `88af9f93`. The complete original 15-case served acceptance ran without `-x`: 14 passed, one failed in 784.03 seconds. The process was reaped with exit status 1; all 38,286 tracked before/after hashes and index entries matched. Root independently checked the report, raw output, 740 manifest bindings, 1,444 private entries and physical receipts. The direct cold failure is localized to host-bootstrap 503 before Create; its underlying cause remains unknown. It remains a functional draft blocker under R182. No retry or second correction/review wave replaces the failed result.
+
+Native dependency, populated rollback/edited SafetyCopy, Canvas and cancellation controls retain separate source-bound receipts. Independent scoped review closes through `95b48a09`; later R181 has source-design advice and root actual-code/test review, not independent post-implementation current-head review. Numeric limits remain unchanged: 24 size-pin violations and UI-ready count 1044/1031 fail; app import 683/686 passes with warning. Tasks stay In Progress. The final documentation-only commit must retain all 9,742 tested executable/test/script hashes. Authorized publication is draft PR #3345 against dev, with auto-merge off. No merge, full sweep, real-profile operation or cleanup. See the [current QA receipt](../qa/2026-10-25-shared-console-mobile-supervision/uat-2026-11-02.md).
+
+
+## User-requested cold bootstrap correction (R183; before implementation)
+
+ADR required: no new ADR for investigation; amend existing ADR244 before any necessary bootstrap contract change
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Correct the existing explicit first-host Create/Send behavior; retain execution admission, exact identity and no-replay rules.
+
+1. Preserve failed141 and capture the actual native pre-sanitization exception/stage in one isolated original cold direct journey, with original assertions, deadlines and guards and exact source/physical receipts.
+2. Trace the observed native failure to its owner, compare existing lifecycle/readiness semantics and write a meaningful deterministic failing regression before the smallest production correction. Root records any service-contract amendment before production edits.
+3. Qualify positive cold admission and negative unavailable/replaced/closed/read-only-discovery paths, then original direct and proxy cold UAT and necessary connected retained/fleet/lifecycle controls. No timeout-only mask, mutation replay, admission bypass or full sweep.
+4. Independently review the scoped correction, update QA/task/PR3345 with actual new evidence while preserving failed141, keep numeric limits unchanged and leave draft/noauto while other blockers remain.
+
+
+### R184 cold-bootstrap repair contract (before production)
+
+ADR required: yes, amend existing ADR244
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Explicit first-use startup must allow native child initialization while steady-state discovery/request deadlines remain unchanged.
+
+Native142 proves connection_deadline_exceeded after5.327826 seconds; source shows textual-serve start returns at process spawn while control authentication begins at native App.on_mount. Implement one named fixed20-second wait only for explicit `_owner(start=True)`, retaining ordinary5-second waits and the original30-second UI assertion. Pin and revalidate the actual host/child/broker identity around awaits; successor/disposed/unadmitted owners refuse without effects. No mutation replay, polling, permission/guard/schema/config/dependency or numeric-governance change. Use meaningful delayed native broker/client+App regression RED before production, then positive and exact refusal/lifetime controls, original direct/proxy cold UAT and committed whole15. One scoped independent review and actual PR/QA update follow; no full suite or real profile.
+
+
+### R185 connected terminal first-output investigation (before diagnostic)
+
+ADR required: no new ADR for observational diagnosis
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Investigate a failed initial retained-terminal paint inside the existing Console acceptance contract, without changing runtime behavior.
+
+Committed R184 whole148 is14P1F846.43; both original cold paths and all other cases pass. The sole fleet case fails before any Chat/worker/phone action at initial desktop first output: body-loaded becomes closed and no first-byte marker appears. Its own child retired0; the source-cause is unobserved. Preserve full148 evidence and run one original fleet diagnostic149 only after physical closure. Adopt exactly fleet148-detach-diagnostic-proposal.md/fleet149-detach-hook-inert.txt: at most8 records/4096 ASCII bytes, direct allowlisted caller code metadata from one immediately deleted frame, queue/ready/closed/current booleans only, original detach delegation, no file I/O in callback and one deferred private write after native retirement. Original45-second readiness/case180-second guards and64-frame/1MiB caps remain. No payload/IDs/secrets/locals/stack walk/SQL/request/timer/sampler/newtask or source fix. Restore original test bytes after actual closure, report observed cause and minimum repair before production. Hypothesized cooperative-scheduling/overflow is not an established cause. Numeric governance remains unchanged.
+
+
+### R185 deterministic component diagnosis continuation (before tests)
+
+Existing ADR244 applies; no new ADR for tests alone. Diagnostic149 is physically closed and restored: initial output passed; one final empty-queue cleanup detach only. Its later question click produced no ticket/command, so neither historical queue overflow nor a specific frontend cause is established. Preserve this result and verify only two narrow source-backed behaviours on unchanged production: (1) real existing host/attachment producer delivers100 ordered small frames to an already-waiting receiver without falsely detaching it, and (2) shipped mobile question controls retain the same form/answer and dispatch exactly once across an unrelated Chat attention-count refresh during one public pointer gesture. Reuse existing fixtures and original guards; this is component evidence, not native admission or retrospective148/149 causal proof. Run only the two new nodes in epoch150. Read exact RED boundaries, then require minimum cause-backed proposal/precode contract before production. No blind fleet retry, limit increase, permission change, source workaround or broad suite. See fleet148-149-component-regression-proposal.md.
+
+
+### R186 component repair after functional RED150 (before production)
+
+ADR required: yes, amend existing ADR244
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Bounded transport fairness and exact current decision interaction through background metadata updates.
+
+Adopt only fleet150-proposed-production-v2.patch plus overview amendment: one successful-enqueue cooperative yield, exact64frames/1MiB and no browser wait; independent existing form/overview signatures, preserving exact native form/answerability/disabled-state identity. No new renderer/persistence/authority/CSS/API/schema/dependency or numeric waiver. Full frontend policy reads precede UI code. Direct both-engine GREEN, slow-pressure/cancellation/generation/target/round/unknown-command controls precede one original unobserved fleet, then focused review/root commit/whole15/PR update. Historical148/149 exact causes stay qualified; no synthetic green total.
+
+
+### R187 initial terminal close diagnosis (before diagnostic154)
+
+ADR required: no new ADR for bounded observation
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Identify the native source of an initial retained-terminal WebSocket close before any prompt, without changing behavior.
+
+Whole153 on19504c is14P1F878.53: both cold paths, full fleet, lostACK/security and all4lifecycle cases pass; only initial retention first-output fails. Exact close cause is unobserved. Adopt only retention153-close-diagnostic-proposal.md/retention154-hook-inert.txt after physical closure: THREE original delegate boundaries (detach/directcaller; child_closed/directcaller+existingreturncode; original terminal processor entry/finally with WSclosecode/exceptionTYPEONLY/sessionrevoked/queueflags). Shared8record/4096ASCII cap with complete-envelope preflight, no locals/stackwalk/payloads/IDs/secrets/SQL/request/processprobe/task/sampler, frame immediatelydeleted, no I/O in callback. One deferred privatewrite after original physical cleanup and patch.undo, nativeprocessreturncodes recorded without invented orphan status. Original45s/case/auth/heartbeat15/64frame1MiB limits/guards remain. Backup and byte-exactrestore originaltest only after nativeclosure. ONEoriginalretention node, no blindretry/qualificationcredit. Source proposal precedes anyproductionrepair; heartbeat/queue/nativeexit remain hypotheses. AC1 current qualification reopened while firstpaint fails; Task stays InProgress and allnumericgovernance limits unchanged.
+
+
+### R188 deterministic slow-start transport control (before test155)
+
+ADR required: no new ADR for test-only reproduction
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Test the existing authenticated socket/start contract with real heartbeat processing before any production change.
+
+Diagnostic154 passed with normal closures only; historical148/153 cause stays unknown. Adopt retention154-startup-order-component-proposal.md: one existing test_served_tab_isolation _stack/_login/_EchoChild.start gate, real server handler/host registry/authenticated aiohttp socket/Ping/Pong. Hold only awaited child-start25s (15+7.5+native ceiling slack, within original45s); release same child, require native begin/ready/started+echo and exactly one child. Client permits handshake on either side of startup. No server clock/heartbeat/admission/protocol/limit patch, observer expansion, provider/replay, new helper/dependency or production edit. Always release/gather/close original owners. Run only new node once in durable155; actual RED required before minimum repair proposal. This cannot retrospectively classify whole148/153. All numeric limits stay unchanged; AC1 remains open.
+
+
+### R189 authenticated startup before heartbeat (pre-implementation)
+
+ADR required: yes, existing ADR amendment
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Correct the existing native terminal upgrade/startup service boundary while preserving current auth and retained-child ownership.
+
+Actual155 reproduces a healthy client answering one native Ping/Pong then closing1006 while awaited startup remains pending, with one child/no ready frames. Adopt only startup155-proposed-production-v2.patch (SHA cc83c412ed07ade7e42fa2fe6c048d1385b1000057f3cc6fc8cee5c28f267c98): native can_prepare rejects malformed upgrade before child effects; same server-admitted profile/shared shielded start precedes prepare; native touch_session and exact registry/host checks precede upgrade. Pre-upgrade auth refusal401, unavailable503, native HTTP exceptions propagate; only prepared sockets are closed. Existing heartbeat15/Pong7.5, sole receive loop, generation/64frame/1MiB limits, established revocation/expiry channels, agent lifetime and permission/admission stay. No retry, timeout increase, input queue, helper or new authority.
+
+Qualify original slow-start node GREEN and minimum malformed-upgrade, revoked/expired pending start, cancelled observer/same-child reconnect, held-start shutdown, and established takeover/logout/expiry/Canvas controls using native fixtures. Historical148/153 causes remain unobserved and154 remains a diagnostic pass without qualification credit. Root review of final diff/evidence and focused independent correction review precede commit and one unchanged original whole15 acceptance. Numeric limits remain unchanged; Task stays In Progress.
+
+
+## Current publication qualification (epoch 159, 2026-11-02)
+
+ADR required: no new ADR for metadata publication
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Record completed qualification of the existing R184/R186/R189 corrections; R189 boundary amendment preceded implementation.
+
+Committed source `91b5ae17` on native dev `88af9f93` passed the original complete 15-case UAT in 727.72s without `-x`/retry/diagnostic or assertion/deadline changes. Pytest 74596 and original runner 74570 were reaped with status 0. Root independently gated 38,287 tracked before/after/current hashes, unchanged index/HEAD, 750 evidence/source/exclusion bindings and 1,451 private entries and 8 symlinks across 11 fixtures. Reconnect/mouse/paste/resize, both cold, full fleet/lost-ACK/security and all four lifecycle cases pass; parent-death proves actual absence/fence reacquisition, not an invented orphan exit status. The closed phone viewport was visually inspected separately from physical-phone qualification.
+
+Meaningful source defects and targeted epochs remain separate: R184's 20-second cold admission wait with owner fencing; R186 ready-consumer yield/stable decision DOM (epoch 151: 18 passed); R189 native handshake/sharedstart/auth-owner recheck before heartbeat (155 RED, 156: 12 passed, 157 teardown-oracle failure, 158: 1 passed). Focused independent reviews accept all three corrections; prior full feature scope/R181 review limits remain. Historical epoch 141/148/153 and non-reproducing diagnostics 149/154 are retained, with no retrospective attribution for 148/153 cause claim.
+
+Only four publication metadata paths change; all 9,742 executable/test/script hashes must equal the tested `91b5ae17` snapshot before/after the normal commit. Task 36769 AC1/2 qualify, aggregate AC3 stays open/status In Progress. Keep all 24 size pins and UI 1044/1031 blockers, app 683/686 warning, current-head CI/review and hardware/live providers/real profiles/full suite limits explicit. Authorized publication is draft PR #3345/base dev/noauto; no merge or cleanup. See current QA receipt and root-complete 15-case9-gate.json.
+
+
+### Current-head Windows qualification correction (2026-11-04)
+
+ADR required: yes
+ADR path: backlog/decisions/354-windows-textual-timer-waits-use-the-event-loop.md
+Reason: Choose the Windows framework timer wait policy at the existing App compatibility seam, including its process-global scope and clock-resolution tradeoff.
+
+The current published-head startup failure reproduces the existing TASK-38462 executor-starvation mechanism. Implement that task within this PR's check correction: finish/physically reap active migration qualification before any source change; preserve the current source/evidence. Add a real-Textual Timer regression under a controlled eight-worker Windows sleeper proxy, keeping the original three-second bound and releasing/awaiting every owned job. Select standard-library asyncio.sleep only for Windows Textual timers in the existing on_load guard, before the already-installed executor return. Preserve all default-executor/context, replacement cleanup, Timer callback/interval/repeat/pause/reset/stop and non-Windows behavior; no worker increase, timer fleet, deadline widening or DB-specific dispatch. Run the new mechanism and unchanged context/startup/timer controls, then fresh mounted manual and whole served-browser UAT. Record actual hosted Windows evidence and final independent exact-head review before readiness/auto-merge; no real-profile or full-repository sweep.

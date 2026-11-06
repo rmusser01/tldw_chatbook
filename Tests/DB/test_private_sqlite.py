@@ -1389,7 +1389,7 @@ def test_connection_rejects_owner_target_kind_mismatch(tmp_path):
         connect_private_sqlite("notifications.client", tmp_path / "db.sqlite")
 
     with pytest.raises(ValueError, match="read-only"):
-        connect_private_sqlite("settings.integrity", tmp_path / "db.sqlite")
+        connect_private_sqlite("db.media.integrity", tmp_path / "db.sqlite")
     with pytest.raises(ValueError, match="target kind"):
         connect_private_sqlite("db.base", tmp_path / "db.sqlite", read_only=True)
     with pytest.raises(ValueError, match="read-only memory"):
@@ -1405,7 +1405,7 @@ def test_connection_rejects_nul_uri_override_and_arbitrary_file_uri(tmp_path):
         connect_private_sqlite("db.base", "file:/tmp/db.sqlite")
     with pytest.raises(ValueError, match="file:"):
         connect_private_sqlite(
-            "settings.integrity",
+            "db.media.integrity",
             "file:/tmp/db.sqlite?mode=ro&immutable=1",
             read_only=True,
         )
@@ -2712,7 +2712,7 @@ def test_read_only_path_query_characters_are_percent_encoded(tmp_path, monkeypat
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", capture_connect)
     connection = connect_private_sqlite(
-        "settings.integrity",
+        "db.media.integrity",
         target,
         read_only=True,
     )

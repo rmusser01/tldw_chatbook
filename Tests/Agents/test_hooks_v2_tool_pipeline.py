@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_runtime import CALC, CFG, make_deps
 from tldw_chatbook.Agents.activation import worker_guard
 from tldw_chatbook.Agents.agent_models import ModelTurn, ToolCall, ToolResult
@@ -303,7 +304,6 @@ async def test_service_result_publication_and_terminal_join_use_real_hook_owner(
         BuiltinToolProvider,
         ToolCatalogRegistry,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     entered = threading.Event()
     release = threading.Event()
@@ -323,7 +323,7 @@ async def test_service_result_publication_and_terminal_join_use_real_hook_owner(
     )
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="hooks-h3")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="hooks-h3")
     chat = ScriptedChat([fence("calculator", {"expression": "6*7"}), "done"])
     service = AgentService(
         db,
@@ -376,7 +376,6 @@ async def test_final_failed_tool_joins_post_requirements_before_terminal_persist
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     # Three distinct failed calls reach the actual terminal failure threshold.
     entered = threading.Event()
@@ -408,7 +407,7 @@ async def test_final_failed_tool_joins_post_requirements_before_terminal_persist
     registry.register_provider(
         _Provider(lambda: ToolResult(ok=False, error="known failure"))
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="h3-final")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="h3-final")
     chat = ScriptedChat([fence("probe", {"attempt": i}) for i in range(3)])
     service = AgentService(
         db,
@@ -632,7 +631,6 @@ async def test_authenticated_canvas_transform_keeps_covered_exemption(tmp_path):
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     provider, coordinator, authority = _provider()
     registry = ToolCatalogRegistry()
@@ -651,7 +649,7 @@ async def test_authenticated_canvas_transform_keeps_covered_exemption(tmp_path):
         HookBudgetOwner(),
     )
     reviews = []
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="h3-canvas")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="h3-canvas")
     chat = ScriptedChat(
         [fence("canvas_create", {"title": "Original", "html": SOURCE_SENTINEL}), "done"]
     )
@@ -689,7 +687,6 @@ async def test_settled_fleet_child_result_does_not_overtake_parent_post_gate(tmp
     from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME, WAIT_AGENTS_TOOL_NAME
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     entered = threading.Event()
     release = threading.Event()
@@ -712,7 +709,7 @@ async def test_settled_fleet_child_result_does_not_overtake_parent_post_gate(tmp
         authority,
         HookBudgetOwner(),
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="h3-fleet")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="h3-fleet")
     service, chat, coordinator = make_fleet_service(
         db,
         [

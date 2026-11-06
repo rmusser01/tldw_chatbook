@@ -28,12 +28,11 @@ and_resume.py``) without also removing the now-orphaned widget code;
 
 from __future__ import annotations
 
-from copy import deepcopy
 import math
 import time
+from copy import deepcopy
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Utils.input_validation import escape_markup as escape
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
@@ -43,13 +42,11 @@ from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
-from tldw_chatbook.Utils.input_validation import MAX_APPROVAL_DENIAL_REASON_CHARS
-from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
-
-# Re-export of the shared cap so existing importers keep working; the
-# canonical home (importable without any widget/textual deps) is
-# ``tldw_chatbook.Chat.approval_constants``.
 from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP  # noqa: F401
+from tldw_chatbook.Chat.approval_constants import APPROVAL_OPTIONS, approval_options
+from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
+from tldw_chatbook.Utils.input_validation import MAX_APPROVAL_DENIAL_REASON_CHARS
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
 # The formatting helpers moved to the Textual-free ``Chat.approval_formatting``
 # (TASK-36944.3); re-exported under their old names for existing importers.
@@ -91,16 +88,7 @@ _FAST_DENY_TOOLTIP = "Deny and resume immediately (skips Select + Submit)."
 #: scope each one carries is spelled out on the row's own line instead --
 #: see `DECISION_SCOPE_COPY`. Budget: `.approval-row-decision`'s width
 #: minus 8 cells of Textual chrome (see the stylesheet rule).
-_DECISION_OPTIONS: list[tuple[str, str]] = [
-    ("Once", "approve_once"),
-    ("This session", "approve_session"),
-    # TASK-26012: persists an allow scoped to EXACTLY the arguments shown
-    # on this card (AC#3: the rule is created from what the user read);
-    # the same tool with different arguments still asks.
-    ("Always · these args", "allow_matching"),
-    ("Always", "always_allow"),
-    (_DENY_LABEL, "deny"),
-]
+_DECISION_OPTIONS: list[tuple[str, str]] = list(APPROVAL_OPTIONS)
 
 #: task-32278 AC#2: what the highlighted decision actually commits the user
 #: to, and where a remembered one is undone. Rendered under each row's
@@ -173,11 +161,7 @@ def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
     if _is_raw_shell_row(call):
         return _RAW_SHELL_DECISION_OPTIONS
     requested = call.get("options") if isinstance(call, Mapping) else None
-    if not isinstance(requested, (list, tuple)) or not requested:
-        return _DECISION_OPTIONS
-    wanted = set(requested)
-    narrowed = [pair for pair in _DECISION_OPTIONS if pair[1] in wanted]
-    return narrowed or _DECISION_OPTIONS
+    return approval_options(requested)
 
 
 def _default_decision_for_row(

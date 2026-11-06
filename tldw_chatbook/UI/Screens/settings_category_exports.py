@@ -3,6 +3,10 @@
 from typing import Any
 
 CATEGORY_EXPORTS = {
+    "normalize_console_os_notifications": (
+        "...Utils.os_notifications",
+        "normalize_console_os_notifications",
+    ),
     "TERMINAL_DISCLOSURE_LINES": ("...Terminal.contracts", "TERMINAL_DISCLOSURE_LINES"),
     "CustomEndpointReferenceStore": (
         ".settings_provider_view_model",

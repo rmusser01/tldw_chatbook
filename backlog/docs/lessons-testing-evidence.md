@@ -1,5 +1,39 @@
 # Lessons: what counts as evidence a change works
 
+## A local parser import needs passive observation instead of a shared-module double (PR3345, 2026-11-06)
+
+**Incident.** The incoming TOML hygiene guard rejected four PR3345 test patches
+of shared `tomllib.loads`. Three consumers have a module-owned name and use a
+complete `SimpleNamespace` copy. The native preview helper imports locally, so
+hoisting its import just for a double would change production. A local-code
+observer, filtered by caller and thread, proved one ordinary decode, ignored an
+unrelated parse and retained zero decoding under the original exhausted budget.
+Direct RED600 had five identity failures; final focused602 passed37 and both
+complete affected native files passed42 in603, with all52 original assertions.
+
+**What to do.** Preserve the actual production body and original decoder.
+Prove a passive observer is live before trusting zero calls, and retire every
+local event/callback/tool in finally without masking a primary error. Separate
+extra-check failures before expanding scope:603 also found six config-fixture
+refusals; fresh604 reproduced all six without importing either changed module.
+They remain red and unchanged rather than being folded into this parser repair.
+
+## An installed-wheel source guard also excludes a virtualenv inside the checkout (PR3345, 2026-11-06)
+
+**Incident.** Packaging reproduction595 stopped before importing the installed
+app because `INSTALLED_PROBE` rejects every `sys.path` entry under the checkout,
+including its local `.venv/site-packages`. It was not evidence for the missing
+mobile assets. A private external virtualenv reusing installed dependencies,
+without editable paths, let unchanged596 reach the real `tldw-serve --help`
+FileNotFoundError. Final597 passed35 including the original immutable full-App
+journey and both wheel origins. A subsequent audit initially counted pytest's
+`current` symlink as a second wheel; both names resolved to the same inode.
+
+**What to do.** Keep source-exclusion guards intact. Select a test interpreter
+outside the forbidden checkout and keep installed children pointed only at their
+private target. Count actual resolved artifact identities, retaining and checking
+all aliases; do not rerun passing tests to correct an audit's path assumption.
+
 ## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
 
 **Incident.** Two Prompts DB privacy pins forbid `str(second_id)` in a log that must contain `count=2`, and the filed task called them self-contradictory: `second_id` was 2. The tests meant to seed ids 71,234,567 and 81,234,567 by INSERTing a `sqlite_sequence` row. The v5->v6 mix-in migration (7970fbcada) rebuilds `Prompts` and keeps its sequence, so a fresh database already has a `('Prompts', 0)` row; SQLite reads the first row and ignored the test's second, and the ids fell back to 1 and 2. Dropping the id check, the obvious "fix", would have weakened a privacy pin. The negative controls then found a second hole: stored keywords are lower-cased, so `"PRIVATE KEYWORD"` never matched a leaked keyword (2 passed with the keyword logged).
@@ -41,6 +75,27 @@
 **Incident.** The Settings snapshot keyboard Save failed five times in CI. Each time, its worker was still RUNNING when the 5 s wait ran out. Locally it took 0.1-0.2 s, and nothing was queued or locked. The test waited with `while not saved: await pilot.pause(0.01)`. Each `pilot.pause()` walks every node of the screen (477 on Settings) and posts a callback to each one. Here each pause took 23-25 ms, 13-15 ms of it event-loop CPU, so the loop was busy about 57-60% of the time. The config write makes a syscall at every storage-admission directory pin and descriptor open, and each syscall gives up the GIL. To get it back, the thread has to wait out a busy thread's switch interval. One save on a thread took 0.08-0.10 s while the main thread was idle. With a main thread spinning in Python it took 2.6-11.8 s, 2.3-3.1 s at a 1 ms switch interval, and 0.8-1.2 s at 0.2 ms. In the mounted test, the poll alone about doubled the save: 0.25-0.36 s, against 0.10-0.18 s when the test awaited an event. A CPU-bound loop gave the exact CI note (`saving` True, worker RUNNING). That a slower CI core turned the poll's doubling into seconds is inferred, not shown. The CI logs had a second sign. A ChaChaNotes creation that takes 0.4 s on CI was still running at the timeout and finished only in teardown, after the poll had stopped.
 
 **What to do.** When a test waits for work on a worker thread (a config write, SQLite, file I/O), await an event the worker sets, or poll with `asyncio.sleep`. Use `pilot.pause()` only to wait for layout. When such a wait times out, compare the event loop's CPU since the wait began with the wall time. If they are close and the thread is partway through its write, the thread was short of the GIL; it was not queued or blocked on a lock. `Tests/UI/test_llamacpp_snapshot_settings.py` (`_SaveTimeline`) reports both. Also, `pilot.press()` and `wait_for_scheduled_animations()` end in `wait_for_idle()`, which measures the whole process's `process_time()`. So while any thread uses CPU, each call can take up to 1 s.
+
+## An empty owner map does not prove construction has stopped (PR3345, 2026-11-05)
+
+**Incident.** Dev integration introduced dedicated RAG SQL pool threads. A real
+completed keyword search left a foreign-thread SQLite handle that the existing
+current-thread cache retirement could not close: full-App RED498 reached every
+producer drain but its native local-storage pause still refused. Retirement
+had to run after the later Chroma/embedding producers, rather than in the first
+Definition stage, because accepted projection work still needs the original
+pool. A subsequent empty-map optimization failed RED501: the real database
+constructor already held a native handle while holding the construction lock,
+but had not published its pool into the map. The drain incorrectly returned
+True. A nonblocking lock attempt now proves emptiness under the same lock;
+contention retains the existing deadline-bounded cleanup task. GREEN502 passed
+all 28 lifecycle/order/native controls without increasing a deadline or pool.
+
+**What to do.** Exercise accepted work at its actual later stage, record the
+native handle on its creating thread, and hold construction before publication.
+A census is evidence only when it also covers in-flight publication. Timeouts
+and cancelled waiters must retain cleanup ownership until physical close and
+thread join; test failed and silent-refused closes as well as the success path.
 
 ## A worker-thread SQLite handle can be proven closed from the test thread with the `in_transaction` getter (TASK-38714, 2026-11-05)
 
@@ -478,6 +533,21 @@ race never shows on macOS, because creation there takes 0.5 s. A 5 s sleep put
 into the suspect step reproduced the CI error exactly. So when a speed fix turns
 into teardown errors, read the captured teardown log for work that started in
 the body. Reproduce it by slowing that one step, not by emulating the platform.
+
+**Follow-up incident, PR #3345 (2026-11-04 UTC).** Windows job
+126398414464 repeated this mechanism in the original three-second startup
+check: UI readiness and audio initializers had progressed, but the DB callback
+had never entered. Its 0.1-second timer was 2.75 seconds late and its retained
+executor source Future was still pending. Five of six sampled workers were
+Textual waiters, with two workers omitted; this did not prove all eight were
+sleepers or that DB calculation was slow. Keep that distinction when diagnosing.
+ADR-354 / TASK-38462 fixes the shared timer seam with Windows-only
+`textual.timer.sleep = asyncio.sleep`, before the already-installed executor
+return. A real-Timer/eight-held-worker proxy failed at the unchanged deadline,
+then delivered and retired a long timer after the correction; every owned
+wait/cancel job was released and awaited. Existing executor/context and original
+startup assertions stayed intact. Current-head hosted Windows qualification is
+still required; a proxy pass does not establish Windows clock precision.
 
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
@@ -1963,6 +2033,38 @@ configuration consumers; an earlier harness refusal is not the intended RED.
 **Incident.** PR3162's native100x30 recovery capture read composer strips instead of its header: the header was at y26 while the transcript ended at y26, with scroll_y1 and max_scroll_y31. An immediate scroll had used the earlier layout's range. Deferred scrolling alone still failed both compact controls; waiting for layout before requesting that scroll completed the same real click/restore/history journey. A separate imported-results assertion ran after a coalesced Console sync request returnedFalse, before its owning pass published the imported session.
 
 **What to do.** Let layout finish before scrolling, then require the full captured widget inside the transcript viewport and crop there. Keep real hit-tested clicks and content assertions. A coalescible sync call is a request, so wait for its observed view session and completed pass before asserting its publication; do not treat its return as an unconditional completion barrier.
+
+## Native fixture success must include the local-only value (TASK-36766, 2026-10-27)
+
+**Incident.** The mobile integrated-planning qualification reached its Workspace
+assertion with `console_project_context_json` still unset even though the fixture's
+`update_conversation()` returned success. The general synchronized update does not
+write this local-only column. Source inspection also identified the dedicated
+message-metadata path. After using `set_conversation_console_project_context()`
+with a read-back assertion and `update_message_metadata_local()`, both captured
+Workspace/Canvas/fork cases passed, including the raw persona/permission case.
+
+**What to do.** Seed local-only state through its actual owner API and verify the
+value before capture/finalization. A general CRUD success result does not prove
+that every supplied field was persisted. Keep a setup mistake separate from a
+reached planning or native-consumer failure.
+
+## Read-only SQLite census can change reviewed sidecars (TASK-36766, 2026-10-25)
+
+**Incident.** Mobile consolidation had reviewed absent canonical WAL/SHM names,
+then a complete native adapter census opened the live Chat SQLite database for
+inspection and created sidecars. Correct strict custody validation rejected the
+next capture. A separate cold test correctly refused a different scope because
+its fixture patched `profile_paths.default_config_path` after `config_adapter`
+had imported that function; the fresh process observed a different tokenizer root.
+
+**What to do.** Under mobile maintenance, use the existing bounded private SQLite
+copy discovery scope, and assert source/main/WAL/SHM bytes and modes stay identical.
+For cold tests, establish the same isolated defaults at every imported fixture
+boundary. Compare actual inventory items before changing a digest or witness gate.
+The real WAL capture, fresh-process ciphertext recovery, and unchanged-source tests
+in `test_mobile_consolidation_lifecycle.py` exercise these failures.
+
 
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
@@ -4924,6 +5026,18 @@ can stay green while one callback monopolizes the loop far beyond the deadline.
 ---
 
 ## Pilot clicks can bind a widget that recomposition removes before hit-testing
+
+**TASK-38901, 2026-11-05.** PR3345 UI17 timed out after one Notes Move click.
+The hosted pointer phase was unobserved; a native pending-layout diagnostic
+proved the helper's separate hazard: its enabled/nonzero-region predicate
+passed at (43,21), then Pilot's first pause moved the same button to (45,21)
+and all three events hit the toolbar. Wait for a refresh inside the original
+readiness deadline, reacquire and hit-test the live control, then click once.
+Keep the unperturbed journey plus the pending-layout regression and all outcome
+assertions. A passing local control does not waive the hosted failure or prove
+its precise phase. Review also caught a test-arm lookup that preceded button
+composition; prepare only that arm boundedly, preserving the original path.
+
 
 **TASK-24403, 2026-08-29.** The clean fast-PR lane passed all 670 selected tests,
 then a second identical run failed one 100x30 MCP Workbench interaction:
@@ -24392,6 +24506,7 @@ The persisted Sources test initially timed out even though a direct reply and it
 The same mounted fixture replaced the factory's absent ChaChaNotes DB with a file DB but rewired only conversation services. Its dictionary participant still referred to the original missing owner. Rebinding the real dictionary service to that same DB restored the production composition; a legacy conversation-service stub was also removed. A full reply arriving before a terminal timeout did not prove a citation bug: native stack observations located guarded Windows admission, and the same agent operation later completed. Capture phase/timing evidence before changing watchdogs, and retain the distinction between functional completion and latency qualification.
 
 Final preservation found a second concrete composition trap in `test_console_runtime_rag_capture_wiring.py`: its helper passed a store to `ensure_chat_controller` but never called `runtime.set_chat_store(store)`. Four cases stopped at required hook initialization on both the integrated candidate (r-cf89449e) and pinned a9c base (r-0bcbb613). The hook owner guard compared the controller's store with the runtime's unset store. Adding the real composition call, without replacing hooks or weakening assertions, passed all four cases (r-306266a0). A swallowed initialization message alone did not identify the cause; the exact owner path and controlled fixture correction did. Keep unrelated base-reproduced trace/Stop failures explicit rather than using this fixture fix to imply they passed.
+
 ## On an old commit, a private-profile failure's reason is in the child's pytest.xml, not the parent's output
 
 **TASK-33621.4, 2026-10-29.** AC#6 asked for a test that fails on the review
@@ -24681,3 +24796,366 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - When a Pilot test slows down on every OS at once, time the node and sample stacks before suspecting a hang or the runner. Look for a worker group that keeps restarting.
 - Judge a local run by its duration as well as its result. A `--timeout` overrun can still be reported as passed.
 - Install diagnostic patches at `pytest_runtest_call`, not at session start, in modules that capture function identities at import.
+
+## Close fixture execution owners before maintenance
+
+**TASK-36765, 2026-10-25.** A legacy mobile fixture created automatic-work and Goal
+ledgers, closed its AgentRunsDB, then attempted public capture. Native maintenance
+timed out after 60 seconds: cached ledger backreferences kept the database alive,
+so the shared test helper's weakref finalizer had not released its execution owner.
+Giving this uniquely owned fixture an explicit ConsoleExecutionOwner lifetime and
+closing every creator DB before that owner made the public capture/WAL/reference
+closure checks pass (4 tests in 28.27 seconds). Do not rely on garbage collection
+for fixtures promising closed writers, and do not bypass admission to hide a
+retained owner.
+
+### Native file custody must include the helpers after rename
+
+**TASK-36766 C2-A-files, 2026-10-25.** A payload-copy close probe passed while
+`native_files.publish_new` could leave its staged-root FD readable after rename
+and release maintenance exclusion. A second reached-phase probe found
+`journal.observe_artifact` retrying an ambiguous parent close after publication.
+Census the connected extraction/staging/publication/observation path before
+freezing final evidence; thread the existing resource owner through those helpers.
+Inject only after real scope issuance: an earlier cold-resume fault stopped at
+`mobile_preview_authority_changed` and proved no FD behavior. The useful witness
+is the actual live FD plus a separately refused native maintenance acquisition,
+followed by successful acquisition after physical process retirement.
+The same increment's self-review caught a traversal mismatch: delegating native
+pinning to bootstrap's descriptor owner admitted the actual root-owned macOS
+`/var` alias. A real-alias RED required retaining native per-component
+`O_NOFOLLOW` traversal and reusing only the owner's FD-close bookkeeping.
+
+### A history-only selector witness does not protect native database owners
+
+**TASK-36766 A-chat selector prerequisite, 2026-10-26.** A-files checked prepared
+selector inode/content witnesses, but native DB owners reached a pending check
+that verified only enrollment content/namespaces. Real no-history legacy81/8/25
+fixtures admitted same-byte source, target and candidate selector replacements
+at all three actual DB admissions and transaction entries (18 reached-boundary
+REDs). Moving one proof to the shared pending owner, removing the file-only copy,
+and exercising actual owner entry rather than a public wrapper closed the gap.
+Use distinct enrolled selector objects and an input without the optional file
+family when qualifying a cross-owner witness contract; same-byte replacement
+must reach the actual protected boundary to count as evidence.
+
+
+## Seed legacy fixtures before their final schema downgrade
+
+During TASK-36766 C2a qualification, the workflow seed in
+`Tests/Backup_Recovery/test_mobile_content_settings.py` reopened CharactersRAGDB
+after `Tests/Backup_Recovery/mobile_consolidation_fixture.py::_seed` had finalized
+legacy schema81. The native constructor
+migrated it back to82, and authenticated capture correctly refused the member
+(expected81, manifest82). Seed linked metadata with actual returned IDs while the
+native owner is still open, before legacy finalization; preserve the admission
+check instead of changing captured versions or weakening schema validation.
+
+
+## Retire capture and fixture admission overrides before a native oracle
+
+**TASK-36766 T, 2026-10-27.** The mapped character-reader oracle first refused
+ordinary DB admission while capture was active (67.73-second epoch), then still
+refused after physical retirement (59.05-second epoch): fixture bootstrap overrides
+continued to select the durable pending operation. Keeping those fixture-only
+patches in `monkeypatch.context()` through capture/no-effects/retirement, then
+restoring the pre-fixture private pytest selector and bootstrap before opening the
+disposable copied canonical DB, reached actual native preview (64.21 seconds).
+Assert the restored paths are the existing private test environment. Preserve the
+pending evidence and ordinary admission guards; a copied DB and constructor do not
+create source authority, and an unreached reader is not reader qualification.
+
+
+### 2026-10-27: Explicit native owners in enrolled RunLog fixtures
+
+The targeted mobile-owner runner23332 stalled after38 progress dots. One bounded
+native sample showed Python lock waits and a GC callback waiting on an RLock;
+a one-level private-fixture listing last reached the second enrolled RunLog case.
+The shared test helper holds its RLock while acquiring a native owner and uses a
+weakref finalizer taking the same lock. This is consistent with a circular wait,
+but the sample did not capture Python frame names and does not prove that cause.
+The new RunLog fixture now acquires a real ConsoleExecutionOwner explicitly and
+closes its DB before closing that owner; all five focused reader cases passed in
+runner94827. The prior PID was retired with one authorized SIGTERM (RC-15,
+source hashes unchanged), which proves process retirement, not clean native close
+or a passing test. Preserve that interrupted evidence separately; do not substitute
+GC cleanup for explicit fixture ownership or infer a cause from elapsed time alone.
+
+### Cold recovery owner imports must be tested outside pytest collection
+
+Task 8's real-home standalone fixture exposed two eager configuration imports hidden by the test suite's preload: Subscriptions' class module imported config for an optional settings getter, and Media's pure template migration imported runtime Chunking package exports. Both retained startup admission and blocked later maintenance. Guarded cold tests reproduced the import boundary and then constructed/closed native owners without loading config after the narrow lazy-import corrections (64101 and 69936). Keep runtime settings/default behavior at actual use; do not retire startup leases or relax admission to make a fixture pass. Existing frozen-default test 70112 separately failed config-selection setup; its origin is unclassified, and the fresh native-source rolling-dispatch control 71245 is a distinct passing scope.
+
+The later FileNotesReplica case (Notes absent epochs13795/32743/46602) exposed the same trap in raw participant selection: eager `_types()` imported unrelated grammar/feedback services and config before reaching the exact File Notes branch. Two fixture-order corrections moved the refusal from initial enrollment to missing-required Complete, then to maintenance after a legitimately retained startup lease; they did not solve that import cause. Deferring only the unrelated lookup to its actual fallback preserved exact source/admission checks. Fresh real-home cold proof63271 verified native schema/read, actual retained SQLite handle closure, config never loaded, no startup leases, both guards and unchanged selector; seventeen native grammar/feedback/FileNotes fallback/pause/close controls63682 passed separately. Preserve those failed setup epochs and avoid a fixture shutdown or admission bypass.
+
+
+### Task36767: qualify an un-warmed viewless native Send
+
+A real App mounted on Library first refused remote Send because the existing
+stock cold configuration proof required the source capsule normally imported by
+CompactModelBar. Warming trust/plugin services in the fixture hid that caller
+dependency. The final control keeps both services cold and loads only the existing
+metadata dependency through native preparation-read lifetime before unchanged
+source checks. The same connected run then exposed an existing project callback
+that unconditionally used Textual `call_from_thread` from its own loop. Preserve
+first failures and distinguish fixture source selection, oracle failures and
+production failures; a successful gateway double alone does not qualify native
+persistence, project review, approval/question, worker execution or physical drain.
+Evidence: Task9 cold-red, agent10 and native-controls packets in the shared
+Console implementation SDD directory.
+
+
+## Native lifetime witnesses must preserve callable identity
+
+**TASK-36769 FIX1, 2026-11-01.** The shared Console fleet qualification initially
+accepted Stop receipts and then closed the whole app with controlled workers
+still unwinding. Positive logs included scratch/run-log failures and a closed
+hook-engine denial, but no timeline established their order. Wrapping native
+log/scratch callbacks to observe them failed frozen callable-provenance admission;
+a broad profiler captured shared context-manager code and distorted timing.
+Those epochs were retained as invalid instrumentation, not production failures.
+Finite Python3.12 local monitoring of exact original code bodies, with primitive
+records and verified removal of its own tool ID, preserved callback identity.
+It showed disposal preceding the failures in the new reproduction; it did not
+retroactively establish the old trace's chronology. The strengthened ordinary
+journey instead witnessed exact corrections consumed, unrelated work remaining
+live, actual worker Threads retired, durable worker results and successful native
+log/hook outcomes before app disposal. A receipt or whole-stack exit is not a
+worker-retirement witness. Generator yield/await events are not final returns.
+
+
+## Outcome uncertainty needs a target-isolation test
+
+**TASK-36769 final whole-feature review, 2026-11-01.** The existing66-case
+portable file passed while a same-target unknown-receipt case expected disabled
+controls. Native discovery actually returns retained pending/unknown receipts
+from the whole profile, including replaced owners. The client's global unknown
+flag consequently disabled unrelated freshly confirmed Chats, exact Stop and
+answerability indefinitely. Receiptless Stop/decision rows also lacked their
+original target, so filtering only received receipt targets would lose custody.
+The final correction retains action/target before the effect, scopes ambiguity
+and labels by applicable identity, preserves historical unknowns/no replay and
+keeps confirmed native Stop available. The93-case final epoch combines90 browser
+cases, actual native owner-replacement/discovery controls and the TLS original-ID
+journey. A same-target test is not cross-target isolation evidence: use a real
+retained predecessor outcome and an independently confirmed current target, and
+prove both old-outcome visibility and current control/decision behavior. Receipt
+delivery negatives must await the specific response and client processing.
+
+
+## Same owner does not mean the same selected preservation scope
+
+**TASK-36766 PR3345 integration, epochs90–97, 2026-11-01.** Installed rollback
+validation rejected a legitimate imported history tree after physical publication.
+The actual native plan contained six `agents.history` directories but selected
+only the default empty `tool_sandbox` in `safety_scope`; the other five remained
+preserved under ordinary native policy. A direct helper fixture containing only
+the selected root missed this distinction. Filter fixed-disposition routing by
+the actual reviewed scope, then retain every strict check on selected members.
+Include unrelated nonempty same-owner siblings in controls. The fresh unobserved
+original rollback94 and actual edited-row/SafetyCopy97 passed after this correction;
+all failed epochs remain retained.
+
+
+### Trace recovery needs one real gateway continuation check
+
+During PR3345 dev integration, the native missing-request tests replaced the
+whole response stream and passed Retry, while the saved-workspace phone case
+(epoch102) rebuilt its request and immediately paused again at the real gateway.
+The controller had passed its pre-reservation failure marker as an owned gateway
+boundary. Epoch109's actual gateway/controlled-adapter continuation passed after
+exact marker consumption; stale/unknown marker controls still refused. Keep a
+real gateway continuation case when testing recovery across that boundary: a
+stream double cannot establish reservation ownership or provider entry.
+
+
+### Retain the original view and execution lease through physical shutdown
+
+PR3345 integrated review FI-001 and isolated epoch115 showed that disposing a
+served Console runtime before ordinary app shutdown discarded its view and let
+a competing native execution owner acquire the lease while project-index, image
+and selected view readers were still physically active. Fence the installed
+controller, then let the native app lifecycle capture and drain those owners
+before releasing execution. Epoch118 proved refusal during all held work,
+repeated-cancellation retention and acquisition only after native retirement.
+Its test keeps Textual run_test entry/exit in one asyncio task and observes the
+real shutdown from a separate owned task; epochs116/117 preserved the failed
+context-lifecycle assumptions rather than treating them as product failures.
+
+The sibling generic Canvas runs121–124 also exposed an evidence trap: the native
+harness writes one fixed lifecycle-output filename outside pytest basetemp.
+Per-epoch stdout/source/wait receipts survived, but older bounded lifecycle
+arrays were overwritten before separate archival. Preserve fixed-output
+artifacts before each new scenario, not only each private pytest directory.
+
+
+In shared-Console integration125, saved Canvas reopened under deliberately
+canonical session IDs, but an older `conversation_id == session_id` heuristic
+classified the durable session as temporary. F12 reached its native handler and
+raised `canvas_base_unavailable`; the later missing acknowledgement was only the
+test symptom. Read the retained native traceback before adding input retries.
+R180 carries the actual native session state and checks it across captured
+operations;130 then passed the unchanged full generic journey.128 separately
+showed that real guarded config readers need the existing exact-node private
+bootstrap profile contract: per-test redirection caused source-selection refusal
+and native fail-closed Canvas disable.129 qualified that setup through the public
+configured-enabled read, without replacing policy or admission helpers.
+
+
+### A child loop can still borrow its parent's cancellation
+
+PR3345 native fleet epoch132 (2026-11-02) kept the child thread alive after primary Stop, yet its adapter returned two empty responses and the child became stuck. Native134 proved both directions: parent Stop closed the silent child provider, while child Stop did not. Independent event loops and correct LoopDeps were insufficient because the shared adapter still captured the parent predicate. Carry the exact native run predicate across the model-call boundary and verify silent in-flight cancellation in both directions. If that predicate reads automatic/Goal state on the provider thread, also prove actual same-thread handle retirement;138 exercised accepted wake, Goal and surviving-child storage, and original fleet140 passed.
+
+
+### Isolate scheduler and DOM identity failures before replaying a fleet
+
+PR3345 epochs148/149 (2026-11-02) failed at different fleet stages;149 recorded only ordinary empty-queue cleanup and did not explain148. Two actual-component regressions in150 instead proved independent defects: awaiting callbacks that only use put_nowait can starve an already-waiting receiver until a bounded queue falsely overflows, and an unrelated overview count can replace an active question input between pointer-down/up. Test runnable-consumer fairness and original DOM identity directly. Preserve genuine pressure/stale-target refusals and do not promote component evidence into a historical cause claim. Both-engine controls151 and original unobserved fleet152 passed after the narrow repairs.
+
+
+### A prepared heartbeat needs its receive loop
+
+PR3345 epoch155 (2026-11-02) held one native shared child start for25 seconds under the existing45-second test bound. A real client received Ping and sent Pong, yet closed1006 before startup released: `prepare` had armed the15/7.5-second heartbeat while the only receiver was still behind awaited startup. Validate the handshake before child effects, finish startup and revalidate native auth/host before upgrade.156 passed the same test plus native malformed/auth/shutdown/cancellation controls without raising timeouts. This establishes that ordering defect; it does not retroactively identify the unobserved close causes in148/153, and diagnostic154's pass remains no reproduction.
+
+
+### A suspended Console can keep replaying FULL presentation
+
+PR3345's GGUF keyboard CI hit its existing 60-second limit. Diagnostic 163 on
+2026-11-02 passed only under its already-running 300-second local limit: the
+child body took 202.36 seconds, with repeated `console_sync` churn while Models
+was visible, before both screens unmounted. That diagnostic is not a CI pass.
+
+Native regression 167 held only one original FULL at its preparation return,
+suspended the actual Console, and proved that completion admitted another hidden
+FULL. Presentation-only deferral then passed 171: dirty work survived, the same
+runtime/store remained attached, and real resume displayed the newest draft with
+one reconciliation completion. Keep app-owned execution and native cleanup live;
+quiesce disposable presentation rather than cropping the navigation fixture.
+
+Setup failures remain separate evidence: 165's broad read observer caught another
+producer; 169's one-shot refresh was legitimately coalesced. The final fixture
+retries real admission within its original five seconds, yielding at the existing
+0.05-second polling cadence. Strict 60-second GGUF and tour qualification were
+still pending when this lesson was recorded.
+
+## Stable saved-chat IDs do not identify a restored display owner (PR3345, 2026-11-04)
+
+The Library outcome reload guard assumed `reuse_existing=False` made another live
+chat, but shared Console ownership deliberately deduplicates the saved identity.
+Closing through the real lifecycle and reopening produced a fresh incarnation
+with the same canonical ID. Its deletion negative then found a real cache bug:
+`ConsoleLibraryOutcomeLines` reused a key containing only that ID and the same
+durable message IDs, so it never reread the removed trajectory record. Including
+the incarnation fixes that identity. The negative must also await the actual
+asynchronous projection, rather than message bodies already painted by an older
+read; it retains its final absence assertion. Epoch 351 retains the concrete RED.
+
+The same CI repair reproduced an independent incomplete-settling fixture: a whole
+Console sync can decline work while its checked-display replay is pending even
+when `_console_sync_in_progress` is false. The existing cadence `_replay_pending`
+helper captures this state. A bounded queued-replay control reproduced the
+original exact-count failure; waiting for that state preserved every count and
+deadline. Epoch 350 records the control, and 351 its passing correction.
+
+
+During PR3345 public history recovery qualification363, the native allowance
+refused a codec requirement of974896 with750816 remaining after fresh inverse
+inventory. One late generic verification was also reparsing the retained frozen
+manifest. Review found that RowData is issued after acquisition: using it to
+replace the first full manifest comparison could launder a pre-frame model
+substitution. Regression364 reproduced only the redundant late native parse;
+365 then passed actual same-operation recovery and native/ordinary four-hash
+controls after retaining that first comparison. The native data holder must be
+an actual immutable tuple, and every repeated new digest needs its own prior
+reservation. Test the digest constructor itself on exhaustion; a later file-open
+refusal alone cannot prove the earlier allocation was priced. Acquisition's
+encrypted `input` copy also has a different path from the original captured
+archive; bind the actual provenance instead of assuming those paths are equal.
+
+
+## Assistant text can precede a native turn's config save (PR3345, 2026-11-04)
+
+The original 15-case mobile UAT failed its third lost-ACK case after the first successful reply appeared. An isolated pass-through probe reproduced it: the native first-send onboarding save replaced the selected config and matching profile fingerprint between the ordinary cutover observer's two checks, which correctly refused `mobile_cutover_changed`. The fixture had started its next independent fault case before `_run_custodied_turn` returned through that awaited save. A content-free child witness now binds PID, session and exact turn, awaits the original once, checks the actual persisted boolean and publishes atomically only on normal return. The parent waits for that witness before the unchanged reload. Do not preseed onboarding, retry the action, or weaken the observer; its genuine concurrent-publication refusal remains a required control. A returned await is not proof that the task's later physical custody-release callback ran.
+
+## Observe actual pointer events when a button click produces no request (PR3345, 2026-11-04)
+
+The same UAT retained a cold Send with no ticket or effect request; a natural passive rerun passed and did not establish that occurrence's cause. A controlled real-asset probe in Chromium and WebKit then held refresh metadata while injecting a normal change hint between physical pointer-down/up. The same button stayed under the pointer, but becoming disabled suppressed click and submit, yielding zero commands. The no-hint control dispatched once. The regression keeps metadata held through actual command acceptance; releasing it before the assertion could falsely qualify a deferred command queue. Ordinary hints now refresh without revoking prior confirmation; genuine reset/loss still pauses controls and never replays the gesture.
+
+
+## App construction can queue native reads before mounting (PR #3345, 2026-11-04)
+
+**Incident.** A Windows retained-Eval timeout diagnostic instead stopped before
+restore with native capture `scope_changed`. Source inspection found that App
+construction queues a Console attention read, although the fixture never mounts
+the App. Its synchronous preview ran before the first loop yield, which allowed
+capture to overlap the queued native transaction and checkpoint. A real-App regression
+reproduced the pending task before preview. Awaiting the retained task before
+both shared previews passed the original capture/reopen/deletion journeys and
+native concurrent-snapshot refusal controls.
+
+**What to do.** Complete the actual accepted initialization task before a fixture
+reviews a supposedly settled source. Verify its real native read and physical
+handle retirement. A projection can correctly discard a completed read after the
+fixture changes its store, and this fixture creates three attention marks; an
+empty projection or empty result was an invalid oracle. Do not replace native
+snapshot refusals with a retry, disable the read, or infer Windows restore speed
+from a Mac helper profile. The separate original 45-second restore gate still
+requires its own uninstrumented Windows evidence.
+
+
+## An every-turn observer must not manufacture the turns it measures (PR3345, 2026-11-05)
+
+UI18 timed out waiting for provider validation after its held permission read.
+The test's BusySampler used a perpetual `asyncio.sleep(0)` task, making the
+selector poll continuously while native guarded reads reacquired the GIL.
+The permanent RED412 wakeup control recorded 1864 zero-timeout polls in 30 ms;
+the passive control permits a blocking selector wait while still sampling each
+actual loop turn. The exact hosted scheduling cause was not captured. Preserve
+the original all-turn no-gap assertion and add a real one-turn-gap negative;
+do not replace the observer with paced or occasional samples. A test-owned
+`_run_once` observer must preserve copied context, initial sampling, prior
+instance-hook state and later hook owners, and become inert after stop.
+
+The same repair exposed a second mount callback still awaiting FULL on the
+screen pump after the initial attach had already moved to an owned worker.
+RED412 held the original checked config read and recorded the pump awaiting
+`prepare_console_presentation_sync` with native leases active. Dispatching that
+second refresh through the existing captured/drained worker group lets a real
+screen marker run before release. Pilot's idle fence was reporting a reachable
+pump stall; lengthening or bypassing that fence would not repair it.
+
+## Async cancellation does not retire a native Evals write (PR3345, 2026-11-05)
+
+During dev2959 integration, independent review traced maintenance drain beyond
+its supplied deadline after an async run had removed itself from the run ledger.
+RED472 held a real accepted file-backed result write, cancelled the run, and
+observed the drain still waiting past its 0.02-second deadline. RED476 then
+showed ordinary aclose cancellation could start a second physical retirement.
+
+Retain one retirement task across both entrances and wait with the remaining
+original deadline without cancelling cleanup. New writes wait for successful
+connection close/thread join; failed cleanup keeps its executor. The permanent
+controls reach resumed write ingress before release, verify two distinct native
+handle lifetimes and durable results, and exercise deadline, cancelled-drain and
+cancelled-close paths. Cleanup attempts every owner and preserves primary
+failures with sanitized notes. A cancelled wrapper or an empty async-run ledger
+alone is not evidence of physical native retirement.
+
+
+### Admission541: presentation state must belong to the actual composed tree
+
+On PR3345's dev2959 integration, admission541 failed the original partial-rail
+resize assertion: a newly composed wide rail stayed visible after a narrow
+resize. An unchanged local run passed, so it did not identify the cause. Native
+RED555 then proved the stock Resize handler entered but reused the previous
+tree's width band; five missing-target controls also published unapplied rail
+state, and the missing-main control consumed a resize too early. Resetting the
+existing presentation state during composition and requiring complete targets
+before apply/publication fixed those controls without another timeout or a new
+cache. Preserve real terminal transitions beside controlled native events.
+
+The added fleet notification guard also exposed an incomplete imported test
+fixture: importing its fake bridge did not import the donor module's real-DB
+autouse fixture. A raw live row was correctly hidden by failed native history
+recovery. An in-memory substitute was invalid across worker threads. Final561
+reuses the existing native DB harness, completes the actual startup audit before
+installing live fake rows, and passes all original lifecycle/notification
+assertions. Do not clear a refusal flag to make a UI fixture look ready.

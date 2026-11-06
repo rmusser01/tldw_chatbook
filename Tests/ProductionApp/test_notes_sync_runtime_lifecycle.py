@@ -75,9 +75,11 @@ def test_app_constructs_exactly_one_cutover_runtime_after_notes_scope_service(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("marker_present", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_real_mounted_runtime_migrates_then_opens_the_cutover_gate(
     marker_present: bool,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     import tldw_chatbook.app_service_wiring as wiring_module
 
@@ -98,11 +100,21 @@ async def test_real_mounted_runtime_migrates_then_opens_the_cutover_gate(
             NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1")
         )
     app = _build_test_app(configured_default="chat")
+    if not marker_present:
+        legacy = tmp_path / "legacy-notes"
+        legacy.mkdir(mode=0o700)
+        monkeypatch.setitem(
+            app.app_config,
+            "notes",
+            {**app.app_config.get("notes", {}), "sync_directory": str(legacy)},
+        )
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await app._notes_sync_runtime_start_task
-        owner = app.notes_sync_runtime_owner
+        task = app._notes_sync_runtime_start_task
+        if task is not None:
+            await task
+        owner = app._notes_sync_runtime_owner
         assert type(owner) is NotesSyncRuntimeOwner
         assert owner.snapshot().status == "active"
         assert owner._coordinator is not None

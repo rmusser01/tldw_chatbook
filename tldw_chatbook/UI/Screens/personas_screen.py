@@ -154,7 +154,6 @@ from ...Constants import (
 )
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
-from ...Media_Creation.generation_templates import GenerationTemplate, get_template
 from ...Persona_Visual.assets import load_persona_visual_asset
 from ...Persona_Visual.authoring import (
     PersonaVisualAuthoringDraft,
@@ -421,6 +420,7 @@ if TYPE_CHECKING:
     )
     from ...Character_Chat.expression_set_io import ExpressionSetApplyResult
     from ...Image_Generation.capabilities import ResolvedReferenceImage
+    from ...Media_Creation.generation_templates import GenerationTemplate
     from ..Navigation.character_conversation_navigation import (
         RoleplayCharacterConversationLink,
         RoleplayDraftSnapshot,
@@ -13516,19 +13516,13 @@ class PersonasScreen(BaseAppScreen):
             return False
 
     async def _expression_style_pick_dialog_worker(self) -> None:
-        """Show the style picker; store the choice and refresh the readout.
+        """Show the style picker; keep the previous style on Cancel.
 
-        Image-gen P3 Task 4: ``None`` (Escape/Cancel) keeps whatever style
-        was previously picked - matches ``ConsoleStylePickerModal``'s own
-        ``dismiss(None)`` convention. The modal's docstring documents that
-        its CALLER is responsible for restoring focus once it dismisses
-        (it only dismisses itself); this refocuses the button that opened
-        it, mirroring how the Console's own style-insert flow refocuses
-        its composer after the same modal closes. Mirrors
-        ``_expression_upload_dialog_worker``'s own nested try/except around
-        ``push_screen_wait``; the dispatching ``run_worker`` call also
-        passes ``exit_on_error=False`` (final review F5) so an uncaught
-        exception here only kills this dialog's worker instead of the app.
+        The modal only dismisses itself, so the caller restores focus.
+        The finally block clears dialog ownership and restores the style
+        button even after permission refusal or picker failure. The
+        dispatching worker uses exit_on_error=False so an unexpected failure
+        ends this dialog worker without terminating the app.
         """
         try:
             if not self._local_character_actions_allowed():
@@ -13542,6 +13536,8 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if choice is not None:
+                from ...Media_Creation.generation_templates import get_template
+
                 style_id = str(choice.get("id") or "")
                 self._expression_generate_style = get_template(style_id)
                 self._update_expression_style_readout()

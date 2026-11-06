@@ -170,7 +170,8 @@ MAX_MODULE_COUNT = 2200
 # definition); #3375 moved `Chat.console_capture_policy` out of the resident
 # `config.py`, which shrank by as much. One module each, no new code on the
 # path; measured 687 at dev 447628d08b.
-MAX_TLDW_MODULE_COUNT = 688
+# PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+MAX_TLDW_MODULE_COUNT = 686
 
 
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
@@ -731,3 +732,44 @@ else:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_app_import_defers_unmount_service_drain_module(tmp_path: Path) -> None:
+    result = _run_isolated_python(
+        tmp_path,
+        "import sys\n"
+        "import tldw_chatbook.app\n"
+        "assert 'tldw_chatbook.app_shutdown' not in sys.modules\n",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_app_import_defers_capture_policy_and_hook_review_results(
+    tmp_path: Path,
+) -> None:
+    code = """
+import sys
+blocked = {
+    "tldw_chatbook.Chat.console_capture_policy",
+    "tldw_chatbook.Chat.console_hook_review",
+}
+class NoEarlyReviewPolicy:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in blocked:
+            raise AssertionError("eager_review_policy:" + fullname)
+trap = NoEarlyReviewPolicy()
+sys.meta_path.insert(0, trap)
+import tldw_chatbook.app
+assert not blocked.intersection(sys.modules)
+sys.meta_path.remove(trap)
+from tldw_chatbook.Chat import console_runtime
+from tldw_chatbook.Chat.console_hook_review import HookReviewResult
+from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
+assert console_runtime.HookReviewResult is HookReviewResult
+assert console_runtime.runtime_capture_policy is runtime_capture_policy
+assert console_runtime.ConsoleRuntime.request_initial_hook_review.__annotations__["return"] == "HookReviewResult"
+print("deferred and native exports preserved")
+"""
+    result = _run_isolated_python(tmp_path, code)
+    assert result.returncode == 0, result.stderr[-4000:]
+    assert result.stdout.strip().endswith("deferred and native exports preserved")

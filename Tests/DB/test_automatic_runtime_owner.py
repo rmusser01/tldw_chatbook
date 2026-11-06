@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_automatic_provider_budget import context_for
 from Tests.DB.test_automatic_wake_attempts import claim, survivor
 from Tests.DB.test_automatic_work_budget import _automatic_work_db, chain  # noqa: F401
@@ -104,10 +105,18 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
     tmp_path, standalone
 ):
     path = tmp_path / "runs.sqlite"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     context = context_for(db)
     assert db.automatic_work.complete_wake("attempt", owner_id="owner")
     with db.transaction() as conn:
+        # Remove only empty v26/v27 additions before reconstructing older storage.
+        for table in (
+            "console_command_receipts",
+            "mobile_consolidation_batches",
+            "mobile_import_authority_holds",
+        ):
+            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            conn.execute(f"DROP TABLE {table}")
         conn.execute("DROP TABLE agent_worktrees")
         conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
         conn.execute("DROP TABLE IF EXISTS automatic_work_runtime_owner")
@@ -126,7 +135,7 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
                 conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
                 == 18
             )
-    reopened = AgentRunsDB(path)
+    reopened = owned_agent_runs_db(path)
     try:
         with reopened.connection() as conn:
             assert (

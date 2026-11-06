@@ -24,6 +24,7 @@ from tldw_chatbook.Utils.platform_files import os
 from .archive_models import ArchiveManifest, EncryptedSource, SealedArchive
 from .limits import ArchiveLimits
 from .native_files import (
+    _close_owned,
     create_private_directory,
     create_private_file,
     pinned_directory,
@@ -53,31 +54,62 @@ def _space(root: Path, required: int) -> None:
 
 
 @contextmanager
-def _regular(path: Path):
-    with pinned_directory(path.parent) as parent:
+def _regular(path: Path, *, _custody=None, _buffering=-1):
+    pinned = (
+        pinned_directory(path.parent)
+        if _custody is None
+        else pinned_directory(path.parent, _custody=_custody)
+    )
+    with pinned as parent:
         fd = os.open(
             path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
         )
+        if _custody is not None:
+            _custody.fds.append(fd)
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise ValueError("invalid_source")
-            with os.fdopen(fd, "rb", closefd=False) as stream:
+            with os.fdopen(fd, "rb", buffering=_buffering, closefd=False) as stream:
                 yield stream
         finally:
-            os.close(fd)
+            _close_owned(fd, _custody)
 
 
 def _identity(info):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
-def _hash(path: Path, cancel: Event) -> str:
+def _hash(path: Path, cancel: Event, *, _custody=None, _read_budget=None) -> str:
+    if _read_budget is not None:
+        _read_budget.reserve(1024)
     digest = hashlib.sha256()
-    with _regular(path) as stream:
+    with (
+        _regular(path, _custody=_custody)
+        if _read_budget is None
+        else _regular(path, _custody=_custody, _buffering=0)
+    ) as stream:
         before = _identity(os.fstat(stream.fileno()))
-        while chunk := stream.read(_BUFFER):
-            _check(cancel)
-            digest.update(chunk)
+        if _read_budget is None:
+            while chunk := stream.read(_BUFFER):
+                _check(cancel)
+                digest.update(chunk)
+        else:
+            width = min(_BUFFER, max(1, before[2] + 1))
+            _read_budget.reserve(width)
+            buffer = bytearray(width)
+            view = memoryview(buffer)
+            while True:
+                _read_budget.reserve(512)
+                count = stream.readinto(buffer)
+                if not count:
+                    _read_budget.reserve(256)  # Retain the original complete EOF fee.
+                    break
+                _check(cancel)
+                if count == width:
+                    digest.update(view)
+                else:
+                    _read_budget.reserve(256)
+                    digest.update(view[:count])
         if before != _identity(os.fstat(stream.fileno())):
             raise ValueError("sealed_changed")
     return digest.hexdigest()
@@ -237,7 +269,7 @@ def _producer_inventory(doc: ArchiveManifest, limits: ArchiveLimits) -> None:
             raise ValueError("shared_payload_mismatch")
 
 
-def _central_preflight(stream, limits):
+def _central_preflight(stream, limits, *, _read_budget=None):
     """Bound count/metadata before ZipFile allocates its central-directory list."""
     stream.seek(0, 2)
     size = stream.tell()
@@ -278,6 +310,10 @@ def _central_preflight(stream, limits):
         raise ValueError("member_limit")
     if offset + central_size != end_offset:
         raise ValueError("invalid_zip_ranges")
+    if _read_budget is not None:
+        # Admit ZipInfo records, decoded names, collision keys and local-range
+        # maps before ZipFile materializes the native central directory.
+        _read_budget.reserve(8192 + count * 4096 + central_size * 32)
     stream.seek(offset)
     for _ in range(count):
         header = stream.read(46)
@@ -390,11 +426,18 @@ def _member_chunks(stream, info, offset, cancel):
         raise ValueError("member_integrity_mismatch")
 
 
-def _inspect(
-    path: Path, limits: ArchiveLimits, encrypted: bool, cancel: Event, digest: str
-) -> bytes:
-    with _regular(path) as stream:
-        central = _central_preflight(stream, limits)
+def _inspect_with_manifest(
+    path: Path,
+    limits: ArchiveLimits,
+    encrypted: bool,
+    cancel: Event,
+    digest: str,
+    *,
+    _custody=None,
+    _read_budget=None,
+) -> tuple[bytes, ArchiveManifest]:
+    with _regular(path, _custody=_custody) as stream:
+        central = _central_preflight(stream, limits, _read_budget=_read_budget)
         with zipfile.ZipFile(stream) as archive:
             infos = archive.infolist()
             names = set()
@@ -433,10 +476,17 @@ def _inspect(
             info = archive.getinfo("manifest.json")
             if info.file_size > limits.manifest_bytes:
                 raise ValueError("manifest_limit")
+            if _read_budget is not None:
+                _read_budget.reserve(131072 + 3 * info.file_size)
             _space(path.parent, total)
             data = b"".join(
                 _member_chunks(stream, info, offsets[info.filename], cancel)
             )
+            if _read_budget is not None:
+                _read_budget.json(data)
+                # Native duplicate-key/schema validation and canonical encoding
+                # make bounded clones of this length-admitted manifest.
+                _read_budget.reserve(16384 + 32 * len(data))
             doc = _manifest(data, limits, encrypted)
             if len(infos) + len(doc.directories) > limits.members:
                 raise ValueError("member_limit")
@@ -463,27 +513,53 @@ def _inspect(
                     digest.update(chunk)
                 if count != payload.size or digest.hexdigest() != payload.sha256:
                     raise ValueError("payload_digest_mismatch")
-            return json.dumps(
+            canonical = json.dumps(
                 doc.model_dump(mode="json"),
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=True,
             ).encode()
+            return canonical, doc
 
 
-def acquire(
+def _inspect(
+    path, limits, encrypted, cancel, digest, *, _custody=None, _read_budget=None
+):
+    """Keep the established byte-only inspection result for existing callers."""
+    return _inspect_with_manifest(
+        path,
+        limits,
+        encrypted,
+        cancel,
+        digest,
+        _custody=_custody,
+        _read_budget=_read_budget,
+    )[0]
+
+
+def _acquire_with_manifest(
     source: Path,
     work_root: Path,
     limits: ArchiveLimits,
     password: bytes | None,
     cancel: Event,
-) -> SealedArchive:
+    *,
+    _custody=None,
+    _read_budget=None,
+) -> tuple[SealedArchive, ArchiveManifest]:
     """Copy, authenticate, and inspect into newly allocated private staging."""
+    custody = {} if _custody is None else {"_custody": _custody}
+    if _read_budget is not None:
+        if _custody is None:
+            raise ValueError("mobile_native_custody_required")
+        # Streaming input, crypto pipes and member hashing retain fixed buffers;
+        # archive byte limits remain independently enforced by installed code.
+        _read_budget.reserve(8 * _BUFFER + 65536)
     _check(cancel)
     operation = None
     completed = False
     try:
-        with _regular(source) as incoming:
+        with _regular(source, **custody) as incoming:
             before = _identity(os.fstat(incoming.fileno()))
             if before[2] > limits.input_bytes:
                 raise ValueError("input_limit")
@@ -496,16 +572,16 @@ def acquire(
                 + (min(before[2], limits.decrypted_bytes) if encrypted else 0),
             )
             if not work_root.exists():
-                create_private_directory(work_root)
-            with pinned_directory(work_root) as fd:
+                create_private_directory(work_root, **custody)
+            with pinned_directory(work_root, **custody) as fd:
                 info = os.fstat(fd)
                 if info.st_uid != os.geteuid() or info.st_mode & 0o077:
                     raise ValueError("work_root_not_private")
             operation = work_root / uuid.uuid4().hex
-            create_private_directory(operation)
+            create_private_directory(operation, **custody)
             copied = operation / "input"
             total = 0
-            with create_private_file(copied) as fd:
+            with create_private_file(copied, **custody) as fd:
                 while chunk := incoming.read(_BUFFER):
                     _check(cancel)
                     total += len(chunk)
@@ -523,7 +599,7 @@ def acquire(
             ):
                 raise ValueError("source_changed")
         path = copied
-        encrypted_digest = _hash(copied, cancel) if encrypted else None
+        encrypted_digest = _hash(copied, cancel, **custody) if encrypted else None
         copied_identity = _identity(os.stat(copied, follow_symlinks=False))
         if encrypted:
             from .crypto import transform
@@ -539,17 +615,26 @@ def acquire(
                 output_limit=limits.decrypted_bytes,
                 space_check=lambda count: _space(operation, count),
                 expected_input_sha256=encrypted_digest,
+                **custody,
             )
-        digest = _hash(path, cancel)
-        manifest_bytes = _inspect(path, limits, encrypted, cancel, digest)
-        if digest != _hash(path, cancel):
+        digest = _hash(path, cancel, **custody)
+        manifest_bytes, document = _inspect_with_manifest(
+            path,
+            limits,
+            encrypted,
+            cancel,
+            digest,
+            _read_budget=_read_budget,
+            **custody,
+        )
+        if digest != _hash(path, cancel, **custody):
             raise ValueError("sealed_changed")
         _check(cancel)
         provenance = None
         if encrypted:
             if (
                 copied_identity != _identity(os.stat(copied, follow_symlinks=False))
-                or _hash(copied, cancel) != encrypted_digest
+                or _hash(copied, cancel, **custody) != encrypted_digest
             ):
                 raise ValueError("encrypted_source_changed")
             provenance = EncryptedSource(
@@ -561,7 +646,7 @@ def acquire(
             )
         sealed = SealedArchive(path, digest, manifest_bytes, provenance)
         completed = True
-        return sealed
+        return sealed, document
     except (
         zipfile.BadZipFile,
         UnicodeError,
@@ -578,17 +663,35 @@ def acquire(
         raise ValueError("archive_io_failed") from None
     finally:
         # Successful return owns the operation; every incomplete stage is removed.
-        if operation is not None and not completed:
+        if operation is not None and not completed and _custody is None:
             shutil.rmtree(operation)
 
 
+def acquire(
+    source, work_root, limits, password, cancel, *, _custody=None, _read_budget=None
+) -> SealedArchive:
+    """Copy, authenticate, and inspect into newly allocated private staging."""
+    return _acquire_with_manifest(
+        source,
+        work_root,
+        limits,
+        password,
+        cancel,
+        _custody=_custody,
+        _read_budget=_read_budget,
+    )[0]
+
+
 def verify_sealed(
-    sealed: SealedArchive, cancel: Event | None = None
+    sealed: SealedArchive, cancel: Event | None = None, *, _custody=None
 ) -> ArchiveManifest:
     """Invalidate a preview if its completed bytes changed; never reopen source."""
-    if _hash(sealed.path, cancel or Event()) != sealed.digest:
+    if _hash(sealed.path, cancel or Event(), _custody=_custody) != sealed.digest:
         raise ValueError("sealed_changed")
-    with _regular(sealed.path) as stream, zipfile.ZipFile(stream) as archive:
+    with (
+        _regular(sealed.path, _custody=_custody) as stream,
+        zipfile.ZipFile(stream) as archive,
+    ):
         info = archive.getinfo("manifest.json")
         if info.file_size > max(16 * 1024**2, len(sealed.manifest_bytes)):
             raise ValueError("sealed_changed")
@@ -601,7 +704,7 @@ def verify_sealed(
     ).encode()
     if (
         canonical != sealed.manifest_bytes
-        or _hash(sealed.path, cancel or Event()) != sealed.digest
+        or _hash(sealed.path, cancel or Event(), _custody=_custody) != sealed.digest
     ):
         raise ValueError("sealed_changed")
     return doc

@@ -142,6 +142,8 @@ def provider_display_name(
         The mapped display name, or the key itself when unmapped so unknown
         providers stay identifiable rather than blank.
     """
+    from tldw_chatbook.config import normalize_provider_config_key
+
     key = (provider_key or "").strip()
     if app_config is not None:
         # Lazy: the registry imports console_provider_support, which imports

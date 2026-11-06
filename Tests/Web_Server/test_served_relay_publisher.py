@@ -225,7 +225,7 @@ async def test_send_failures_are_swallowed_and_drainer_survives() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bounded_queue_drops_when_the_drainer_stalls() -> None:
+async def test_bounded_queue_resets_when_the_drainer_stalls() -> None:
     client = FakeRelayClient()
     client.gate = asyncio.Event()
     publisher = ServedRelayPublisher(client, max_pending=2)
@@ -239,8 +239,9 @@ async def test_bounded_queue_drops_when_the_drainer_stalls() -> None:
     client.gate.set()
     await _drain(publisher)
 
-    # One in-flight + two queued; the remaining three were dropped, not raised.
-    assert len(client.frames) == 3
+    # One in-flight + two queued + one reset; native state remains untouched.
+    assert len(client.frames) == 4
+    assert client.frames[1][0] == "console.changed"
     await publisher.aclose()
 
 
@@ -423,7 +424,7 @@ assert "tldw_chatbook.Web_Server.served_relay_publisher" not in sys.modules
 
 
 @pytest.mark.asyncio
-async def test_app_approval_wrapper_with_publisher_keeps_original_and_relay() -> None:
+async def test_app_approval_wrapper_leaves_relay_to_runtime_projection() -> None:
     from tldw_chatbook.app_served import _served_relay_wrap_pending_approval
 
     client = FakeRelayClient()
@@ -439,9 +440,78 @@ async def test_app_approval_wrapper_with_publisher_keeps_original_and_relay() ->
         wrapped = _served_relay_wrap_pending_approval(
             SimpleNamespace(served_relay_publisher=publisher), original
         )
+        assert wrapped is original
         assert wrapped(CONSOLE_APPROVAL_PAYLOAD) == "card-mounted"
         assert calls == [CONSOLE_APPROVAL_PAYLOAD]
         await _drain(publisher)
-        assert [frame[0] for frame in client.frames] == ["relay.approval.raised"]
+        assert client.frames == []
+    finally:
+        await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stalled_publisher_marks_lost_clear_as_reset_with_bounded_handoff(
+    monkeypatch,
+):
+    client = FakeRelayClient()
+    client.gate = asyncio.Event()
+    publisher = ServedRelayPublisher(client, max_pending=2)
+    publisher.attach()
+    publisher.approval_raised(CONSOLE_APPROVAL_PAYLOAD)
+    await asyncio.wait_for(client.in_flight.wait(), 1)
+    callbacks = []
+    loop = asyncio.get_running_loop()
+    original_wake = loop.call_soon_threadsafe
+
+    def wake(callback, *args, **kwargs):
+        callbacks.append(callback)
+        return original_wake(callback, *args, **kwargs)
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", wake)
+    for index in range(1000):
+        publisher.run_status("session-7", f"state-{index}")
+    publisher.approval_cleared("round-42")
+    assert len(callbacks) == 1
+    client.gate.set()
+    await _drain(publisher)
+    assert any(
+        kind == "console.changed" and payload.get("reset_required") is True
+        for kind, payload in client.frames
+    )
+    assert len(client.frames) <= 4
+    await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_publisher_retains_only_bounded_mounted_round_metadata():
+    client = FakeRelayClient()
+    publisher = ServedRelayPublisher(client, max_pending=2)
+    publisher.attach()
+    for index in range(100):
+        round_id = f"round-{index}"
+        publisher.approval_raised({**CONSOLE_APPROVAL_PAYLOAD, "round_id": round_id})
+        publisher.approval_cleared(round_id)
+    assert not publisher._mounted_rounds
+    for index in range(100):
+        publisher.approval_raised(
+            {**CONSOLE_APPROVAL_PAYLOAD, "round_id": f"round-{index}"}
+        )
+    assert len(publisher._mounted_rounds) <= 2
+    await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_projection_invalidations_need_no_mounted_approval_callback():
+    client = FakeRelayClient()
+    publisher = ServedRelayPublisher(client, poll_interval=0.001)
+    revisions = iter((1, None, None))
+    source = SimpleNamespace(poll_changes=lambda: next(revisions, None))
+    publisher.attach(projection_source=lambda: source)
+    try:
+        for _ in range(20):
+            await asyncio.sleep(0.002)
+            if client.frames:
+                break
+        assert client.frames == [("console.changed", {"sequence": 1})]
     finally:
         await publisher.aclose()

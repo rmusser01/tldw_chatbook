@@ -43,7 +43,8 @@ FAST_LANE_TARGETS = (
     "Tests/DB/test_automatic_wake_attempts.py",
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
-    "Tests/UI/test_mcp_workbench.py",
+    # PR #3345: the complete MCP workbench rider now runs in the UI census;
+    # test_derived_artifacts_workflow pins all279 function selectors exactly once.
     "Tests/UI/test_mcp_tools_mode.py",
     "Tests/Widgets/test_detach_safe_text_area.py",
     "Tests/Web_Server/test_served_tab_isolation.py",
@@ -1622,6 +1623,7 @@ PERF_GUARD_LAST_STEP_TARGETS = (
 def test_perf_guard_runs_its_wall_clock_compact_gates_last() -> None:
     """Perf Guard runs the Console compact-setup gates only in its last pytest step."""
     (job,) = _workflow("perf-guard.yml")["jobs"].values()
+    assert job["timeout-minutes"] == 15
     *earlier, last = [step for step in job["steps"] if "pytest" in step.get("run", "")]
     assert _pytest_targets(last["run"]) == PERF_GUARD_LAST_STEP_TARGETS, last["name"]
     for step in earlier:
@@ -1798,3 +1800,26 @@ def test_dreams_required_placement_rejects_drift(name, mutation):
         step["run"] = step["run"].replace("--timeout=", "--timeout=1")
     with pytest.raises(AssertionError):
         _assert_dreams_required_steps(workflow)
+
+
+def test_eval_native_retirement_controls_keep_platform_recovery_enrollment():
+    workflow = _workflow("eval-recovery-regressions.yml")
+    paths = _triggers(workflow)["pull_request"]["paths"]
+    for source in (
+        "tldw_chatbook/RAG_Search/simplified/db_connection_pool.py",
+        "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+        "Tests/RAG_Search/test_keyword_leg_db_resolution.py",
+    ):
+        assert any(_github_paths_match(pattern, source) for pattern in paths)
+    job = workflow["jobs"]["eval-recovery"]
+    assert job["timeout-minutes"] == 20
+    assert set(job["strategy"]["matrix"]["os"]) == {
+        "ubuntu-24.04",
+        "macos-15",
+        "windows-2022",
+    }
+    step = _named_step(job, "Verify override classification and recovery lifetimes")
+    assert "Tests/Backup_Recovery/test_eval_maintenance.py" in step["run"]
+    assert "Tests/Backup_Recovery/test_rag_manager_maintenance.py" in step["run"]
+    assert "Tests/Evals/test_orchestrator_offloop_writes.py" in step["run"]
+    assert "--timeout=180" in step["run"]

@@ -23,6 +23,16 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 
 `TldwCli` composes `TextualAppGuards` before `App`. The aggregate in `Utils/text_selection_crash_guard.py` includes the Textual 8.x text-selection crash guard, detached-focus recovery, input activity tracking, and thread-worker context isolation.
 
+On Windows, `ThreadWorkerContextGuard.on_load` installs dev's short/coarse
+`textual.timer.sleep` policy before checking for an already-installed executor
+(ADR-354, amended on dev integration). Waits of at least 0.25 seconds use
+`asyncio.sleep`; shorter precision waits use the existing fixed 32-worker timer
+pool and Textual's original timing allowances. Waits and cancellation do not use
+the default executor. A cancelled short wait returns immediately while its
+physical sleep retires in that pool. Native Timer callbacks, intervals, repeats,
+pause/reset and stop remain in Textual. Default-worker capacity, fresh contexts,
+and replaced-pool cleanup stay unchanged. macOS/Linux leave the timer slot alone.
+
 On native Windows, its `get_driver_class()` adapts Textual's default `WindowsDriver` to enable `ENABLE_WINDOW_INPUT` after every application-mode start, including resume (TASK-37173). Textual 8.2.8 enables VT input but omits this resize-reporting flag, leaving screens at their old dimensions after a terminal resize. The adapter preserves the remaining input flags and upstream console restoration; constructor-supplied and environment-selected drivers, including served transports, are unchanged. Unix does not import the Windows adapter path. Native before/after evidence and a reproducible Logs probe live in `qa/windows-terminal-resize-2026-10-28/`.
 
 Construction is phased and timed (`self._startup_phases`, histogram `app_startup_phase_duration_seconds`):
@@ -185,3 +195,21 @@ and requests the existing idle refreeze. The domain warmup owner imports no UI.
 Config warnings load `app_config_notifications.py` only after detecting their
 existing failure/conflict condition. Notes startup outcome helpers live in
 `Notes/notes_sync_startup.py`; app wiring retains its lazy entry points.
+
+The ChaChaNotes FTS startup worker uses the database already selected on the
+app (`chachanotes_db`), just like the other app-owned startup repositories.
+An app with no selected database skips this speculative backfill; it does not
+construct the global database during shutdown. Cancellation polling and
+`operation_owned_connection` still govern the actual backfill and native handle
+retirement. PR3345's Windows teardown logs exposed the former second selection:
+a fresh global schema 0→87 migration and character seeding ran before the first
+FTS abort check, leaving executor custody uncertain under the unchanged 3-second join.
+The selected-owner regressions cover both absent and real selected databases;
+current-head Windows CI remains the platform qualification.
+
+The first-send warm-up includes Console runtime custody, saved-session hydration,
+scratch admission and migration-receipt decoding. Native send acceptance and
+settlement retain every imported-parent quarantine check. The already-resident
+`app_served` module and the served-child-only relay publisher are not separate
+first-send steps. The official UI-ready snapshot updater records the actual
+resident roster; its unchanged ceiling still rejects an over-budget refresh.

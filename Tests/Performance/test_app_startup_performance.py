@@ -766,10 +766,10 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
     """Optional audio/DB/cleanup startup work should not gate initial UI readiness."""
 
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.Utils.db_status_manager import DBStatusManager
-    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
-    from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
+    from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 
     tts_started = asyncio.Event()
     stts_started = asyncio.Event()
@@ -810,6 +810,547 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 
     app = _build_test_app()
 
+    def startup_failure_context():
+        # Read retained state only: do not resolve app properties/lazy owners.
+        fields = app.__dict__
+
+        def task_state(task):
+            if not isinstance(task, asyncio.Task):
+                return {"present": task is not None}
+            done, cancelled = task.done(), task.cancelled()
+            error = task.exception() if done and not cancelled else None
+            return {
+                "present": True,
+                "name": task.get_name()[:96],
+                "done": done,
+                "cancelled": cancelled,
+                "error_class": None if error is None else type(error).__name__,
+            }
+
+        children = fields.get("_speech_initialization_children", {})
+        context = {
+            "ui_ready": fields.get("_ui_ready") is True,
+            "tts_initializer_entered": tts_started.is_set(),
+            "stts_initializer_entered": stts_started.is_set(),
+            "db_size_entered": db_size_started.is_set(),
+            "media_cleanup_entered": media_cleanup_started.is_set(),
+            "speech_paused": fields.get("_speech_initialization_paused") is True,
+            "speech_closed": fields.get("_speech_initialization_closed") is True,
+            "speech_deferred": [
+                kind
+                for kind in ("tts", "stts")
+                if kind in fields.get("_speech_initialization_deferred", ())
+            ],
+            "tasks": {
+                "tts_wrapper": task_state(fields.get("_tts_initialization_task")),
+                "stts_wrapper": task_state(fields.get("_stts_initialization_task")),
+                "tts_child": task_state(children.get("tts")),
+                "stts_child": task_state(children.get("stts")),
+            },
+            "admission_observation": "retained flags/tasks only; allowed result not retained",
+        }
+        try:
+            import inspect
+            import math
+            import time
+            from concurrent.futures import Future as ConcurrentFuture
+            from concurrent.futures import ThreadPoolExecutor
+            from concurrent.futures import thread as executor_thread
+            from functools import partial
+            from queue import SimpleQueue
+            from types import (
+                CellType,
+                CodeType,
+                CoroutineType,
+                FrameType,
+                FunctionType,
+                MethodType,
+                ModuleType,
+            )
+            from weakref import WeakSet
+
+            def code_identity(function):
+                if type(function) is not FunctionType:
+                    return "unknown"
+                code = function.__code__
+                return [
+                    code.co_filename[-80:],
+                    code.co_qualname[:80],
+                    code.co_firstlineno,
+                ]
+
+            def callback_identity(callback):
+                for _ in range(2):
+                    if type(callback) is not partial:
+                        break
+                    function = callback.func
+                    if (
+                        type(function) is MethodType
+                        and function.__self__ is app
+                        and function.__func__ is call_next
+                        and callback.args
+                    ):
+                        callback = callback.args[0]
+                    else:
+                        callback = function
+                if type(callback) is MethodType:
+                    return callback.__func__, callback.__self__ is app
+                return callback, False
+
+            def native_task_state(task):
+                if type(task) is not asyncio.Task:
+                    return "unknown"
+                return {
+                    "state": task._state,
+                    "error": (
+                        None
+                        if task._exception is None
+                        else type(task._exception).__name__[:80]
+                    ),
+                }
+
+            def timer_wait_state(task):
+                if type(task) is not asyncio.Task:
+                    return {"missing": "unknown; no native task"}
+
+                def task_path(current):
+                    path = []
+                    coroutine = current._coro
+                    timing = {"missing": "unknown; no retained Timer._run numbers"}
+                    native_run = inspect.getattr_static(timer_class, "_run", None)
+                    timer_code = (
+                        native_run.__code__
+                        if type(native_run) is FunctionType
+                        else None
+                    )
+                    clock_module = sys.modules.get("textual._time")
+                    clock = (
+                        vars(clock_module).get("get_time")
+                        if type(clock_module) is ModuleType
+                        else None
+                    )
+                    for _ in range(5):
+                        if type(coroutine) is not CoroutineType:
+                            break
+                        frame, code = coroutine.cr_frame, coroutine.cr_code
+                        path.append(
+                            [
+                                code.co_qualname[:72],
+                                frame.f_lineno if type(frame) is FrameType else None,
+                            ]
+                        )
+                        if code is timer_code and type(frame) is FrameType:
+                            # Only exact native Timer._run numeric fields; no worker locals.
+                            numbers = {
+                                key: frame.f_locals.get(key)
+                                for key in ("start", "next_timer", "count", "_interval")
+                            }
+
+                            def valid(value):
+                                return (
+                                    type(value) in (int, float)
+                                    and abs(value) < 1e12
+                                    and math.isfinite(value)
+                                )
+
+                            if clock is time.perf_counter or clock is time.monotonic:
+                                now = clock()
+                                timing = {
+                                    "age_s": round(now - numbers["start"], 3)
+                                    if valid(numbers["start"])
+                                    else "unknown",
+                                    "late_s": round(now - numbers["next_timer"], 3)
+                                    if valid(numbers["next_timer"])
+                                    else "unknown",
+                                    "count": numbers["count"]
+                                    if type(numbers["count"]) is int
+                                    and valid(numbers["count"])
+                                    else "unknown",
+                                    "interval_s": numbers["_interval"]
+                                    if valid(numbers["_interval"])
+                                    else "unknown",
+                                }
+                        coroutine = coroutine.cr_await
+                    return {
+                        "task": native_task_state(current),
+                        "code": path,
+                        "more_code": type(coroutine) is CoroutineType,
+                        "timing": timing,
+                    }
+
+                result = task_path(task)
+                waiter = task._fut_waiter
+                if type(waiter) is asyncio.Task:
+                    result["child"] = task_path(waiter)
+                    waiter = waiter._fut_waiter
+                result["waiter"] = {
+                    "type": "Task"
+                    if type(waiter) is asyncio.Task
+                    else "Future"
+                    if type(waiter) is asyncio.Future
+                    else "unknown",
+                    "state": waiter._state
+                    if type(waiter) is asyncio.Task or type(waiter) is asyncio.Future
+                    else "unknown",
+                }
+                source_state = "unknown"
+                if type(waiter) is asyncio.Future:
+                    chain_module = sys.modules.get("asyncio.futures")
+                    chain = (
+                        vars(chain_module).get("_chain_future")
+                        if type(chain_module) is ModuleType
+                        else None
+                    )
+                    if (
+                        type(chain) is FunctionType
+                        and chain.__module__ == "asyncio.futures"
+                        and chain.__qualname__ == "_chain_future"
+                    ):
+                        check_code = next(
+                            (
+                                code
+                                for code in chain.__code__.co_consts
+                                if type(code) is CodeType
+                                and code.co_name == "_call_check_cancel"
+                            ),
+                            None,
+                        )
+                        callbacks = waiter._callbacks
+                        if (
+                            check_code is not None
+                            and type(callbacks) is list
+                            and "source" in check_code.co_freevars
+                        ):
+                            source_index = check_code.co_freevars.index("source")
+                            for entry in callbacks[:8]:
+                                if type(entry) is not tuple or len(entry) != 2:
+                                    continue
+                                callback = entry[0]
+                                if (
+                                    type(callback) is not FunctionType
+                                    or callback.__code__ is not check_code
+                                ):
+                                    continue
+                                closure = callback.__closure__
+                                if (
+                                    type(closure) is not tuple
+                                    or source_index >= len(closure)
+                                    or type(closure[source_index]) is not CellType
+                                ):
+                                    continue
+                                try:
+                                    source = closure[source_index].cell_contents
+                                except ValueError:
+                                    continue
+                                if type(source) is ConcurrentFuture:
+                                    value = inspect.getattr_static(
+                                        source, "_state", None
+                                    )
+                                    if type(value) is str and value in {
+                                        "PENDING",
+                                        "RUNNING",
+                                        "FINISHED",
+                                        "CANCELLED",
+                                    }:
+                                        source_state = value
+                                    break
+                result["waiter"]["executor_source_state"] = source_state
+                return result
+
+            def executor_state():
+                executor = inspect.getattr_static(
+                    asyncio.get_running_loop(), "_default_executor", None
+                )
+                guard_module = sys.modules.get(
+                    "tldw_chatbook.Utils.text_selection_crash_guard"
+                )
+                fresh = (
+                    vars(guard_module).get("FreshContextExecutor")
+                    if type(guard_module) is ModuleType
+                    else None
+                )
+                trusted = (
+                    (ThreadPoolExecutor, fresh)
+                    if type(fresh) is type and fresh.__bases__ == (ThreadPoolExecutor,)
+                    else (ThreadPoolExecutor,)
+                )
+                if not any(type(executor) is kind for kind in trusted):
+                    return {"missing": "unknown; executor type not trusted"}
+                threads = inspect.getattr_static(executor, "_threads", None)
+                work_queue = inspect.getattr_static(executor, "_work_queue", None)
+                maximum = inspect.getattr_static(executor, "_max_workers", None)
+                info = {
+                    "kind": type(executor).__name__,
+                    "max_workers": maximum if type(maximum) is int else "unknown",
+                    "thread_count": len(threads) if type(threads) is set else "unknown",
+                    "queue_size_approx": SimpleQueue.qsize(work_queue)
+                    if type(work_queue) is SimpleQueue
+                    else "unknown",
+                    "workers": [],
+                    "workers_omitted": 0,
+                }
+                if type(threads) is not set or len(threads) > 1024:
+                    info["missing"] = (
+                        "unknown; thread set unavailable or outside observation bound"
+                    )
+                    return info
+                frames = sys._current_frames()
+                worker = executor_thread._worker
+                if type(worker) is not FunctionType:
+                    info["missing"] = "unknown; executor worker code not native"
+                    return info
+                worker_code = worker.__code__
+                info["workers_omitted"] = max(0, len(threads) - 6)
+                for thread in tuple(threads)[:6]:
+                    if type(thread) is not threading.Thread:
+                        continue
+                    frame = frames.get(thread.ident)
+                    names, matched = [], False
+                    for _ in range(24):
+                        if type(frame) is not FrameType:
+                            break
+                        if len(names) < 2:
+                            names.append(frame.f_code.co_qualname[:72])
+                        matched = matched or frame.f_code is worker_code
+                        frame = frame.f_back
+                    if not matched:
+                        continue
+                    info["workers"].append({"code": names})
+                info["worker_sample_missing"] = (
+                    "unknown; departed or deeper worker frames may not match"
+                )
+                return info
+
+            manager = fields.get("db_status_manager")
+            actual_class = type(app)
+            constructor = inspect.getattr_static(actual_class, "__init__", None)
+            constructor_manager = (
+                constructor.__globals__.get("DBStatusManager")
+                if type(constructor) is FunctionType
+                else None
+            )
+            manager_method = inspect.getattr_static(manager, "update_db_sizes", None)
+            call_next = inspect.getattr_static(actual_class, "call_next", None)
+            callbacks = {
+                name: inspect.getattr_static(actual_class, name, None)
+                for name in (
+                    "_schedule_footer_status_updates",
+                    "update_db_sizes",
+                    "_start_deferred_audio_service_initialization",
+                )
+            }
+            timer_module = sys.modules.get("textual.timer")
+            timer_class = (
+                vars(timer_module).get("Timer")
+                if type(timer_module) is ModuleType
+                else None
+            )
+            event_module = sys.modules.get("textual.events")
+            event_class = (
+                vars(event_module).get("Callback")
+                if type(event_module) is ModuleType
+                else None
+            )
+            records, seen, omitted = [], 0, 0
+            db_timer_wait = {"missing": "unknown; second DB timer not retained"}
+            periodic = inspect.getattr_static(manager, "_update_timer", None)
+            timers = fields.get("_timers")
+            retained = [periodic]
+            if type(timers) is WeakSet:
+                retained.extend(timer for timer in timers if timer is not periodic)
+            for timer in retained:
+                if timer_class is None or type(timer) is not timer_class:
+                    continue
+                callback, bound = callback_identity(
+                    inspect.getattr_static(timer, "_callback", None)
+                )
+                roles = [
+                    name for name, function in callbacks.items() if callback is function
+                ]
+                if timer is not periodic and not roles:
+                    continue
+                if bound and "update_db_sizes" in roles:
+                    try:
+                        db_timer_wait = timer_wait_state(
+                            inspect.getattr_static(timer, "_task", None)
+                        )
+                    except Exception as probe_error:  # noqa: BLE001 -- Keep the original observation.
+                        db_timer_wait = {
+                            "missing": "unknown",
+                            "error": type(probe_error).__name__[:80],
+                        }
+                seen += 1
+                if len(records) >= 6:
+                    omitted += 1
+                    continue
+                active = inspect.getattr_static(timer, "_active", None)
+                records.append(
+                    {
+                        "kind": "periodic" if timer is periodic else "timer",
+                        "roles": roles,
+                        "app_bound": bound,
+                        "code": code_identity(callback),
+                        "interval": inspect.getattr_static(timer, "_interval", None),
+                        "repeat": inspect.getattr_static(timer, "_repeat", None),
+                        "active": inspect.getattr_static(active, "_value", "unknown"),
+                        "task": native_task_state(
+                            inspect.getattr_static(timer, "_task", None)
+                        ),
+                    }
+                )
+            pending = fields.get("_next_callbacks")
+            if type(pending) is list:
+                for message in pending:
+                    if event_class is None or type(message) is not event_class:
+                        continue
+                    callback, bound = callback_identity(
+                        inspect.getattr_static(message, "callback", None)
+                    )
+                    roles = [
+                        name
+                        for name, function in callbacks.items()
+                        if callback is function
+                    ]
+                    if not roles:
+                        continue
+                    seen += 1
+                    if len(records) >= 6:
+                        omitted += 1
+                        continue
+                    records.append(
+                        {
+                            "kind": "queued",
+                            "roles": roles,
+                            "app_bound": bound,
+                            "code": code_identity(callback),
+                        }
+                    )
+            pump = fields.get("_task")
+            coroutine = pump._coro if type(pump) is asyncio.Task else None
+            chain = []
+            for _ in range(6):
+                if type(coroutine) is not CoroutineType:
+                    break
+                code = coroutine.cr_code
+                chain.append(
+                    [
+                        code.co_filename[-80:],
+                        code.co_qualname[:80],
+                        None
+                        if coroutine.cr_frame is None
+                        else coroutine.cr_frame.f_lineno,
+                    ]
+                )
+                coroutine = coroutine.cr_await
+            database_module = sys.modules.get(DBStatusManager.__module__)
+            canonical_manager = (
+                vars(database_module).get("DBStatusManager")
+                if type(database_module) is ModuleType
+                else None
+            )
+            try:
+                executor_snapshot = executor_state()
+            except Exception as probe_error:  # noqa: BLE001 -- Keep the original observation.
+                executor_snapshot = {
+                    "missing": "unknown",
+                    "error": type(probe_error).__name__[:80],
+                }
+            db_startup = {
+                "missing": "unknown; completed timers or callback batches may no longer be retained",
+                "app_class_matches": actual_class is TldwCli,
+                "factory_class_matches": _build_test_app.__globals__.get("TldwCli")
+                is actual_class,
+                "manager_class_matches": (
+                    "unknown" if manager is None else type(manager) is DBStatusManager
+                ),
+                "constructor_class_matches": (
+                    "unknown"
+                    if constructor_manager is None
+                    else constructor_manager is DBStatusManager
+                ),
+                "canonical_class_matches": (
+                    "unknown"
+                    if canonical_manager is None
+                    else canonical_manager is DBStatusManager
+                ),
+                "manager_points_to_app": inspect.getattr_static(manager, "app", None)
+                is app,
+                "manager_method_is_blocked": (
+                    "unknown"
+                    if manager_method is None
+                    else manager_method is blocked_db_size_update
+                ),
+                "manager_method_is_class_binding": (
+                    "unknown"
+                    if manager_method is None
+                    else manager_method
+                    is inspect.getattr_static(type(manager), "update_db_sizes", None)
+                ),
+                "manager_method": code_identity(manager_method),
+                "app_update_method": code_identity(
+                    inspect.getattr_static(app, "update_db_sizes", None)
+                ),
+                "manager_closed": inspect.getattr_static(
+                    manager, "_maintenance_closed", "unknown"
+                ),
+                "periodic_retained": timer_class is not None
+                and type(periodic) is timer_class,
+                "closing": [
+                    fields.get(name, "unknown")
+                    for name in ("_closed", "_closing", "_exit")
+                ],
+                "records": records,
+                "matching_records_seen": seen,
+                "records_omitted": omitted,
+                "timer_set_known": type(timers) is WeakSet,
+                "queue_known": type(pending) is list,
+                "pump_task": native_task_state(pump),
+                "pump_code": chain,
+                "pump_more_code": True
+                if type(coroutine) is CoroutineType
+                else "unknown",
+                "db_timer_wait": db_timer_wait,
+                "executor": executor_snapshot,
+            }
+
+            def oversized():
+                return (
+                    len(
+                        json.dumps(
+                            dict(context, db_startup=db_startup), sort_keys=True
+                        ).encode("utf-8")
+                    )
+                    > 4096
+                )
+
+            while oversized() and chain:
+                chain.pop()
+                db_startup["pump_more_code"] = True
+            workers = db_startup["executor"].get("workers", [])
+            while oversized() and workers:
+                workers.pop()
+                db_startup["executor"]["workers_omitted"] += 1
+            while oversized() and records:
+                records.pop()
+                db_startup["records_omitted"] += 1
+            for observed in (db_timer_wait.get("child", {}), db_timer_wait):
+                codes = observed.get("code", [])
+                while oversized() and codes:
+                    codes.pop()
+                    observed["more_code"] = True
+            if oversized():
+                db_startup = {
+                    "missing": "unknown",
+                    "truncated": "4096-byte observation limit",
+                }
+        except Exception as observation_error:  # noqa: BLE001 -- Keep the original diagnostic fields.
+            db_startup = {
+                "missing": "unknown",
+                "observation_error": type(observation_error).__name__[:80],
+            }
+        context["db_startup"] = db_startup
+        return context
+
     async with app.run_test(size=(120, 36)) as pilot:
         try:
             await _wait_until(lambda: app._ui_ready, pause=pilot.pause)
@@ -825,6 +1366,18 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 
             await asyncio.sleep(0.2)
             assert media_cleanup_started.is_set() is False
+        except AssertionError as error:
+            try:
+                error.add_note(
+                    "optional_startup_diagnostic="
+                    + json.dumps(startup_failure_context(), sort_keys=True)
+                )
+            except Exception as diagnostic_error:  # noqa: BLE001 -- Preserve the original assertion.
+                error.add_note(
+                    "optional_startup_diagnostic_error="
+                    + type(diagnostic_error).__name__
+                )
+            raise
         finally:
             release_optional_work.set()
             await pilot.pause(0.05)
@@ -985,3 +1538,111 @@ async def test_stts_handler_initializes_on_first_use(monkeypatch) -> None:
 
     assert initialized.is_set()
     assert handler is app._stts_handler
+
+
+@pytest.mark.asyncio
+async def test_windows_timer_delivery_and_stop_do_not_wait_for_default_workers(
+    monkeypatch,
+):
+    from threading import Event as ThreadEvent
+    from types import SimpleNamespace
+
+    from textual import timer as timer_module
+    from textual.app import App
+    from textual.timer import Timer
+
+    from tldw_chatbook.Utils import text_selection_crash_guard as guard
+
+    loop = asyncio.get_running_loop()
+    executor = guard.FreshContextExecutor(max_workers=8, thread_name_prefix="asyncio")
+    previous = getattr(loop, "_default_executor", None)
+    loop.set_default_executor(executor)
+    if previous is not None:
+        previous.shutdown(wait=False)
+    release = ThreadEvent()
+    entered = [ThreadEvent() for _ in range(8)]
+    native_jobs = []
+    proxy_wakes = []
+    timers = []
+    monkeypatch.setattr(guard, "_windows_timer_pool", None)
+
+    def hold_worker(started):
+        started.set()
+        release.wait()
+
+    async def windows_executor_sleep(seconds):
+        wake = ThreadEvent()
+        proxy_wakes.append(wake)
+        job = executor.submit(wake.wait, seconds)
+        native_jobs.append(job)
+        try:
+            await asyncio.wrap_future(job)
+        except asyncio.CancelledError:
+            cancellation = executor.submit(wake.set)
+            native_jobs.append(cancellation)
+            await asyncio.wrap_future(cancellation)
+            raise
+
+    try:
+        held_jobs = []
+        for started in entered:
+            job = executor.submit(hold_worker, started)
+            held_jobs.append(job)
+            native_jobs.append(job)
+        await _wait_until(
+            lambda: all(started.is_set() for started in entered), pause=asyncio.sleep
+        )
+        monkeypatch.setattr(timer_module, "sleep", windows_executor_sleep)
+        monkeypatch.setattr(guard, "sys", SimpleNamespace(platform="win32"))
+        guard.ThreadWorkerContextGuard().on_load()
+        assert getattr(loop, "_default_executor", None) is executor
+        assert executor._max_workers == 8
+        delivered = asyncio.Event()
+        long_delivered = asyncio.Event()
+        app = App()
+        with app._context():
+            short = Timer(app, 0.1, callback=delivered.set, repeat=0)
+            timers.append(short)
+            short._start()
+            await _wait_until(delivered.is_set, pause=asyncio.sleep)
+            assert not release.is_set()
+            assert all(not job.done() for job in held_jobs)
+            long = Timer(app, 86400, callback=long_delivered.set, repeat=0)
+            timers.append(long)
+            long._start()
+            await asyncio.sleep(0)
+            await asyncio.wait_for(Timer._stop_all([long]), timeout=3.0)
+            assert not long_delivered.is_set()
+            assert long._task is None
+            assert all(not job.done() for job in held_jobs)
+    finally:
+        for wake in proxy_wakes:
+            wake.set()
+        release.set()
+        await Timer._stop_all(timers)
+        await asyncio.gather(
+            *(asyncio.wrap_future(job) for job in native_jobs), return_exceptions=True
+        )
+        owned_timer_pool = guard._windows_timer_pool
+        if owned_timer_pool is not None:
+            owned_timer_pool.shutdown(wait=True)
+            assert all(not thread.is_alive() for thread in owned_timer_pool._threads)
+        assert all(job.done() for job in native_jobs)
+        assert all(job.cancelled() or job.exception() is None for job in native_jobs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+async def test_non_windows_load_preserves_the_existing_timer_sleep(
+    monkeypatch, platform
+):
+    from types import SimpleNamespace
+
+    from textual import timer as timer_module
+
+    from tldw_chatbook.Utils import text_selection_crash_guard as guard
+
+    existing_sleep = timer_module.sleep
+    monkeypatch.setattr(guard, "sys", SimpleNamespace(platform=platform))
+    guard.ThreadWorkerContextGuard().on_load()
+    assert timer_module.sleep is existing_sleep

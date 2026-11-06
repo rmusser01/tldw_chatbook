@@ -163,6 +163,7 @@ def test_level_up_xp_bar_changes_every_frame(cards):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_keypress_skips_splash():
     from textual.app import App
 
@@ -185,11 +186,31 @@ async def test_keypress_skips_splash():
         assert app.closed, "keypress should skip the splash screen"
 
 
-def test_old_import_path_keeps_ui_module_spec_so_reload_works():
-    import importlib
+def test_old_import_path_keeps_ui_module_spec_so_reload_works(tmp_path, cards):
+    from Tests.Packaging.test_app_import_diet_closure import _run_isolated_python
 
-    importlib.import_module("tldw_chatbook.Utils.Splash_Screens.base_effect")
-    ui = importlib.import_module("tldw_chatbook.UI.Splash_Screens.base_effect")
-    assert ui.__spec__.name == "tldw_chatbook.UI.Splash_Screens.base_effect"
-    importlib.reload(ui)
-    assert ui.__spec__.name == "tldw_chatbook.UI.Splash_Screens.base_effect"
+    result = _run_isolated_python(
+        tmp_path,
+        """
+from Tests import network_guard, real_profile_guard
+network_guard.install()
+real_profile_guard.install()
+import importlib
+
+importlib.import_module("tldw_chatbook.Utils.Splash_Screens.base_effect")
+ui = importlib.import_module("tldw_chatbook.UI.Splash_Screens.base_effect")
+assert ui.__spec__.name == "tldw_chatbook.UI.Splash_Screens.base_effect"
+importlib.reload(ui)
+assert ui.__spec__.name == "tldw_chatbook.UI.Splash_Screens.base_effect"
+
+assert not real_profile_guard.take_violations()
+assert not network_guard.blocked_attempts()
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert list_available_effects()
+    assert all(
+        get_effect_class(card.get("effect") or "") is not None
+        for card in cards.values()
+        if card.get("type") == "animated"
+    )

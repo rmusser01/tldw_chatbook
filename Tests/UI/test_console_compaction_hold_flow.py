@@ -104,13 +104,22 @@ async def _send(console, host, runtime_tasks, draft: str) -> None:
     console._session._sync_console_session_draft()
     console._console_composer_or_none().load_draft(draft)
     before = len(runtime_tasks)
+    runtime = console._console_runtime()
+    prior_custody = set(runtime._turn_custody)
     await asyncio.wait_for(
         console._send_console_message_from_visible_action(
             session_id=console._ensure_console_chat_controller().store.active_session_id
         ),
         10,
     )
-    for task in runtime_tasks[before:]:
+    # Received-intent custody starts before accept_turn promotion. Await the
+    # actual native intake task before deciding that zero calls means a hold.
+    received_tasks = [
+        record.task
+        for key, record in runtime._turn_custody.items()
+        if key not in prior_custody and record.task is not None
+    ]
+    for task in dict.fromkeys((*received_tasks, *runtime_tasks[before:])):
         await asyncio.wait_for(asyncio.shield(task), 30)
     await console._sync_native_console_chat_ui()
 
@@ -473,7 +482,7 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
             assert console._native_run_status_copy() == "Pauses for compaction"
             chip = console._context_spend._build_console_cost_state()
             assert chip.label.startswith(COMPACTION_PAUSE_FORECAST_COPY)
-            assert "Next send pauses for compaction approval" in chip.tooltip
+            assert "Estimated next send pauses for compaction approval:" in chip.tooltip
     finally:
         if console is not None:
             await console._console_runtime().dispose()

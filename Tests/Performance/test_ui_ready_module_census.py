@@ -175,7 +175,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: `Chat.console_capture_policy` and `Canvas.config_policy` (#3375, out of
 #: `config.py`). Measured 1036 at dev 447628d08b; limit = measured + the
 #: documented +/-1 warm-boot wobble, as TASK-32856 and PR #2223 pinned.
-MAX_TLDW_MODULES_AT_UI_READY = 1037
+# PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+MAX_TLDW_MODULES_AT_UI_READY = 1031
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
@@ -646,9 +647,35 @@ import Tests.conftest  # private profile/null keyring/network guard before produ
 import asyncio
 import sys
 from types import SimpleNamespace
+from tldw_chatbook import app_served
+native = SimpleNamespace(served_canvas_control=None, _served_canvas_mode=False,
+    _served_canvas_control_start_task=None)
+app_served._start_served_canvas_control(native, app_globals={})
+served_names = ("tldw_chatbook.Web_Server", "tldw_chatbook.Web_Server.served_console_app")
+assert all(name not in sys.modules for name in served_names), [n for n in served_names if n in sys.modules]
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
-names = ("tldw_chatbook.Chat.console_generate_image", "tldw_chatbook.Chat.console_side_chat")
+from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+ConsoleDispatchRepository(SimpleNamespace())
+names = (
+    "tldw_chatbook.Chat.console_generate_image",
+    "tldw_chatbook.Chat.console_side_chat",
+    "tldw_chatbook.DB.mobile_consolidation_receipts",
+    "tldw_chatbook.Backup_Recovery.mobile_identity_plan",
+    "tldw_chatbook.Backup_Recovery.mobile_plan_manifest",
+    "tldw_chatbook.Widgets.Console.console_edit_message_modal",
+    "tldw_chatbook.Widgets.Console.console_save_as_modal",
+    "tldw_chatbook.Widgets.Console.console_fork_chat_modal",
+    "tldw_chatbook.Widgets.Console.console_workspace_switcher_modal",
+    "tldw_chatbook.Widgets.Console.console_character_picker_modal",
+    "tldw_chatbook.Widgets.Console.console_session_switcher_modal",
+    "tldw_chatbook.Widgets.Console.console_scope_picker_modal",
+    "tldw_chatbook.Chat.scope_picker_listers",
+    "tldw_chatbook.Chat.console_local_review_hook",
+    "tldw_chatbook.Chat.console_compaction_hooks",
+    "tldw_chatbook.Utils.os_notifications",
+    "tldw_chatbook.Widgets.Console.console_citation_sources_modal",
+)
 assert all(name not in sys.modules for name in names), [n for n in names if n in sys.modules]
 
 class Composer:
@@ -682,6 +709,74 @@ assert type(pushed[0]._service) is ConsoleSideChatService
 assert pushed[0]._service.gateway is gateway
 assert pushed[0]._provider_selection is selection
 assert pushed[0]._auto_send_prompt is None
+
+# Resolve the same public exports that action handlers consume, then construct
+# the real finite dialogs without mounting or starting provider/OS work.
+import inspect
+from tldw_chatbook.Widgets import Console as widgets
+from tldw_chatbook.UI.Screens import chat_screen
+from tldw_chatbook.UI.Console_Modules import character, message, session, workspace, retrieval
+
+def canonical(module_name, name, *aliases):
+    value = getattr(widgets, name)
+    native = getattr(sys.modules[module_name], name)
+    assert value is native
+    for alias in aliases:
+        assert getattr(alias, name) is native
+        assert inspect.signature(getattr(alias, name)) == inspect.signature(native)
+    return value
+
+edit = canonical(names[5], "ConsoleEditMessageModal", message)(content="original")
+assert type(edit) is sys.modules[names[5]].ConsoleEditMessageModal
+thinking = canonical(names[5], "ConsoleEditThinkingModal", message)(text="reasoning")
+assert type(thinking) is sys.modules[names[5]].ConsoleEditThinkingModal
+save = canonical(names[6], "ConsoleSaveAsModal", message)(destinations=())
+assert type(save) is sys.modules[names[6]].ConsoleSaveAsModal
+summary_type = canonical(names[7], "ConsoleForkDialogSummary", session)
+summary = summary_type(default_title="Fork", boundary_label="Through assistant 1",
+    boundary_excerpt="Answer", message_count=1, response_variant=None,
+    destination="Temporary chat", temporary=True, includes_attachments=False,
+    includes_citations=False, contains_video=False)
+fork = canonical(names[7], "ConsoleForkChatModal", session)(summary, on_submit=lambda result: None)
+assert fork.summary is summary
+switcher = canonical(names[8], "ConsoleWorkspaceSwitcherModal", workspace)(
+    workspaces=(), active_workspace_id=None)
+assert type(switcher) is sys.modules[names[8]].ConsoleWorkspaceSwitcherModal
+picker = canonical(names[9], "ConsoleCharacterPickerModal", chat_screen)(options=())
+assert type(picker) is sys.modules[names[9]].ConsoleCharacterPickerModal
+canonical(names[9], "ConsoleCharacterOption", character)
+choice = canonical(names[10], "ConsoleSwitcherChoice", session)
+from tldw_chatbook.Widgets.Console.console_session_switcher_modal import ConsoleSessionSwitcherModal
+assert type(ConsoleSessionSwitcherModal()) is sys.modules[names[10]].ConsoleSessionSwitcherModal
+assert choice is sys.modules[names[10]].ConsoleSwitcherChoice
+
+listers = retrieval.ConsoleRetrievalController._console_scope_picker_listers(
+    SimpleNamespace(app_instance=SimpleNamespace(notes_user_id="first-use")))
+from tldw_chatbook.Chat import scope_picker_listers
+assert listers[0].__class__ is scope_picker_listers._MediaSourceLister
+assert listers[1].__class__ is scope_picker_listers._NotesSourceLister
+for name in ("build_media_source_lister", "build_notes_source_lister", "build_keyword_tag_lister"):
+    assert getattr(retrieval, name) is getattr(scope_picker_listers, name)
+scope = canonical(names[11], "ConsoleScopePickerModal", chat_screen, workspace)(
+    "Conversation", None, None, lambda value: None,
+    media_lister=listers[0], notes_lister=listers[1], tag_lister=listers[2])
+assert type(scope) is sys.modules[names[11]].ConsoleScopePickerModal
+citation = canonical(names[16], "ConsoleCitationSourcesModal", chat_screen)(
+    native_message_id="native", persisted_message_id="persisted", current_body="Answer",
+    repository=None, request_is_current=lambda: True)
+assert type(citation) is sys.modules[names[16]].ConsoleCitationSourcesModal
+
+from tldw_chatbook.Chat import console_interrupt_rounds
+from tldw_chatbook.Chat import console_local_review_hook, console_compaction_hooks
+assert console_interrupt_rounds.build_local_review_hook is console_local_review_hook.build_local_review_hook
+assert inspect.signature(console_interrupt_rounds.build_local_review_hook) == inspect.signature(console_local_review_hook.build_local_review_hook)
+assert asyncio.run(console_compaction_hooks._finish_compaction_hooks(None)) is None
+from tldw_chatbook.Utils import os_notifications
+assert chat_screen.send_os_notification is os_notifications.send_os_notification
+assert chat_screen.normalize_console_os_notifications is os_notifications.normalize_console_os_notifications
+assert inspect.signature(chat_screen.send_os_notification) == inspect.signature(os_notifications.send_os_notification)
+assert chat_screen.send_os_notification("run_finished", "Conversation",
+    settings=os_notifications.normalize_console_os_notifications(None)) is False
 print("FIRST_USE_IDENTITY_OK")
 """
     profile = tmp_path / "first-use-profile"

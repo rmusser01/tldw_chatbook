@@ -5807,4 +5807,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("d89080f8267d02d2992ecea12e0274a9b93110d8f99c3cbaed5f07da316d8e85")
+BUNDLE_SHA256 = _enter_worker_exchange("d891995d06fc3b98afa7d1d178dbcd9ff4f4afbfb69a838e15a0d9d0a871122e")

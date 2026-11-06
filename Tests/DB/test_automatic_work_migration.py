@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 
 def v16_database(path):
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     run_id = db.create_run(conversation_id="legacy", agent_kind="primary")
     db.set_status(run_id, "done", "original result", budget_tokens=23)
     with db.transaction() as conn:
@@ -62,7 +62,7 @@ def test_v16_upgrade_preserves_legacy_rows_without_giving_them_allowance(
                 conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
                 == 17
             )
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     legacy = db.get_run(run_id)
     assert legacy["result"] == "original result"
     assert legacy["budget_tokens"] == 23
@@ -75,7 +75,7 @@ def test_v16_upgrade_preserves_legacy_rows_without_giving_them_allowance(
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     chain_id = db.automatic_work.create_chain("new", root_submission_id="new")
     db.close()
-    reopened = AgentRunsDB(path)
+    reopened = owned_agent_runs_db(path)
     assert reopened.automatic_work.snapshot(chain_id).limits.generations == 3
     assert reopened.get_run(run_id)["work_chain_id"] is None
     reopened.close()
@@ -86,7 +86,7 @@ def v21_database(path):
     from Tests.DB.test_automatic_work_budget import chain, reserve
     from Tests.DB.test_automatic_wake_attempts import claim, survivor
 
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     root = chain(db, generations=2, budget_tokens=1234)
     run_id = survivor(db, root)
     claim(db, root, [run_id])
@@ -194,10 +194,10 @@ def test_v21_upgrade_preserves_roots_reservations_and_wake_scope(tmp_path, stand
                 )
             conn.rollback()
     for _ in range(2):
-        reopened = AgentRunsDB(path)
+        reopened = owned_agent_runs_db(path)
         assert rows() == predecessor
         reopened.close()
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     try:
         snapshot = db.automatic_work.snapshot(root)
         assert snapshot.limits.generations == 2

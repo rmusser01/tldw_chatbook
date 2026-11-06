@@ -220,7 +220,7 @@ from .config import (
     get_subscriptions_db_path,
     get_tts_profiles_db_path,
     get_user_data_dir,
-    save_setting_to_cli_config,
+    save_setting_to_cli_config,  # noqa: F401 -- live profile-stamp namespace dependency
 )
 from .Logging_Config import (
     configure_application_logging,
@@ -854,46 +854,13 @@ class TldwCli(
     ]
 
     def _stamp_new_profile_library_lifecycle(self) -> None:
-        """Persist the Library lifecycle at profile CREATION (task-32059).
+        """Persist the Library lifecycle at profile CREATION (task-32059)."""
+        from . import app_profile_startup
 
-        ``coerce_library_lifecycle`` reads an absent
-        ``[library.rail_state] lifecycle`` as ``expanded`` for any profile the
-        current run did not create -- so a user who completed first-run setup,
-        quit, and relaunched before ever opening Library never saw the
-        documented compact "Get started" rail. Writing ``unknown`` here (the
-        same value the screen would have derived on a first visit in THIS run)
-        makes the second launch read the fact instead of inferring it from a
-        missing key. A profile that already carries a lifecycle is untouched.
-        """
-        library_config = self.app_config.get("library")
-        if not isinstance(library_config, dict):
-            library_config = {}
-            self.app_config["library"] = library_config
-        rail_state = library_config.get("rail_state")
-        if not isinstance(rail_state, dict):
-            rail_state = {}
-            library_config["rail_state"] = rail_state
-        if "lifecycle" in rail_state:
-            return
-        # One name for the value both the in-memory state and the file get:
-        # "unknown" is LibraryLifecycle.UNKNOWN.value, spelled out rather than
-        # imported: pulling the Library package in here would put its modules
-        # on every boot for one string (see the module-census ratchet).
-        lifecycle = "unknown"
-        rail_state["lifecycle"] = lifecycle
-        try:
-            # `save_setting_to_cli_config` REPORTS a write failure rather than
-            # raising it, and an unstamped profile reads back as `expanded` on
-            # the next launch -- so the return value is the failure signal.
-            saved = save_setting_to_cli_config(
-                "library.rail_state", "lifecycle", lifecycle
-            )
-        except Exception:
-            saved = False
-        if not saved:
-            # A profile whose config cannot be written still gets the correct
-            # in-memory lifecycle for this run; boot must not fail over it.
-            logger.warning("Could not stamp the Library lifecycle for a new profile.")
+        return app_profile_startup._stamp_new_profile_library_lifecycle(
+            self,
+            source_globals=globals(),
+        )
 
     def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
         """Add the two consolidated widget-defaults stylesheets as CSS sources.
@@ -1044,6 +1011,14 @@ class TldwCli(
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
+    def get_driver_class(self):
+        """Use the retained-terminal driver only for a served child."""
+        if os.environ.get("CHATBOOK_SERVED_CHILD") == "1":
+            from .Web_Server.console_web_driver import ConsoleWebDriver
+
+            return ConsoleWebDriver
+        return super().get_driver_class()
+
     def __init__(self):
         # Track startup timing
         self._startup_start_time = time.perf_counter()
@@ -1118,7 +1093,7 @@ class TldwCli(
                     runtime_snapshot_id=runtime_snapshot_id(
                         self._canvas_profile_snapshot
                     ),
-                    handler=self.served_canvas_handler.handle,
+                    handler=self._handle_served_control_request,
                 )
             except ControlProtocolError:
                 loguru_logger.warning(
@@ -3621,26 +3596,37 @@ class TldwCli(
     def _start_served_canvas_control(self) -> None:
         """Attach this authoritative child to its parent transport."""
         from .app_served import _start_served_canvas_control
+
         return _start_served_canvas_control(self, app_globals=globals())
+
+    async def _handle_served_control_request(self, request):
+        """Route independent Console control before Canvas scope lookup."""
+        from .app_served import _handle_served_control_request
+
+        return await _handle_served_control_request(self, request)
 
     def _served_relay_run_states(self):
         """Current ``{session_id: run state}`` for the relay poller, if built."""
         from .app_served import _served_relay_run_states
+
         return _served_relay_run_states(self)
 
     def served_relay_wrap_pending_approval(self, original):
         """Wrap one ``set_pending_approval`` binding for the relay (served only)."""
         from .app_served import _served_relay_wrap_pending_approval
+
         return _served_relay_wrap_pending_approval(self, original)
 
     def _served_relay_decide(self, round_id, decisions):
         """Apply one phone decision on this child's Console controller."""
         from .app_served import _served_relay_decide
+
         return _served_relay_decide(self, round_id, decisions)
 
     async def _stop_served_canvas_control(self) -> None:
         """Close the private child channel without affecting terminal exit."""
         from .app_served import _stop_served_canvas_control
+
         return await _stop_served_canvas_control(self, app_globals=globals())
 
     @on(ModelCatalogRefreshed)

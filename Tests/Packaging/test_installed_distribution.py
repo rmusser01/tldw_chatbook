@@ -171,6 +171,24 @@ TIKTOKEN_RESOURCE_PATHS = frozenset(
     )
 )
 TIKTOKEN_REQUIREMENT = "tiktoken==0.14.0"
+SERVED_STATIC_RESOURCE_PATHS = frozenset(
+    f"tldw_chatbook/Web_Server/static/{name}"
+    for name in (
+        "served_shell.html",
+        "served_shell.css",
+        "served_shell.js",
+        "devices.js",
+        "qrcodegen.js",
+        "passkeys.js",
+        "mobile/index.html",
+        "mobile/app.css",
+        "mobile/app.js",
+        "mobile/manifest.webmanifest",
+        "mobile/icon-192.png",
+        "mobile/icon-512.png",
+        "mobile/apple-touch-icon.png",
+    )
+)
 AUDIO_CPP_ARTIFACT_MANIFEST_PATH = "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json"
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
 AUDIO_CPP_ARTIFACT_COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
@@ -3013,6 +3031,97 @@ def test_release_checker_rejects_missing_database_migration(
     assert result.returncode == 1
     assert missing in result.stdout + result.stderr
 
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_built_artifact_contains_served_static_assets(
+    built_distributions: BuiltDistributions,
+    archive_kind: str,
+) -> None:
+    members = (
+        _wheel_members(built_distributions.wheel)
+        if archive_kind == "wheel"
+        else _sdist_members(built_distributions.sdist)
+    )
+    assert not SERVED_STATIC_RESOURCE_PATHS - members
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+@pytest.mark.parametrize("missing", sorted(SERVED_STATIC_RESOURCE_PATHS))
+def test_release_checker_rejects_missing_served_static_asset(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    missing: str,
+) -> None:
+    dist_dir = _dist_dir_without(
+        built_distributions,
+        tmp_path,
+        drop_from_wheel=[missing] if archive_kind == "wheel" else (),
+        drop_from_sdist=[missing] if archive_kind == "sdist" else (),
+    )
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert missing in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+def test_installed_wheel_reads_served_static_assets_without_writes(
+    built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
+    tmp_path: Path,
+    wheel_source: str,
+) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel_path(wheel, target)
+    env = _private_child_env(state_root, target, build_source_root)
+    prefix = "tldw_chatbook/Web_Server/static/"
+    env["EXPECTED_SERVED_ASSET_SHA256"] = json.dumps(
+        {
+            path.removeprefix(prefix): hashlib.sha256(
+                (REPO_ROOT / path).read_bytes()
+            ).hexdigest()
+            for path in SERVED_STATIC_RESOURCE_PATHS
+        }
+    )
+    probe = r"""
+import hashlib
+from importlib.resources import files
+import json
+import os
+from pathlib import Path
+from tldw_chatbook.Web_Server import serve
+
+assert Path(serve.__file__).resolve().is_relative_to(Path(os.environ["EXPECTED_TARGET"]))
+expected = json.loads(os.environ["EXPECTED_SERVED_ASSET_SHA256"])
+declared = {"served_shell.html"}
+declared.update(item[1] for item in serve._SERVED_SHELL_ASSETS.values())
+declared.update("mobile/" + item[1] for item in serve._MOBILE_STATIC_ASSETS.values())
+assert declared == set(expected)
+root = files("tldw_chatbook.Web_Server").joinpath("static")
+for name, digest in expected.items():
+    assert hashlib.sha256(root.joinpath(name).read_bytes()).hexdigest() == digest, name
+assert serve._SERVED_SHELL_HTML == root.joinpath("served_shell.html").read_text(encoding="utf-8")
+assert serve._MOBILE_PAGE_HTML == root.joinpath("mobile/index.html").read_text(encoding="utf-8")
+print("installed-served-static-assets-ok")
+"""
+    with _read_only_installed_tree(target):
+        result = _run_child([sys.executable, "-c", probe], run_root, env)
+        assert "installed-served-static-assets-ok" in result.stdout
+        script_path = os.pathsep.join(
+            str(path) for path in (target / "bin", target / "Scripts")
+        )
+        script = shutil.which("tldw-serve", path=script_path)
+        assert script is not None
+        _run_child([script, "--help"], run_root, env)
 
 def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
     built_distributions: BuiltDistributions,

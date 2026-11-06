@@ -31,12 +31,15 @@ from .restore_plan import (
 from .space import held_capacity, require_capacity
 
 
-def _mkdirs(path, root):
+def _mkdirs(path, root, *, _custody=None):
     if path == root:
         return
-    _mkdirs(path.parent, root)
+    _mkdirs(path.parent, root, _custody=_custody)
     if not path.exists():
-        create_private_directory(path)
+        if _custody is None:
+            create_private_directory(path)
+        else:
+            create_private_directory(path, _custody=_custody)
 
 
 def _copy(source, destination, cancel):
@@ -664,6 +667,24 @@ def stage_restore(
             else _preview_reads()
         )
         with validation_scope:
+            if doc.credential_policy != "exclude":
+                from .credentials import _material, validate_citation_coverage
+
+                _copy(
+                    stage / "payload" / "credential-recovery.json",
+                    stage / "credential-recovery.json",
+                    cancel,
+                )
+                validate_citation_coverage(
+                    stage,
+                    (
+                        (items[key].owner, path)
+                        for key, path in extracted.items()
+                        if key in items
+                    ),
+                    _material(stage),
+                )
+                (stage / "credential-recovery.json").unlink()
             credentials = {}
             if isolated_profiles:
                 from dataclasses import replace

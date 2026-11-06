@@ -959,3 +959,18 @@ def attach_review_launch(review_service, review_launch, run_id: str) -> None:
                 review_service.retire_unstarted_launch(review_launch, run_id)
                 review_launch.run_id = None
         raise
+
+
+def _response_text(resp) -> str:
+    try:
+        return resp["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def _response_message(resp) -> dict:
+    try:
+        message = resp["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return {}
+    return message if isinstance(message, dict) else {}

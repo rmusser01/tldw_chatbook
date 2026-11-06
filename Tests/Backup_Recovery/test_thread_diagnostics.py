@@ -953,6 +953,89 @@ def test_capture_snapshot_diagnostic_failure_cannot_replace_original_error(
     assert storage._PreviewScope.sqlite_target is original
 
 
+@pytest.mark.parametrize(
+    "kind, accepted",
+    [
+        ("native_entry", True),
+        ("delegated", True),
+        ("direct_helper", False),
+        ("helper_self", False),
+        ("wrapper_self", False),
+        ("foreign_helper", False),
+        ("deeper_failure", False),
+    ],
+)
+def test_snapshot_change_requires_exact_delegation_frames(tmp_path, kind, accepted):
+    """Only the captured innermost body and its actual scoped entry prove metadata."""
+    import os
+    from types import FunctionType
+
+    from Tests.Backup_Recovery.thread_diagnostics import _snapshot_change
+
+    source = tmp_path / "private-snapshot.db"
+    source.write_bytes(b"fixture")
+    state = os.stat(source)
+    before = (
+        state.st_dev,
+        state.st_ino,
+        state.st_size + 1,
+        state.st_mtime_ns,
+        state.st_ctime_ns,
+    )
+
+    class Scope:
+        def __eq__(self, other):
+            raise AssertionError("scope comparison must use identity")
+
+    scope, foreign_scope = Scope(), Scope()
+
+    def deeper_failure():
+        raise ValueError("preview_sqlite_changed")
+
+    def copy_body(self):
+        suffix, expected, opened = "", before, state  # noqa: F841 -- consumed through traceback frame locals.
+        if kind == "deeper_failure":
+            deeper_failure()
+        raise ValueError("preview_sqlite_changed")
+
+    # Equal names and behavior cannot substitute a different captured code object.
+    foreign_body = FunctionType(
+        copy_body.__code__.replace(
+            co_firstlineno=copy_body.__code__.co_firstlineno + 1
+        ),
+        copy_body.__globals__,
+        closure=copy_body.__closure__,
+    )
+
+    def native_entry(self):
+        if kind == "native_entry":
+            suffix, expected, opened = "", before, state  # noqa: F841 -- consumed through traceback frame locals.
+            raise ValueError("preview_sqlite_changed")
+        if kind == "foreign_helper":
+            return foreign_body(self)
+        if kind == "helper_self":
+            return copy_body(foreign_scope)
+        if kind == "wrapper_self":
+            self = foreign_scope
+            return copy_body(scope)
+        return copy_body(self)
+
+    entry = copy_body if kind == "direct_helper" else native_entry
+    with pytest.raises(ValueError, match="^preview_sqlite_changed$") as caught:
+        entry(scope)
+    if kind == "native_entry":
+        detail = _snapshot_change(caught.value, native_entry.__code__)
+    else:
+        detail = _snapshot_change(
+            caught.value, native_entry.__code__, copy_body.__code__, scope
+        )
+    assert detail == (
+        {"member": "main", "phase": "opened_state", "changed_fields": ["size"]}
+        if accepted
+        else None
+    )
+
+
 def test_capture_snapshot_observer_retains_native_concurrent_note_refusal(tmp_path):
     from Tests.Backup_Recovery.test_core_dependency_discovery import _SCRIPT
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
@@ -963,11 +1046,9 @@ snapshot_log=home/'snapshot-failure.json.log'
 stop_snapshot=observe_capture_review(snapshot_log)
 """
     script = _SCRIPT.replace("validations=[]", setup + "\nvalidations=[]", 1)
-    script = script.replace(
-        " storage._PreviewScope._source_state=staticmethod(original)",
-        " stop_snapshot()\n storage._PreviewScope._source_state=staticmethod(original)",
-        1,
-    )
+    restore = " storage._PreviewScope._source_state=original"
+    assert script.count(restore) == 1
+    script = script.replace(restore, " stop_snapshot()\n" + restore, 1)
     _run(tmp_path, "native", "dependency-review", script=script, timeout=20)
     rows = json.loads((tmp_path / "home" / "snapshot-failure.json.log").read_text())
     assert len(rows) == 1
@@ -1020,8 +1101,8 @@ def test_snapshot_observer_identifies_native_changed_member_without_values(
                 writer.execute("INSERT INTO fixture VALUES (?)", ("private-row" * 2048,))
                 writer.commit()
 
-        def state(path):
-            result = original_state(path)
+        def state(scope, path):
+            result = original_state(scope, path)
             if phase == "opened_state" and not changed:
                 change()
             return result
@@ -1036,7 +1117,7 @@ def test_snapshot_observer_identifies_native_changed_member_without_values(
                 change()
             return data
 
-        monkeypatch.setattr(storage._PreviewScope, "_source_state", staticmethod(state))
+        monkeypatch.setattr(storage._PreviewScope, "_source_state", state)
         monkeypatch.setattr(storage.os, "read", read)
         path = tmp_path / "snapshot-metadata.log"
         stop = observe_capture_review(path)

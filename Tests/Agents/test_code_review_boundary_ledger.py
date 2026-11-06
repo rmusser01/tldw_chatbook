@@ -161,48 +161,53 @@ def test_foreign_runtime_recovery_retains_uncertain_evidence(ledger_case):
 
 
 def test_v24_upgrade_and_reopen_preserve_ordinary_history(tmp_path):
-    import sqlite3
-
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import (
+        _reconstruct_predecessor,
+    )
+    from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA
 
     path = tmp_path / "upgrade.db"
-    db = AgentRunsDB(path, client_id="migration")
-    parent = db.create_run(conversation_id="chat", agent_kind="primary")
-    db.close()
-    with sqlite3.connect(path) as connection:
-        connection.execute("DROP TABLE automatic_review_boundary_claims")
-        connection.execute(
-            "ALTER TABLE automatic_wake_attempts DROP COLUMN review_boundary_id"
-        )
-        connection.execute("DELETE FROM schema_version WHERE version=25")
+    with ConsoleExecutionOwner.acquire(path) as owner:
+        db = AgentRunsDB(path, client_id="migration", execution_owner=owner)
+        try:
+            parent = db.create_run(conversation_id="chat", agent_kind="primary")
+        finally:
+            db.close()
+    catalog = next(catalog for version, catalog in _AGENT_RUNS_SCHEMA if version == 24)
+    _reconstruct_predecessor(path, catalog, 24)
     for _ in range(2):
-        db = AgentRunsDB(path, client_id="migration")
-        assert db.get_run(parent)["agent_kind"] == "primary"
-        with db.connection() as connection:
-            assert (
-                connection.execute(
-                    "SELECT max(version) FROM schema_version"
-                ).fetchone()[0]
-                == 25
-            )
-            assert (
-                connection.execute(
-                    "SELECT count(*) FROM automatic_review_boundary_claims"
-                ).fetchone()[0]
-                == 0
-            )
-            assert "review_boundary_id" in {
-                row[1]
-                for row in connection.execute(
-                    "PRAGMA table_info(automatic_wake_attempts)"
-                )
-            }
-            ddl = connection.execute(
-                "SELECT sql FROM sqlite_master WHERE name='automatic_wake_attempts'"
-            ).fetchone()[0]
-            assert "'completion', 'progress', 'mixed'" in ddl
-            assert "'fleet_wake', 'goal_iteration'" in ddl
-        db.close()
+        with ConsoleExecutionOwner.acquire(path) as owner:
+            db = AgentRunsDB(path, client_id="migration", execution_owner=owner)
+            try:
+                assert db.get_run(parent)["agent_kind"] == "primary"
+                with db.connection() as connection:
+                    assert (
+                        connection.execute(
+                            "SELECT max(version) FROM schema_version"
+                        ).fetchone()[0]
+                        == 27
+                    )
+                    assert (
+                        connection.execute(
+                            "SELECT count(*) FROM automatic_review_boundary_claims"
+                        ).fetchone()[0]
+                        == 0
+                    )
+                    assert "review_boundary_id" in {
+                        row[1]
+                        for row in connection.execute(
+                            "PRAGMA table_info(automatic_wake_attempts)"
+                        )
+                    }
+                    ddl = connection.execute(
+                        "SELECT sql FROM sqlite_master WHERE name='automatic_wake_attempts'"
+                    ).fetchone()[0]
+                    assert "'completion', 'progress', 'mixed'" in ddl
+                    assert "'fleet_wake', 'goal_iteration'" in ddl
+            finally:
+                db.close()
 
 
 def test_stale_sql_predecessor_cannot_replace_live_native_settlement(ledger_case):

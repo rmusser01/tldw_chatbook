@@ -2,6 +2,8 @@
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 
@@ -275,7 +277,6 @@ async def test_model_calls_native_skill_through_real_agent_spawn(
     )
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     rig = native_console
     await rig.install(metadata='  context: "fork"\n', tools="")
@@ -289,7 +290,7 @@ async def test_model_calls_native_skill_through_real_agent_spawn(
             ["All done."],
         ]
     )
-    db = AgentRunsDB(tmp_path / "agent-runs.sqlite", client_id="plugins")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.sqlite", client_id="plugins")
     assistant = rig.store.append_message(
         rig.session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
@@ -737,7 +738,6 @@ async def test_real_agent_final_send_bounds_aggregate_plugin_file_results(
     from Tests.Chat.test_console_agent_bridge import _ChunkGateway, _fence, _run
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     rig = native_console
     package = native_package()
@@ -782,7 +782,7 @@ async def test_real_agent_final_send_bounds_aggregate_plugin_file_results(
             ["done"],
         ]
     )
-    db = AgentRunsDB(tmp_path / "aggregate.sqlite", client_id="plugins")
+    db = owned_agent_runs_db(tmp_path / "aggregate.sqlite", client_id="plugins")
     assistant = rig.store.append_message(
         rig.session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
@@ -857,7 +857,6 @@ async def native_agent_submit(native_console, native_package, tmp_path, monkeypa
     from Tests.Chat.test_console_agent_bridge import _fence
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     rig = native_console
     established = await rig.controller.submit_draft(
@@ -897,7 +896,7 @@ async def native_agent_submit(native_console, native_package, tmp_path, monkeypa
                 yield "Done [S1]."
 
     gateway = Gateway()
-    db = AgentRunsDB(tmp_path / "submit-agent.sqlite", client_id="plugins")
+    db = owned_agent_runs_db(tmp_path / "submit-agent.sqlite", client_id="plugins")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=rig.store,

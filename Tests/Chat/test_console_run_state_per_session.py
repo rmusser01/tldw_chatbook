@@ -23,6 +23,11 @@ from Tests.console_provider_doubles import provider_resolution
 from Tests.console_provider_doubles import persisted_console_store
 
 
+# TASK-36762: all eight native-admission failures reproduce at BASE96d6c88669;
+# keep the collection-bound private config while fixtures retain their own DBs.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 # `controller_with_two_sessions` (and its `StreamingGateway` provider stub)
 # moved to `Tests/Chat/conftest.py` (Task 7 brief) so
 # `test_console_run_markers.py` can share it without a cross-module import.

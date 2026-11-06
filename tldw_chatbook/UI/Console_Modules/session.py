@@ -245,15 +245,14 @@ from ...Widgets.Console.console_composer_bar import ComposerDraftSnapshot
 from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
     ConsoleProjectInstructionStatusRow,
-    ConsoleForkChatModal,
-    ConsoleForkDialogSummary,
-    ConsoleForkSubmitResult,
     ProjectInstructionBindingOption,
     ProjectInstructionNoticeModal,
     ProjectInstructionSetupModal,
     ProjectInstructionSetupResult,
 )
-from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
+from ...Widgets import Console as ui
+
+__getattr__ = ui.__getattr__
 from ...Widgets.Console.console_session_surface import session_tab_click_record
 from ...Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
@@ -289,6 +288,7 @@ if TYPE_CHECKING:
 # `_workspace_default_for_new_session`) so it stays out of the UI-ready
 # module census.
 
+__getattr__ = ui.__getattr__
 logger = logger.bind(module="ChatScreen")
 
 
@@ -359,7 +359,7 @@ class _ConsoleForkRequest:
     fence: ConsoleForkFence
     fork_session_id: str
     fork_conversation_id: str | None
-    modal: ConsoleForkChatModal
+    modal: ui.ConsoleForkChatModal
     title: str
     snapshot: ConsoleChatForkSnapshot | None = None
     committed: bool = False
@@ -2594,7 +2594,7 @@ class ConsoleSessionController:
         self,
         fence: ConsoleForkFence,
         messages: Sequence[ConsoleChatMessage],
-    ) -> ConsoleForkDialogSummary:
+    ) -> ui.ConsoleForkDialogSummary:
         """Build bounded presentation facts from one already-captured fence."""
 
         boundary = fence.lineage[-1]
@@ -2632,6 +2632,7 @@ class ConsoleSessionController:
                 "Saved chat · "
                 f"{self._workspace_display_name_fn(source_session.workspace_id)}"
             )
+        from .session import ConsoleForkDialogSummary
         return ConsoleForkDialogSummary(
             default_title=default_fork_title(fence.source_title),
             boundary_label=boundary_label,
@@ -2674,9 +2675,7 @@ class ConsoleSessionController:
             self.app_instance.notify(str(exc), severity="warning")
             return
 
-        modal: ConsoleForkChatModal
-
-        def submit(result: ConsoleForkSubmitResult) -> None:
+        def submit(result: ui.ConsoleForkSubmitResult) -> None:
             self._submit_console_chat_fork(modal, result)
 
         def cancel() -> None:
@@ -2685,6 +2684,7 @@ class ConsoleSessionController:
         def open_existing() -> None:
             self._open_created_console_chat_fork(modal)
 
+        from .session import ConsoleForkChatModal
         modal = ConsoleForkChatModal(
             self._fork_dialog_summary(fence, prefix),
             on_submit=submit,
@@ -2702,7 +2702,7 @@ class ConsoleSessionController:
         )
         self.push_screen(modal)
 
-    def _cancel_console_chat_fork(self, modal: ConsoleForkChatModal) -> None:
+    def _cancel_console_chat_fork(self, modal: ui.ConsoleForkChatModal) -> None:
         request = self._active_fork_request
         if request is None or request.modal is not modal:
             return
@@ -2711,8 +2711,8 @@ class ConsoleSessionController:
 
     def _submit_console_chat_fork(
         self,
-        modal: ConsoleForkChatModal,
-        result: ConsoleForkSubmitResult,
+        modal: ui.ConsoleForkChatModal,
+        result: ui.ConsoleForkSubmitResult,
     ) -> None:
         request = self._active_fork_request
         if request is None or request.modal is not modal:
@@ -2732,7 +2732,7 @@ class ConsoleSessionController:
             exit_on_error=False,
         )
 
-    def _open_created_console_chat_fork(self, modal: ConsoleForkChatModal) -> None:
+    def _open_created_console_chat_fork(self, modal: ui.ConsoleForkChatModal) -> None:
         request = self._active_fork_request
         if request is None or request.modal is not modal:
             return
@@ -3628,7 +3628,7 @@ class ConsoleSessionController:
         )
 
     async def _apply_console_switcher_choice(
-        self, choice: ConsoleSwitcherChoice | None
+        self, choice: ui.ConsoleSwitcherChoice | None
     ) -> None:
         """Apply one authority-bound switcher selection without target inference.
 
