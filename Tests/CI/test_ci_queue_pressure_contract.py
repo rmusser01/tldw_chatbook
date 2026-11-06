@@ -339,6 +339,10 @@ FAST_LANE_TARGETS = (
     "Tests/MCP/test_control_plane_permissions.py::test_remember_exact_inputs_writer_failure_preserves_error_and_stale_rule",
     "Tests/MCP/test_unified_control_plane_service.py::test_remember_exact_inputs_persistence_failure_keeps_current_call",
     "Tests/Canvas/test_canvas_kill_switch.py",
+    # TASK-34100.5.3.2 (carried #3295 review fix): every production
+    # ConsoleAgentBridge( passes a light-surface reader, so no new builder
+    # can hand plain chat the full agent surface again (pure AST, <1 s).
+    "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
