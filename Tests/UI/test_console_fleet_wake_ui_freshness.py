@@ -50,7 +50,7 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
@@ -138,13 +138,28 @@ def _tab_label(console, session_id: str) -> str:
 
 @pytest.mark.asyncio
 async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     """AC#2, the live finding 1a shape: the wake turn's ``●`` painted
     mid-turn (live: by the survivor tick's settle paint; here: by one
     explicit sync while the stream is gated) must flip off RUNNING at the
     terminal edge WITH NO USER INTERACTION -- live it sat stuck for
     minutes until the session was viewed."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    # TASK-39044: the settled wake gets exactly one background toast, not
+    # only its glyph. Counted on the class, before mount, so the screen's
+    # hook rebinding cannot route around the count. (A wake carries no
+    # ordinary outcome id -- its acceptance has no preparation -- so it
+    # publishes no ordinary receipt, on dev or here.)
+    outcomes = []
+    notify = ChatScreen._notify_console_run_outcome
+
+    def counted_notify(self, session_id, status):
+        outcomes.append((session_id, status))
+        return notify(self, session_id, status)
+
+    monkeypatch.setattr(ChatScreen, "_notify_console_run_outcome", counted_notify)
     app = _app_with_plain_provider_path(tmp_path)
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
@@ -166,6 +181,9 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
         _parent, run_id = _terminal_subagent_run(bridge.runs_db, target.persisted_conversation_id)
         gate = asyncio.Event()
         gateway.stream_gate = gate
+        assert controller.notify_run_outcome is not None, (
+            "harness precondition: the screen wires the background toast"
+        )
 
         _drain_from_child_thread(
             controller.fleet_wake,
@@ -213,6 +231,10 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
             "task-15862: the wake turn ended but its tab glyph froze at "
             f"RUNNING with no user interaction: {label!r}"
         )
+        await pilot.pause(0.3)
+        assert [entry for entry in outcomes if entry[0] == target.id] == [
+            (target.id, ConsoleRunStatus.COMPLETED)
+        ], f"the settled wake must toast exactly once: {outcomes}"
         assert "✓" in label, (
             "the settled wake turn's unvisited outcome must reach the tab "
             f"glyph without a session switch: {label!r}"

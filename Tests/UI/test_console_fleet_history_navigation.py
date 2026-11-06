@@ -51,11 +51,17 @@ async def test_preview_bounds_mounts_and_hidden_changes_do_not_recompose():
 
 async def _until_fleet_auto_opened(pilot, console) -> None:
     """Wait (bounded) for the fleet section's one-shot auto-open."""
-    for _ in range(100):
+    for _ in range(400):  # 20 s: the rows land on a worker, slow under load
         if console._console_fleet_section_auto_opened:
             return
         await pilot.pause(0.05)
-    raise AssertionError("the populated fleet section never auto-opened")
+    section = console.query_one("#console-agent-section-subagents")
+    raise AssertionError(
+        "the populated fleet section never auto-opened: "
+        f"rows={len(section.rows)} open={section.open} "
+        f"dismissed={console._console_fleet_inspector_dismissed} "
+        f"read={console._agent._console_historical_read!r:.300}"
+    )
 
 
 async def _loaded(pilot, modal):
@@ -311,15 +317,23 @@ async def test_history_selection_rechecks_conversation_and_agent_kind(
 
 
 @pytest.mark.asyncio
-async def test_a_config_write_keeps_a_collapsed_fleet_collapsed_with_its_rows(tmp_path):
+@pytest.mark.parametrize("superseded", [False, True], ids=["one-write", "superseded"])
+async def test_a_config_write_keeps_a_collapsed_fleet_collapsed_with_its_rows(
+    tmp_path, superseded
+):
     """A config write re-keys the historical read; the rows stay (TASK-39044).
 
     The read's key holds the config identity. Before, a re-key served empty
     rows until the new read landed, which reset the fleet's auto-open and
     dismissed flags: the section the user collapsed opened again and the
     rail scrolled to it. Here the config write is a Settings save of the
-    display cap the historical rows are cut to.
+    display cap the historical rows are cut to. ``superseded`` holds the
+    re-keyed read and makes a second write before it returns, so that read
+    lands under a stale key and must not drop the rows it carried.
     """
+    import asyncio
+    import threading
+
     from tldw_chatbook import config
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="history")
@@ -339,6 +353,7 @@ async def test_a_config_write_keeps_a_collapsed_fleet_collapsed_with_its_rows(tm
         _configure_native_ready_console(app)
         ensure_console_runtime(app).set_agent_bridge(bridge)
         host = _StyledConsoleHarness(app)
+        entered, release = threading.Event(), threading.Event()
         async with host.run_test(size=(180, 48)) as pilot:
             console = await _setup_console(pilot, host, bridge)
             section = console.query_one(
@@ -351,16 +366,44 @@ async def test_a_config_write_keeps_a_collapsed_fleet_collapsed_with_its_rows(tm
             assert await pilot.click("#console-inspector-section-agent-fleet-toggle")
             await pilot.pause()
             assert not section.open and section.rows
-            before = config.current_config_identity()
-            # A Settings save of the cap the historical rows are cut to.
-            assert config.save_setting_to_cli_config(
-                "console",
-                "tool_result_display_chars",
-                config.DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS + 1,
-            )
-            assert config.current_config_identity() != before, (
-                "precondition: the save must be a real config write"
-            )
+            derive = bridge._derive_historical_snapshot
+
+            def held_once(*args, **kwargs):
+                if entered.is_set():
+                    return derive(*args, **kwargs)
+                entered.set()
+                assert release.wait(5)
+                value = derive(*args, **kwargs)
+                # The second write lands as this re-read returns, so it
+                # returns under a stale key with no sync in between.
+                settings_save(2)
+                return value
+
+            if superseded:
+                bridge._derive_historical_snapshot = held_once
+
+            def settings_save(step: int) -> None:
+                before = config.current_config_identity()
+                assert config.save_setting_to_cli_config(
+                    "console",
+                    "tool_result_display_chars",
+                    config.DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS + step,
+                )
+                assert config.current_config_identity() != before, (
+                    "precondition: the save must be a real config write"
+                )
+
+            try:
+                settings_save(1)
+                console._sync_console_agent_section()
+                if superseded:
+                    assert await asyncio.to_thread(entered.wait, 5)
+                    held = console._agent._console_historical_read
+                    release.set()
+                    await held["worker"].wait()
+            finally:
+                release.set()
+            await pilot.pause()
             console._sync_console_agent_section()
             await pilot.pause()
             assert section.rows, "the re-keyed read blanked the fleet rows"

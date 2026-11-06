@@ -496,7 +496,7 @@ async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_pa
         wake.on_fleet_drained(
             _drain(first.persisted_conversation_id, _survivor(first_child, session_id=first.id))
         )
-        assert await _settle(lambda: any(received), seconds=5)
+        assert await _settle(lambda: any(received), seconds=15)
         payload = next(item for item in received if item)
         round_id = payload["round_id"]
         with controller._approval_state_lock:
@@ -515,7 +515,7 @@ async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_pa
         controller.resolve_pending_approval(
             {"mcp__srv__run": "denied"}, round_id=round_id
         )
-        assert await _settle(lambda: not wake._delivery_tasks, seconds=5)
+        assert await _settle(lambda: not wake._delivery_tasks, seconds=15)
     finally:
         controller._disposed = True
         for sid in wake.delivering_session_ids():

@@ -92,8 +92,9 @@ async def test_no_tab_sync_before_the_mount_claim_consumes_the_active_chats_wake
     before the claim in about half the mounts, and a strict claim-first
     order is no longer what holds. What must hold is the outcome: a relaunch
     with a staged wake on the active chat keeps its mark through every sync
-    before the claim, and the claim seeds the wake (TASK-39044). Recorded on
-    a REAL mount of the real screen class.
+    before the claim, and the claim seeds the wake (TASK-39044). The test
+    runs one real tab sync before the claim on every mount, so the hazard is
+    always exercised. Recorded on a REAL mount of the real screen class.
     """
     from pathlib import Path
 
@@ -128,13 +129,12 @@ async def test_no_tab_sync_before_the_mount_claim_consumes_the_active_chats_wake
     def marked() -> bool:
         return marks.has_mark(cid, ConversationLocalMarksService.FLEET_UNSEEN)
 
+    import asyncio
+
     order: list[tuple[str, bool]] = []
+    forced: list[asyncio.Task] = []
     real_claim = ConsoleFleetLifecycleController._claim_console_fleet_wake_marks
     real_sync = ChatScreen._sync_console_native_session_tabs
-
-    def recording_claim(self):
-        order.append(("claim", marked()))
-        return real_claim(self)
 
     async def recording_sync(self):
         order.append(("sync", marked()))
@@ -142,16 +142,37 @@ async def test_no_tab_sync_before_the_mount_claim_consumes_the_active_chats_wake
         order.append(("synced", marked()))
         return result
 
+    def recording_claim(self):
+        if forced:
+            order.append(("claim", marked()))
+            return real_claim(self)
+        # Every mount meets the hazard: one real tab sync runs before the
+        # mount's claim reads the marks, not only the mounts where a
+        # readiness worker happens to win.
+        screen = host.screen
+
+        async def sync_then_claim():
+            await recording_sync(screen)
+            order.append(("claim", marked()))
+            real_claim(self)
+
+        forced.append(asyncio.get_running_loop().create_task(sync_then_claim()))
+        return None
+
+    host = ConsoleHarness(app)
     ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = recording_claim
     ChatScreen._sync_console_native_session_tabs = recording_sync
     try:
-        host = ConsoleHarness(app)
         async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
             console = host.screen_stack[-1]
             from Tests.UI.test_console_fleet_wake_ui_freshness import _settle
             from Tests.UI.test_destination_shells import _wait_for_selector
 
             await _wait_for_selector(console, pilot, "#console-session-surface")
+            assert forced and await _settle(pilot, forced[0].done), (
+                "the forced pre-claim sync never finished"
+            )
+            forced[0].result()
             wake = console._ensure_console_chat_controller().fleet_wake
             assert await _settle(
                 pilot,
