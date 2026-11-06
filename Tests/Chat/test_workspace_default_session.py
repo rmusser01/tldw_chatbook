@@ -249,16 +249,25 @@ def test_created_persona_identity_persists_reopens_and_survives_workspace_move(
             record["version"],
         )
         moved = db.get_conversation_by_id(conversation_id)
-        restored = store.restore_persisted_session(
-            title="Moved",
-            workspace_id=moved["workspace_id"],
-            persisted_conversation_id=conversation_id,
-            all_nodes=[],
-            settings=session.settings,
-            assistant_kind=moved["assistant_kind"],
-            assistant_id=moved["assistant_id"],
-            persona_memory_mode=moved["persona_memory_mode"],
-        )
+        restore_values = {
+            "title": "Moved",
+            "workspace_id": moved["workspace_id"],
+            "persisted_conversation_id": conversation_id,
+            "all_nodes": [],
+            "settings": session.settings,
+            "assistant_kind": moved["assistant_kind"],
+            "assistant_id": moved["assistant_id"],
+            "persona_memory_mode": moved["persona_memory_mode"],
+        }
+        live = store.restore_persisted_session(**restore_values)
+        assert live is session
+        assert live.workspace_id == "target"
+        store.close_session(session.id)
+        assert session.id not in store._sessions
+        assert conversation_id not in store._saved_session_operations
+        assert db.get_conversation_by_id(conversation_id)["workspace_id"] == "moved"
+        restored = store.restore_persisted_session(**restore_values)
+        assert restored is not session
         assert restored.workspace_id == "moved"
         assert restored.assistant_id == PERSONA["id"]
         assert (

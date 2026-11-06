@@ -10774,12 +10774,9 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.config_sync import run_console_config_sync
 
         def sync() -> None:
-            # task-32804.3: build readiness inside the derivation scope so the
-            # per-tick config reads share ONE app_config admission instead of six
-            # (~49 ms -> ~8 ms/tick). The (revision, status) gate is preserved
-            # exactly -- status() reports a credential's time-based expiry with no
-            # revision bump, so gating on the revision alone would leave the send
-            # controls stale; both signals stay in the snapshot.
+            # TASK-32804.3: share one config admission across readiness reads.
+            # Retain both expiry status and revision in the snapshot, as in
+            # the pre-gate above; a revision alone misses time-based expiry.
             with self._console_derivation_scope():
                 # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
                 # before the build: a switcher probe settles off-thread mid-build.
@@ -12538,11 +12535,8 @@ class ChatScreen(BaseAppScreen):
                 not rail_state.right_open and not rail_state.single_pane,
             ),
         )
-        # TASK-25888: track whether this sync moves PANE-level geometry --
-        # a rail or handle actually shown/hidden, or the main column minimum
-        # actually changing. Ground truth is read from the DOM rather than a
-        # shadow variable, so a sync that re-applies the current state never
-        # miscounts as a change.
+        # TASK-25888: compare live DOM visibility and the main minimum, so
+        # reapplying the current pane geometry does not count as a change.
         pane_changed = False
         for selector, visible in targets:
             try:
@@ -12572,12 +12566,9 @@ class ChatScreen(BaseAppScreen):
             if main_column.styles.min_width != min_width_before:
                 pane_changed = True
 
-        # TASK-25888: scope the repaint to what actually moved. The
-        # unconditional whole-screen refresh(layout=True) here cost ~61ms of
-        # relayout plus ~39ms of full render per click on this ~500-widget
-        # screen, and 54-62KB of terminal output -- for a SECTION toggle,
-        # whose geometry changes entirely inside one rail. Only a pane-level
-        # change resizes the main column and needs the screen pass.
+        # TASK-25888: only pane geometry needs a full-screen pass. A section
+        # toggle's unconditional pass cost ~61ms layout + ~39ms render and
+        # 54-62KB output on this ~500-widget screen; refresh only its rails.
         if pane_changed:
             self.refresh(layout=True)
         else:
@@ -12594,6 +12585,17 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Apply rail visibility only when the visible rail state changes."""
         if rail_state == self._last_console_rail_state:
+            return
+        try:
+            for selector in (
+                "#console-left-rail",
+                "#console-right-rail",
+                "#console-context-rail-handle",
+                "#console-inspector-rail-handle",
+                "#console-main-column",
+            ):
+                self.query_one(selector)
+        except QueryError:
             return
         previous = self._last_console_rail_state
         handles_only = console_rail_handle_copy_only_changed(previous, rail_state)
@@ -14759,6 +14761,9 @@ class ChatScreen(BaseAppScreen):
 
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
+        # Cached presentation belongs to the widget tree being replaced.
+        self._last_console_rail_state = None
+        self._last_console_workspace_width_band = None
         pending_launch = self._consume_pending_console_launch()
         control_state = self._build_console_control_state(pending_launch)
         staged_context_state = self._build_console_staged_context_state(pending_launch)
@@ -14766,9 +14771,7 @@ class ChatScreen(BaseAppScreen):
         workspace_context_state = (
             self._workspace._build_console_workspace_context_state()
         )
-        # task-10: built once, shared verbatim by the header's "Scope" chip
-        # and the Inspector's retrieval-scope row below -- one zero-DB
-        # state, two renderers.
+        # task-10: one zero-DB scope state feeds the header and Inspector.
         retrieval_scope_state = self._retrieval._build_console_retrieval_scope_state()
         available_columns = self._console_rail_available_columns()
         rail_state = self._build_console_rail_state(
@@ -21644,13 +21647,11 @@ class ChatScreen(BaseAppScreen):
 
     @on(Resize)
     def _adapt_console_shell_to_height(self, event: Resize) -> None:
-        """Drop the header banner at small heights to preserve the composer.
+        """Keep the composer visible by hiding compact-height header chrome.
 
-        TASK-346: at <=34 rows the composer was pushed off the bottom with
-        no warning (a silently broken core loop at 97x30, larger than the
-        80x24 default terminal). Toggling `-console-compact` hides the ~5-row
-        header banner (title/purpose/Ready) so transcript+composer stay
-        visible; the setup-card/onboarding overlay is unaffected.
+        TASK-346: at <=34 rows the ~5-row header pushed the composer off the
+        97x30 view. `-console-compact` preserves transcript/composer space;
+        the setup-card/onboarding overlay is unaffected.
 
         TASK-361: a live resize also dismisses any hover tooltip. The review saw
         a nav-tab tooltip ("Open the live agent Console.") stick over the header
@@ -21676,21 +21677,17 @@ class ChatScreen(BaseAppScreen):
     @on(Resize)
     @spend.retry_after_config_rebuild
     def _adapt_console_workspace_to_width(self, event: Resize) -> None:
-        """Re-evaluate the width-driven rail rules on live terminal resizes.
+        """Rebuild rails across the 100/84-column width bands (TASK-2154.1).
 
-        TASK-2154.1 (LY-08/LY-09): available_columns feeds build_console_rail_state
-        only when rail state is (re)built -- at compose or on a console sync tick --
-        and a pure terminal resize triggers neither, so without this hook crossing the
-        100/84-column thresholds mid-session left the grid in its stale (possibly
-        broken) layout until some unrelated state change happened to rebuild it.
-        Guarded on the width BAND so a resize drag does not rebuild the
-        (store-reading) effective rail state on every event.
+        A resize otherwise triggers neither compose nor a Console sync. Band
+        gating avoids store-reading rebuilds on each event during a resize drag.
         """
         band = console_rail_width_band(event.size.width)
         if band == self._last_console_workspace_width_band:
             return
         try:
             self.query_one("#console-workspace-grid")
+            self.query_one("#console-main-column")
             left_rail = self.query_one("#console-left-rail")
             right_rail = self.query_one("#console-right-rail")
             left_handle = self.query_one("#console-context-rail-handle")

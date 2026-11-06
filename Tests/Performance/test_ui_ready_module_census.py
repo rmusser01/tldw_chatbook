@@ -175,7 +175,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: `Chat.console_capture_policy` and `Canvas.config_policy` (#3375, out of
 #: `config.py`). Measured 1036 at dev 447628d08b; limit = measured + the
 #: documented +/-1 warm-boot wobble, as TASK-32856 and PR #2223 pinned.
-MAX_TLDW_MODULES_AT_UI_READY = 1037
+# PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+MAX_TLDW_MODULES_AT_UI_READY = 1031
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

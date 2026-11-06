@@ -147,7 +147,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 backlog owner size waiver: explicit URL source handoff.
     # TASK-38714 Qodo fold, 2026-11-05 (same waiver): 5020 -> 5021 (+1). The
     # held-job scan's UI-thread note records its measured startup cost.
-    "tldw_chatbook/app_ingest_queue.py": 5021,
+    # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+    "tldw_chatbook/app_ingest_queue.py": 5020,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
@@ -810,7 +811,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9436,
+    # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9429,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -822,7 +824,8 @@ _BUDGETS: dict[str, int] = {
     # Three scope docstrings name the control-bar syncs as openers (+7 lines).
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 8942 -> 8961 (+19).
     # The control-bar syncs' shared build reads the registry live.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8961,
+    # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8935,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -856,7 +859,8 @@ _BUDGETS: dict[str, int] = {
     # watcher restyles the bar and its draft text, not its subtree: +9 lines.
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 7198 -> 7202 (+4).
     # The focus watcher's docstring gains its Args section.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7202,
+    # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7189,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.

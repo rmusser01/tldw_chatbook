@@ -2216,12 +2216,7 @@ class ConsoleComposerBar(Horizontal):
         self._hidden_input_mirror = canonical
 
     def _sync_interaction_classes(self) -> None:
-        """Mirror focus-within and draft presence onto stable CSS state classes.
-
-        TASK-33620.15.8: a change restyles only the bar and
-        `INTERACTION_STYLED_DESCENDANTS`, the nodes rules keyed on these
-        classes style, instead of the bar's whole subtree.
-        """
+        """Mirror focus-within and draft presence onto the bounded CSS state classes."""
         focused, has_draft = self.INTERACTION_CLASSES
         wanted = {
             focused: bool(self.has_focus_within),
@@ -2233,16 +2228,10 @@ class ConsoleComposerBar(Horizontal):
         self._sync_raw_cli_state()
 
     def watch_has_focus(self, _has_focus: bool) -> None:
-        """Restyle only the bar and `INTERACTION_STYLED_DESCENDANTS`.
-
-        TASK-36511.2: Textual's focus watcher restyled the bar's whole subtree
-        (27 nodes, 8-13 ms of CPU per focus change in an attach). The focus
-        rules keyed on the bar style only those nodes too.
+        """Restyle only the bar and INTERACTION_STYLED_DESCENDANTS (TASK-36511.2).
 
         Args:
-            _has_focus: Textual's new focus state. Unused: the restyle reads
-                ``self.has_focus`` through the stylesheet.
-        """
+            _has_focus: New focus state; the stylesheet reads self.has_focus directly."""
         nodes: list[Widget] = [self]
         for selector in self.INTERACTION_STYLED_DESCENDANTS:
             nodes.extend(self.query(selector))
@@ -2252,19 +2241,13 @@ class ConsoleComposerBar(Horizontal):
             pass
 
     def has_sendable_payload(self) -> bool:
-        """Return whether a Send now would carry anything: Send's readiness input.
+        """Return the live Send-readiness rule shared by both sync sites.
 
-        TASK-33620.15.22: the one rule for both of Send's sync sites (this
-        composer's resync and the screen's sync), so whichever runs last
-        agrees with the other. Draft text counts. With an empty draft only a
-        staged item the send gate would send counts, asked live of the
-        screen: the label may still show an image a Send has already taken,
-        and the gate refuses every other staged kind unsent.
+        Draft text counts; otherwise ask the screen about staged content. A stale
+        attachment label alone grants no sendability (TASK-33620.15.22).
 
         Returns:
-            True when the draft has text or the screen reports a staged item
-            the send gate sends on its own; False with no provider installed.
-        """
+            Whether draft text or a sendable staged item exists; False without a provider."""
         if self.draft_text().strip():
             return True
         provider = self._sendable_attachment_provider

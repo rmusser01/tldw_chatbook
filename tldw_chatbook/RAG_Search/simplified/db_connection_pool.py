@@ -2,14 +2,16 @@
 Simple database connection pool for FTS5 searches.
 """
 
+import asyncio
 import threading
+import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional
+
 from loguru import logger
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-
 
 # Global connection pools: one pooled `MediaDatabase` per db_path, reused
 # across searches. `MediaDatabase` already manages a thread-local SQLite
@@ -47,13 +49,15 @@ class _PoolThread(ThreadPoolExecutor):
         return super().submit(self._unless_retired, fn, *args, **kwargs)
 
     def _unless_retired(self, fn, *args, **kwargs):
-        if self.retired:
+        if self.retired or maintenance._closed:
             raise RuntimeError("media search pool closed")
         return fn(*args, **kwargs)
 
     def retire(self, db) -> None:
         try:
             db.close_connection()
+            if getattr(db._local, "conn", None) is not None:
+                raise RuntimeError("media search pool close refused")
         finally:
             self.retired = True
 
@@ -73,6 +77,8 @@ def get_connection_pool(db_path: str, pool_size: int = 3) -> MediaDatabase:
     `MediaDatabase` hands out one connection per calling thread rather than
     capping a fixed pool.
     """
+    if maintenance._closed:
+        raise RuntimeError("media search pools paused for maintenance")
     # Fast path: no lock needed once the pool for this path already exists.
     pool = _connection_pools.get(db_path)
     if pool is not None:
@@ -117,12 +123,53 @@ def pool_executor(pool: object) -> Optional[ThreadPoolExecutor]:
 def close_all_pools():
     """Close each pool's connection on its own thread, then that thread."""
     with _connection_pools_lock:
-        for db_path, db in _connection_pools.items():
+        while _connection_pools:
+            db_path, db = next(iter(_connection_pools.items()))
             thread = _pool_threads[db]
-            try:
-                thread.submit(thread.retire, db).result()
-            except Exception as e:
-                logger.debug(f"Error closing pooled connection for {db_path}: {e}")
+            # Retirement remains admissible after searches have been refused.
+            ThreadPoolExecutor.submit(thread, thread.retire, db).result()
             thread.shutdown(wait=True)
-        _connection_pools.clear()
+            del _connection_pools[db_path]
         logger.debug("Closed and cleared all connection pool references")
+
+
+class PoolMaintenance:
+    """Retain physical SQL pool cleanup after all upstream producers settle."""
+
+    def __init__(self) -> None:
+        self._closed = False
+        self._retirement: asyncio.Task[None] | None = None
+
+    def _maintenance_close_admission(self) -> None:
+        self._closed = True
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        if not self._closed:
+            raise RuntimeError("media search pool intake is open")
+        if self._retirement is None:
+            # Construction owns this lock before publishing its native handle.
+            if _connection_pools_lock.acquire(blocking=False):
+                try:
+                    if not _connection_pools:
+                        return True
+                finally:
+                    _connection_pools_lock.release()
+            self._retirement = asyncio.create_task(asyncio.to_thread(close_all_pools))
+        done, _ = await asyncio.wait(
+            {self._retirement}, timeout=max(0.0, deadline - time.monotonic())
+        )
+        if not done:
+            return False
+        self._retirement.result()
+        return True
+
+    async def _maintenance_resume(self) -> None:
+        if self._retirement is not None:
+            await asyncio.gather(
+                asyncio.shield(self._retirement), return_exceptions=True
+            )
+        self._retirement = None
+        self._closed = False
+
+
+maintenance = PoolMaintenance()

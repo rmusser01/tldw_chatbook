@@ -483,3 +483,15 @@ these projections do not turn the retained assertion failures into passes.
 PR #3345 head `19fec5614b` automatic Derived job `127394826830` exceeded the unchanged 35-minute Fast Lane limit at 93% of 3,983 collected cases, confirmed by GitHub's annotation. Logs show advancing MCP progress, without an identified individual hang. The unchanged MCP workbench file passed 357 cases locally in 485.33 seconds. Its 279 unique function selectors move into the existing 32 UI shards; actual pytest collection proves all 357 parameter cases remain covered exactly once. The original 1,666-entry census prefix and positions stay intact, and floor 1,945 protects enrollment. A permanent membership Counter guard and missing, duplicate, whole-file and second-owner controls prevent a removed rider from becoming a coverage hole. Each relocated group also passes in isolation.
 
 Dependency installs, sandbox/profile rules, required aggregation and conditions are unchanged. The same 32 shards, maximum parallelism 17, 20-minute UI jobs and 180-second MCP/UI cases apply; Fast Lane remains 35 minutes and admission remains 35 minutes/300 seconds per case. Placement uses measured total setup/call/teardown costs. Local replay and isolation do not qualify hosted capacity: genuine new-head checks still decide landing. This redistributes required coverage under the existing decision, with no new runtime or ownership boundary.
+
+## 2026-11-05: conserve enrollment across the dev2959 rebase
+
+The next integration preserves the reviewed 1,945-entry prefix and every position,
+then appends all 22 unique incoming Settings, Agents and resend entries. The
+union is exactly 1,967 unique entries and the coverage floor tightens to 1,967.
+The 279 MCP selectors retain their positions and complete 357-case membership.
+Incoming entries receive new placements; their qualification is measured afresh,
+not inferred from the former dev positions. The same 32 shards/max-parallel 17,
+20-minute UI jobs,180-second cases and required aggregation remain unchanged.
+No new job or runner capacity is added. Perf retains its pre-rebase 15-minute
+cap with all incoming compact-setup controls; real new-head results remain gates.

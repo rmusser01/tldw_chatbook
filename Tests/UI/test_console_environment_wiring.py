@@ -38,6 +38,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 import tldw_chatbook.Workspaces.environment_status as env_mod
 from tldw_chatbook.UI.Console_Modules.environment import UNKNOWN_ROOT
 from tldw_chatbook.Chat.console_environment_state import (
@@ -1633,13 +1634,38 @@ def _running_handle(handle_id: str) -> FleetHandle:
     )
 
 
+@asynccontextmanager
+async def _fleet_console_screen(tmp_path):
+    """Complete native history recovery before installing the fake live fleet."""
+    from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
+
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    try:
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 45)) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_selector(screen, pilot, "#console-native-composer")
+            await console_attach_ended(screen)
+            controller = screen._console_chat_controller
+            assert await controller.fleet_wake.wait_for_recovery()
+            assert controller.fleet_wake.pause_reason("conv-A") is None
+            yield pilot, screen
+    finally:
+        await dispose_console_runtime(app)
+
+
 async def _wire_fleet_bridge(pilot, screen, bridge) -> None:
-    """Attach the established fake fleet bridge (test_console_fleet_panel's)."""
+    """Install live rows after the initial empty fleet has settled."""
+    await pilot.pause()
+    bridge.runs_db = screen._console_agent_bridge.runs_db
     screen._console_agent_bridge = bridge
+    screen._console_chat_controller.update_agent_runtime(enabled=True, bridge=bridge)
+    assert screen._console_chat_controller._agent_bridge is bridge
     screen._console_agent_drilldown_run_id = None
     screen._character._current_console_rail_conversation_id = lambda: "conv-A"
     screen._agent._console_agent_drilldown_conversation_id = "conv-A"
-    await pilot.pause()
 
 
 async def _real_fleet_sync(pilot, screen) -> None:
@@ -1650,7 +1676,8 @@ async def _real_fleet_sync(pilot, screen) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fleet_rows_drive_the_section_and_rail_auto_open_lifecycle():
+@pytest.mark.bootstrap_profile
+async def test_fleet_rows_drive_the_section_and_rail_auto_open_lifecycle(tmp_path):
     """The whole busy-window cycle, driven through the REAL derivation.
 
     Rows come from `ConsoleAgentBridge.fleet_snapshot` via
@@ -1661,7 +1688,7 @@ async def test_fleet_rows_drive_the_section_and_rail_auto_open_lifecycle():
     keying the force on other-sessions activity misbehaved.
     """
     bridge = _FleetBridge((_running_handle("h1"),))
-    async with _console_screen() as (pilot, screen):
+    async with _fleet_console_screen(tmp_path) as (pilot, screen):
         await _wire_fleet_bridge(pilot, screen, bridge)
         fleet_section = screen.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
@@ -1700,10 +1727,11 @@ async def test_fleet_rows_drive_the_section_and_rail_auto_open_lifecycle():
 
 
 @pytest.mark.asyncio
-async def test_fleet_rows_auto_open_the_inspect_rail_and_refresh_it():
+@pytest.mark.bootstrap_profile
+async def test_fleet_rows_auto_open_the_inspect_rail_and_refresh_it(tmp_path):
     """Rows appearing while the rail is closed reveal it AND refresh it."""
     bridge = _FleetBridge((_running_handle("h1"),))
-    async with _console_screen() as (pilot, screen):
+    async with _fleet_console_screen(tmp_path) as (pilot, screen):
         await _wire_fleet_bridge(pilot, screen, bridge)
         opens: list[int] = []
         screen._console_environment.notify_rail_opened = lambda: opens.append(1)
