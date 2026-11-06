@@ -290,6 +290,45 @@ async def test_failing_persist_worker_surfaces_error_without_crashing_the_app(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_splash_saved_off_by_setup_shows_off_and_turning_it_on_persists(
+    request, splash_app
+):
+    """Qodo review (2026-11-05, TASK-34100.13): setup's "Startup animation:
+    Off" sends the user here, but the viewer read its section through
+    ``get_cli_setting("splash_screen", default={})`` -- a shape that returns
+    the default -- so it showed Enabled On over a saved ``enabled = false``,
+    and its per-control save took that On as unchanged."""
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Wizards.first_run_appearance_state import (
+        STARTUP_FULL,
+        STARTUP_OFF,
+        build_startup_commit,
+    )
+
+    assert config.save_settings_to_cli_config(
+        build_startup_commit(choice=STARTUP_OFF, current=STARTUP_FULL)
+    )
+    assert config.get_cli_setting("splash_screen", "enabled", None) is False
+
+    async with splash_app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        viewer = splash_app.query_one(SettingsSplashScreenViewer)
+        enabled = viewer.query_one("#settings-splash-enabled", Checkbox)
+        state = viewer.query_one("#settings-splash-enabled-state", Static)
+        assert enabled.value is False
+        assert str(state.renderable) == "Off"
+
+        enabled.toggle()
+        await pilot.pause()
+        await splash_app.workers.wait_for_complete()
+        await pilot.pause()
+        assert str(state.renderable) == "On"
+    assert config.get_cli_setting("splash_screen", "enabled", None) is True
+    assert SettingsSplashScreenViewer()._load_config()["enabled"] is True
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_splash_animation_speed_persists_to_the_section_it_loads(
     request, splash_app
 ):
