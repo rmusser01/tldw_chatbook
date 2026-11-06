@@ -154,13 +154,14 @@ MAX_PASS_ADDED_MODULES = 558
 #: before this change; `library_screen` then drops 44 lines
 #: (the timer landing becomes a one-shot pending landing). Modules unchanged
 #: (556), pinned at the measurement.
-#: 426,388 -> 426,429 (2026-11-06 owner decision ("Re-pin per PR (Rec.)", B2b
-#: follow-up burn-down): TASK-38228/.46/.37 add +41 LOC in the ccp route
-#: (personas_screen +35, roleplay_list_window_state +6); no new module), pinned
+#: 426,388 -> 426,438 (2026-11-06 owner decision ("Re-pin per PR (Rec.)", B2b
+#: follow-up burn-down): TASK-38228/.46/.37 add +50 LOC in the ccp route
+#: (personas_screen +44, roleplay_list_window_state +6, including PR #3427's
+#: review fix round 1); no new module), pinned
 #: at the measurement, LOC only, modules unchanged (556); ADR-097 ledger.
-MAX_PASS_ADDED_LOC = 426_429
+MAX_PASS_ADDED_LOC = 426_438
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
-#: integration retains current dev 426,512 above. The old measurement at
+#: integration keeps the current pin above instead. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
 #: unchanged (558). Task 5 is B2b's first commit over the ceiling, so the
 #: re-pin lands there (controller ruling, 2026-10-29: dev's own growth to
