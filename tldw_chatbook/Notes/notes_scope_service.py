@@ -1193,6 +1193,77 @@ class NotesScopeService:
 
         return normalized_keywords
 
+    def change_local_note_keyword(
+        self,
+        *,
+        user_id: Optional[str],
+        note_id: Any,
+        keyword: str,
+        remove: bool = False,
+        cursor: Any = None,
+    ) -> bool:
+        """Add or remove ONE keyword on one local note, keeping the rest.
+
+        PR #3423 review I-2: the Library's bulk Add/Remove keyword wrote
+        plain database links, so on a Sync v2 device the change never left
+        it. This applies the note's current keyword set plus or minus
+        ``keyword`` through ``_sync_local_note_keywords`` -- the editor's
+        own keyword save -- so the change passes the same policy gate and,
+        on a ready Sync v2 profile, records the same organization intents (a
+        ``notes.keyword`` resource for a new keyword, a
+        ``notes.keyword_link`` intent per link).
+
+        Synchronous: it joins the caller's Notes transaction
+        (``note_transaction``) through ``cursor``, on the caller's thread.
+        Matching ignores case, as the keyword field does.
+
+        Args:
+            user_id: Local Notes user identity.
+            note_id: The note to change.
+            keyword: The one keyword to add or remove.
+            remove: Remove ``keyword`` instead of adding it.
+            cursor: The open Notes transaction's cursor, when there is one.
+
+        Returns:
+            ``True`` when the note's keywords changed; ``False`` when it
+            already had (or never had) the keyword.
+
+        Raises:
+            PolicyDeniedError: If runtime policy refuses local note updates.
+            ValueError: If ``user_id`` or ``keyword`` is missing, or a Sync
+                v2 profile's Notes organization group is not ready.
+        """
+        self._enforce_policy(self._note_action_id(ScopeType.LOCAL_NOTE, "update"))
+        local_user_id = self._require_user_id(user_id)
+        text = str(keyword or "").strip()
+        if not text:
+            raise ValueError("A keyword is required.")
+        key = text.casefold()
+        rows = self.local_notes_service.get_keywords_for_note(
+            local_user_id, str(note_id)
+        )
+        current = [
+            str(row.get("keyword") or "").strip()
+            for row in rows or ()
+            if isinstance(row, Mapping) and str(row.get("keyword") or "").strip()
+        ]
+        has_keyword = any(existing.casefold() == key for existing in current)
+        if remove and not has_keyword:
+            return False
+        if not remove and has_keyword:
+            return False
+        self._sync_local_note_keywords(
+            user_id=local_user_id,
+            note_id=note_id,
+            keywords=(
+                [existing for existing in current if existing.casefold() != key]
+                if remove
+                else [*current, text]
+            ),
+            cursor=cursor,
+        )
+        return True
+
     @staticmethod
     def _note_id(note: Mapping[str, Any]) -> str:
         return str(note.get("id") or note.get("uuid") or "")
