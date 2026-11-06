@@ -220,9 +220,10 @@ async def test_a_bulk_keyword_change_the_policy_refuses_changes_nothing(
             "food",
             "Add a keyword to 3 notes",
         )
+        # PR #3423 re-review N-3: the refusal's own sentence follows the count.
         receipt = (
             "Added 'food' to 0 notes · 3 could not be changed — still checked, "
-            "so you can try again"
+            "so you can try again. Local note changes are not allowed right now."
         )
         await until(
             pilot,
