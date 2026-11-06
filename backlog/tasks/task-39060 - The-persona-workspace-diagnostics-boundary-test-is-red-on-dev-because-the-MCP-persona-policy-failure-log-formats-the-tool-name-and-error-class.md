@@ -1,11 +1,11 @@
 ---
 id: TASK-39060
 title: "The persona workspace diagnostics boundary test is red on dev because the MCP persona-policy failure log formats the tool name and error class"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 12:31
-updated_date: 2026-11-06 17:59
+updated_date: 2026-11-06 23:20
 labels:
 - follow-up
 - logging
@@ -46,9 +46,9 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f and on 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `test_persona_workspace_diagnostics_do_not_interpolate_private_values` passes; it is shown red first (`assert 3 == 1` on the persona-policy failure log)
+- [x] #1 `test_persona_workspace_diagnostics_do_not_interpolate_private_values` passes; it is shown red first (`assert 3 == 1` on the persona-policy failure log)
 - [x] #2 With a `persona_policy_provider` that raises, the line the production forwarder emits still names the error class and holds no value the boundary test forbids; a test through the real forwarder shows this
-- [ ] #3 `Tests/test_persistent_diagnostic_boundary.py` runs whole on a PR lane (never the fast PR contract), replacing the single-node entry if TASK-38989 added one, with three timings of that lane's command recorded
+- [x] #3 `Tests/test_persistent_diagnostic_boundary.py` runs whole on a PR lane (never the fast PR contract), replacing the single-node entry if TASK-38989 added one, with three timings of that lane's command recorded
 <!-- AC:END -->
 
 Possible approach (not required): after TASK-38989 the forwarder renders a bound `exception_type` (a plain class name only), so a constant message plus `logger.bind(exception_type=...)`, the shape the Persona Buddy logs use, would keep the class visible.
@@ -63,61 +63,49 @@ Possible approach (not required): after TASK-38989 the forwarder renders a bound
 
 ## Implementation Notes
 
-**Status: In Progress (NEEDS_CONTEXT). AC#2 is met; AC#1 and AC#3 are blocked on an owner question. The test hid nine more offenders behind the one filed.**
+**Status: Done.**
 
-**Done (AC#2).**
-- `MCPToolProvider._persona_floor` (`Agents/mcp_tool_provider.py`) used to format `tool.name` and the error class. It now logs a constant message and binds the class: `logger.bind(exception_type=type(exc).__name__).warning("MCPToolProvider: persona_policy_provider failed")`. The forwarder renders that as `MCPToolProvider: persona_policy_provider failed: RuntimeError`.
-- New test `Tests/test_persistent_diagnostic_boundary.py::test_persona_policy_failure_forwards_only_its_error_class`. It drives a raising provider through `_persona_floor` and the real `_forward_loguru_to_standard`. It asserts the exact forwarded line, that `RuntimeError` survives `RedactingFileFormatter`, and that neither the tool-name sentinel nor the error-text sentinel does.
-  - Red before the change: the forwarded line was `...failed for tool-PRIVATE-PROMPT-SENTINEL-...; error_type=RuntimeError`.
-  - Green after.
-- Pins that follow the change:
-  - the `exception_type` bind-site census and the package tripwire in `Tests/Persona_Buddy/test_controller_failure_logging.py` each gained one reviewed row. The stale "7-site census" wording now reads "bind-site census".
-  - The reviewed fields in `Tests/Architecture/test_persistent_diagnostic_inventory.py` changed from `("tool.name", "type(exc).__name__")` to `("type(exc).__name__",)`.
-  - `Docs/security/production-diagnostic-inventory.json` was regenerated after reading the drift. One row changed: `mcp_tool_provider.py 10/eef0ce33… -> 10/7d804c0e…`, the reviewed call.
-- The new node runs on the Architecture guards job beside the existing forwarder node. The workflow step and `ARCHITECTURE_GUARD_TARGETS` were both updated.
-- Covering runs:
-  - the boundary file, the bind census, the diagnostic inventory and `Tests/Agents/test_mcp_provider_profile.py`: 101 passed, 1 skipped, 1 failed (the boundary test, below);
-  - `Tests/CI`: 1,215 passed, 1 skipped.
+Owner decision (2026-11-06): "Bind class, drop count. All 10 sites log a constant message with logger.bind(exception_type=…) — the forwarder already renders it, so no detail is lost for the class name. Drop rule_count and its test assertion. The boundary stays strict: no runtime values in the message."
 
-**Blocked (AC#1, AC#3).** With the MCP line fixed, `test_persona_workspace_diagnostics_do_not_interpolate_private_values` fails at its next file: `persona_policy.py: 'Dropping non-mapping persona policy rule' must not format runtime values`, `assert 2 == 1`. The test stops at the first offender. A walk over all of `_CONSTANT_DIAGNOSTIC_PREFIXES` found 10 offenders at base 2684e5453f, not 1. The nine besides MCP are:
-- `Agents/persona_policy.py:62` (`entry_type`) and `:76` (`error_type`);
-- `Character_Chat/local_character_persona_service.py:89` (`error_type`);
-- `UI/Screens/personas_screen.py:16002` (`mode=local; rule_count={}; error_type={}`);
+**The red, in full.** `test_persona_workspace_diagnostics_do_not_interpolate_private_values` stops at its first offender, which hid most of the drift. Walking every prefix in `_CONSTANT_DIAGNOSTIC_PREFIXES` at base 2684e5453f found 10 offenders, not 1:
+- MCP `mcp_tool_provider.py:1635` (the filed `assert 3 == 1`);
+- `Agents/persona_policy.py:62` and `:76`;
+- `Character_Chat/local_character_persona_service.py:89`;
+- `UI/Screens/personas_screen.py:16002`;
 - `Workspaces/agent_provisioning.py:95` and `:177`;
 - `Workspaces/registry_service.py:897`, `:910` and `:3976`.
 
-Every one of them formats `type(<x>).__name__`, and personas_screen also formats `len(rules)`.
+The class and count arguments came from b6653e3806 and 0b2f6209de; 4ee4c5af5a's constant-message rule landed the same day, 2026-08-30.
 
-Two reviewed policies conflict here:
-- b6653e3806 ("reconcile inventory and enforce privacy") and 0b2f6209de ("retain safe persona save context") added those arguments on 2026-08-30. They pinned them as reviewed metadata in `REVIEWED_METADATA_ONLY_DIAGNOSTICS`, and `Tests/UI/test_persona_policy_rules_editor.py::test_policy_rule_save_failure_logs_metadata_only` asserts `rule_count=1` and `mode=local` in the rendered message.
-- 4ee4c5af5a, merged the same day, requires a constant, single-argument message for each of these prefixes.
+**Changes.**
+- All 10 sites now log a constant message and bind the class: `logger.bind(exception_type=type(<x>).__name__).<level>("<message>")`. The forwarder renders that as `<message>: <Class>`.
+  - `persona_policy.py:62` binds the dropped entry's type under `exception_type`, the one key the forwarder renders.
+  - The personas screen keeps the constant `mode=local` in its message and no longer logs the rule count.
+- **Deliberate test change (owner decision):** `Tests/UI/test_persona_policy_rules_editor.py::test_policy_rule_save_failure_logs_metadata_only` no longer asserts `rule_count=1`. It asserts the bound `exception_type == "RuntimeError"` instead. With a temporary unbound call that assertion failed (`assert False`); with the bound call it passes.
+- New test `Tests/test_persistent_diagnostic_boundary.py::test_persona_policy_failure_forwards_only_its_error_class` (AC#2). It drives a raising `persona_policy_provider` through `_persona_floor` and the real `_forward_loguru_to_standard`, and asserts the line `MCPToolProvider: persona_policy_provider failed: RuntimeError`. It also checks that neither the tool-name sentinel nor the error-text sentinel survives `RedactingFileFormatter`. It was red before the change: the line held the tool name.
+- Pins updated:
+  - In `Tests/Persona_Buddy/test_controller_failure_logging.py`, 8 reviewed sites were added to `EXCEPTION_TYPE_BIND_SITES`, with matching `EXCEPTION_TYPE_TOKEN_ROWS` tripwire rows. The stale "7-site census" wording now reads "bind-site census".
+  - The reviewed fields in `Tests/Architecture/test_persistent_diagnostic_inventory.py` no longer list MCP's `tool.name` or personas_screen's `len(rules)`.
+  - `Docs/security/production-diagnostic-inventory.json` was regenerated after reading the drift. `--statements` showed only the rewritten calls, and each file's diagnostic count is unchanged.
 
-The owner needs to choose one of:
-- (a) bind the class at all nine sites, as here. personas_screen then loses `rule_count`, and that editor test's `rule_count=1` assertion has to go.
-- (b) let the boundary test accept reviewed class-name and count arguments.
+**Evidence.**
+- AC#1: red at base with `assert 3 == 1`. After the MCP fix alone it failed at `persona_policy.py` with `assert 2 == 1`. Now `Tests/test_persistent_diagnostic_boundary.py` passes 6 of 6, and an all-prefix walk finds no offender.
+- AC#3: the whole file is laned on the Architecture guards job, in place of the two forwarder-node entries. The step and `ARCHITECTURE_GUARD_TARGETS` are both updated.
+- The covering-file runs on head and base, and the job run, are under "Final runs" below.
 
-I did neither. (a) removes an assertion from another test, and (b) loosens the boundary test, so either one needs the owner's ruling. Until then the whole file cannot run on a lane, so AC#3 stays open. Only its two forwarder nodes are laned.
-
-Files: `tldw_chatbook/Agents/mcp_tool_provider.py`, `Tests/test_persistent_diagnostic_boundary.py`, `Tests/Persona_Buddy/test_controller_failure_logging.py`, `Tests/Architecture/test_persistent_diagnostic_inventory.py`, `Docs/security/production-diagnostic-inventory.json`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
-
-**Architecture guards job timings (shared by TASK-39054, TASK-39055, TASK-39060 and TASK-39061).**
-- Before adding anything: CI ran the step in 402 s (job 7 m 38 s) on #3436's run 42218508176, 2026-11-06.
-- The step's command, run with `bash $FU/jobstep.sh fu-r11-arch "Run Architecture guard contracts"` (serial, `--timeout=180 --tb=short`). Each run of the final 36 targets gave 383 passed:
-
-| Command | Targets | Nodes | pytest time | Load |
-|---|---|---|---|---|
-| Base 2684e5453f | 29 | 160 | 153.9 s | 7-11 |
-| Base 2684e5453f | 29 | 160 | 457.0 s | 27-45 |
-| Base 2684e5453f | 29 | 160 | 283.9 s | 32-38 |
-| This branch, run 1 | 36 | 383 | 563.4 s | 25-48 |
-| This branch, run 2 | 36 | 383 | 451.2 s | 24-48 |
-| This branch, run 3 | 36 | 383 | 440.6 s | 24-57 |
-| This branch, right after the 283.9 s base run | 36 | 383 | 413.8 s | 32-48 |
-
-- Six agents shared the machine, and the load swung from 24 to 57, so the totals mostly measure the load.
-- One more run, with `--durations=0` (862.4 s at load 50-85), attributes setup, call and teardown time per file. The added files cost 146.9 s of its 858.3 s:
-  - `test_no_undefined_module_globals.py`: 72.5 s for 3 nodes, with no periodic-GC teardown;
-  - `test_log_sanitizer.py`: 40.6 s for 168 nodes, of which 31.8 s is the conftest's every-25th-test `gc.collect()`;
-  - the four ChatScreen files: 33.5 s for 51 nodes, 8.9 s of it GC;
-  - the two boundary nodes: 0.3 s.
-- An extra job run overlapped my temporary source reverts for a boot-census bisect (12 failed). I discarded it.
+**Final runs** (code at 7d4f2b3f7a, through run.sh, 2026-11-06, after a reboot). Other agents kept the load between 15 and 200, so several heavy nodes hit their timeouts.
+- Persona and log covering files (13 files, `-n 4`):
+  - Head: 438 passed, 9 failed, 1 skipped, at load 64-201.
+  - Base 2684e5453f: 421 passed, 7 failed, 1 skipped, at load 64-142.
+  - None of head's 9 failures comes from this change:
+    - 4 `test_persona_policy_rules_editor.py` nodes fail locally with RecoveryRequired (TASK-38111); base has the same 4. Under a temporary `bootstrap_profile` mark the file passes 17 and fails 1, `test_switcher_suffix_available_default_appends_label`, which is red at base with the same assertion.
+    - 5 `test_persistent_diagnostic_inventory.py` nodes timed out at the 300 s default: 4 `task_15103` ledger nodes (base timed out 2 of them) and `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`.
+  - With `--timeout=1500`, the ledger and inventory nodes all pass on head (49 passed, load 65-99). The production-inventory node alone took a 284.9 s call.
+  - Base's extra red is this task's boundary test.
+- Architecture guards job command (`jobstep.sh`, 35 targets): 386 passed, 1 failed, load 19-138.
+  - The failure is `test_profile_owned_path_inventory.py::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners`, the 180 s timeout.
+  - That node passes alone on head with a longer timeout (332.9 s call at load 65-106).
+  - At base it also hits 180 s, at load about 79 (177.4 s call).
+  - The node has been on this job since TASK-38989 and passed in all three earlier runs at load 24-57.
+- bootbudget: 32 passed.
+- `Tests/CI` at `-n 4`: 1,215 passed, 1 skipped.

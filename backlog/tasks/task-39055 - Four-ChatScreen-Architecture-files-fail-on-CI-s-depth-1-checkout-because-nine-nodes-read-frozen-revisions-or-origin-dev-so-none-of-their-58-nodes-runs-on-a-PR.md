@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 17:59
+updated_date: 2026-11-06 23:20
 labels:
 - follow-up
 - tests
@@ -77,7 +77,7 @@ Owner decision (2026-11-06): lane the 49 shallow-safe nodes, retire the 9 histor
 
 ## Implementation Notes
 
-**Status: Done.** Two of the nine nodes deviate from the ruling; see "Deviation" below.
+**Status: Done.** Two of the nine nodes keep their live checks; the owner ruled on this (see "Deviation" below).
 
 Owner decision (2026-11-06): "Lane 49, retire 9: put the 49 shallow-safe nodes on the Architecture guards job and delete the 9 history nodes. They only restate facts about frozen commits no product change can alter, and the 3 origin/dev ones would check the base branch, not the PR. Live ceilings already run in the fast contract." (AC#1)
 
@@ -95,7 +95,8 @@ Owner decision (2026-11-06): "Lane 49, retire 9: put the 49 shallow-safe nodes o
 - `test_wave6_inventory_matches_the_implementation_base` also checked, on the working tree, that every moved method of every wave-6 family has exactly one owner, that delegates and stays exist, that target methods make no `query_one` or DOM access, and every family's residue and delegate contract. For the image and video families no other node checks any of this.
 - `test_wave6_compatibility_inventory_is_complete_and_phase_safe` was the only node that checked each owner's compatibility descriptors: controller defaults, reads after build, wiring, and the runtime fail-loud contract.
 - Deleting them whole would have dropped live guards the ruling did not mean to drop ("they only restate facts about frozen commits" is not true of these two). So their frozen-revision reads are gone, and their live assertions stay unchanged, as `test_wave6_families_have_one_owner_and_bounded_delegates` and `test_wave6_compatibility_descriptors_are_wired_and_fail_loud`.
-- A temporary edit to `UI/Console_Modules/image.py` (renaming one moved method, changing one controller default) turned each of them red. If the owner wants them gone too, delete those two functions.
+- A temporary edit to `UI/Console_Modules/image.py` (renaming one moved method, changing one controller default) turned each of them red.
+- Owner decision (2026-11-06) on this deviation: "Keep the two live checks. Only the frozen-history reads are retired, as decided; the live ownership and descriptor contracts keep guarding the code on the Architecture lane."
 
 **After (AC#2).** I made the same depth-1 simulation of the committed HEAD 476cf26b2a. In that clone `git show 8d806b71d9:…` fails with `invalid object name`. The four files ran 51 passed and 0 failed (the 49, plus the 2 kept). With full history: 51 passed.
 
