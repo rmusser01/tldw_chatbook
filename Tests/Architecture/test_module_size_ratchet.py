@@ -51,6 +51,7 @@ row — `backlog/docs/library-decomposition-recipe.md` governs any split.
 
 from __future__ import annotations
 
+import ast
 from functools import lru_cache
 from pathlib import Path
 
@@ -596,7 +597,9 @@ _BUDGETS: dict[str, int] = {
     # checked after the rebuild, and moves into the rebuilt panes do not count.
     # 2026-11-07, review r12s-rev3 (owner waiver): +38, a focus that was in
     # the old panes keeps the landing; new detail-pane focus counts as a move.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35911,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
+    # 2026-11-06, TASK-1378.1: Network moved to its registered panel
+    # (UI/Settings_Modules/category_panels.py); 2026-11-07 rebase onto dev: 35,728 -> 35,597.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35780,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -1193,4 +1196,40 @@ def test_every_module_of_the_guard_size_has_a_row() -> None:
         f"row: {unbudgeted}. Add a row to _BUDGETS in "
         f"Tests/Architecture/test_module_size_ratchet.py pinned at the "
         f"measured size, or split the module below the line."
+    )
+
+
+#: TASK-1378.1: SettingsCategoryId references inside comparisons in
+#: SettingsScreen (the if/elif chains the panel registry replaces). A category
+#: moved onto `Settings_Modules/category_panels.py::CATEGORY_PANELS` removes
+#: its arms; lower this when one moves, never raise it -- new category
+#: behaviour goes in a registered panel. Base (dev 5ca7ec6a03): 245.
+_SETTINGS_CATEGORY_COMPARISON_CEILING = 240
+
+
+def _settings_category_comparisons() -> int:
+    tree = ast.parse(
+        (_REPO_ROOT / "tldw_chatbook/UI/Screens/settings_screen.py").read_text()
+    )
+    return sum(
+        1
+        for compare in ast.walk(tree)
+        if isinstance(compare, ast.Compare)
+        for node in ast.walk(compare)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "SettingsCategoryId"
+    )
+
+
+def test_settings_screen_category_comparisons_do_not_rise() -> None:
+    count = _settings_category_comparisons()
+    assert count <= _SETTINGS_CATEGORY_COMPARISON_CEILING, (
+        f"settings_screen.py compares SettingsCategoryId {count} times "
+        f"(ceiling {_SETTINGS_CATEGORY_COMPARISON_CEILING}). Serve the category "
+        "from a registered panel in UI/Settings_Modules/category_panels.py "
+        "instead of adding an arm; do not raise the ceiling."
+    )
+    assert _SETTINGS_CATEGORY_COMPARISON_CEILING - count <= 0, (
+        f"Only {count} comparisons remain: lower the ceiling to {count}."
     )

@@ -293,6 +293,7 @@ from ...Utils.timestamps import parse_utc, utc_now, utc_now_iso
 from ..Navigation.base_app_screen import BaseAppScreen
 from ...Widgets.rag_profile_name_modal import RagProfileNameModal  # noqa: F401
 from ...LLM_Provider_Catalog.provider_model_resolution import resolve_effective_provider_model
+from ..Settings_Modules.category_panels import CATEGORY_PANELS, NETWORK_PANEL
 from ..Settings_Modules.settings_config_adapter import (
     SettingsConfigAdapter,
     failure_status_text,
@@ -497,7 +498,6 @@ if TYPE_CHECKING:
     from ..Settings_Modules.settings_advanced_config import AdvancedConfigSettings
     from .settings_endpoint_probe import SettingsEndpointProbeOutcome
     from .settings_hooks import HooksSettingsPanel
-    from .settings_network_defaults import SettingsNetworkTLS
     from ..Settings_Modules.settings_web_search import WebSearchSettings
 
 
@@ -1770,19 +1770,6 @@ QWENCLOUD_PROVIDER_TABLE_INVALID_COPY = (
     "category Save cannot repair this configuration."
 )
 _MALFORMED_QWENCLOUD_PROVIDER_TABLE = object()
-# Network ([network] ssl_verify) TLS trust mode options for the Settings
-# Network category Select. Textual Select options are (label, value) pairs,
-# so the mode strings -- load_network_tls's contract: "verify" | "off" |
-# "custom-ca" ("invalid" is a load state, never offered) -- are the VALUES.
-_NETWORK_TLS_MODE_OPTIONS: list[tuple[str, str]] = [
-    ("Verify certificates (default)", "verify"),
-    ("Disable verification", "off"),
-    ("Custom CA bundle", "custom-ca"),
-]
-# The Selectable subset of load_network_tls's modes ("invalid" is a load
-# state, never an option): used to fold an unselectable effective mode back
-# to "verify" when seeding the Select.
-_NETWORK_TLS_MODE_VALUES = frozenset(value for _, value in _NETWORK_TLS_MODE_OPTIONS)
 # Dreams (task-34792): the provider Select's "unset" is a REAL option, never
 # Select.NULL -- the dropdown must list "Follow chat defaults" so following
 # chat defaults is an explicit choice, and picking it deletes the key from
@@ -3724,7 +3711,7 @@ class SettingsScreen(BaseAppScreen):
         if action == "save":
             return (
                 category in GUIDED_SETTINGS_MUTATION_CATEGORIES
-                or category is SettingsCategoryId.NETWORK
+                or category in CATEGORY_PANELS
             )
         if action == "revert":
             return (
@@ -3923,8 +3910,8 @@ class SettingsScreen(BaseAppScreen):
 
         # Network category pending edits. Deliberately NOT a SettingsDraft in
         # _settings_drafts: the category bypasses the draft-staging machinery
-        # (GUIDED_SETTINGS_MUTATION_CATEGORIES) with a self-contained save
-        # branch in action_settings_save_category.
+        # (GUIDED_SETTINGS_MUTATION_CATEGORIES); its registered panel
+        # (Settings_Modules/category_panels.py) owns the save.
         self._network_pending: dict[str, object] = {}
         self._snapshot_preferences_loaded = None
         self._snapshot_preferences_raw = None
@@ -10075,6 +10062,9 @@ class SettingsScreen(BaseAppScreen):
                 return
 
     def _guided_action_message(self, category: SettingsCategoryId) -> str:
+        panel = CATEGORY_PANELS.get(category)
+        if panel is not None:
+            return panel.scope_text(self)
         if category is SettingsCategoryId.APPEARANCE:
             if self._category_has_unsaved_changes(category):
                 validation = self._appearance_validation_result()
@@ -10107,12 +10097,6 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "Applies immediately: agent definitions save/delete as you "
                 "act; there is no draft to save or revert."
-            )
-        if category is SettingsCategoryId.NETWORK:
-            return (
-                "Save with s: the TLS trust setting applies to newly created "
-                "clients; already-open connections keep their trust policy "
-                "until restart."
             )
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
@@ -10863,6 +10847,9 @@ class SettingsScreen(BaseAppScreen):
             A short badge such as "Draft — save with s" that leads the
             State banner in the same position on every category.
         """
+        panel = CATEGORY_PANELS.get(category)
+        if panel is not None:
+            return panel.commit_model.badge
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             return "Draft — save with s"
         if category in LISTED_SAVE_MODELS:  # the category list's own words
@@ -10881,10 +10868,6 @@ class SettingsScreen(BaseAppScreen):
             # Use/Try/Revert act at once; the banner stays hidden for Theme,
             # but F1/category help reads this (TASK-32948).
             return "Applies immediately"
-        if category is SettingsCategoryId.NETWORK:
-            # No SettingsDraft: edits stage in `self._network_pending`
-            # until the screen-wide `s` reaches the Network save branch.
-            return "Pending — save with s"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
         if category is SettingsCategoryId.SCHEDULES:
@@ -22813,7 +22796,10 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
-        if category is SettingsCategoryId.HOOKS:
+        panel = CATEGORY_PANELS.get(category)
+        if panel is not None:
+            yield from panel.render(self)
+        elif category is SettingsCategoryId.HOOKS:
             yield Button(
                 "Response rules · this profile",
                 id="settings-response-rules",
@@ -23563,8 +23549,6 @@ class SettingsScreen(BaseAppScreen):
                     terminal_button.disabled = terminal_disabled
                     yield terminal_button
 
-        elif category is SettingsCategoryId.NETWORK:
-            yield from self._render_network_detail()
         elif category is SettingsCategoryId.DIAGNOSTICS:
             yield Static(
                 "Diagnostics", classes="destination-section settings-column-title"
@@ -26803,91 +26787,6 @@ class SettingsScreen(BaseAppScreen):
         self._sync_appearance_widgets()
         self._mark_appearance_settings_staged()
 
-    def _render_network_detail(self) -> ComposeResult:
-        from .settings_network_defaults import load_network_tls
-
-        values = load_network_tls(self._app_config_mapping())
-        # Seed the Select and CA Input from the EFFECTIVE (pending-aware)
-        # state, not the loaded config: `self._network_pending` survives a
-        # category hop, so seeding from the loaded values let a hop-away-and-
-        # back repaint the Select with the LOADED mode while `s` still saved
-        # the PENDING one. The invalid-row banner below stays keyed on the
-        # LOADED mode -- a hand-edited invalid config is a config-file fact,
-        # not a pending edit.
-        effective = self._network_effective_values()
-        yield Static("Network", classes="destination-section settings-column-title")
-        with Vertical(id="settings-network-card", classes="settings-focus-card"):
-            yield Static(
-                "TLS trust for outbound API traffic", classes="destination-section"
-            )
-            if values.mode == "invalid":
-                yield Static(
-                    f"Config has an invalid [network] ssl_verify value"
-                    f" ({values.raw!r}); default verification is in use until"
-                    " it is fixed.",
-                    id="settings-network-invalid-row",
-                    classes="settings-network-error",
-                )
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Certificate verification", classes="settings-input-label")
-                yield Select(
-                    _NETWORK_TLS_MODE_OPTIONS,
-                    value=(
-                        effective.mode
-                        if effective.mode in _NETWORK_TLS_MODE_VALUES
-                        else "verify"
-                    ),
-                    id="settings-network-ssl-mode",
-                    classes="settings-compact-select",
-                    allow_blank=False,
-                    compact=True,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("CA bundle path", classes="settings-input-label")
-                yield Input(
-                    value=(
-                        effective.ca_bundle_path
-                        if effective.mode == "custom-ca"
-                        else ""
-                    ),
-                    id="settings-network-ca-path",
-                    classes="settings-compact-input",
-                    placeholder="/path/to/corp-ca.pem (used by 'Custom CA bundle')",
-                )
-            yield Static(
-                self._network_warning_text(self._network_effective_mode()),
-                id="settings-network-warning",
-                classes="settings-network-warning",
-            )
-
-    def _network_effective_mode(self) -> str:
-        from .settings_network_defaults import load_network_tls
-
-        loaded = load_network_tls(self._app_config_mapping())
-        pending_mode = self._network_pending.get("mode")
-        return pending_mode if isinstance(pending_mode, str) else loaded.mode
-
-    @staticmethod
-    def _network_warning_text(mode: str) -> str:
-        if mode == "off":
-            return (
-                "Verification is DISABLED: API keys and conversation content"
-                " can be intercepted by anyone on the network path."
-            )
-        if mode == "custom-ca":
-            return (
-                "Verification additionally trusts your custom CA bundle"
-                " (corporate root CA)."
-            )
-        return ""
-
-    def _update_network_warning(self) -> None:
-        try:
-            widget = self.query_one("#settings-network-warning", Static)
-        except Exception:
-            return
-        widget.update(self._network_warning_text(self._network_effective_mode()))
-
     @on(Select.Changed, "#settings-network-ssl-mode")
     def handle_network_ssl_mode_changed(self, event: Select.Changed) -> None:
         event.stop()
@@ -26898,15 +26797,14 @@ class SettingsScreen(BaseAppScreen):
     def handle_network_ca_path_changed(self, event: Input.Changed) -> None:
         self._network_pending["ca_bundle_path"] = event.value
 
-    def _network_effective_values(self) -> "SettingsNetworkTLS":
-        from .settings_network_defaults import SettingsNetworkTLS, load_network_tls
-
-        loaded = load_network_tls(self._app_config_mapping())
-        mode = self._network_effective_mode()
-        if mode in ("verify", "off", "invalid"):
-            return SettingsNetworkTLS(mode, raw=loaded.raw)
-        path = str(self._network_pending.get("ca_bundle_path", loaded.ca_bundle_path))
-        return SettingsNetworkTLS(mode, ca_bundle_path=path, raw=loaded.raw)
+    def _update_network_warning(self) -> None:
+        try:
+            widget = self.query_one("#settings-network-warning", Static)
+        except Exception:
+            return
+        widget.update(
+            NETWORK_PANEL.warning_text(NETWORK_PANEL.effective_mode(self))
+        )
 
     @on(Button.Pressed, "#settings-preview-appearance")
     def handle_preview_appearance(self, event: Button.Pressed) -> None:
@@ -33208,40 +33106,11 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.HOOKS:
             self._start_hooks_save()
             return
-        # Network sits ABOVE the GUIDED_SETTINGS_MUTATION_CATEGORIES guard on
-        # purpose: the category deliberately bypasses the SettingsDraft
-        # staging machinery (plain `self._network_pending` dict) with this
-        # self-contained validate/save/notify branch, so it must not join
-        # the mutation set -- and without membership the guard below would
-        # return before any category branch is reached.
-        if category is SettingsCategoryId.NETWORK:
-            from .settings_network_defaults import (
-                build_network_save_sections,
-                validate_network_tls,
-            )
-
-            values = self._network_effective_values()
-            validation = validate_network_tls(values)
-            if not validation.valid:
-                self.app.notify(validation.message, severity="error")
-                return
-            section_values = build_network_save_sections(values)
-            saved = SettingsConfigAdapter().save_sections(section_values)
-            self.app.notify(
-                "Network TLS setting saved."
-                if saved
-                else "Failed to save Network TLS setting.",
-                severity="information" if saved else "error",
-            )
-            if saved:
-                # Sync the app's in-memory config mapping so the next detail
-                # render (which seeds from _app_config_mapping, not the
-                # runtime config cache) shows the saved value -- same shape
-                # as _apply_appearance_save_result (qodo PR #2223, bug 5).
-                self._app_config_update_target().update(
-                    copy.deepcopy(dict(section_values))
-                )
-                self._network_pending = {}
+        # A registered panel owns its save (it may bypass the SettingsDraft
+        # machinery, as Network does), so it sits ABOVE the guard below.
+        panel = CATEGORY_PANELS.get(category)
+        if panel is not None:
+            panel.request_save(self)
             return
         if category is SettingsCategoryId.WEB_SEARCH:
             self.app.run_worker(
