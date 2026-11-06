@@ -1913,8 +1913,14 @@ class LibraryNotesController:
         not re-enabled yet (a deferred apply) gets one retry after the
         refresh, still in the operation's region and marked programmatic.
         A backstop since the origin stays enabled while its transfer runs
-        (TASK-34000.29 fix round 1, A): a focus the user moved meanwhile is
-        captured by the apply's own sync and replayed over this return.
+        (TASK-34000.29 fix round 1, A).
+
+        PR #3423 review m-3: it moves focus only while focus is on nothing,
+        on Textual's reset landing (``_is_framework_focus_landing``), or
+        still on the origin. The export's write runs in a worker, so its
+        finish lands after the user may have moved on -- into Info's
+        keywords field, say -- and in Info nothing captures or replays that
+        move (the apply patches in place): the return took focus from them.
         """
         if not operation.origin_control:
             return
@@ -1924,6 +1930,12 @@ class LibraryNotesController:
             target = self.query_one(f"#{operation.origin_control}", Widget)
         except (NoMatches, QueryError):
             return
+        focused = self.focused
+        if focused is target:
+            return
+        if not _is_framework_focus_landing(self, focused):
+            # The user's own move since the operation began wins.
+            return
         if not target.focusable:
             if not deferred:
                 self.call_after_refresh(
@@ -1932,9 +1944,8 @@ class LibraryNotesController:
                     deferred=True,
                 )
             return
-        if self.focused is not target:
-            self._library_notes_programmatic_focus_target = target
-            self.set_focus(target, scroll_visible=False)
+        self._library_notes_programmatic_focus_target = target
+        self.set_focus(target, scroll_visible=False)
     def _apply_library_note_presentation_state(self) -> None:
         """Synchronize the mounted canvas without changing its composition."""
         if not self.is_mounted or self._library_note_session.snapshot is None:
