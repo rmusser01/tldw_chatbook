@@ -77,9 +77,9 @@ Enter and the POST than dev: the profiles' history, not their code.
 
 **What to do.**
 - Before a high-load launch, count the busy children (`signal.alarm(int(T)+5)` in the command line) by parent pid. Start your own generator only if fewer than 60 belong to someone else.
-- Before a low-load launch, stop yours and wait for load1 < 12.
+- Before a low-load launch, stop yours and open the low-load gate on the generator's processes, as the entry above says: load1 trails a generator's start and stop by minutes.
 - When another session already holds the host loaded, run your high-load block on its load and move your low-load block to later. Do not sit waiting for quiet.
-- Record load1 at every Enter, and bin each send by that reading, not by the block it ran in.
+- Record load1 and idle CPU at every Enter, and bin each send by those readings, not by the block it ran in.
 
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
