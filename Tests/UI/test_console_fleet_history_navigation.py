@@ -444,7 +444,23 @@ async def test_expansion_scrolls_once_and_in_place_refresh_preserves_reading_pos
     host = _ScrolledSectionHarness(section)
     async with host.run_test(size=(70, 20)) as pilot:
         section.set_open(True)
-        await pilot.pause(0.2)
+
+        def tail_painted() -> bool:
+            # The expansion lays out and scrolls over several refreshes; a
+            # loaded machine needs more than one fixed pause (TASK-39044).
+            tails = section.query("#console-inspector-section-agents-view-all")
+            if not tails:
+                return False
+            region = tails.first().region
+            try:
+                return host.get_widget_at(region.x + 1, region.y)[0] is tails.first()
+            except Exception:  # noqa: BLE001 - nothing painted there yet
+                return False
+
+        for _ in range(200):
+            await pilot.pause(0.05)
+            if tail_painted():
+                break
         tail = section.query_one("#console-inspector-section-agents-view-all")
         _assert_painted_at_own_region(host, tail)
         scroll = host.query_one("#scroll")
