@@ -298,7 +298,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
             or (self.discover_tools is not None and self._catalog_binding_id is None)
         )
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="goal-launch")
     async def launch(self) -> None:
         try:
             if self._submitted is None:

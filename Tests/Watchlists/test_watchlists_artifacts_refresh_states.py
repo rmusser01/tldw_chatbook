@@ -9,6 +9,7 @@ import pytest
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widgets import Button, Collapsible, DataTable, Static
+from textual.worker import NoActiveWorker, WorkerCancelled, get_current_worker
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.app_factory import _build_test_app
@@ -120,6 +121,16 @@ class _EventuallyVisibleBriefingsDB:
             for row in self._delegate.list_briefings(watchlist_id)
             if row["id"] != self.hidden_id
         ]
+
+
+async def _settle_briefings_load(host, pilot) -> None:
+    """Wait out the Artifacts loader group; a newer load may cancel an older one."""
+    for worker in [w for w in host.workers if w.group == "wl-briefings-load"]:
+        try:
+            await worker.wait()
+        except WorkerCancelled:
+            pass
+    await pilot.pause()
 
 
 def _seed_complete_briefing(app) -> tuple[int, int]:
@@ -535,7 +546,8 @@ async def test_accepted_missing_receipt_retries_its_exact_id(
                 accepted_local_receipt,
             )
             await screen._generate_briefing(hidden_db, watchlist_id, None)
-        await pilot.pause()
+        # Both paths repaint through the loader group (TASK-38990).
+        await _settle_briefings_load(host, pilot)
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.view_state == "storage_mismatch"
@@ -581,7 +593,15 @@ async def test_coordinated_briefing_follow_releases_ui_when_receipt_stays_genera
         screen.active_section = "artifacts"
         await pilot.pause()
         await host.workers.wait_for_complete()
-        reload_briefings = AsyncMock()
+        reload_groups: list[str | None] = []
+
+        async def record_reload_group(**_kwargs):
+            try:
+                reload_groups.append(get_current_worker().group)
+            except NoActiveWorker:
+                reload_groups.append(None)
+
+        reload_briefings = AsyncMock(side_effect=record_reload_group)
         screen._load_briefings = reload_briefings
         screen._briefing_in_flight = True
         screen._briefing_in_flight_watchlist_id = watchlist_id
@@ -605,10 +625,14 @@ async def test_coordinated_briefing_follow_releases_ui_when_receipt_stays_genera
         assert screen._briefing_in_flight is False
         assert screen._briefing_in_flight_watchlist_id is None
         assert screen._durable_briefing_reload_target == (watchlist_id, accepted_id)
+        await _settle_briefings_load(host, pilot)
         reload_briefings.assert_awaited_once_with(
             select_briefing_id=accepted_id,
             expect_durable_receipt=True,
         )
+        # TASK-38990: the reload runs in the Artifacts loader group, so a newer
+        # load supersedes it instead of racing it.
+        assert reload_groups == ["wl-briefings-load"]
 
 
 @pytest.mark.asyncio

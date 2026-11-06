@@ -28,6 +28,7 @@ from ...Audio.meeting_session import (
 from ...config import save_setting_to_cli_config
 from ...Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
 from ...Utils.path_validation import validate_path_simple
+from ...Widgets.pausable_progress import PausableProgressBar
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -269,8 +270,8 @@ class MeetingsScreen(BaseAppScreen):
                             tooltip="Stop recording and finalize the transcript.",
                         )
                     yield Static("00:00:00", id="meetings-timer")
-                    yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="meetings-level-mic")
-                    yield ProgressBar(total=100, show_eta=False, show_percentage=False, id="meetings-level-sys")
+                    yield PausableProgressBar(total=100, show_eta=False, show_percentage=False, id="meetings-level-mic")
+                    yield PausableProgressBar(total=100, show_eta=False, show_percentage=False, id="meetings-level-sys")
                     yield Static("", id="meetings-recovery")
                     yield Button(
                         "Recover", id="meetings-recover", disabled=True,

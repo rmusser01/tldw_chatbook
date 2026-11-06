@@ -7821,8 +7821,8 @@ class ChatScreen(BaseAppScreen):
             # Keep app access late-bound and worker failures non-fatal, as before.
             owner = ConsoleEnvironmentController(
                 run_worker=(
-                    lambda job, **kwargs: self.run_worker(
-                        job, exit_on_error=False, **kwargs
+                    lambda job, *, group, **kwargs: self.run_worker(
+                        job, exit_on_error=False, group=group, **kwargs
                     )
                 ),
                 marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),

@@ -25,6 +25,22 @@ FORBIDDEN_IMPORT_PARTS = frozenset(
     }
 )
 SAFE_EXTERNAL_IMPORT_ROOTS = frozenset({"PIL"})
+#: TASK-38990 reviewed exceptions, keyed by (module, imported name). The
+#: create-only built-in Buddy installer (f4c1ad1a7a) writes a Character_Chat
+#: persona and its Persona Visual pack in one coordinated step, so it reads
+#: the character store by design. No other Persona_Visual module may.
+#: Production has not called it since 11150b849d (Persona_Buddy.library seeds
+#: the built-in Buddy); moving or deleting it is an owner decision.
+REVIEWED_BOUNDARY_EXCEPTIONS = {
+    (
+        "builtin_pixel_migu.py",
+        "tldw_chatbook.Character_Chat.local_character_persona_service",
+    ): "installer writes the persona record it binds a visual pack to",
+    (
+        "builtin_pixel_migu.py",
+        "tldw_chatbook.Character_Chat.builtin_pixel_migu",
+    ): "installer finds or creates the bundled character it binds to",
+}
 PRIVATE_FIELD_TOKENS = ("path", "relpath", "exception", "traceback")
 
 
@@ -53,6 +69,8 @@ def test_persona_visual_modules_stay_outside_other_runtime_and_ui_boundaries() -
     for path in PRODUCTION_MODULES:
         imports = _imports(path)
         for imported in imports:
+            if (path.name, imported) in REVIEWED_BOUNDARY_EXCEPTIONS:
+                continue
             assert not FORBIDDEN_IMPORT_PARTS.intersection(imported.split(".")), (
                 f"{path.relative_to(REPO_ROOT)} imports forbidden boundary {imported}"
             )
@@ -63,6 +81,12 @@ def test_persona_visual_modules_stay_outside_other_runtime_and_ui_boundaries() -
                 external_roots.add(root)
 
     assert external_roots <= SAFE_EXTERNAL_IMPORT_ROOTS
+
+
+def test_reviewed_boundary_exceptions_are_live() -> None:
+    """TASK-38990: an exception outlives neither its module nor its import."""
+    for module, imported in REVIEWED_BOUNDARY_EXCEPTIONS:
+        assert imported in _imports(PACKAGE_ROOT / module), (module, imported)
 
 
 def test_persona_visual_tables_are_separate_from_shared_visual_identity() -> None:

@@ -45,6 +45,15 @@ FORBIDDEN_IMPORT_PARTS = frozenset(
     }
 )
 SAFE_EXTERNAL_IMPORT_ROOTS = frozenset({"PIL"})
+#: TASK-38990 reviewed exceptions, keyed by (module, imported name).
+REVIEWED_BOUNDARY_EXCEPTIONS = {
+    ("contracts.py", "tldw_chatbook.tldw_api.character_persona_schemas"): (
+        "Imported persona policy rules are validated with the server-mirroring "
+        "PersonaPolicyRule schema (fe5fee00da), imported lazily. That module is "
+        "pure Pydantic and tldw_api's package init is lazy, so no HTTP client "
+        "loads (pinned below); a second rule schema here would fork the contract."
+    ),
+}
 FORBIDDEN_ARCHIVE_CALLS = frozenset(
     {
         "extract",
@@ -89,6 +98,8 @@ def test_pure_contracts_do_not_cross_runtime_ui_network_or_provider_boundaries()
     external_roots: set[str] = set()
     for path in PURE_MODULES:
         for imported in _imports(path):
+            if (path.name, imported) in REVIEWED_BOUNDARY_EXCEPTIONS:
+                continue
             parts = imported.split(".")
             assert not FORBIDDEN_IMPORT_PARTS.intersection(parts), (
                 f"{path.relative_to(REPO_ROOT)} imports forbidden boundary {imported}"
@@ -100,6 +111,23 @@ def test_pure_contracts_do_not_cross_runtime_ui_network_or_provider_boundaries()
                 external_roots.add(root)
 
     assert external_roots <= SAFE_EXTERNAL_IMPORT_ROOTS
+
+
+def test_reviewed_boundary_exceptions_are_live_and_network_free() -> None:
+    """TASK-38990: each exception is still used, and stays off the network."""
+    for module, imported in REVIEWED_BOUNDARY_EXCEPTIONS:
+        assert imported in _imports(ACTOR_PACK_ROOT / module), (module, imported)
+        target = REPO_ROOT / (imported.replace(".", "/") + ".py")
+        package_init = target.parent / "__init__.py"
+        for dependency in _imports(target) | _imports(package_init):
+            parts = set(dependency.split("."))
+            assert not (FORBIDDEN_IMPORT_PARTS - {"tldw_api"}) & parts, (
+                f"{imported} now imports {dependency}"
+            )
+            root = dependency.split(".", 1)[0]
+            assert root in sys.stdlib_module_names | {"__future__", "pydantic"}, (
+                f"{imported} now imports {dependency}"
+            )
 
 
 def test_foundation_defines_no_archive_io_or_import_activation_review_surface() -> None:

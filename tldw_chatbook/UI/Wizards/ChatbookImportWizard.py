@@ -659,7 +659,9 @@ class ConflictResolutionStep(WizardStep):
     def on_show(self) -> None:
         """Run the conflict scan every time the step is shown."""
         super().on_show()
-        self.conflict_worker = self.run_worker(self._scan_conflicts(), exclusive=True)
+        self.conflict_worker = self.run_worker(
+            self._scan_conflicts(), exclusive=True, group="chatbook-import-conflict-scan"
+        )
 
     def compose(self) -> ComposeResult:
         """Compose conflict resolution UI."""
