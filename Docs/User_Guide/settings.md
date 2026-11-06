@@ -1546,8 +1546,11 @@ joke and persona cards (the "JULES" intro and character select, the arcade
 high-score table, the old-film "Starring YOU" card); choose one by name as the
 **Default card** if you want it. With **Reduce motion** on (Appearance), or the
 `TLDW_REDUCE_MOTION` or `NO_MOTION` environment variable set when chatbook
-starts, the card is drawn as a still frame. The environment variable is read at
-launch only and is never written to config.toml. Setup's Appearance step offers
+starts, the card is drawn as a still frame. `TLDW_REDUCE_MOTION` set to `0`,
+`false`, `no` or `off` does the opposite: the card animates even with **Reduce
+motion** on. `NO_MOTION` only ever turns motion off, so a false word there counts
+as unset. The environment variable is read at launch only and is never written
+to config.toml. Setup's Appearance step offers
 the same choice as **Startup animation: Off / Short (2 s) / Full**.
 
 ### Interface — Console Behavior

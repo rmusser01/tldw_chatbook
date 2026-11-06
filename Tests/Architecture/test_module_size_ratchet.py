@@ -162,7 +162,11 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3693,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.13 +1 -- Qodo
+    # review 2026-11-05: Buddy reads the saved reduce_motion through
+    # startup_logging.motion_reduced, so TLDW_REDUCE_MOTION=0 wins there
+    # too (one import): 3693 -> 3694.
+    "tldw_chatbook/app_service_wiring.py": 3694,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved

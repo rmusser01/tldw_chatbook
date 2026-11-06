@@ -1299,6 +1299,7 @@ class ServiceWiringMixin(
             from .Persona_Buddy.preferences import (  # noqa: PLC0415
                 parse_persona_buddy_preferences,
             )
+            from .Utils.startup_logging import motion_reduced  # TLDW_REDUCE_MOTION=0 wins
 
             self._persona_buddy_controller = PersonaBuddyController(
                 preferences=parse_persona_buddy_preferences(
@@ -1312,7 +1313,7 @@ class ServiceWiringMixin(
                 profile_db=profile_db,
                 profile_root=get_user_data_dir(),
                 reduced_motion=lambda: bool(
-                    self.app_config.get("appearance", {}).get("reduce_motion", False)
+                    motion_reduced(self.app_config.get("appearance", {}))
                     or not parse_preferences(
                         self.app_config.get("buddy_interaction", {})
                     ).animated

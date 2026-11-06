@@ -210,6 +210,43 @@ def test_motion_is_reduced_by_the_saved_setting_or_the_environment(
     assert reduced is expected
 
 
+@pytest.mark.parametrize(
+    ("environ", "saved", "expected"),
+    [
+        # An explicit false TLDW_REDUCE_MOTION wins over the saved setting.
+        ({"TLDW_REDUCE_MOTION": "0"}, True, False),
+        ({"TLDW_REDUCE_MOTION": " Off "}, True, False),
+        ({"TLDW_REDUCE_MOTION": "false"}, "true", False),
+        # Unset or empty falls through to the saved setting.
+        ({"TLDW_REDUCE_MOTION": ""}, True, True),
+        ({"TLDW_REDUCE_MOTION": "  "}, True, True),
+        ({}, True, True),
+        # NO_MOTION only ever asks for less motion; a false word is unset.
+        ({"NO_MOTION": "0"}, True, True),
+        ({"NO_MOTION": "false"}, True, True),
+        # Any variable asking for less motion wins over an explicit false.
+        ({"NO_MOTION": "1", "TLDW_REDUCE_MOTION": "0"}, False, True),
+    ],
+)
+def test_an_explicit_false_tldw_reduce_motion_overrides_the_saved_setting(
+    environ, saved, expected
+) -> None:
+    """Qodo review (2026-11-05): a false word read as unset, so
+    TLDW_REDUCE_MOTION=0 lost to a saved reduce_motion = true -- the
+    environment is meant to override the config. The splash, character
+    expressions and Buddy read it the same way."""
+    appearance = {"reduce_motion": saved}
+    assert startup_logging.motion_reduced(appearance, environ) is expected
+    merged = startup_logging.with_motion_environment(appearance, environ)
+    assert startup_logging.motion_reduced(merged, {}) is expected
+    options = startup_splash.splash_options(
+        {"splash_screen": {}, "appearance": appearance},
+        environ=environ,
+        first_launch=False,
+    )
+    assert options is not None and options["reduced_motion"] is expected
+
+
 def test_character_expressions_hold_still_under_the_environment_override(
     monkeypatch,
 ) -> None:
