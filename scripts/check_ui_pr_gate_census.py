@@ -1307,9 +1307,10 @@ MINIMUM_FILES = 2520
 #   executor, ~10-12 s alone at load ~17, with and without the w1b plugin; kept
 #   out of its ~10 s sibling so neither nears the budget): 935 -> 936.
 # Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
-# polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2457 + 20 = 2477.
-MINIMUM_FILES = 2477
+# polish-1b entries above, then PR #3423's 1 review-fix pin, stay
+# appended at the tail, so no existing slot moves; the floor is the
+# measured entry count: 2457 + 21 = 2478.
+MINIMUM_FILES = 2478
 
 
 MINIMUM_FILES = 2038
