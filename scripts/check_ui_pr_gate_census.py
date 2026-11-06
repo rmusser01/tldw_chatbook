@@ -1310,7 +1310,11 @@ MINIMUM_FILES = 2520
 # polish-1b entries above, then PR #3423's 3 review-fix pins, stay
 # appended at the tail, so no existing slot moves; the floor is the
 # measured entry count: 2457 + 23 = 2480.
-MINIMUM_FILES = 2480
+# - PR #3423 re-review N-1/N-2/N-3 (2026-11-06): Tests/UI/test_library_notes_
+#   bulk_keyword_per_note.py (per-note commits under a ready Sync v2 profile:
+#   three production-CSS Library boots over a real ChaChaNotes database),
+#   appended at the tail: 2480 -> 2481.
+MINIMUM_FILES = 2481
 
 
 MINIMUM_FILES = 2038
