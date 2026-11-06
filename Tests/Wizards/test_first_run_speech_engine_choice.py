@@ -585,7 +585,8 @@ def test_summary_names_cloud_whisper_after_the_cloud_choice() -> None:
                     "enabled": True,
                     "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
                 },
-            }
+            },
+            "api_settings": {"openai": {"api_key": "sk-provider-key"}},
         }
     )
     assert row.state == wizard_state.ROW_CONFIGURED
@@ -845,3 +846,122 @@ def test_readiness_and_spend_read_one_real_config_alike(
     sent = ts._openai_key_for_endpoint(engines.OPENAI_TRANSCRIPTIONS_URL)
     assert sent == expected
     assert offered is bool(expected)
+
+
+# -- review v5r2 LV1-F1: OpenAI Whisper saved, but no key to send -------------
+
+_SAVED_OPENAI = {
+    "default_provider": "remote-whisper",
+    "default_model": "whisper-1",
+    "remote_whisper": {
+        "enabled": True,
+        "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
+        "api_key_env_var": "",
+    },
+}
+#: The live case: credential_source = "stored" with nothing stored, and the
+#: key only in the environment -- the provider rule excludes it.
+_STORED_NOTHING = {"openai": {"credential_source": "stored"}}
+_ENV_ONLY = {"OPENAI_API_KEY": "sk-env-only-key"}
+
+
+def test_saved_openai_whisper_without_a_key_says_so_on_the_step() -> None:
+    """Review LV1-F1 (TASK-34100.13): the step hid Cloud and said "Nothing is
+    changed. Set dictation up later…" -- as if no dictation were saved --
+    while [transcription] still sent audio files to OpenAI with no key."""
+    app_config = {"transcription": _SAVED_OPENAI, "api_settings": _STORED_NOTHING}
+    facts = engines.detect_engine_facts(app_config, environ=_ENV_ONLY)
+    assert facts.openai_key is False
+    assert facts.kept_openai == engines.KEPT_OPENAI_NO_KEY
+    assert engines.saved_engine(_SAVED_OPENAI, facts) == engines.ENGINE_NONE
+    none = engines.engine_choices(facts)[0]
+    assert none.key == engines.ENGINE_NONE
+    assert none.detail.startswith("Nothing is changed: ")
+    assert "OpenAI Whisper" in none.detail
+    assert "no OpenAI key is available" in none.detail
+    assert "Settings ▸ Providers & Models" in none.detail
+    assert "Set dictation up later" not in none.detail
+
+
+def test_saved_openai_whisper_without_a_key_is_no_tick_on_the_summary() -> None:
+    rows = {
+        row.label: row
+        for row in wizard_state.build_summary_rows(
+            {"transcription": _SAVED_OPENAI, "api_settings": _STORED_NOTHING},
+            _ENV_ONLY,
+            rag_deps_installed=True,
+        )
+    }
+    row = rows["Speech transcription"]
+    assert row.state == wizard_state.ROW_ATTENTION
+    assert "OpenAI Whisper" in row.detail
+    assert "no OpenAI key is available" in row.detail
+    assert "Settings ▸ Providers & Models" in row.detail
+
+
+@pytest.mark.parametrize(
+    ("remote_extra", "environ", "app_extra"),
+    [
+        # A key given to the endpoint itself, or through the variable it names.
+        ({"api_key": "sk-their-own"}, {}, {}),
+        ({"api_key_env_var": "REMOTE_WHISPER_API_KEY"}, {"REMOTE_WHISPER_API_KEY": "sk-rw"}, {}),
+        # A legacy [API] key, which the Summary's raw config read has not folded.
+        ({}, {}, {"API": {"openai_api_key": "sk-legacy-only-key"}}),
+    ],
+)
+def test_saved_openai_whisper_with_a_key_it_can_send_keeps_its_tick(
+    remote_extra, environ, app_extra
+) -> None:
+    """The controls: any key the transcription service would send (its own
+    key, its named variable, or the OpenAI provider's, a legacy one included)
+    keeps the ✓ -- the attention mark is only for a key nothing resolves."""
+    transcription = {
+        **_SAVED_OPENAI,
+        "remote_whisper": {**_SAVED_OPENAI["remote_whisper"], **remote_extra},
+    }
+    rows = {
+        row.label: row
+        for row in wizard_state.build_summary_rows(
+            {"transcription": transcription, **app_extra},
+            environ,
+            rag_deps_installed=True,
+        )
+    }
+    row = rows["Speech transcription"]
+    assert row.state == wizard_state.ROW_CONFIGURED
+    assert row.detail == "OpenAI Whisper (cloud; for audio and video files)"
+
+
+def test_saved_openai_whisper_with_its_own_key_says_it_is_kept() -> None:
+    transcription = {
+        **_SAVED_OPENAI,
+        "remote_whisper": {**_SAVED_OPENAI["remote_whisper"], "api_key": "sk-their-own"},
+    }
+    facts = engines.detect_engine_facts(
+        {"transcription": transcription, "api_settings": _STORED_NOTHING},
+        environ=_ENV_ONLY,
+    )
+    assert facts.kept_openai == engines.KEPT_OPENAI_KEYED
+    detail = engines.engine_choices(facts)[0].detail
+    assert detail.startswith("Nothing is changed: ")
+    assert "keep going to OpenAI Whisper" in detail
+    assert "no OpenAI key" not in detail
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_step_over_keyless_openai_whisper_shows_it_and_writes_nothing() -> None:
+    from dataclasses import replace
+
+    facts = replace(FACTS, openai_key=False, kept_openai=engines.KEPT_OPENAI_NO_KEY)
+    wizard, step = _step(facts=facts, app_config={"transcription": _SAVED_OPENAI})
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        pressed = [
+            b.id for b in step.query("#setup-speech-engine RadioButton") if b.value
+        ]
+        detail = str(step.query_one("#setup-speech-engine-detail", Static).render())
+        ok, _ = await step.commit()
+    assert pressed == ["setup-speech-engine-none"]
+    assert "no OpenAI key is available" in detail
+    assert ok
+    wizard.commit_config.assert_not_awaited()

@@ -66,6 +66,28 @@ ENGINE_DEFAULT_MODELS: Mapping[str, str] = {
 }
 
 NO_DICTATION_DETAIL = "Nothing is changed. Set dictation up later by running setup again."
+#: ``EngineFacts.kept_openai``: an enabled remote-whisper at OpenAI's endpoint
+#: that the Cloud row does not cover (no OpenAI provider key resolves), with a
+#: key of its own to send, or with none at all (review LV1-F1).
+KEPT_OPENAI_KEYED = "keyed"
+KEPT_OPENAI_NO_KEY = "no-key"
+#: The remote-whisper key variable the transcription service reads when the
+#: table names none.
+REMOTE_KEY_ENV_DEFAULT = "REMOTE_WHISPER_API_KEY"
+#: Where an OpenAI key is added (the Protect step names the same page).
+OPENAI_KEY_PAGE = "Settings ▸ Providers & Models"
+KEPT_OPENAI_KEYED_DETAIL = (
+    "Nothing is changed: audio and video files keep going to OpenAI Whisper, "
+    "with the key saved for it."
+)
+KEPT_OPENAI_NO_KEY_DETAIL = (
+    "Nothing is changed: audio and video files are set to go to OpenAI "
+    f"Whisper, but no OpenAI key is available — add one in {OPENAI_KEY_PAGE}."
+)
+CLOUD_NO_KEY_SUMMARY = (
+    "OpenAI Whisper, but no OpenAI key is available — add one in "
+    f"{OPENAI_KEY_PAGE}"
+)
 #: Fields of ``[transcription.remote_whisper]`` that name a server's own key.
 REMOTE_KEY_FIELDS = ("api_key", "api_key_env_var")
 CLOUD_DETAIL = (
@@ -88,12 +110,18 @@ class EngineFacts:
         kept_remote: The host of a Whisper server (not OpenAI's) that
             ``[transcription]`` already sends audio files to, or "". "No
             dictation for now" leaves it alone and says so (review R1).
+        kept_openai: ``KEPT_OPENAI_KEYED`` or ``KEPT_OPENAI_NO_KEY`` when
+            ``[transcription]`` already sends audio files to OpenAI's endpoint
+            but no OpenAI provider key resolves (so there is no Cloud row to
+            preselect); "" otherwise. "No dictation for now" says which
+            (review LV1-F1).
     """
 
     installed_engine: str = ""
     openai_key: bool = False
     parakeet_mib: int = 0
     kept_remote: str = ""
+    kept_openai: str = ""
 
 
 @dataclass(frozen=True)
@@ -163,6 +191,42 @@ def _remote_in_use(transcription: Mapping[str, Any]) -> Mapping[str, Any]:
     return {}
 
 
+def remote_whisper_own_key(remote: Mapping[str, Any], environ: Mapping[str, str]) -> bool:
+    """Whether a remote-whisper table carries a key of its own (bool only).
+
+    Mirrors the first two sources ``transcription_service`` sends: the
+    table's ``api_key`` (never ``enc:`` ciphertext), else the variable its
+    ``api_key_env_var`` names (``REMOTE_WHISPER_API_KEY`` when the table
+    names none). Placeholders and blanks count as no key.
+    """
+    from tldw_chatbook.config import resolve_provider_api_key
+
+    if resolve_provider_api_key(remote.get("api_key")) is not None:
+        return True
+    env_var = str(remote.get("api_key_env_var", REMOTE_KEY_ENV_DEFAULT) or "").strip()
+    return bool(env_var) and resolve_provider_api_key(environ.get(env_var)) is not None
+
+
+def saved_openai_whisper_lacks_key(
+    transcription: Mapping[str, Any],
+    app_config: Mapping[str, Any],
+    environ: Mapping[str, str],
+) -> bool:
+    """Whether audio files are set to go to OpenAI's Whisper with no key to send.
+
+    Review LV1-F1 (TASK-34100.13): the Summary ticked "OpenAI Whisper" for a
+    saved setup that cannot authenticate. ``True`` only when the enabled
+    remote-whisper is OpenAI's https endpoint and neither its own key nor the
+    OpenAI provider's resolves -- the three sources the service tries.
+    """
+    remote = _remote_in_use(transcription)
+    if not remote or not is_openai_endpoint(remote.get("api_endpoint")):
+        return False
+    if remote_whisper_own_key(remote, environ):
+        return False
+    return not openai_key_configured(app_config, environ)
+
+
 def openai_key_configured(
     app_config: Mapping[str, Any], environ: Mapping[str, str]
 ) -> bool:
@@ -180,11 +244,19 @@ def openai_key_configured(
     from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
     from tldw_chatbook.UI.Wizards.first_run_setup_state import full_config_sections
 
-    api_settings = full_config_sections(app_config, "api_settings")["api_settings"]
+    from tldw_chatbook.config import resolve_provider_api_key
+
+    sections = full_config_sections(app_config, "api_settings", "API")
     try:
-        table = provider_settings_for_key(api_settings, "openai")
+        table = provider_settings_for_key(sections["api_settings"], "openai")
     except ProviderSettingsError:
         return False
+    legacy = resolve_provider_api_key(sections["API"].get("openai_api_key"))
+    if legacy is not None and resolve_provider_api_key(table.get("api_key")) is None:
+        # The Summary reads the raw TOML, which ``load_settings``' legacy
+        # ``[API]`` fold has not reached; fold it the same way (the stored
+        # key, lowest precedence) so the step and the Summary agree.
+        table = {**table, "api_key": legacy}
     return resolve_provider_credential("openai", table, environ=environ)[0] is not None
 
 
@@ -202,15 +274,19 @@ def detect_engine_facts(
     transcription = full_config_sections(app_config, "transcription")["transcription"]
     configured = str(transcription.get("default_provider") or "")
     remote = _remote_in_use(transcription)
+    at_openai = bool(remote) and is_openai_endpoint(remote.get("api_endpoint"))
+    openai_key = openai_key_configured(app_config, env)
+    kept_openai = ""
+    if at_openai and not openai_key:
+        kept_openai = (
+            KEPT_OPENAI_KEYED if remote_whisper_own_key(remote, env) else KEPT_OPENAI_NO_KEY
+        )
     return EngineFacts(
         installed_engine=pick_installed_engine(configured, installed_local_providers()),
-        openai_key=openai_key_configured(app_config, env),
+        openai_key=openai_key,
         parakeet_mib=round(parakeet_bytes / 1048576) if parakeet_bytes else 0,
-        kept_remote=(
-            remote_whisper_host(remote)
-            if remote and not is_openai_endpoint(remote.get("api_endpoint"))
-            else ""
-        ),
+        kept_remote=remote_whisper_host(remote) if remote and not at_openai else "",
+        kept_openai=kept_openai,
     )
 
 
@@ -244,12 +320,17 @@ def refresh_engine_facts(step: Any) -> None:
 def engine_choices(facts: EngineFacts) -> list[EngineChoice]:
     """The engine radio's rows, in order, built from what was detected."""
     size = f"{facts.parakeet_mib} MiB download" if facts.parakeet_mib else "download"
-    none_detail = (
-        "Nothing is changed: audio and video files keep going to your Whisper "
-        f"server at {facts.kept_remote}."
-        if facts.kept_remote
-        else NO_DICTATION_DETAIL
-    )
+    if facts.kept_remote:
+        none_detail = (
+            "Nothing is changed: audio and video files keep going to your Whisper "
+            f"server at {facts.kept_remote}."
+        )
+    elif facts.kept_openai == KEPT_OPENAI_NO_KEY:
+        none_detail = KEPT_OPENAI_NO_KEY_DETAIL
+    elif facts.kept_openai == KEPT_OPENAI_KEYED:
+        none_detail = KEPT_OPENAI_KEYED_DETAIL
+    else:
+        none_detail = NO_DICTATION_DETAIL
     choices = [EngineChoice(ENGINE_NONE, "No dictation for now", none_detail)]
     if facts.installed_engine:
         name = engine_display_name(facts.installed_engine)
