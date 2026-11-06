@@ -85,6 +85,20 @@ TASK-33620.15.18 AC2, .49 and unmeasured .50 criteria remain open; .51's narrow
 historical acceptance does not transfer. Functional real-GC controls will be
 recorded separately from those performance limits.
 
+**Measured 2026-11-05 (TASK-33620.15.51).** A first send's provider latency was
+measured live on dev 29592ecc9b, against the same commit with #3336's runtime changes
+reverted. Setup: real Anthropic haiku, Enter 4.5 s after the warm-up ended, 16 ABBA
+pairs over two rounds with the profiles swapped. Enter to provider POST was a paired
+median 60 ms *earlier* on dev (bootstrap 95% CI -176 to +18 ms), and dev was slower in
+5 of 16 pairs.
+
+The pass-end request usually re-froze 2.0 s after the warm-up ended. In 4 of 36 dev
+launches its timer found a compaction already due instead, because the runtime
+re-freezes count what they freeze as growth. In those launches the first send ran
+with the warm-up's modules unfrozen, and the first reply's maintenance compacted for
+241-298 ms on the UI loop (TASK-33620.15.57). With the old closing boot freeze, that
+happened in 0 of 36 launches.
+
 ## Measured result
 
 All runs used a scratch profile at 235x52: boot, then a 24-visit tour of 8
