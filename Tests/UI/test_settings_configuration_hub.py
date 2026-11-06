@@ -8697,6 +8697,13 @@ async def test_provider_navigation_conflict_requires_review_discard_or_return(re
         screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
 
         screen.apply_navigation_context(target.to_context())
+        # TASK-39046: the navigation's pane swap rebuilds these panes and ends
+        # by focusing the rail button. Read them, and press Review, only after
+        # the swap's queued follow-ups ran, so Review's focus queues behind
+        # the swap's instead of losing to it.
+        swap_landed = asyncio.Event()
+        screen._after_category_panes(swap_landed.set)
+        await asyncio.wait_for(swap_landed.wait(), timeout=10)
         await pilot.pause()
 
         assert screen.query_one("#settings-provider-value", Select).value == "openai"
@@ -8715,13 +8722,24 @@ async def test_provider_navigation_conflict_requires_review_discard_or_return(re
             "Return to Chat settings"
         )
 
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         screen.query_one("#settings-provider-conflict-review", Button).press()
-        await pilot.pause()
-        assert screen.query_one("#settings-provider-endpoint-value", Input).has_focus
+        # Review's focus is deferred (press, handler, then the app's queue);
+        # with no swap left to take it, wait for it to land.
+        for _ in range(100):
+            if endpoint.has_focus:
+                break
+            await pilot.pause(0.05)
+        assert endpoint.has_focus
         assert screen.query_one("#settings-provider-value", Select).value == "openai"
 
         screen.query_one("#settings-provider-conflict-return", Button).press()
-        await pilot.pause()
+        # The return posts its navigation through the screen to the app;
+        # wait for its arrival, not for one pause (TASK-39046: 0 == 1 at load).
+        for _ in range(200):
+            if host.navigation_messages:
+                break
+            await pilot.pause(0.05)
         assert len(host.navigation_messages) == 1
         return_context = host.navigation_messages[0].screen_context
         assert set(return_context) == {
