@@ -95,6 +95,22 @@ The first fix warmed the display after the evidence settle, just before the poll
 
 **What to do.** When a test waits for work on a worker thread (a config write, SQLite, file I/O), await an event the worker sets, or poll with `asyncio.sleep`. Use `pilot.pause()` only to wait for layout. When such a wait times out, compare the event loop's CPU since the wait began with the wall time. If they are close and the thread is partway through its write, the thread was short of the GIL; it was not queued or blocked on a lock. `Tests/UI/test_llamacpp_snapshot_settings.py` (`_SaveTimeline`) reports both. Also, `pilot.press()` and `wait_for_scheduled_animations()` end in `wait_for_idle()`, which measures the whole process's `process_time()`. So while any thread uses CPU, each call can take up to 1 s.
 
+## A per-tick count on the mounted Console must retry deferred ticks (TASK-36571.1, 2026-11-05)
+
+**Incident.** A pin counted workspace builds over four poll-shaped syncs on a
+settled harness Console and expected `[0, 1, 0, 1]`. It read `[0, 1, 0, 0]`,
+then failed differently on the next run: the third sync returned False (its
+checked display had gone cold, so a whole-sync replay owned the render) and
+the next two returned at entry on the replay flag without reading anything.
+A projection pin that asserted `_sync_console_rail_and_controls() is True`
+failed the same way in one run of three.
+
+**What to do.** Treat a sync that returns False as "did not run" and retry
+it after a `pilot.pause()` until one completes, then count only that one;
+pair the two syncs whose relation you pin (an explicit sync, then at once a
+poll tick) inside the retry. Check the pin on the base build too: the retry
+must not turn the base's red into a pass.
+
 ## A worker-thread SQLite handle can be proven closed from the test thread with the `in_transaction` getter (TASK-38714, 2026-11-05)
 
 **Incident.** Four TASK-38714 tests had to show that a connection a store opened on a pool thread was closed after the owner's close ran elsewhere. The thread-local slot belongs to a thread that has already exited, and TASK-31993's lesson says SQLite's thread check fires before its closed check. So the first plan was to probe on each opening thread. The kernel stores (`AgentRunsDB`) use `check_same_thread=True`, but `sqlite3.Connection.in_transaction.__get__(conn)` only checks that the connection is open, not which thread asks. Called from the test thread, it returned normally for the leaked handles at base (`DID NOT RAISE`, red) and raised "Cannot operate on a closed database" after the fix (green). Statements such as `execute` are the calls that check the thread first.

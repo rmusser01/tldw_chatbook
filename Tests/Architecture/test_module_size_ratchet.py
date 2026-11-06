@@ -847,7 +847,20 @@ _BUDGETS: dict[str, int] = {
     # Three scope docstrings name the control-bar syncs as openers (+7 lines).
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 8942 -> 8961 (+19).
     # The control-bar syncs' shared build reads the registry live.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8961,
+    # TASK-36571.1, 2026-11-05: same waiver (owner rule: a fix over a size
+    # ratchet raises the row by the branch's growth with a dated comment).
+    # A run tick reuses its predecessor's unchanged build once (keyed on the
+    # run markers it shows), the workspace state builder is reused while the
+    # registry view's reads are unmoved, the projection reads the workspace
+    # label alone, and an unchanged folder-availability re-read no longer
+    # pushes a rebuild: 8961 -> 9160 (+199).
+    # TASK-36571.1 review fix, 2026-11-06: same waiver (owner rule: a fix
+    # over a size ratchet raises the row by the branch's growth with a dated
+    # comment). The label and open-flag reads ask for the TTL-gated re-reads
+    # (folder availability, saved rows, sub-agent counts) the idle builds
+    # they replaced asked for, and two stale docstrings are corrected:
+    # 9160 -> 9231 (+71).
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 9231,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

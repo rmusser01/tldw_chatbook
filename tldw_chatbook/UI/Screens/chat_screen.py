@@ -665,10 +665,7 @@ from ...Widgets.destination_rail import (
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (the summarize-preview modal imports where it is pushed.)
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
-from ...Workspaces.display_state import (
-    ConsoleWorkspaceConversationRow,
-    ConsoleWorkspaceContextState,
-)
+from ...Workspaces.display_state import ConsoleWorkspaceConversationRow
 from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 
@@ -12249,12 +12246,14 @@ class ChatScreen(BaseAppScreen):
         *,
         staged_context_state: ConsoleStagedContextState,
         inspector_state: ConsoleInspectorState,
-        workspace_context_state: ConsoleWorkspaceContextState,
+        workspace_label: str,
         available_columns: int | None = None,
     ) -> ConsoleRailState:
         """Build the effective Console rail state for the current composition.
 
         Args:
+            workspace_label: The workspace context's label, the one part of
+                that context the rail shows (TASK-36571.1).
             available_columns: Optional width override for the responsive
                 rules; the live-resize hook passes the event's width so the
                 build never depends on widget-size update ordering.
@@ -12271,21 +12270,8 @@ class ChatScreen(BaseAppScreen):
                 if session.id == active_session_id:
                     active_session = session
                     break
-        workspace_key = build_console_rail_preference_key(
-            workspace_id=workspace_context.active_workspace_id,
-            conversation_id=(self._character._current_console_rail_conversation_id()),
-            session_id=self._session._current_console_session_id(),
-            layout_scope="workspace",
-        )
-        preference_key = build_console_rail_preference_key(
-            workspace_id=workspace_context.active_workspace_id,
-            layout_scope=normalize_console_rail_layout_scope(
-                self._console_config().get("rail_layout_scope")
-            ),
-        )
-        stored_preferences = self._ensure_console_rail_scope_seed(
-            preference_key,
-            workspace_key,
+        preference_key, stored_preferences = self._console_rail_stored_preferences(
+            workspace_context
         )
         resolved_available_columns = (
             available_columns
@@ -12297,7 +12283,7 @@ class ChatScreen(BaseAppScreen):
             stored_preferences=stored_preferences,
             staged_source_count=len(workspace_context.staged_sources),
             staged_summary=staged_context_state.summary,
-            workspace_label=workspace_context_state.workspace_label,
+            workspace_label=workspace_label,
             session_label=getattr(active_session, "title", ""),
             run_status=self._current_console_run_status_value(),
             inspector_rows=console_badge_inspector_rows(inspector_state),
@@ -12319,6 +12305,43 @@ class ChatScreen(BaseAppScreen):
         ):
             return replace(rail_state, right_open=True, right_forced_collapsed=False)
         return rail_state
+
+    def _console_rail_stored_preferences(
+        self, workspace_context: Any = None
+    ) -> tuple[ConsoleRailPreferenceKey, Any]:
+        """The rail's preference key and stored preferences (seeding a new scope)."""
+        if workspace_context is None:
+            workspace_context = self._workspace._current_console_workspace_context()
+        workspace_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            conversation_id=(self._character._current_console_rail_conversation_id()),
+            session_id=self._session._current_console_session_id(),
+            layout_scope="workspace",
+        )
+        preference_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            layout_scope=normalize_console_rail_layout_scope(
+                self._console_config().get("rail_layout_scope")
+            ),
+        )
+        return preference_key, self._ensure_console_rail_scope_seed(
+            preference_key, workspace_key
+        )
+
+    def _current_console_agent_section_open(self) -> bool:
+        """Whether the Agent rail section renders open, without the rail state.
+
+        TASK-36571.1: equals ``_current_console_rail_state().agent_open`` (the
+        stored preference, then the fleet's force-open; no other rail rule
+        touches it), which the Agent section's sync built, Inspector state
+        included, on every projection for this one flag. Asks for the
+        re-reads that build asked for (``request_due_console_context_rereads``).
+        """
+        self._workspace.request_due_console_context_rereads()
+        _preference_key, stored_preferences = self._console_rail_stored_preferences()
+        return self._agent._fleet_agent_section_open(
+            coerce_console_rail_preferences(stored_preferences).agent_open
+        )
 
     def _should_open_standard_width_inspector(
         self,
@@ -12661,9 +12684,8 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleRailState:
         """Build the current effective rail state from mounted Console context.
 
-        Inside a run tick's `tick_workspace_build_scope` (TASK-22201) the
-        workspace-context build below is served from the tick's shared,
-        fingerprint-validated build; every other caller builds live.
+        The rail reads only the workspace context's label (TASK-36571.1), so
+        it takes that one display read rather than the whole context build.
         """
         resolved_available_columns = (
             available_columns
@@ -12674,13 +12696,10 @@ class ChatScreen(BaseAppScreen):
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         if inspector_state is None:
             inspector_state = self._build_console_inspector_state(pending_launch)
-        workspace_context_state = (
-            self._workspace._build_console_workspace_context_state()
-        )
         rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
-            workspace_context_state=workspace_context_state,
+            workspace_label=self._workspace.console_workspace_label(),
             available_columns=resolved_available_columns,
         )
         rail_state = resolve_console_rail_priority(
@@ -13531,8 +13550,8 @@ class ChatScreen(BaseAppScreen):
                 ConsoleDisplayRow("Conversation source", "none"),
             )
 
-        workspace_state = self._workspace._build_console_workspace_context_state()
-        workspace_value = workspace_state.workspace_label
+        # TASK-36571.1: the label alone, not the whole context build.
+        workspace_value = self._workspace.console_workspace_label()
         if isinstance(workspace_value, str) and workspace_value.startswith(
             "Workspace: "
         ):
@@ -14781,7 +14800,7 @@ class ChatScreen(BaseAppScreen):
         rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
-            workspace_context_state=workspace_context_state,
+            workspace_label=workspace_context_state.workspace_label,
             available_columns=available_columns,
         )
         rail_state = resolve_console_rail_priority(rail_state, available_columns)

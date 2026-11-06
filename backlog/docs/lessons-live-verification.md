@@ -71,6 +71,52 @@ Enter and the POST than dev: the profiles' history, not their code.
   so that each arm meets each profile equally often. Swapping pairs of profiles
   between halves is not enough.
 
+## A tick-shared build is paid by its first reader, and a changed fingerprint does not mean a changed build (TASK-36571.1, 2026-11-05)
+
+**Incident.** TASK-36571.1 was filed from component timers that put the
+workspace-context build in the projection (about 9 ms of CPU per send
+window) and said the Conversations tray push "needs the whole build". On dev
+29592ecc9b, per root, the projection paid 27.4 of the 31.6 ms of build wall
+per window: it is the first reader in most ticks, and the tick cache
+(TASK-22201) charges the build to whoever reads first. Once the projection
+read only the label, the tray push paid every tick instead (one launch: 0 in
+the projection, all of it in the tray). A census that recorded, per build,
+which fingerprint components had changed and which state fields differed
+from the previous build showed what the tray push was rebuilding: in a send
+window most fingerprint changes were run-status flips (VALIDATING to
+STREAMING and on) whose build equalled the one before, and a once-a-second
+folder-availability re-read pushed a full rebuild with identical values.
+
+**What to do.** Attribute a shared per-tick cache by tick, not by reader,
+and expect its cost to move to the next reader when you remove one. Before
+deciding that a fingerprint is too volatile to reuse a build across ticks,
+record what the build's output actually does when the fingerprint moves: a
+field-level diff of consecutive builds names the inputs worth keying on (the
+probe was session-local, a `sys.monitoring` PY_RETURN hook on the fingerprint
+and the build).
+
+## A harness's idle cadence is not the app's: count a live idle window before sizing an idle gap (TASK-36571.1, 2026-11-06)
+
+**Incident.** TASK-36571.1's review blocked the branch on the idle Console. The
+label and open-flag reads had stopped the folder-availability and saved-rows
+re-reads that the base's settings-summary, control-bar and Agent section builds
+asked for. The review sized the gap by "the idle summary-sync cadence the
+implementer measured live (12-14 per 20 s)". That figure came from the branch's
+diagnosis of a test race, in mounted harness runs. In the real app, launched
+through the session launcher, a `sys.monitoring` entry counter (no method
+replaced) watched 60 s of a truly idle Console after mount. It counted 0 of
+those syncs, 0 builds and 0 re-reads, on dev, on the pre-fix head and on the
+fix alike. The credential poll's pre-gate skips its sync when nothing changed,
+and no other idle timer runs one. The gap was real, but it shows only where an
+event-driven sync runs without a build. Over a launch and 3 sends, dev started
+21 folder re-reads, the pre-fix head 15 and the fix 20.
+
+**What to do.** Before sizing a gap by an idle cadence, count that cadence in
+the live app over a fixed idle window with an entry counter, and say which
+harness any cadence you quote came from. Pin the fix in a mounted harness that
+calls the sync explicitly, rather than relying on how often the harness happens
+to run it.
+
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
 **Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:
