@@ -352,6 +352,37 @@ class SQLiteConnectionQuiescenceRegistry:
             connection.close()
             self.unregister(connection)
 
+    def close_if_idle(self) -> bool:
+        """Close every registered handle now, or none while any is in use.
+
+        Unlike a quiescence barrier, this never makes new work fail: it holds
+        the registry lock throughout, so an acquisition or use arriving
+        meanwhile waits for the lock and then reopens (TASK-38955 quit close).
+
+        Returns:
+            ``True`` when every handle was closed; ``False``, closing nothing,
+            while a barrier, acquisition, managed use or transaction is active.
+        """
+
+        with self._condition:
+            if (
+                self._quiescence_token is not None
+                or self._active_uses
+                or self._active_acquisitions
+            ):
+                return False
+            connections = tuple(self._connections.values())
+            for connection in connections:
+                try:
+                    if connection.in_transaction:
+                        return False
+                except sqlite3.ProgrammingError:
+                    pass  # already closed; forgotten below
+            for connection in connections:
+                connection.close()
+                self.unregister(connection)
+            return True
+
     def end_quiescence(self, token: object) -> None:
         """Resume ordinary acquisition after the exact maintenance window.
 

@@ -367,16 +367,10 @@ async def test_app_unmount_retires_both_stores_on_every_thread(
     await asyncio.get_running_loop().run_in_executor(pool, chacha_db.get_connection)
     assert chacha_db.registered_connection_count() == 2
 
-    order: list[str] = []
+    # ChaChaNotes handles still registered when the workers settled.
+    open_when_workers_settled: list[int] = []
     owner = object.__new__(type("_Owner", (lifecycle_module.LifecycleMixin,), {}))
-    close_stores = owner._close_main_databases
-
-    async def recorded_close() -> None:
-        order.append("stores closed")
-        await close_stores()
-
     owner.__dict__.update(
-        _close_main_databases=recorded_close,
         chachanotes_db=chacha_db,
         media_db=media_db,
         loguru_logger=Mock(),
@@ -389,7 +383,9 @@ async def test_app_unmount_retires_both_stores_on_every_thread(
         _stop_served_canvas_control=AsyncMock(),
         _shutdown_app_owned_lifecycles=AsyncMock(),
         _cancel_and_settle_workers=AsyncMock(
-            side_effect=lambda *_: order.append("workers settled")
+            side_effect=lambda *_: open_when_workers_settled.append(
+                chacha_db.registered_connection_count()
+            )
         ),
         _close_owned_tts_resources=AsyncMock(),
         _stop_ui_responsiveness_monitor=Mock(),
@@ -411,60 +407,173 @@ async def test_app_unmount_retires_both_stores_on_every_thread(
     finally:
         pool.shutdown(wait=True)
 
-    # (registered ChaChaNotes handles, live leases on either store)
-    assert left == (0, 0)
-    assert order == ["workers settled", "stores closed"]
+    # (registered ChaChaNotes handles, live leases on either store); the
+    # stores close after the workers settle, not before.
+    assert (left, open_when_workers_settled) == ((0, 0), [2])
 
 
-async def test_app_unmount_store_close_is_bounded_and_keeps_the_loop_live(
+def _loop_gaps() -> tuple[list[float], asyncio.Task]:
+    """Record the event loop's gaps between 20 ms ticks."""
+    import time
+
+    gaps: list[float] = []
+
+    async def ticker() -> None:
+        last = time.monotonic()
+        while True:
+            await asyncio.sleep(0.02)
+            now = time.monotonic()
+            gaps.append(now - last)
+            last = now
+
+    return gaps, asyncio.create_task(ticker())
+
+
+async def test_app_unmount_store_close_never_aborts_a_straggler_write(
     chacha_db: CharactersRAGDB,
-    monkeypatch: pytest.MonkeyPatch,
 ):
-    """TASK-38955: a ChaChaNotes user that never finishes cannot hold quit.
-    Quiescence gives up at its bound, off the loop, and the close goes on."""
+    """TASK-38955 review: a worker can outlive the unmount's cancel grace.
+    A waiting quiescence barrier made its next statement raise and rolled its
+    transaction back; the quit close must never abort a write."""
+    import threading
+    from unittest.mock import Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+
+    chacha_db.get_connection().execute(
+        "CREATE TABLE IF NOT EXISTS quit_probe (n INTEGER NOT NULL)"
+    )
+    stop, running = threading.Event(), threading.Event()
+    errors: list[str] = []
+    committed = [0]
+
+    def straggler() -> None:
+        try:
+            while not stop.is_set():
+                with chacha_db.transaction() as cursor:
+                    cursor.execute("INSERT INTO quit_probe (n) VALUES (?)", (committed[0],))
+                    cursor.execute("INSERT INTO quit_probe (n) VALUES (?)", (committed[0],))
+                committed[0] += 1
+                running.set()
+        except Exception as exc:  # noqa: BLE001 - the assertion reports it
+            errors.append(f"{type(exc).__name__}: {exc}")
+        finally:
+            chacha_db.close_connection()
+
+    writer = threading.Thread(target=straggler)
+    writer.start()
+    assert running.wait(5)
+    owner = SimpleNamespace(chachanotes_db=chacha_db, loguru_logger=Mock())
+    try:
+        await lifecycle_module.LifecycleMixin._close_main_databases(owner)
+        await asyncio.sleep(0.2)  # the straggler keeps writing past the close
+    finally:
+        stop.set()
+        writer.join(10)
+
+    rows = chacha_db.get_connection().execute(
+        "SELECT COUNT(*) FROM quit_probe"
+    ).fetchone()[0]
+    assert (errors, rows) == ([], 2 * committed[0])
+
+
+async def test_app_unmount_store_close_skips_a_busy_store_without_blocking(
+    chacha_db: CharactersRAGDB,
+):
+    """TASK-38955 review: a straggler mid-transaction, holding the WAL write
+    lock. The close must not wait for it, freeze the loop (the UI-thread
+    close's checkpoint used to wait out busy_timeout, 15 s) or abort it; the
+    busy store is left to close with the process."""
     import threading
     import time
     from unittest.mock import Mock
 
     from tldw_chatbook import app_lifecycle as lifecycle_module
 
-    monkeypatch.setattr(lifecycle_module, "_QUIT_QUIESCE_SECONDS", 0.3)
+    chacha_db.add_conversation({"title": "ui handle", "character_id": 1})
+    chacha_db.get_connection().execute(
+        "CREATE TABLE IF NOT EXISTS quit_probe (n INTEGER NOT NULL)"
+    )
     entered, release = threading.Event(), threading.Event()
+    outcome: list[str] = []
 
     def stuck_writer() -> None:
         try:
-            with chacha_db.transaction():
+            with chacha_db.transaction() as cursor:
+                cursor.execute("INSERT INTO quit_probe (n) VALUES (1)")
                 entered.set()
-                release.wait(10)
+                release.wait(20)
+            outcome.append("committed")
+        except Exception as exc:  # noqa: BLE001 - the assertion reports it
+            outcome.append(f"{type(exc).__name__}: {exc}")
+            entered.set()
         finally:
             chacha_db.close_connection()
 
     writer = threading.Thread(target=stuck_writer)
     writer.start()
     assert entered.wait(5)
-    ticks = 0
-
-    async def ticker() -> None:
-        nonlocal ticks
-        while True:
-            await asyncio.sleep(0.02)
-            ticks += 1
-
+    gaps, beat = _loop_gaps()
+    await asyncio.sleep(0.1)
     owner = SimpleNamespace(chachanotes_db=chacha_db, loguru_logger=Mock())
-    beat = asyncio.create_task(ticker())
     started = time.monotonic()
     try:
         await lifecycle_module.LifecycleMixin._close_main_databases(owner)
-        waited = time.monotonic() - started
+        took = time.monotonic() - started
+        await asyncio.sleep(0.05)
     finally:
         beat.cancel()
         release.set()
-        writer.join(5)
+        writer.join(10)
 
-    assert waited < 3.0, waited
-    assert ticks >= 5, f"the event loop froze during the close ({ticks} ticks)"
-    assert "quiescing ChaChaNotes" in owner.loguru_logger.error.call_args.args[0]
+    assert (took < 1.0, max(gaps) < 1.0, outcome) == (True, True, ["committed"]), (
+        took,
+        max(gaps),
+    )
+    assert chacha_db.registered_connection_count() >= 1  # left for process exit
 
+
+async def test_app_unmount_ui_close_bounds_its_checkpoint_wait(
+    chacha_db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """TASK-38955 review: a UI-thread handle opened while the idle close ran
+    on its worker is closed on the loop, and that close checkpoints. With
+    another connection holding the write lock it waited out busy_timeout
+    (15 s); the quit close bounds the wait."""
+    import sqlite3
+    import time
+    from unittest.mock import Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+
+    chacha_db.add_conversation({"title": "ui handle", "character_id": 1})
+    chacha_db.get_connection().execute(
+        "CREATE TABLE IF NOT EXISTS quit_probe (n INTEGER NOT NULL)"
+    )
+    # Stands in for an idle close that finished before the UI handle opened.
+    monkeypatch.setattr(chacha_db, "close_idle_connections", lambda: True)
+    holder = sqlite3.connect(chacha_db.db_path_str, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("INSERT INTO quit_probe (n) VALUES (1)")
+    gaps, beat = _loop_gaps()
+    await asyncio.sleep(0.1)
+    owner = SimpleNamespace(chachanotes_db=chacha_db, loguru_logger=Mock())
+    started = time.monotonic()
+    try:
+        await lifecycle_module.LifecycleMixin._close_main_databases(owner)
+        took = time.monotonic() - started
+        await asyncio.sleep(0.05)
+    finally:
+        beat.cancel()
+        holder.rollback()
+        holder.close()
+
+    bound = lifecycle_module._QUIT_CLOSE_BUSY_SECONDS
+    assert (took < bound + 1.0, max(gaps) < bound + 1.0) == (True, True), (
+        took,
+        max(gaps),
+    )
 
 def test_app_pass_zero_disables(
     chacha_db: CharactersRAGDB,

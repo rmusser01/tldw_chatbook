@@ -82,8 +82,9 @@ DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 # thread worker that will not notice cancellation at all.
 WORKER_CANCELLATION_GRACE_SECONDS = 3.0
 
-# TASK-38955: quit's bound on draining ChaChaNotes (exit watchdog: 120 s).
-_QUIT_QUIESCE_SECONDS = 5.0
+# TASK-38955: the longest a quit-time close waits on another writer's lock
+# for its WAL checkpoint, on the loop (exit watchdog: 120 s).
+_QUIT_CLOSE_BUSY_SECONDS = 0.5
 
 # TASK-1240. The `component` this module passes to `persist_event`. It is a
 # bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
@@ -436,28 +437,38 @@ class LifecycleMixin:
     async def _close_main_databases(self) -> None:
         """Retire the ChaChaNotes and media handles at quit (TASK-38955).
 
-        Bounded ChaChaNotes quiescence, off the loop, closes its handles on
-        every thread; each store then drops this thread's. Workers retire their
-        own. In-memory stores keep their data. Failures never abort unmount.
+        ChaChaNotes closes its handles on every thread only if none is in
+        use, so a straggler worker's write is never aborted; a busy store is
+        left to close with the process. Each store then closes this thread's
+        handle with its checkpoint wait bounded. Media worker threads retire
+        their own. In-memory stores keep their data. Failures never abort.
         """
         notes = getattr(self, "chachanotes_db", None)
-        media = getattr(self, "media_db", None)
+        stores = [getattr(self, "media_db", None)]
         if notes is not None and not notes.is_memory_db:
-
-            def quiesce() -> None:
-                with notes.quiesce_connections(timeout_seconds=_QUIT_QUIESCE_SECONDS):
-                    pass
-
             try:
-                await asyncio.to_thread(quiesce)
+                idle = await asyncio.to_thread(notes.close_idle_connections)
             except Exception as exc:  # noqa: BLE001 - quit must go on regardless
+                idle = False
                 self.loguru_logger.error(
-                    f"Error quiescing ChaChaNotes at quit: {type(exc).__name__}"
+                    f"Error closing ChaChaNotes at quit: {type(exc).__name__}"
                 )
-        for db in (notes, media):
+            if idle:
+                stores.insert(0, notes)
+            else:
+                self.loguru_logger.info(
+                    "ChaChaNotes still in use at quit; its handles close with the process"
+                )
+        for db in stores:
             if db is None or db.is_memory_db:
                 continue
+            conn = getattr(db._local, "conn", None)
             try:
+                if conn is not None:
+                    with contextlib.suppress(sqlite3.Error):  # already retired
+                        conn.execute(
+                            f"PRAGMA busy_timeout = {int(_QUIT_CLOSE_BUSY_SECONDS * 1000)}"
+                        )
                 db.close_connection()
             except Exception as exc:  # noqa: BLE001 - quit must go on regardless
                 self.loguru_logger.error(

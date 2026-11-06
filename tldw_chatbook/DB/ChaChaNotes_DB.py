@@ -3255,6 +3255,15 @@ DELETE FROM keywords
 
         return self._connection_quiescence.connection_count()
 
+    def close_idle_connections(self) -> bool:
+        """Close every same-file handle unless one is in use (never aborts work).
+
+        Returns:
+            Whether the handles were closed; see ``close_if_idle``.
+        """
+
+        return self._connection_quiescence.close_if_idle()
+
     def get_console_trace_compaction_status(self) -> dict[str, object]:
         """Return content-free physical trace-maintenance status and metrics.
 
