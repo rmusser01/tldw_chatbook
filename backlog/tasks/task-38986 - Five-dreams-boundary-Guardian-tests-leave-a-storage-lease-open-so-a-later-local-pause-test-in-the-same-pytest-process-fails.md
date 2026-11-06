@@ -1,8 +1,10 @@
 ---
 id: TASK-38986
 title: "Five dreams-boundary Guardian tests leave a storage lease open, so a later local-pause test in the same pytest process fails"
-status: To Do
+status: Done
+assignee: ['@claude']
 created_date: 2026-11-06 01:42
+updated_date: 2026-11-06 05:00
 labels:
 - follow-up
 - tests
@@ -58,7 +60,46 @@ The production lease of this shape is the sync-log retention pass, which TASK-38
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the five nodes leaves storage_admission._live_leases as it found it; a per-test count shows +1 for each on dev and 0 after the fix
-- [ ] #2 With TASK-38759 merged, the three Guardian files followed by Tests/Backup_Recovery/test_async_file_participant_lifetimes.py in one serial pytest process pass 3 of 3 runs (red before: 4 failed, 42 passed on dev 29592ecc9b, the 4th being TASK-38759's own red; 3 failed, 43 passed on the TASK-38759 branch)
-- [ ] #3 In the dreams-boundary step, a test that leaves a new live storage lease fails and names itself; negative control: reintroduce one of the five leaks
+- [x] #1 Each of the five nodes leaves storage_admission._live_leases as it found it; a per-test count shows +1 for each on dev and 0 after the fix
+- [x] #2 With TASK-38759 merged, the three Guardian files followed by Tests/Backup_Recovery/test_async_file_participant_lifetimes.py in one serial pytest process pass 3 of 3 runs (red before: 4 failed, 42 passed on dev 29592ecc9b, the 4th being TASK-38759's own red; 3 failed, 43 passed on the TASK-38759 branch)
+- [x] #3 In the dreams-boundary step, a test that leaves a new live storage lease fails and names itself; negative control: reintroduce one of the five leaks
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Measure the per-test live-lease delta with a step-only guard: a `--storage-lease-guard` option in `Tests/conftest.py` registers an autouse fixture that fails the test naming itself when `storage_admission._live_leases` grew (AC#1 count, AC#3 guard).
+2. Close each leak in its test: retire the worker-thread Guardian handle that `revoke()` opens (`operation_owned_connection`), close the borrowed raw inbox connection on its own pool thread, close `_fresh_db`'s store in `test_crisis_resources.py`.
+3. Pass the flag in the dreams-boundary step and update both step pins; keep the TASK-38759 order (lifetimes file first).
+4. Evidence: the guard on the three Guardian files (+1 each before, 0 after), the whole step under the guard, the AC#2 serial combo 3 of 3, and a negative control that reintroduces one leak.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Leaks closed (test-only; no product change).**
+- `test_live_discovery_consent.py`: `revoke()` runs on Dreams' worker thread. It now wraps its `upsert_rule` in `operation_owned_connection(guardian)`, so the handle that write opens is retired on that same thread. The test's main-thread `guardian.close()` cannot reach it.
+- `test_daily_native_lifecycle.py` `[True]`: the borrowed branch keeps the raw `inbox._get_connection()` it opens, and the teardown closes it on the pool thread before `inbox.close()`. The store never caches that handle.
+- `test_crisis_resources.py`: the `_fresh_db` store is closed in a `finally`.
+
+**Guard (AC#3).**
+- `Tests/conftest.py` gains a `--storage-lease-guard` option. When set, `pytest_configure` registers `_StorageLeaseGuard`, whose autouse fixture compares `storage_admission._live_leases` before and after each test. A new lease fails the test at teardown with its node id and each lease's path and thread. Autouse fixtures are set up before the test's other function fixtures and torn down after them, so wider-scoped fixtures' leases are excluded.
+- The guard lives in conftest rather than its own module. A conftest-imported module fails `test_perf_guard_runs_when_a_file_its_steps_load_changes` unless `perf-guard.yml` lists it, and that workflow is outside this brief.
+- The dreams-boundary step passes the flag. `.github/workflows/derived-artifacts.yml` carries the flag and an updated comment. Both step pins are updated: `Tests/CI/test_response_rules_critical_gate.py`, and `Tests/CI/test_ci_queue_pressure_contract.py`, which now takes per-step flags.
+- The TASK-38759 order is kept: the lifetimes file is still first.
+
+**Evidence.**
+- AC#1: the guard on the three Guardian files before the fixes flagged exactly the five nodes, `left 1 new live storage lease(s) open` each:
+  - guardian.sqlite on asyncio_0, three times;
+  - inbox.sqlite on ThreadPoolExecutor-4_0;
+  - guardian.sqlite on MainThread.
+
+  After the fixes: 20 passed, 0 leaks.
+- Whole step: the step's 26 targets under the guard, before the fixes, gave 472 passed and 5 errors, exactly those five. No other test in the step leaks.
+- AC#2: the three Guardian files followed by `test_async_file_participant_lifetimes.py`, serially in one process, passed 3 of 3 runs, 46 passed each (44.3 s, 54.9 s, 53.3 s at load 31-38). Red before, on the base worktree (e8eeae7db9) with the same command: 3 failed, 43 passed. The three TASK-38759 drain nodes failed.
+- AC#3, negative control: dropping the `db.close()` from `test_crisis_resources.py` gave `ERROR Tests/Guardian/test_crisis_resources.py::test_check_pipeline_uses_the_extracted_module`, then reverted. That run also had one unidentified failure at load 86; the three full-step runs below were clean.
+- Lane cost:
+  - Recent PR runs: dreams-boundary job 6m14s to 7m04s of its 20 min, and this step 2m11s to 2m21s (5 runs, 2026-11-05).
+  - Locally, the step's exact command with the flag, serially (my `stepguard.sh`, which parses the targets the way `dreamstep.sh` does): 472 passed in 340 s, 287 s and 316 s at load 34-51.
+  - The unguarded, unfixed run was 326 s.
+- CI pins: `Tests/CI` ran 410 passed, and the preflight lane-resolution pair passed 2.
+<!-- SECTION:NOTES:END -->
+

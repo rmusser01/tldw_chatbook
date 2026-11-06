@@ -61,17 +61,20 @@ async def test_check_pipeline_uses_the_extracted_module(gate_on, tmp_path):
             }
         ],
     )
-    notes = _notes()
-    checker = _checker(db, notes)
+    try:
+        notes = _notes()
+        checker = _checker(db, notes)
 
-    result = await checker.check("I have been feeling suicidal")
+        result = await checker.check("I have been feeling suicidal")
 
-    notice = result["notice"]
-    assert notice is not None and notice["is_crisis"] is True
-    assert notice["text"].endswith(render_crisis_block()), (
-        "the crisis block must ride every surfaced crisis notice, verbatim"
-    )
-    assert notes["rows"] and notes["rows"][0].endswith(render_crisis_block())
+        notice = result["notice"]
+        assert notice is not None and notice["is_crisis"] is True
+        assert notice["text"].endswith(render_crisis_block()), (
+            "the crisis block must ride every surfaced crisis notice, verbatim"
+        )
+        assert notes["rows"] and notes["rows"][0].endswith(render_crisis_block())
+    finally:
+        db.close()  # TASK-38986: the store's lease outlived the test
 
 
 @pytest.fixture()

@@ -246,9 +246,12 @@ async def test_daily_file_inbox_contention_keeps_ui_live_and_retires_only_new_ha
             connection.close()
 
     writer = threading.Thread(target=competing_writer)
+    borrowed_connection = None
     try:
         if borrowed:
-            await loop.run_in_executor(pool, inbox._get_connection)
+            borrowed_connection = await loop.run_in_executor(
+                pool, inbox._get_connection
+            )
         writer.start()
         assert await loop.run_in_executor(pool, locked.wait, 3)
         await handler.handle({"id": "guardian:trends"})
@@ -289,6 +292,10 @@ async def test_daily_file_inbox_contention_keeps_ui_live_and_retires_only_new_ha
         if writer.ident is not None:
             writer.join(timeout=4)
         await handler_module.shutdown()
+        if borrowed_connection is not None:
+            # A raw handle the store never caches, so inbox.close() cannot
+            # reach it; close it on its own thread (TASK-38986).
+            await loop.run_in_executor(pool, borrowed_connection.close)
         await loop.run_in_executor(pool, inbox.close)
         await loop.run_in_executor(pool, db.close)
         loop._default_executor = previous

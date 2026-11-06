@@ -1125,8 +1125,46 @@ def clean_environment():
 # ========== Test Markers ==========
 
 
+class _StorageLeaseGuard:
+    """Fail a test that leaves a new live storage lease (TASK-38986).
+
+    A local backup pause drains every live lease in the process
+    (``storage_admission._LocalPause.drain``), so a lease one test leaves
+    open makes a later pause test in the same process time out, far from
+    the leak. Registered for ``--storage-lease-guard``, which the
+    dreams-boundary step passes. The autouse fixture is set up before, and
+    torn down after, the test's own function fixtures; leases of wider-scoped
+    fixtures are already in ``before``.
+    """
+
+    @staticmethod
+    def _live() -> set:
+        from tldw_chatbook.Backup_Recovery import storage_admission
+
+        with storage_admission._lock:
+            return set(storage_admission._live_leases)
+
+    @pytest.fixture(autouse=True)
+    def _no_new_live_storage_lease(self, request):
+        before = self._live()
+        yield
+        leaked = self._live() - before
+        if leaked:
+            where = sorted(
+                f"{lease.resource_path} on {getattr(lease.resource_thread, 'name', None)}"
+                for lease in leaked
+            )
+            pytest.fail(
+                f"{request.node.nodeid} left {len(leaked)} new live storage "
+                f"lease(s) open: {where}",
+                pytrace=False,
+            )
+
+
 def pytest_configure(config):
     """Register custom test markers."""
+    if config.getoption("--storage-lease-guard"):
+        config.pluginmanager.register(_StorageLeaseGuard(), "storage-lease-guard")
     config.addinivalue_line(
         "markers", "unit: Unit tests that don't require external resources"
     )
@@ -2089,6 +2127,12 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="Run tests that call real paid external APIs (requires key files + TLDW_LIVE_SEARCH_TESTS=1)",
+    )
+    parser.addoption(
+        "--storage-lease-guard",
+        action="store_true",
+        default=False,
+        help="Fail a test that leaves a new live storage lease (TASK-38986)",
     )
 
 
