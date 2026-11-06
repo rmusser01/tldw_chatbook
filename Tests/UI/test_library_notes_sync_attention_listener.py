@@ -34,6 +34,7 @@ from Tests.UI.library_quit_guard_support import (
     _settings_without_splash,
     _until,
 )
+from Tests.UI.test_library_notes_sync_delete_restore import LIST, _live_button, _press
 from Tests.UI.test_library_shell import _seed_conversations, _wait_for_selector
 from Tests.app_module_patches import patch_app_global
 
@@ -48,12 +49,23 @@ def _text(screen, selector: str) -> str:
     return " ".join(str(screen.query_one(selector, Static).render()).split())
 
 
-def _folder_row(screen) -> Button:
-    return next(
-        button
-        for button in screen.query(".library-notes-folder-row").results(Button)
-        if "VSync" in str(button.label)
-    )
+def _is_vsync(row) -> bool:
+    return "VSync" in str(row.label)
+
+
+def _folder_row(screen) -> Button | None:
+    """The live VSync row, or None while the tree rebuilds (TASK-38959).
+
+    A bare ``next()`` raised ``StopIteration`` inside the ``_until``
+    predicates whenever the row was briefly gone; this is the sibling
+    file's lookup since 67406398ad.
+    """
+    return _live_button(screen, LIST, ".library-notes-folder-row", _is_vsync)
+
+
+def _folder_row_reads(screen, status: str) -> bool:
+    row = _folder_row(screen)
+    return row is not None and status in str(row.label)
 
 
 async def test_a_watcher_driven_hold_turns_the_three_surfaces_without_a_keypress(
@@ -76,29 +88,27 @@ async def test_a_watcher_driven_hold_turns_the_three_surfaces_without_a_keypress
                 await _wait_for_selector(screen, pilot, ".library-notes-folder-row")
                 await _until(
                     pilot,
-                    lambda: "Sync managed" in str(_folder_row(screen).label),
+                    lambda: _folder_row_reads(screen, "Sync managed"),
                     "the healthy folder's tree row",
                 )
                 assert "Ready" in _text(screen, "#library-notes-authority")
 
-                _folder_row(screen).press()
-                await _until(
+                await _press(
+                    screen,
                     pilot,
-                    lambda: any(
-                        "quotes" in str(button.label)
-                        for button in screen.query(
-                            ".library-notes-tree-note-row"
-                        ).results(Button)
-                    ),
-                    "the folder to list its note",
+                    LIST,
+                    ".library-notes-folder-row",
+                    "the healthy folder's tree row",
+                    _is_vsync,
                 )
-                next(
-                    button
-                    for button in screen.query(".library-notes-tree-note-row").results(
-                        Button
-                    )
-                    if "quotes" in str(button.label)
-                ).press()
+                await _press(
+                    screen,
+                    pilot,
+                    LIST,
+                    ".library-notes-tree-note-row",
+                    "the folder to list its note",
+                    lambda row: "quotes" in str(row.label),
+                )
                 await _armed_editor(screen, pilot, "note-1")
                 location = _text(screen, "#library-note-location")
                 assert location.startswith("In a synced folder"), location
@@ -115,9 +125,8 @@ async def test_a_watcher_driven_hold_turns_the_three_surfaces_without_a_keypress
 
                 await _until(
                     pilot,
-                    lambda: (
-                        NOTES_TREE_SYNC_ATTENTION_STATUS
-                        in str(_folder_row(screen).label)
+                    lambda: _folder_row_reads(
+                        screen, NOTES_TREE_SYNC_ATTENTION_STATUS
                     ),
                     "the tree row to say the folder needs attention",
                 )
