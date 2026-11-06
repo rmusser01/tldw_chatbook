@@ -1594,6 +1594,66 @@ async def test_a_refused_purge_keeps_the_row_and_says_why() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_runtime_that_failed_to_build_refuses_before_the_purge_is_asked() -> None:
+    """PR #3423 review I-1: "could not say" refuses here, never by accident.
+
+    A failed lasting-sync build leaves the app's slot empty, which the
+    non-constructing peek reads as "no lasting sync"; the worker resolves the
+    runtime with ``_prepare_runtime`` instead, and its could-not-say answer
+    is the sync-unknown refusal BEFORE the purge is asked -- not a sentinel
+    handed on for the service to trip over (it would refuse too, but only
+    because an ``object()`` has no ``note_sync_bound``). The mounted pin is
+    ``test_library_notes_trash_purge_sync_unknown.py``.
+    """
+    import inspect
+
+    from tldw_chatbook.Library.library_notes_state import LibraryNoteDeleteReceipt
+    from tldw_chatbook.Notes.notes_scope_service import PURGE_REFUSED_SYNC_UNKNOWN
+
+    async def run(call, *args, isolate_in_worker=False, **kwargs):
+        result = call(*args, **kwargs)
+        return await result if inspect.isawaitable(result) else result
+
+    service = _PurgeService(True)
+    notices: list[tuple] = []
+    refreshes: list[dict] = []
+    fake = _ControllerShaped(
+        _notes_state=SimpleNamespace(mutation_in_flight=True),
+        # The app after a failed build: the slot it always creates, empty;
+        # the failure recorded; the safe reader answering None.
+        app_instance=SimpleNamespace(
+            notes_scope_service=service,
+            _notes_sync_runtime_owner=None,
+            _notes_sync_runtime_build_failure=OSError("synthetic build failure"),
+            _read_notes_sync_runtime_owner_safe=lambda: None,
+            notify=lambda message, **kwargs: notices.append((message, kwargs)),
+        ),
+        _run_library_service_call=run,
+        _library_notes_user_id=lambda: "user-1",
+        _refresh_library_notes_trash=lambda **kwargs: refreshes.append(kwargs),
+        _tree_reload_owed=False,
+        _trash_reload_owed="",
+        _trash_focus_role="trash-restore:3",
+        _library_note_delete_receipt=LibraryNoteDeleteReceipt(
+            note_id="n4", title="Groceries", expected_version=4
+        ),
+        is_mounted=True,
+    )
+
+    await LibraryNotesController._purge_library_note_from_trash(
+        fake, "n4", "Groceries", 5, trash_focus="trash-restore:3"
+    )
+
+    assert service.calls == []
+    assert notices == [
+        (PURGE_REFUSED_SYNC_UNKNOWN, {"severity": "warning", "markup": False})
+    ]
+    assert refreshes == []
+    assert fake._library_note_delete_receipt is not None
+    assert fake._library_notes_mutation_in_flight is False
+
+
+@pytest.mark.asyncio
 async def test_a_purge_that_finds_the_tombstone_changed_reloads_the_page() -> None:
     from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 
