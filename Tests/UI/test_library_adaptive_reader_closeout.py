@@ -17,6 +17,7 @@ import inspect
 import operator
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.containers import Vertical
@@ -1146,9 +1147,16 @@ async def test_closeout_preferences_restore_in_fresh_screen(
     assert cleanup["host_thread_worker_leaks"] == 0
 
 
+#: TASK-39052: longer than any route cycle, so no autosave timer fires on
+#: its own while the cycle runs; the burst clock decides the return instead.
+_ROUTE_CYCLE_AUTOSAVE_NEVER = 3600.0
+
+
 async def _exercise_closeout_single_app_route_cycle(
     tmp_path: Path,
 ) -> tuple[dict[str, object], str, str]:
+    from tldw_chatbook.UI.Library_Modules import library_note_autosave
+
     app, prompt_db = await _seed_closeout_app(tmp_path / "cycle")
     host = LibraryGlobalKeyProductionCSSHarness(app)
     worker_baseline = {id(worker) for worker in host.workers}
@@ -1162,6 +1170,31 @@ async def _exercise_closeout_single_app_route_cycle(
     stale_target_id: str | None = None
     facts: dict[str, object] | None = None
     svg = ""
+    # TASK-39052 (owner decision 2026-11-06: save at once). The max wait means
+    # a draft is never left unsaved longer than its max wait of editing time,
+    # so returning to Notes with a parked draft whose max wait has passed
+    # saves it at once (``AUTOSAVE_MIN_DELAY_SECONDS``). The test used to
+    # expect no save, which held only while it outran the 2 s debounce and the
+    # 10 s max wait. Neither timer can fire on its own here; the burst clock
+    # (``library_note_autosave``'s ``time.monotonic()``) is moved past the max
+    # wait while the note is parked, so the return decides the save.
+    burst_clock = [0.0]
+    autosave_patch = pytest.MonkeyPatch()
+    autosave_patch.setattr(
+        library_screen_module,
+        "LIBRARY_NOTES_AUTOSAVE_SECONDS",
+        _ROUTE_CYCLE_AUTOSAVE_NEVER,
+    )
+    autosave_patch.setattr(
+        library_screen_module,
+        "LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS",
+        _ROUTE_CYCLE_AUTOSAVE_NEVER,
+    )
+    autosave_patch.setattr(
+        library_note_autosave,
+        "time",
+        SimpleNamespace(monotonic=lambda: burst_clock[0]),
+    )
     try:
         async with host.run_test(size=(160, 50)) as pilot:
             screen = _active_library_screen(host)
@@ -1303,6 +1336,15 @@ async def _exercise_closeout_single_app_route_cycle(
                 )
                 remembered[destination] = _destination_state(screen, destination)
 
+            # Parked: leaving Notes saved nothing behind the user's back.
+            assert app.notes_scope_service.save_calls == []
+            assert (
+                tuple(dict(note) for note in app.notes_scope_service.notes)
+                == notes_before
+            )
+            # The burst's max wait runs out while the note is parked.
+            burst_clock[0] += _ROUTE_CYCLE_AUTOSAVE_NEVER + 1.0
+
             for destination in DESTINATIONS:
                 shell = await _open_destination(screen, pilot, destination)
                 if destination == "notes" and stale_service is not None:
@@ -1325,6 +1367,20 @@ async def _exercise_closeout_single_app_route_cycle(
                             and not screen._conversations_state.reader_state.loading
                         ),
                         message="Late Conversation worker escaped its route fence",
+                    )
+                if destination == "notes":
+                    # The return saves the parked draft at once: the debounce
+                    # it would otherwise wait is an hour here.
+                    await _wait_for_condition(
+                        pilot,
+                        lambda: (
+                            len(app.notes_scope_service.save_calls) == 1
+                            and not screen._library_note_session.snapshot.dirty
+                        ),
+                        message=lambda: (
+                            "Returning to Notes did not save the parked draft "
+                            f"at once: saves={app.notes_scope_service.save_calls!r}"
+                        ),
                     )
                 current = _destination_state(screen, destination)
                 assert current[3] == remembered[destination][3]
@@ -1366,8 +1422,8 @@ async def _exercise_closeout_single_app_route_cycle(
                 )
                 if destination == "notes":
                     draft = {
-                        "dirty": True,
-                        "retained_without_save": True,
+                        "dirty": screen._library_note_session.snapshot.dirty,
+                        "retained_without_save": False,
                         "value": screen.query_one("#library-note-body", TextArea).text,
                     }
                 elif destination == "prompts":
@@ -1397,11 +1453,21 @@ async def _exercise_closeout_single_app_route_cycle(
                     revisit_receipts["conversations"]["worker_fenced"] = True
             assert screen._notes_state.reader_preferences.items_open is False
             assert screen._media_state.reader_preferences.items_open is True
-            assert (
-                tuple(dict(note) for note in app.notes_scope_service.notes)
-                == notes_before
-            )
-            assert app.notes_scope_service.save_calls == []
+            # Exactly one save, of the parked draft, on the return to Notes.
+            assert [
+                (call["note_id"], call["content"], call["version"])
+                for call in app.notes_scope_service.save_calls
+            ] == [("n-2", "Closeout route draft", 1)]
+            notes_after = tuple(dict(note) for note in app.notes_scope_service.notes)
+            assert notes_after[0] == notes_before[0]
+            assert {
+                key: notes_after[1][key] for key in ("id", "title", "content", "version")
+            } == {
+                "id": "n-2",
+                "title": "Reading list",
+                "content": "Closeout route draft",
+                "version": 2,
+            }
             assert tuple(prompt_db.get_prompt_by_id(index) for index in (1, 2)) == (
                 prompts_before
             )
@@ -1418,7 +1484,8 @@ async def _exercise_closeout_single_app_route_cycle(
                         name: region
                         for name, (region, _owner) in remembered_focus.items()
                     },
-                    "notes_draft_retained_without_save": True,
+                    "notes_draft_retained_without_save": False,
+                    "notes_draft_saved_on_return": True,
                     "prompt_draft_retained_without_save": True,
                     "late_conversation_worker_fenced": True,
                     "revisit_receipts": revisit_receipts,
@@ -1432,6 +1499,7 @@ async def _exercise_closeout_single_app_route_cycle(
         if stale_service is not None:
             stale_service.release_first.set()
         prompt_db.close()
+        autosave_patch.undo()
     assert facts is not None
     return facts, str(facts["compositor_text"]), svg
 
@@ -1469,6 +1537,16 @@ async def test_closeout_single_app_route_cycle(
                 DESTINATION_CONTRACT[destination][1].removeprefix("#")
             )
         assert receipt["worker_fenced"] is True
+    # TASK-39052: the parked Notes draft comes back with its text and is saved
+    # on the return; the Prompt draft (no autosave) is kept unsaved.
+    assert receipts["notes"]["draft"] == {
+        "dirty": False,
+        "retained_without_save": False,
+        "value": "Closeout route draft",
+    }
+    assert receipts["prompts"]["draft"]["dirty"] is True
+    assert receipts["prompts"]["draft"]["retained_without_save"] is True
+    assert facts["observations"]["notes_draft_saved_on_return"] is True
 
 
 def _assert_inside_items(items, widget) -> None:
