@@ -1164,7 +1164,11 @@ _BUDGETS: dict[str, int] = {
     # first-chat readiness (capacity blocker, send-outcome ledger, template
     # samples, per-model words) takes the module from 3,440 on dev 29592ecc9b
     # past the 4,000-line guard: born governed at its measured size, 4,195.
-    "tldw_chatbook/Chat/console_session_settings.py": 4195,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +7 -- the
+    # owner's 2026-11-05 "Values decide" ruling (AC#9): the template-sample
+    # helpers' docstrings say a marked table is a sample only while it still
+    # holds the shipped endpoint and model: 4,202.
+    "tldw_chatbook/Chat/console_session_settings.py": 4202,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that

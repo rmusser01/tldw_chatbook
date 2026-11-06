@@ -1076,6 +1076,50 @@ async def test_settings_t_judges_the_model_with_its_saved_model_default(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {
+            "api_key": "sk-saved-test-key",
+            "max_tokens": 4096,
+            "model_defaults": {"gpt-4o": {"max_tokens": 200_000}},
+        },
+        {"api_key": "sk-saved-test-key", "max_tokens": 200_000},
+    ],
+    ids=("model-default", "provider-value"),
+)
+@private_profile_test
+async def test_the_key_check_row_reads_the_capacity_blocker_before_any_test(
+    request, monkeypatch, settings
+):
+    """Review IV-2: before Test was pressed, Settings ▸ Providers & Models read
+    'Key check  Ready · not tested' and 'Provider readiness: OpenAI / gpt-4o —
+    Ready · not tested' for a model whose reply reservation fills its window,
+    while the Console header, the switcher and the Overview read 'Not ready ·
+    window too small' (live, g2cv5-iv-oai 24-31). The untested word now comes
+    from the same capacity blocker as the Test rows, with the same reply
+    maximum. No request is sent."""
+    provider = _Provider(httpx.Response(200, json=LISTING))
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app("openai", settings, "gpt-4o")
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+        await pilot.pause()
+        key_check = _static_text(screen.query_one("#settings-provider-readiness", Static))
+        inspector = _static_text(
+            screen.query_one("#settings-provider-inspector-readiness", Static)
+        )
+        console = _console_word(app, host, "openai", "gpt-4o")
+
+    assert console == "Not ready · window too small"
+    assert key_check == console
+    assert inspector.endswith(f"— {console}"), inspector
+    assert provider.requests == []  # the word is read, nothing is tested
+
+
+@pytest.mark.asyncio
 @private_profile_test
 async def test_settings_t_reads_ready_when_the_model_default_overrides_a_huge_provider_value(
     request, monkeypatch

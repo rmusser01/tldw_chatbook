@@ -935,8 +935,18 @@ def key_check_verdict(screen: SettingsScreen) -> str:
         if identity is not None
         else None
     )
+    from .provider_test_rows import test_row_extras
+
+    # TASK-34100.2 review IV-2: the reply maximum the Test path passes, so a
+    # model whose reply fills its window reads the one capacity blocker's
+    # 'Not ready' here before any Test, as the Console header does.
     rows = screen._provider_test_rows(
-        readiness, display_name="", model=model, endpoint="", evidence=evidence
+        readiness,
+        display_name="",
+        model=model,
+        endpoint="",
+        evidence=evidence,
+        **test_row_extras(screen, provider, model, evidence),
     )
     return rows[0][1]
 
