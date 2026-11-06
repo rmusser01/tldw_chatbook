@@ -345,6 +345,26 @@ The first fix warmed the display after the evidence settle, just before the poll
 - Show the RED at KB sizes. A cubic regex never finishes at the sizes the scaling test needs, so the scaling test cannot be the red test on dev. The fixed-bound test is.
 - Check the scaling assertion with a mutation that adds superlinear work but finishes, such as a rescan loop of `len(text) // 250_000` passes. A real quadratic mutation hangs the scaling test rather than failing it.
 - Give a regex rewrite a differential oracle: keep the old pattern in the test and compare `group(1)` on generated inputs. With random token strings, 25 Hypothesis examples caught none of five semantic mutations (one run each). Structured shapes (opening, whitespace, noise, closing) caught all five in three of three fresh runs.
+## An empty owner map does not prove construction has stopped (PR3345, 2026-11-05)
+
+**Incident.** Dev integration introduced dedicated RAG SQL pool threads. A real
+completed keyword search left a foreign-thread SQLite handle that the existing
+current-thread cache retirement could not close: full-App RED498 reached every
+producer drain but its native local-storage pause still refused. Retirement
+had to run after the later Chroma/embedding producers, rather than in the first
+Definition stage, because accepted projection work still needs the original
+pool. A subsequent empty-map optimization failed RED501: the real database
+constructor already held a native handle while holding the construction lock,
+but had not published its pool into the map. The drain incorrectly returned
+True. A nonblocking lock attempt now proves emptiness under the same lock;
+contention retains the existing deadline-bounded cleanup task. GREEN502 passed
+all 28 lifecycle/order/native controls without increasing a deadline or pool.
+
+**What to do.** Exercise accepted work at its actual later stage, record the
+native handle on its creating thread, and hold construction before publication.
+A census is evidence only when it also covers in-flight publication. Timeouts
+and cancelled waiters must retain cleanup ownership until physical close and
+thread join; test failed and silent-refused closes as well as the success path.
 
 ## A worker-thread SQLite handle can be proven closed from the test thread with the `in_transaction` getter (TASK-38714, 2026-11-05)
 
@@ -25923,3 +25943,41 @@ RED412 held the original checked config read and recorded the pump awaiting
 second refresh through the existing captured/drained worker group lets a real
 screen marker run before release. Pilot's idle fence was reporting a reachable
 pump stall; lengthening or bypassing that fence would not repair it.
+
+## Async cancellation does not retire a native Evals write (PR3345, 2026-11-05)
+
+During dev2959 integration, independent review traced maintenance drain beyond
+its supplied deadline after an async run had removed itself from the run ledger.
+RED472 held a real accepted file-backed result write, cancelled the run, and
+observed the drain still waiting past its 0.02-second deadline. RED476 then
+showed ordinary aclose cancellation could start a second physical retirement.
+
+Retain one retirement task across both entrances and wait with the remaining
+original deadline without cancelling cleanup. New writes wait for successful
+connection close/thread join; failed cleanup keeps its executor. The permanent
+controls reach resumed write ingress before release, verify two distinct native
+handle lifetimes and durable results, and exercise deadline, cancelled-drain and
+cancelled-close paths. Cleanup attempts every owner and preserves primary
+failures with sanitized notes. A cancelled wrapper or an empty async-run ledger
+alone is not evidence of physical native retirement.
+
+
+### Admission541: presentation state must belong to the actual composed tree
+
+On PR3345's dev2959 integration, admission541 failed the original partial-rail
+resize assertion: a newly composed wide rail stayed visible after a narrow
+resize. An unchanged local run passed, so it did not identify the cause. Native
+RED555 then proved the stock Resize handler entered but reused the previous
+tree's width band; five missing-target controls also published unapplied rail
+state, and the missing-main control consumed a resize too early. Resetting the
+existing presentation state during composition and requiring complete targets
+before apply/publication fixed those controls without another timeout or a new
+cache. Preserve real terminal transitions beside controlled native events.
+
+The added fleet notification guard also exposed an incomplete imported test
+fixture: importing its fake bridge did not import the donor module's real-DB
+autouse fixture. A raw live row was correctly hidden by failed native history
+recovery. An in-memory substitute was invalid across worker threads. Final561
+reuses the existing native DB harness, completes the actual startup audit before
+installing live fake rows, and passes all original lifecycle/notification
+assertions. Do not clear a refusal flag to make a UI fixture look ready.

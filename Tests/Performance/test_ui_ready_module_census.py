@@ -190,7 +190,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: `Agents.ordinary_tree`, `Agents.workflow_task_scope`,
 #: `Chat.console_ordinary_tree` and `Workspaces.worktree_activity` (dev is at
 #: 1040); measured.
-MAX_TLDW_MODULES_AT_UI_READY = 1040
+# PR3345 retains the pre-integration ready-module limit.
+MAX_TLDW_MODULES_AT_UI_READY = 1031
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

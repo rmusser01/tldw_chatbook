@@ -1844,3 +1844,26 @@ Test-only AC4 completion also adopts r177-post-import-safety-row-control-proposa
 
 
 Test-only SafetyCopy precision before code: use native update_conversation on the existing canonical archived conversation with exact expected_version, after ALL original post-import assertions and immediately before target preview. Keep original/edited full rows; after rollback require original live row and edited full row in exact retained encrypted SafetyCopy. This supersedes the earlier add_note/absence alternative and directly proves preservation of an edit to existing data. Native locked acquire/inert extraction/read-only restricted copied-owner validation and all source/authority/root/budget/no-real-profile constraints stay unchanged.
+
+## PR3345 dev2959: retire thread-affine RAG SQL pools after producers (2026-11-05)
+
+Full-App RED498 settles actual producers, fences ordinary storage and retires
+current-thread caches, yet a completed keyword search leaves its dedicated
+thread's idle MediaDatabase connection visible to the local native pause.
+Component497 proves the foreign lease separately; Definition-only settlement
+is not full runtime or native capture authority.
+
+Bind the already-loaded SQL pool cleanup owner at the end of RuntimeMaintenance
+producer settlement, after Chroma and embedding owners. Do not close pools in
+the first Definition stage: accepted later producers may still need them.
+Retain one cleanup task across deadline expiry and waiter cancellation; wait
+with the original remaining deadline, then physically join cleanup before
+reopening intake. This uses the existing bounded executor and each pool's
+existing single thread, with no higher capacity or timeout.
+
+Close every connection on its original pool thread. Keep the pool, executor and
+failed native close reachable until actual close and thread shutdown succeed;
+a close method's silent refusal is not retirement. Failed owners refuse new
+search/replacement work, while explicit cleanup may still close them. Native
+pause and coverage validation remain independent and mandatory. No pool census,
+empty dictionary or async cancellation grants storage capture authority.

@@ -2676,6 +2676,7 @@ async def test_settings_action_rows_keep_every_button_whole(size):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_dirty_category_status_has_visual_marker_class():
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
@@ -2707,6 +2708,7 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_advanced_config_controls_use_action_and_status_rows():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")

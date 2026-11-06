@@ -118,13 +118,8 @@ jobs:
   ui-latency-guardrails:
     name: UI latency guardrails
     runs-on: ubuntu-latest
-    # TASK-36511.3: 20, not 15 (owner-approved). CI, measured: the 40 green
-    # runs before the gates had a median of 618 s and a max of 883 s, and
-    # TASK-38703's idle-loop fix took the latency step from a 179 s median to
-    # 85-117 s. Local, scaled: the compact-setup gates take 115-132 s
-    # locally, about 240-280 s on CI at its ~2.1x. Estimate: a median of
-    # about 800 s and a max of about 1060-1100 s, 100-140 s under this limit.
-    timeout-minutes: 20
+    # PR3345 integration retains the original cap and all compact-setup controls.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

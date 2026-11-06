@@ -170,7 +170,8 @@ MAX_MODULE_COUNT = 2200
 # definition); #3375 moved `Chat.console_capture_policy` out of the resident
 # `config.py`, which shrank by as much. One module each, no new code on the
 # path; measured 687 at dev 447628d08b.
-MAX_TLDW_MODULE_COUNT = 688
+# PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
+MAX_TLDW_MODULE_COUNT = 686
 
 
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:

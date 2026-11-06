@@ -1280,18 +1280,9 @@ class MediaDatabase:
                 if unpublished is not None:
                     with suppress(Exception):  # a failed close retains its lease
                         unpublished.close()
-                # `from error`, NOT `from None` (TASK-19569): the raised
-                # message stays scrubbed (no path, no driver text), but the
-                # private-path contract identifies its boundary failure by
-                # walking `__cause__` to a `PrivatePathError`. Severing the
-                # chain here made this owner the only one of five whose
-                # unsafe-namespace rejection was unidentifiable to callers --
-                # the log line above already records the type, so the
-                # information was being thrown away, not withheld. Chaining is
-                # privacy-safe: `PrivatePathError.__str__` is
-                # `"<status>: <symbolic reason>"` with no path in it (see
-                # `Utils/private_paths.py`), matching the `from e` chaining
-                # the ChaChaNotes and Prompts owners already do.
+                # Preserve the PrivatePathError cause for boundary classification
+                # (TASK-19569). Public/log messages omit paths and driver text;
+                # PrivatePathError.__str__ exposes only status and symbolic reason.
                 raise DatabaseError("Failed to connect to media database.") from error
         self._local.conn_last_used = time.monotonic()
         return self._local.conn

@@ -778,14 +778,13 @@ class LibraryIngestQueueMixin:
             )
 
     async def _reconcile_research_source_held_jobs(self, *, limit: int = 50) -> None:
-        """Boundedly link or cancel durable Research jobs left held at restart."""
+        """Boundedly reconcile held Research jobs on the ingest store’s UI thread."""
 
         ingest_store = getattr(self, "_library_ingest_jobs_store", None)
         operation_store = getattr(self, "research_source_operation_store", None)
         if ingest_store is None or operation_store is None:
             return
         try:
-            # UI-thread-only store (TASK-38714); one scan a start, 12 ms at 100k jobs.
             rows = ingest_store.list_dispatch_held(limit=limit)
         except Exception:
             logger.opt(exception=True).warning(

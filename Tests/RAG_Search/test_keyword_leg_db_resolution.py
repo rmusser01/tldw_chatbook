@@ -37,6 +37,7 @@ def _make_service(tmp_path, media_db_path=None):
     return RAGService(cfg)
 
 
+@pytest.mark.bootstrap_profile
 def test_missing_media_db_returns_empty_and_creates_nothing(tmp_path):
     service = _make_service(tmp_path, media_db_path=tmp_path / "absent.db")
     results = asyncio.run(service._keyword_search("anything", top_k=5))
@@ -45,6 +46,7 @@ def test_missing_media_db_returns_empty_and_creates_nothing(tmp_path):
     assert list(tmp_path.glob("*.db")) == []  # no rogue DB anywhere
 
 
+@pytest.mark.bootstrap_profile
 def test_traversal_shaped_media_db_path_is_rejected_before_any_db_open(
     tmp_path, monkeypatch
 ):
@@ -91,6 +93,7 @@ def test_traversal_shaped_media_db_path_is_rejected_before_any_db_open(
     assert calls == [], "get_connection_pool must never be reached for a rejected path"
 
 
+@pytest.mark.bootstrap_profile
 def test_symlinked_media_db_path_yields_empty_and_no_db_open(tmp_path):
     """A `media_db_path` pointing at a symlink must never actually open a
     database through it. `validate_path_simple` defers symlink authority to
@@ -125,6 +128,7 @@ def test_symlinked_media_db_path_yields_empty_and_no_db_open(tmp_path):
     assert results == []
 
 
+@pytest.mark.bootstrap_profile
 def test_keyword_rows_carry_media_source_type(tmp_path):
     db_path = tmp_path / "tldw_cli_media_v2.db"
     # Create a real MediaDatabase and insert one item via its public API
@@ -148,6 +152,7 @@ def test_keyword_rows_carry_media_source_type(tmp_path):
     assert results[0].metadata["source_type"] == "media"
 
 
+@pytest.mark.bootstrap_profile
 def test_default_resolution_uses_get_media_db_path(monkeypatch, tmp_path):
     sentinel = tmp_path / "sentinel_media.db"
     import tldw_chatbook.config as cfg
@@ -159,6 +164,7 @@ def test_default_resolution_uses_get_media_db_path(monkeypatch, tmp_path):
     assert not sentinel.exists()  # still no writes
 
 
+@pytest.mark.bootstrap_profile
 def test_keyword_search_orders_strongest_match_first(tmp_path):
     """FTS5's hidden `rank` column is smaller-is-better (more negative =
     stronger match). Review finding on this task's PR: `_perform_fts5_search`
@@ -246,6 +252,7 @@ def test_keyword_search_orders_strongest_match_first(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_keyword_rows_render_their_real_title_in_library_evidence(tmp_path):
     """A keyword-leg row must reach the Library evidence list titled.
 
@@ -294,6 +301,7 @@ def test_keyword_rows_render_their_real_title_in_library_evidence(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyword_search_leaves_no_executor_connection_after_close(
     tmp_path, monkeypatch
@@ -381,6 +389,7 @@ async def test_keyword_search_leaves_no_executor_connection_after_close(
             sqlite3.Connection.in_transaction.__get__(connection)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ordering", ["queued_behind_close", "after_shutdown"])
 async def test_a_search_racing_close_all_pools_leaves_no_connection_open(

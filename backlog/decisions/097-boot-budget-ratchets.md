@@ -251,3 +251,18 @@ adds three lines, so its final static measurement is 1,582 against the retained
 1,297 cap (+285). Screen/state remain 17,505/16,859 and 1,322/855. The original
 three numeric test failures remain explicitly WAIVED; this is a refreshed static
 line count, not a new numeric/performance sweep. No cap is changed.
+
+## PR3345 dev2959 integration retains the prior ceilings (2026-11-05)
+
+The PR's explicit no-increase instruction retains an import ceiling of 686 and UI-ready ceiling of 1031 and
+pre-import 426,199 LOC. The TASK-38765 upstream exceptions above remain history;
+they are not applied by this integration. The official snapshot writer runs
+without force and measures 685 boot modules, warm 1030 UI modules, and 556
+pre-import modules/426,144 LOC. The UI guard also passed at 1031. First-send
+residency remains 94 of 94; no timing, buffer, worker or authority limit rises.
+
+Five affected large modules fit their pre-rebase source ceilings by consolidating
+repeated ownership/freshness documentation, with executable AST identity verified.
+Incoming functional controls remain enrolled, including compact-setup gates under
+the retained 15-minute Perf job cap. These local measurements do not qualify
+hosted capacity or the new commit's required checks.

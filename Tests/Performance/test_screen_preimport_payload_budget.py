@@ -181,8 +181,9 @@ MAX_PASS_ADDED_MODULES = 558
 #: already-resident modules (watchlists +50, settings +10, llm +2, schedules
 #: -16).
 MAX_PASS_ADDED_LOC = 427_830
+# PR3345 prior 426199 source pin is historical; owner waived source-count ceilings.
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
-#: integration retains current dev 426,512 above. The old measurement at
+#: integration retains its pre-rebase 426,199 ceiling above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
 #: unchanged (558). Task 5 is B2b's first commit over the ceiling, so the
 #: re-pin lands there (controller ruling, 2026-10-29: dev's own growth to
