@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: '2026-11-06 00:03'
+updated_date: '2026-11-06 00:54'
 labels:
 - follow-up
 - docs
@@ -81,4 +81,7 @@ Not in scope: the badge table and the category map in settings.md are TASK-35013
     - `settings.md`: the **Plugins** button row.
     - `settings/rag.md`: the field is **Agent Library access**. The `Tests/Docs/test_console_library_controls_docs.py` pin for rag.md is updated to match.
     - `import-and-export.md`: the target line only shows with a server, and the path field is labelled.
+- **Review round 2.**
+  - `console.md`: **Speak replies** and **Hands-free** are named in the Layout-tour Header bullet. They are mounted in `DestinationHeader(before_status=ConsoleSpeechControls(...))` (`chat_screen.py`). The touch note now says "The header's **Hands-free** switch", and their control-table rows are marked "(header)".
+  - `buddy.md`: the pixel-migu step says **Chat now**.
 <!-- SECTION:NOTES:END -->

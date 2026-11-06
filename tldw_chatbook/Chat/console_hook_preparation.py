@@ -196,7 +196,11 @@ def capture_hook_preparation_source(self, session_id, permissions):
 
 
 def require_hook_preparation_source(self, source):
-    self._raise_if_disposed_or_session_fenced(source.session_id)
+    try:
+        self._raise_if_disposed_or_session_fenced(source.session_id)
+    except RuntimeError as error:
+        # TASK-38751: a close fence or disposal that lands mid-check voids it.
+        raise HookCheckOwnerChanged(str(error)) from error
     session = (
         next(
             (row for row in source.store.sessions() if row.id == source.session_id),

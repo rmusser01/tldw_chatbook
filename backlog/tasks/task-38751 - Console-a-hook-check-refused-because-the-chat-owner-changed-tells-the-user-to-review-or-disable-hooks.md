@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 06:34
-updated_date: '2026-11-06 00:02'
+updated_date: '2026-11-06 00:54'
 labels:
 - follow-up
 - console
@@ -55,7 +55,12 @@ The function's catch-all (:559-562) turns every exception into "Hooks unavailabl
   - `test_a_chat_closed_during_the_hook_check_says_send_again` closes the session through `ConsoleChatStore.close_session` during the admission read. Red before the fix (`'Hooks unavailable; review or disable hooks before sending.' == 'Chat changed during the hook check; send again.'`), green after.
   - `test_a_failed_hooks_read_still_says_review_or_disable_hooks` makes the accessor raise `OSError`. Green before and after (AC#2).
   - `test_a_chat_closed_during_v2_hook_preparation_says_send_again` (AC#5) pauses `HookPermissions.v2_configuration` inside `prepare_submission_hooks`, closes the chat on the event loop, then releases the read. Red before the mapping (`'Required hook initialization failed.' == 'Chat changed…'`), green after. Negative control: with the v2 raise turned back into a plain `RuntimeError`, the test goes red again.
-  - Real initialization failures: `test_console_turn_resend.py::test_resend_runs_granted_required_hooks_before_clear[SessionStart-*]` (a required hook exits 1) still asserts "Required hook initialization failed." and passes.
+    - Review round 2 parametrizes that test over `store` (`ConsoleChatStore.close_session`) and `fence` (`runtime._admission_fenced_sessions.add`, the first step of the app's `_close_session_after_voice_drain`).
+    - `require_hook_preparation_source` checks the fence first, and that check raised a plain `RuntimeError` ("Console session is closed."). It now converts a fence or disposal failure into `HookCheckOwnerChanged`, keeping the message. The shared `_raise_if_disposed_or_session_fenced` helper is unchanged for its other callers.
+    - `[fence]` was red ('Required hook initialization failed.') and is green now.
+    - The full `ConsoleRuntime.close_session` was also tried. It cancels the waiting submission (CancelledError from the shield wait in `run_preparation_read`; run state "Initialization cancelled."), so it paints neither copy. That case is therefore not a test.
+    - A session that is already fenced when a send starts still fails at `prepare_hooks_v2`'s entry check, with the initialization copy. "Send again" would not help there.
+- Real initialization failures: `test_console_turn_resend.py::test_resend_runs_granted_required_hooks_before_clear[SessionStart-*]` (a required hook exits 1) still asserts "Required hook initialization failed." and passes.
 - AC#4: no User Guide page quoted either copy. The hooks section of `console/agent-runs-and-tools.md` now quotes both, and names closing the chat as the trigger. Saving a temporary chat would also change the session identity, but that was not tested, so the guide does not claim it.
 - Covering run (`-n 4`, load ~16): 307 passed, 5 failed across viewless hooks, hook preparation lifetime/reads, both read-sharing suites, preparation scheduling, turn resend, prompt mix-in admission, agent swap, received custody, the pre-import payload budget and first-send pre-import. The 5 failures also fail at base 29592ecc9b with the same command: agent swap's 2 stop/cancel nodes and turn resend's 3 refused-echo/vision-gate nodes.
 <!-- SECTION:NOTES:END -->

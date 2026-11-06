@@ -942,10 +942,18 @@ async def test_a_failed_hooks_read_still_says_review_or_disable_hooks():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("closer", ["store", "fence"])
 async def test_a_chat_closed_during_v2_hook_preparation_says_send_again(
-    hook_file, monkeypatch
+    hook_file, monkeypatch, closer
 ):
-    """The v2 preparation read is voided the same way, not "failed"."""
+    """The v2 preparation read is voided the same way, not "failed".
+
+    ``fence`` is the first step of the app's own close
+    (``ConsoleRuntime._close_session_after_voice_drain`` adds the session to
+    ``_admission_fenced_sessions``). The full close then cancels the
+    submission, so only a fence that lands without that cancel reaches the
+    copy; ``require_hook_preparation_source`` checks the fence first.
+    """
     from Tests.Chat.test_console_hook_preparation_demand import _save_hooks
     from tldw_chatbook.Agents.hook_permissions import HookPermissions
     from tldw_chatbook.Chat.console_automatic_submission import (
@@ -985,11 +993,15 @@ async def test_a_chat_closed_during_v2_hook_preparation_says_send_again(
                 break
             await asyncio.sleep(0.02)
         assert entered.is_set(), "v2 preparation never read the configuration"
-        store.close_session(session.id)  # the user closes the chat mid-read
-        assert all(row.id != session.id for row in store.sessions())
+        if closer == "store":
+            store.close_session(session.id)  # the chat closes mid-read
+            assert all(row.id != session.id for row in store.sessions())
+        else:
+            runtime._admission_fenced_sessions.add(session.id)
         release.set()
         result = await asyncio.wait_for(task, 5)
     finally:
+        runtime._admission_fenced_sessions.discard(session.id)
         release.set()
         await runtime.dispose()
         owner.close()

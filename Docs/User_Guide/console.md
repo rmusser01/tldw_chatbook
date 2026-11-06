@@ -35,7 +35,8 @@ This page is the orientation tour; the details live on the child pages below:
 Top to bottom:
 
 - **Header** — the title "Console", the subtitle "— Chat, source handoffs,
-  live runs, and control actions.", and a status badge. The badge shows the
+  live runs, and control actions.", the **Speak replies** and **Hands-free**
+  switches, and a status badge. The badge shows the
   active chat's readiness word (see **Readiness words** below), or
   **Running** while a reply is generating. A few states take the readiness
   word's place: **Blocked** for a blocked turn, **Held · emergency stop**
@@ -259,7 +260,7 @@ have on-screen routes:
   gathers the actions desktop reaches through hotkeys.
 - Tool approvals are fully tappable (per-call buttons, Approve all /
   Deny all / Submit).
-- The control bar's **Hands-free** switch is the touch route into (and
+- The header's **Hands-free** switch is the touch route into (and
   out of) the voice loop.
 - The command palette (`Ctrl+P` — on-screen keyboards can usually
   produce this) is the universal escape hatch; on a phone without
@@ -477,8 +478,8 @@ composer-level strip below shows once setup completes.
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Buddy** (composer **Menu**) | Manage independent Buddy artwork, follow a conversation/workspace, and change Persona settings — see [Buddies](buddies.md). |
 | **Help** | Opens the Console help panel (same as F1). |
-| **Speak replies** | Speaks new assistant replies in this conversation — see [Voice & hands-free](console/voice-and-hands-free.md). |
-| **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. See [Voice & hands-free](console/voice-and-hands-free.md). |
+| **Speak replies** (header) | Speaks new assistant replies in this conversation — see [Voice & hands-free](console/voice-and-hands-free.md). |
+| **Hands-free** (header) | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. See [Voice & hands-free](console/voice-and-hands-free.md). |
 
 For local Kokoro, open **Settings > Speech & TTS** and use **Exact** voice policy
 with a Kokoro voice value. If an older configuration shows **Server default**,
