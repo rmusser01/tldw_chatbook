@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
+    unsaved_endpoint_copy,
 )
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
@@ -1126,6 +1127,29 @@ def test_a_single_label_host_displays_and_compares_as_itself():
     assert safe_endpoint_display("http://kobold") == "invalid endpoint"
     # Review r10e-rev2: the path counts only after a typed scheme.
     assert safe_endpoint_display("unit-test-key/v1") == "invalid endpoint"
+
+
+#: TASK-38963 review r10e-rev2: keys holding "/", pasted without a scheme
+#: (moved here in rev3 so a PR lane runs it).
+_SCHEMELESS_KEYS_WITH_A_SLASH = (
+    "abcDEF123/xyz+789=",
+    "sk-abc123def456/extra",
+    "unit-test-key/v1",
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+)
+
+
+@pytest.mark.parametrize("pasted", _SCHEMELESS_KEYS_WITH_A_SLASH)
+def test_a_schemeless_token_with_a_slash_is_never_echoed(pasted: str) -> None:
+    """A single label's path counts only after a typed scheme: rev1 let any
+    path through, so these keys displayed (and compared) as themselves."""
+    key = pasted.split("/", 1)[0]
+
+    assert safe_endpoint_display(pasted) == "invalid endpoint"
+    assert normalize_generic_endpoint_for_compare(pasted) == "invalid endpoint"
+    copy = unsaved_endpoint_copy(pasted, {"api_url": "http://127.0.0.1:9099/v1"})
+    assert key not in copy and key.lower() not in copy
+    assert "Selected endpoint: invalid endpoint." in copy
 
 
 @pytest.mark.asyncio
