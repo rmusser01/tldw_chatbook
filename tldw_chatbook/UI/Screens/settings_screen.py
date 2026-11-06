@@ -30515,7 +30515,10 @@ class SettingsScreen(BaseAppScreen):
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
         self._sync_model_picker()
-        if self._syncing_provider_model_value:
+        if self._syncing_provider_model_value or event.value != event.input.value:
+            # TASK-38975: a stale echo (the mount echo, handled after a quiet
+            # write such as the vLLM handoff's) names a value the field no
+            # longer holds; a later edit posts its own Changed.
             return
         model_value = event.value.strip()
         if (

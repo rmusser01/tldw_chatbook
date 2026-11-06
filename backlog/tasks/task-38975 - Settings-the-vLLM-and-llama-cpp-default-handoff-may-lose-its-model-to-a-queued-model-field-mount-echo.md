@@ -1,9 +1,11 @@
 ---
 id: TASK-38975
 title: "Settings: the vLLM and llama.cpp default handoff may lose its model to a queued model-field mount echo"
-status: To Do
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-06 01:37
+updated_date: 2026-11-06 17:01
 labels:
 - follow-up
 - settings
@@ -38,8 +40,30 @@ The user would then save the new provider with the old model. This ordering is n
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The ordering is traced and recorded: whether a Providers & Models card's model-field mount echo can still be queued when _consume_verified_default_intent runs (on mount via call_after_refresh, and on a later in-session handoff), for both the vLLM and llama.cpp intents
-- [ ] #2 A test drives the real handoff with the mount echo delivered after it (forced if it cannot happen naturally); after the echo, the draft still holds the handoff's provider, model and endpoint and the model field shows the handoff's model; it is red on dev if the race is real
-- [ ] #3 If the race is real, the fix keeps a handoff-staged model against a stale mount echo while a user's later typing still re-stages the model; both are pinned
-- [ ] #4 If the race cannot happen, the notes record why with the evidence, the test from #2 stays as a pin, and the task closes
+- [x] #1 The ordering is traced and recorded: whether a Providers & Models card's model-field mount echo can still be queued when _consume_verified_default_intent runs (on mount via call_after_refresh, and on a later in-session handoff), for both the vLLM and llama.cpp intents
+- [x] #2 A test drives the real handoff with the mount echo delivered after it (forced if it cannot happen naturally); after the echo, the draft still holds the handoff's provider, model and endpoint and the model field shows the handoff's model; it is red on dev if the race is real
+- [x] #3 If the race is real, the fix keeps a handoff-staged model against a stale mount echo while a user's later typing still re-stages the model; both are pinned
+- [x] #4 If the race cannot happen, the notes record why with the evidence, the test from #2 stays as a pin, and the task closes
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Trace, on a mounted Settings with a staged handoff, when the model field's mount echo reaches the screen relative to `_consume_verified_default_intent` (temporary probe, not committed), for vLLM; check whether the llama.cpp intent reaches that path at all, and whether any in-session path calls it.
+2. Test: hold the real mount echo (`Input.post_message` wrapper) and deliver it after the real handoff; assert the draft and the field keep the handoff's model; then type a Custom ID and assert it stages. Red on dev first.
+3. Fix in `handle_model_value_changed`: ignore an `Input.Changed` whose value is no longer the field's (a stale echo). A deterministic state check, no timer.
+
+## Implementation Notes
+
+The race is real in principle, though it was never seen in a natural run, so the fix applies (AC#3). AC#4's branch (the race cannot happen) did not hold. Its test stays as the pin AC#4 asks for, so AC#4 is ticked as covered by AC#3.
+
+**AC#1, the trace.** A temporary probe (not committed; run.sh, private profile) wrapped `Input.Changed.__init__`, `SettingsScreen._on_message`, `_consume_verified_default_intent` and `_stage_provider_value`. It staged a vLLM default intent and mounted Settings the way production does: `apply_navigation_context` runs before the push or switch (`app_navigation.py:1043` before `:1077`), so the Providers & Models card is composed with the screen. In 40 of 40 runs at load 36-58, the model field's mount echo (`model-a`, the saved model) reached the screen 135-1018 ms before `_consume_verified_default_intent` started, and the run ended with the draft and the field both on `chatbook-vllm`. Textual does not guarantee that order, though. `MessagePump._pre_process` dispatches an Input's Compose and Mount directly, and the `Input.Changed` its constructor queued is handled only afterwards, in the Input's own loop. The parent's `mount_all` waits only for that Mount. So when Settings' `on_mount` queues the consume (`call_after_refresh`, screen hop then app hop), the echo can still be in the field's queue or partway up its bubble chain. Nothing orders the two.
+- In-session handoff: none exists. The consume is scheduled only from `on_mount`, nothing else calls it, and the Settings route is not reusable (`screen_registry.py`), so every handoff gets a fresh screen.
+- llama.cpp: the intent never reaches the staging on dev. `_consume_pending_llamacpp_default_intent` is never scheduled (only the vLLM consumer is, at `on_mount`). `_consume_verified_default_intent` also ignores its `channel`, `intent_type` and `owner` arguments: it claims `HandoffChannel.VLLM_DEFAULT` and requires a `VllmDefaultIntent` (since 9dab7d15b1). `test_settings_stages_verified_llamacpp_without_persisting`, run under a temporary `@private_profile_test` marker and then reverted, fails at `assert draft is not None`. This is listed as a proposed follow-up. The fix below is in the shared change handler, so it covers llama.cpp once that is wired.
+
+**AC#2.** `test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stages` (`Tests/UI/test_settings_custom_id_fast_typing.py`, a whole-file UI census entry). It holds the field's real mount echo (an `Input.post_message` wrapper keeps the first `Input.Changed` of `#settings-model-value`), lets the real handoff consume on mount, and delivers the held echo afterwards. Red on dev: `('vllm', 'mod.../completions') == ('vllm', 'cha.../completions')`, i.e. the draft's model became `model-a` while the field showed `chatbook-vllm`.
+
+**AC#3, the fix.** `handle_model_value_changed` returns, after `_sync_model_picker()`, when `event.value != event.input.value`. A stale echo names a value the field no longer holds. Any non-quiet writer posts its own Changed with the value it wrote, and a quiet writer stages for itself, so dropping the stale event loses nothing. This is a state check, not a timer. The same test then types a Custom ID through the picker (Tab to Custom ID, Enter, keys) and asserts the draft takes `typed-model`. Negative control: with the handler made to return always, that assertion fails (`'chatbook-vllm' == 'typed-model'`). Green after the fix: 2 passed (the file).
+- Size ratchet: `settings_screen.py` 35654 -> 35657 under the owner waiver (`Tests/Architecture/test_module_size_ratchet.py`, dated 2026-11-06).
+- Covering run (run.sh, `-n 4`, load 28-56, 37 files naming the model field, the picker or the handoff channels): 1262 passed, 106 failed. At `fu-base-r11`, 100 of the 106 fail (mostly `RecoveryRequired: raw_source_selection_changed` in plain UI tests). The other 6 passed serially both here and at base.
+
+Files: `tldw_chatbook/UI/Screens/settings_screen.py`, `Tests/UI/test_settings_custom_id_fast_typing.py`, `Tests/Architecture/test_module_size_ratchet.py`.
