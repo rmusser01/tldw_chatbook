@@ -351,6 +351,10 @@ FAST_LANE_TARGETS = (
     # projection's child-call rows (92 pure tests, 8 s serially).
     "Tests/Chat/test_provider_usage.py",
     "Tests/Chat/test_trajectory_projection.py",
+    # TASK-34100.5.3.2 (carried #3295 review fix): every production
+    # ConsoleAgentBridge( passes a light-surface reader, so no new builder
+    # can hand plain chat the full agent surface again (pure AST, <1 s).
+    "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
