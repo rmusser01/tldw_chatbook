@@ -8,6 +8,20 @@ and this project adheres to Some kind of Versioning
 ## [Unreleased]
 
 ### Changed
+- Plain Console chat now offers a light, safe tool set by default — date
+  and time, a calculator and ask-you-a-question — until you turn on **Full
+  agent tools** (Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool
+  gates, or `[tools] full_agent_tools_enabled`). Sub-agents, skills, web,
+  Watchlists, workspace, character, Canvas and chat-fork tools come with it.
+  Profiles that already use agent features keep them: the first time this
+  version opens a profile with no `full_agent_tools_enabled` setting, it
+  checks once, in the background, for a sub-agent definition, a workspace
+  folder or SSH binding, or an earlier Console reply that called a tool
+  outside the light set, and if it finds one it writes
+  `full_agent_tools_enabled = true` and nothing else. New profiles and
+  profiles that use none of these stay on the light set with config.toml
+  unchanged. The check runs once per profile and never overrides a value you
+  set, so switching Full agent tools off afterwards keeps it off.
 - Console replies now stream by default for every provider, including
   OpenAI, Anthropic and the Custom OpenAI-compatible slots: the shipped
   `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]
