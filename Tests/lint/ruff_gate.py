@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ruff ratchet gate (TASK-38600, ADR 287).
+"""Ruff ratchet gate (TASK-38600, ADR 355).
 
 Runs ruff over ``tldw_chatbook`` with the project selection (F, B, ASYNC,
 PLE), aggregates findings PER RULE, and compares them against the checked-in
@@ -82,8 +82,8 @@ def _write_baseline(counts: dict[str, int]) -> None:
         text=True,
     ).stdout.strip()
     lines = [
-        "# ruff ratchet baseline (TASK-38600; ADR 287 "
-        "backlog/decisions/287-ruff-lint-gate.md)",
+        "# ruff ratchet baseline (TASK-38600; ADR 355 "
+        "backlog/decisions/355-ruff-lint-gate.md)",
         f"# generated with: {ruff_version}",
         "# selection: F,B,ASYNC,PLE over tldw_chatbook (F is ZERO by policy",
         "# and intentionally absent here -- the gate-new CI job enforces it)",

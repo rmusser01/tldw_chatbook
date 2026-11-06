@@ -25,7 +25,6 @@ from typing import (
     ContextManager,
     Iterable,
     Iterator,
-    Literal,
     Mapping,
     NamedTuple,
     Protocol,

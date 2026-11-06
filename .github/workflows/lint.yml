@@ -1,6 +1,6 @@
 name: Lint
 
-# Ruff lint gate (TASK-38600; ADR 287 backlog/decisions/287-ruff-lint-gate.md).
+# Ruff lint gate (TASK-38600; ADR 355 backlog/decisions/355-ruff-lint-gate.md).
 #
 # Two ratchets over tldw_chatbook with selection F,B,ASYNC,PLE:
 #   gate-new      -- F must stay at ZERO (F-class findings are fixed for real,

@@ -21,15 +21,10 @@ import asyncio
 from typing import TYPE_CHECKING, Callable, Sequence
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Workspaces.change_revert import (
-        RevertOutcome,
-        RevertPreflight,
-    )
     from tldw_chatbook.Workspaces.git_workspace import (
         CommitResult,
         CurrentRootStatus,
         GitWorkspaceInfo,
-        GitWorkspaceRefusal,
         PushResult,
     )
 

@@ -1,4 +1,4 @@
-# ADR-287: Ruff lint gate (zero-F policy + ratcheted baseline)
+# ADR-355: Ruff lint gate (zero-F policy + ratcheted baseline)
 
 Status: Accepted 2026-11-02
 Date: 2026-11-02
@@ -94,3 +94,5 @@ under a reasoned `# noqa: F401` or a static `__all__` (e.g.
 - **Per-file or per-line `# noqa` instead of a baseline file.** Rejected for
   non-F rules: it would spread ~1,000 suppressions through the source, hiding
   the debt at the sites instead of centralizing it for deliberate paydown.
+
+Renumbered from ADR-287 to ADR-355 on 2026-11-06 while rebasing PR #3361 onto dev (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-287 refers to 287-personas-destination-native-workbench.md.

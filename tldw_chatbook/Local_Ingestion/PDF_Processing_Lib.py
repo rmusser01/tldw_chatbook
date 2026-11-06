@@ -38,7 +38,7 @@ except ImportError as e:
     PDF_IMPORT_ERROR = str(e)
 #
 # Import Local
-from ..config import get_cli_setting, get_ocr_backend_config
+from ..config import get_ocr_backend_config
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from loguru import logger
 # NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) and `ocr_manager`
