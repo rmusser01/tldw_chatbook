@@ -147,7 +147,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 backlog owner size waiver: explicit URL source handoff.
     # TASK-38714 Qodo fold, 2026-11-05 (same waiver): 5020 -> 5021 (+1). The
     # held-job scan's UI-thread note records its measured startup cost.
-    "tldw_chatbook/app_ingest_queue.py": 5021,
+    # 2026-11-06, TASK-38954 (owner size waiver: a fix over a size ratchet
+    # raises the row): 5021 -> 5057 (+36) -- the Research startup work is
+    # queued from the asynchronous restore's completion, not before it.
+    "tldw_chatbook/app_ingest_queue.py": 5057,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.

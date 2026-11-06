@@ -463,6 +463,18 @@ def _response_field(payload: Any, name: str) -> Any:
     return getattr(payload, name, None)
 
 
+def _queue_research_source_startup_from_thread(host: Any) -> None:
+    """After a failed restore, queue startup source work (worker thread)."""
+    if not getattr(host, "_research_source_startup_pending", False):
+        return
+    try:
+        host.call_from_thread(host._schedule_research_source_startup)
+    except Exception:  # noqa: BLE001 - the restore worker must never raise
+        logger.opt(exception=True).debug(
+            "Research source startup work could not be queued; the app stopped."
+        )
+
+
 class LibraryIngestQueueMixin:
     """Library ingest job submission seam + parallel-parse coordinator + writer.
 
@@ -559,6 +571,7 @@ class LibraryIngestQueueMixin:
         self._research_source_terminal_jobs_scheduled: set[str] = set()
         self._research_source_parse_dispatch_pending: set[str] = set()
         self._research_source_restore_in_progress = False
+        self._research_source_startup_pending = False
         self.library_ingest_jobs.add_listener(
             self._schedule_settled_research_source_operations
         )
@@ -640,11 +653,13 @@ class LibraryIngestQueueMixin:
         # jobs WITHOUT the per-job deep copy jobs() makes (read-only here) --
         # a 1,000-file folder import fired this per file, each deep-copying
         # the whole queue (O(n^2), 1.65 s).
-        if self._research_source_restore_in_progress:
-            return
         scheduler = getattr(self, "research_source_association_scheduler", None)
         if scheduler is None:
             return
+        # TASK-38954: restored terminal jobs belong to the bounded
+        # resume_startup. Marking them here keeps the seeding, and every later
+        # mutation, from starting one worker per restored job.
+        restoring = self._research_source_restore_in_progress
         jobs = list(self.library_ingest_jobs.iter_jobs_for_listeners())
         if self._research_source_terminal_jobs_scheduled:
             self._research_source_terminal_jobs_scheduled.intersection_update(
@@ -665,6 +680,8 @@ class LibraryIngestQueueMixin:
             ):
                 continue
             self._research_source_terminal_jobs_scheduled.add(job.job_id)
+            if restoring:
+                continue
             self.run_worker(
                 self._resume_settled_research_source_operation(
                     job.job_id,
@@ -702,14 +719,25 @@ class LibraryIngestQueueMixin:
             )
 
     def _restore_ingest_jobs_and_schedule_research_sources(self) -> None:
-        """Restore ingest history before queuing bounded source-operation work."""
+        """Restore ingest history before queuing bounded source-operation work.
 
-        restore_was_in_progress = self._research_source_restore_in_progress
-        self._research_source_restore_in_progress = True
-        try:
-            self._restore_ingest_jobs()
-        finally:
-            self._research_source_restore_in_progress = restore_was_in_progress
+        The restore is a thread worker that seeds the registry and attaches
+        the store later, on the UI thread, so the startup work is queued when
+        the restore finishes, not here (TASK-38954).
+        """
+
+        self._research_source_startup_pending = True
+        self._restore_ingest_jobs()
+
+    def _schedule_research_source_startup(self) -> None:
+        """Queue the startup source-operation work, once. UI thread only.
+
+        Runs when the startup restore has seeded the registry, or has failed.
+        """
+
+        if not self._research_source_startup_pending:
+            return
+        self._research_source_startup_pending = False
         ingest_store = getattr(self, "_library_ingest_jobs_store", None)
         operation_store = getattr(self, "research_source_operation_store", None)
         if ingest_store is not None and operation_store is not None:
@@ -966,6 +994,7 @@ class LibraryIngestQueueMixin:
                     logger.opt(exception=True).debug(
                         "Ingest job store close after failed restore failed."
                     )
+            _queue_research_source_startup_from_thread(self)
             return
 
         try:
@@ -983,6 +1012,7 @@ class LibraryIngestQueueMixin:
                 logger.opt(exception=True).debug(
                     "Ingest job store close after failed restore failed."
                 )
+            _queue_research_source_startup_from_thread(self)
 
     def _apply_ingest_job_restore(self, store: Any, plan: Any) -> None:
         """Seed the registry from a completed restore plan. UI thread only.
@@ -1011,7 +1041,13 @@ class LibraryIngestQueueMixin:
             return
         self._library_ingest_jobs_store = store
         self.library_ingest_jobs.attach_store(store)
-        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
+        self._research_source_restore_in_progress = True
+        try:
+            self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
+        finally:
+            self._research_source_restore_in_progress = False
+        if getattr(self, "_research_source_startup_pending", False):
+            self._schedule_research_source_startup()
 
     def _expand_library_ingest_source(self, source_path: str) -> list[str] | None:
         """Expand a directory source into the files it contains.
