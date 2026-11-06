@@ -1,7 +1,7 @@
 ---
 id: TASK-34994
 title: Delete or revive the unwired server panels (OutputsPanel SharingPanel)
-status: To Do
+status: Done
 created_date: 2026-10-13 02:04
 labels:
 - simplification
@@ -16,13 +16,19 @@ Deletion-wave review finding: OutputsPanel and SharingPanel have zero production
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Per-panel disposition decided (wire or delete) with rationale,If deleted: panel modules plus their CSS rules and census entries removed and bundle rebuilt,If wired: a reachable route mounts the panel and a mount test exists
+- [x] #1 Per-panel disposition decided (wire or delete) with rationale,If deleted: panel modules plus their CSS rules and census entries removed and bundle rebuilt,If wired: a reachable route mounts the panel and a mount test exists
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
+Deleted by TASK-38605 (the 2026-11-02 audit's dead-code purge, PR #3361). `UI/Outputs_Panel.py` and `UI/Sharing_Panel.py` had no production route, so both were deleted along with:
+- their seam tests;
+- their class-level CSS allowlist rows;
+- their markup-interpolation and await-DOM census rows.
+
+The CSS bundle reproduces (preflight).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

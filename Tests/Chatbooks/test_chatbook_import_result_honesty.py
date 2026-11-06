@@ -398,6 +398,39 @@ async def test_media_left_out_by_the_user_is_never_reported_as_imported(
 # ---------------------------------------------------------------------------
 
 
+def test_replace_overwrites_existing_media_in_place(chatbook_zip, destination_paths):
+    """REPLACE updates the media row that shares the bundle's URL instead of
+    skipping or failing on it (TASK-38594 AC#1)."""
+    _import_once(chatbook_zip, destination_paths)
+    media_db = MediaDatabase(destination_paths["Media"], "test_client")
+    before = media_db.get_media_by_url("https://example.com/trail")
+    media_db.add_media_with_keywords(
+        url="https://example.com/trail",
+        title=before["title"],
+        media_type="video",
+        content="A locally edited transcript.",
+        keywords=["trail"],
+        overwrite=True,
+    )
+    media_db.close_connection()
+
+    status = ImportStatus()
+    ChatbookImporter(destination_paths).import_chatbook(
+        chatbook_path=chatbook_zip,
+        conflict_resolution=ConflictResolution.REPLACE,
+        prefix_imported=False,
+        import_media=True,
+        import_status=status,
+    )
+
+    assert status.result_snapshot(ContentType.MEDIA).successful == 1
+    media_db = MediaDatabase(destination_paths["Media"], "test_client")
+    after = media_db.get_media_by_url("https://example.com/trail")
+    assert after["id"] == before["id"]
+    assert after["content"] == "A transcript of the trail video."
+    media_db.close_connection()
+
+
 @pytest.mark.parametrize(
     ("counts", "expected_state", "expected_fragments"),
     [

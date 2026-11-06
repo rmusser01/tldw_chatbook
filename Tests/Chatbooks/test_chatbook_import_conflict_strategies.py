@@ -53,6 +53,7 @@ pytestmark = pytest.mark.bootstrap_profile
 
 NOTE_TITLE = "Packing list"
 NOTE_CONTENT = "Boots, map, water"
+NOTE_KEYWORD = "field-notes"
 CHARACTER_NAME = "Field Guide"
 CHARACTER_DESCRIPTION = "A helpful guide"
 CONVERSATION_TITLE = "Trip planning"
@@ -103,6 +104,7 @@ def chatbook_zip(tmp_path, chachanotes_template_db) -> Path:
         }
     )
     note_id = chacha.add_note(title=NOTE_TITLE, content=NOTE_CONTENT)
+    chacha.link_note_to_keyword(str(note_id), chacha.add_keyword(NOTE_KEYWORD))
 
     export_path = tmp_path / "bundle.zip"
     success, message, _deps = ChatbookCreator(db_paths=source_paths).create_chatbook(
@@ -197,6 +199,28 @@ def test_replace_note_updates_in_place(tmp_path, chatbook_zip, destination):
     assert rows[0]["content"] == NOTE_CONTENT
     assert rows[0]["id"] == first[0]["id"], "the existing note is updated, not recreated"
     assert rows[0]["version"] > first[0]["version"], "versioned update, not raw SQL"
+    db.close_connection()
+
+
+def test_replace_note_relinks_the_bundles_keywords(tmp_path, chatbook_zip, destination):
+    """REPLACE overwrites with the imported version, keywords included: the
+    update-in-place branch must re-link the bundle's keywords like the create
+    path does (TASK-34000.19), not skip them."""
+    db = _open(destination)
+    existing_id = db.add_note(title=NOTE_TITLE, content="local version, no tags")
+    db.close_connection()
+
+    success, _message, _status = _import(
+        chatbook_zip, destination, ConflictResolution.REPLACE
+    )
+
+    assert success is True
+    db = _open(destination)
+    rows = _active_note_rows(db, NOTE_TITLE)
+    assert [row["id"] for row in rows] == [existing_id]
+    assert [k["keyword"] for k in db.get_keywords_for_note(existing_id)] == [
+        NOTE_KEYWORD
+    ]
     db.close_connection()
 
 

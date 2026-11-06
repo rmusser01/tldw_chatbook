@@ -2256,7 +2256,7 @@
     },
     {
       "call_count": 70,
-      "diagnostic_digest": "7b6f2ce22bb0001de779",
+      "diagnostic_digest": "3cf5033d5a81ec8631af",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
       "reason": "remaining Chatbook production diagnostic owner"

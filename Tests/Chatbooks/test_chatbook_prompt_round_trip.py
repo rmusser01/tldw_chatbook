@@ -22,6 +22,7 @@ from tldw_chatbook.Chatbooks.chatbook_models import (
     ContentItem,
     ContentType,
 )
+from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_chatbook_record import (
     CHATBOOK_PROMPT_RECORD_KEYS,
@@ -538,6 +539,40 @@ def test_prompt_import_name_conflict_is_bounded_before_shared_database_logs(
         assert sentinel not in rendered
         assert sentinel not in message
         assert sentinel not in "\n".join(status.errors)
+
+
+def test_prompt_import_replace_overwrites_the_existing_prompt(tmp_path: Path) -> None:
+    """REPLACE updates a same-named prompt in place (TASK-38594 AC#1)."""
+    archive_path = tmp_path / "replace.zip"
+    _write_prompt_chatbook(
+        archive_path,
+        {"name": "Shared name", "description": None, "content": "Imported body"},
+    )
+    destination_path = tmp_path / "destination.db"
+    destination = PromptsDatabase(destination_path, client_id="destination-seed")
+    try:
+        existing_id, _uuid = _add_prompt(
+            destination, name="Shared name", system_prompt="Existing"
+        )
+    finally:
+        destination.close_connection()
+    status = ImportStatus()
+
+    success, _message = _importer(destination_path, tmp_path).import_chatbook(
+        archive_path,
+        conflict_resolution=ConflictResolution.REPLACE,
+        import_status=status,
+    )
+
+    assert success is True
+    assert status.successful_items == 1
+    reopened = PromptsDatabase(destination_path, client_id="destination-check")
+    try:
+        prompt = reopened.get_prompt_by_name("Shared name")
+        assert prompt["id"] == existing_id
+        assert prompt["system_prompt"] == "Imported body"
+    finally:
+        reopened.close_connection()
 
 
 def test_prompt_import_reusing_keyword_does_not_log_archive_value(

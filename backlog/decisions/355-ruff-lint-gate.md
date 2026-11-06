@@ -95,4 +95,8 @@ under a reasoned `# noqa: F401` or a static `__all__` (e.g.
   non-F rules: it would spread ~1,000 suppressions through the source, hiding
   the debt at the sites instead of centralizing it for deliberate paydown.
 
+## Amendment 2026-11-06: one F401 exemption
+
+`tldw_chatbook/UI/Screens/library_screen.py` re-exports the support layer moved out of it in the Library decomposition. `Tests/Architecture/test_library_support_layer_surface.py` pins every re-exported name, so its F401 findings are a deliberate surface, not dead imports. `pyproject.toml` exempts that file from F401 alone; every other F finding still fails `gate-new`. The number 354 was skipped because an open branch already uses it.
+
 Renumbered from ADR-287 to ADR-355 on 2026-11-06 while rebasing PR #3361 onto dev (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-287 refers to 287-personas-destination-native-workbench.md.

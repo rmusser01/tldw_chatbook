@@ -4,7 +4,9 @@ name: Lint
 #
 # Two ratchets over tldw_chatbook with selection F,B,ASYNC,PLE:
 #   gate-new      -- F must stay at ZERO (F-class findings are fixed for real,
-#                    never baselined; TASK-38600).
+#                    never baselined; TASK-38600). The one exemption is
+#                    library_screen.py's F401 re-export surface, pinned by
+#                    an Architecture test (pyproject per-file-ignores).
 #   gate-ratchet  -- per-rule counts for the remaining debt must never exceed
 #                    Tests/lint/ruff_baseline.txt. Shrinking is allowed and
 #                    printed; regrow only by lowering the baseline first.
@@ -23,10 +25,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
+
 jobs:
   gate-new:
     name: F-rule gate (must be empty)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,6 +49,7 @@ jobs:
   gate-ratchet:
     name: Ratchet gate (no rule above baseline)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
