@@ -2554,3 +2554,9 @@ The fix patches nothing of Textual's.
   - Give each input a case of its own: an `add_source` rule while away (the rules check), and an App class set while the screen is current and cleared while it is away (the suspend check).
   - Compare every node's `_css_styles.get_rules()` with a forced `app.update_styles(screen)` (`Tests/UI/test_console_projection_restyles.py`).
 - **The same shape elsewhere.** `#console-shell`'s `-console-compact` class still restyles 517 nodes when the height crosses 34 rows.
+
+## A one-shot close gated on `is_mounted` is lost when it lands between push and mount (TASK-38979, 2026-11-06)
+
+**Incident.** `test_dialog_validation_is_coalesced_owned_and_drained[close]` hung in 4 of 19 serial runs, and once past `--timeout` it kept pytest alive in teardown for 26 minutes. `PortraitRegionEditor.retire()` dismissed only `if self.is_mounted`. `push_screen` puts the editor on the stack (`app.screen` is the editor) at once, but its Compose and Mount run later on its own task, so a `controller.close()` that landed in that window set `_retired`, skipped the dismiss, and left the editor on top for good. The regions worker stayed parked in `push_screen_wait`, and `close()` (awaited on a runtime-backend change and on Personas unmount) waited on that worker forever. A class-level async stand-in for `on_mount` that awaits an event holds the editor in exactly that window, and made the hang deterministic: 4 of 4 cases red in 5 s each.
+
+**What to do.** A retire or close that may run before the modal mounts must not drop its dismissal. Queue it to run after mount (`self.call_later(self.retire)`: the Callback message is handled after `_pre_process` sets `_is_mounted`), rather than gating on `is_mounted`. To test the window, hold `on_mount` on the class (Textual dispatches it from `cls.__dict__`), wait with plain `asyncio.wait(..., timeout=...)` rather than Pilot, and dismiss a leftover modal in the cleanup so a red case still ends.
