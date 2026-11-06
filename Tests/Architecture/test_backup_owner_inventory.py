@@ -178,9 +178,24 @@ def test_every_persistence_source_symbol_has_reviewed_owner_row():
             key = module, symbol, call
             assert key not in rows
             rows[key] = int(count)
-    assert rows == production_census(), (
-        "Persistence producer census changed; review owner, resolver, cohort and exclusion."
-    )
+    production = production_census()
+    added = sorted(production.keys() - rows.keys())
+    gone = sorted(rows.keys() - production.keys())
+    changed = sorted(k for k in production.keys() & rows.keys() if rows[k] != production[k])
+    if added or gone or changed:
+        # Raised, not asserted: pytest truncates assertion explanations, and the
+        # reviewer needs every row (TASK-39053: a truncated diff hid 850 rows).
+        listing = [
+            f"Persistence producer census changed: {len(added)} added, {len(gone)} gone, "
+            f"{len(changed)} changed. Review owner, resolver, cohort and exclusion.",
+            *(f"added   | {m} | {s} | {c} | {production[m, s, c]} |" for m, s, c in added),
+            *(f"gone    | {m} | {s} | {c} | {rows[m, s, c]} |" for m, s, c in gone),
+            *(
+                f"changed | {m} | {s} | {c} | {rows[m, s, c]} -> {production[m, s, c]} |"
+                for m, s, c in changed
+            ),
+        ]
+        raise AssertionError("\n".join(listing))
 
 
 def test_census_detects_new_producer_and_new_call_in_existing_symbol():
@@ -203,7 +218,11 @@ def test_sqlite_registry_members_have_explicit_census_rows():
     )
     names = {key.value for key in registry.keys}
     documented = set(re.findall(r"^\| sqlite:([^ |]+) \|", DOC.read_text(), re.M))
-    assert names == documented
+    if names != documented:
+        raise AssertionError(
+            f"SQLite registry members without a row: {sorted(names - documented)}\n"
+            f"rows without a registry member: {sorted(documented - names)}"
+        )
 
 
 def test_census_detects_module_qualified_and_aliased_writable_opens():
