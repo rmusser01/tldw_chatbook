@@ -565,16 +565,10 @@ def staged_key_line(owner: Any) -> str:
     usable list keeps the line: Next still checks the key.
     """
 
-    from tldw_chatbook.UI.Wizards import first_run_key_check as key_check
-
-    # TASK-34100.2 AC#3: a key the shared discovery checks is offered that
-    # check (Enter); one a public model list cannot prove says so.
-    unchecked = key_check.unchecked_key_line(owner.selected_provider_key)
     key = owner._model_discovery_key(owner._effective_provider_draft())
     if key is None:
-        return unchecked or STAGED_KEY_LINE
+        return STAGED_KEY_LINE
     evidence = owner._test_evidence_for_discovery_key(key)
-    outcome = None
     if evidence is not None:
         refused = evidence.category == "unauthorized"
         answered = evidence.endpoint == "reachable"
@@ -583,16 +577,14 @@ def staged_key_line(owner: Any) -> str:
             outcome = owner._selected_provider_outcomes.get(key)
             _models, state, category = _model_discovery_ui_outcome(outcome)
         except ValueError:  # no listing of this key yet
-            return unchecked or STAGED_KEY_LINE
+            return STAGED_KEY_LINE
         refused = state == "connection_failed" and category == "authentication"
         answered = state in {"available", "empty"}
     if refused:
         return "Key staged — the server rejected it; update it above."
     if answered:
-        return key_check.answered_key_line(
-            owner.selected_provider_key, outcome
-        ) or "Key staged — the server did not refuse it."
-    return unchecked or STAGED_KEY_LINE
+        return "Key staged — the server did not refuse it."
+    return STAGED_KEY_LINE
 
 
 def auth_title(owner: Any, requires_api_key: bool) -> str:

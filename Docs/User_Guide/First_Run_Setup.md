@@ -208,8 +208,10 @@ provider that answered without a usable list says what it answered instead:
 that it won't list models for this key (HTTP 403, which never keeps you on
 the step: the key may still chat, though the tracker shows Provider with
 **!** rather than ✓), an error with its status code, or an
-empty list. OpenRouter, Hugging Face and Novita list models
-without a valid key, so that list can't confirm one. A rejected key (a 401)
+empty list. OpenRouter, Hugging Face, NVIDIA NIM and Novita list models
+without a valid key, so that list can't confirm one; OpenRouter and Hugging
+Face are checked at their own key endpoint instead (see [How setup checks
+your key](#how-setup-checks-your-key)). A rejected key (a 401)
 keeps you on the Provider step, with the reason under the key field; for an
 exported key the fix is **Store a different key for this app** (or another
 provider), and **Skip — connect later** stays available — it skips even
@@ -254,29 +256,28 @@ soon as you edit that field.
 
 ## How setup checks your key
 
-On the Provider step, press Enter in the key field (or **Test connection**)
-to check the key now; it is also checked when you press **Next →**. For
-most cloud providers the check is the provider's own model list, which only
-answers a valid key. Some providers need more than that, and setup words the
-result in the provider's own terms:
+On the Provider step, **Check key** (or Enter in the key field) checks the
+key now; it is also checked when you press **Next →**. For most cloud
+providers the check is the provider's own model list, which only answers a
+valid key. Some providers need more than that:
 
-- **Google Gemini**: Google's model list is the key check. "✓ Google
-  accepted this key — found 15 model(s)." A wrong key reads "✗ Google
-  rejected this key: API key not valid."
-- **Anthropic**: its authenticated model list. "✓ Anthropic accepted this
-  key — found 13 model(s)." A wrong key reads as it does for OpenAI: "✗
-  Anthropic rejected this API key. Update it, or continue anyway." (a
-  provider that refuses a key without giving a reason always reads this
-  way).
+- **Google Gemini**: Google's own model list is the key check, so setup
+  lists Gemini's chat models and reads "✓ Key works — Google Gemini
+  returned 15 models." A wrong key reads "✗ Google Gemini rejected this
+  key: API key not valid. Please pass a valid API key."
+- **Anthropic**: its authenticated model list. "✓ Key works — Anthropic
+  returned 13 models." A wrong key reads "✗ Anthropic rejected this key.";
+  when a provider gives its own reason for refusing a key, setup adds it
+  after a colon.
 - **OpenRouter** and **Hugging Face**: their model lists answer any key, so
-  setup asks each provider's key endpoint. "✓ OpenRouter accepted this key —
-  found 466 model(s)", or "✗ OpenRouter rejected this key: User not found."
-  The Model step quotes the same reason, and so does its **Continue
+  setup asks each provider's key endpoint. "✓ Key works — OpenRouter
+  returned 466 models.", or "✗ OpenRouter rejected this key: User not
+  found." The Model step quotes the same reason, and so does its **Continue
   anyway?** question.
 - **NVIDIA NIM** and **Novita AI**: the model list answers without a valid
   key and there is no key endpoint, so the key is not checked until your
-  first message. Setup says "key not checked" and never shows ✓; the summary
-  reads "– Provider — nvidia (key not checked)".
+  first message. Setup says the list "can't confirm this one here" and never
+  shows ✓; the summary reads "– Provider — nvidia (key not checked)".
 
 The summary's Provider row shows ✓ for OpenRouter and Hugging Face only when
 their key check passed in this run of setup. If it didn't run (for example,
@@ -742,12 +743,14 @@ setup with your choices intact.
 
 ## Local servers stream
 
-Setting up a local OpenAI-compatible server (llama.cpp, Ollama, vLLM, LM
-Studio through **Custom OpenAI-compatible**, and the other local servers)
-turns streaming on for it, so its first reply appears as it is written. The
-shipped Custom and Custom 2 sections also start with streaming on. A server
-that cannot stream still answers through the non-streaming path. Cloud
-providers keep their own streaming setting.
+Console streams every provider's replies by default (`[chat_defaults]
+streaming`; see [Console](console.md)), so a local OpenAI-compatible server
+set up here (llama.cpp, Ollama, vLLM, LM Studio through **Custom
+OpenAI-compatible**, and the other local servers) shows its first reply as it
+is written. Setup also turns that provider's own `streaming` on, and the
+shipped Custom and Custom 2 sections start with it on, so the provider's own
+setting agrees. A server that cannot stream still answers through the
+non-streaming path.
 
 ## If a provider key is already exported
 
