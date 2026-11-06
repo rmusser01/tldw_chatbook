@@ -965,3 +965,32 @@ async def test_an_untouched_step_over_keyless_openai_whisper_shows_it_and_writes
     assert "no OpenAI key is available" in detail
     assert ok
     wizard.commit_config.assert_not_awaited()
+
+
+# -- review v5r2 LV1-F2: the Language Select survives a recompose mid-mount ------
+
+
+@pytest.mark.asyncio
+async def test_the_language_select_survives_being_pruned_mid_mount() -> None:
+    """Review LV1-F2 (TASK-34100.13): under load a mounted walk and a Speech
+    test raised NoMatches('#label' on SelectCurrent) from Select._on_mount.
+    The step recomposes from a dozen places (show, reload, every install
+    state), and a recompose or teardown that prunes the Language Select
+    inside its own mount cascade hits Textual's unguarded #label lookup
+    (TASK-1960). Dev's Speech step had no Select; this branch added it, so it
+    uses the project's PruneSafeSelect. The state is reconstructed as in
+    Tests/Widgets/test_prune_safe_select.py (a stock Select raises in it)."""
+    from textual import events
+    from textual.widgets._select import SelectCurrent
+
+    _wizard, step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _parakeet_step(pilot, step)
+        select = step.query_one("#setup-speech-language", Select)
+        current = select.query_one(SelectCurrent)
+        await current.query_children("*").remove()
+        select.set_reactive(Select.value, Select.NULL)
+        select._pruning = True
+        current._pruning = True
+        select._on_mount(events.Mount())

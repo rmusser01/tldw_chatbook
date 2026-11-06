@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Iterator
 
 from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
-from textual.widgets import Button, Collapsible, Label, Select, Static
+from textual.widgets import Button, Collapsible, Label, Static
 
 from tldw_chatbook.UI.Wizards import first_run_speech_engine as engines
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
@@ -30,6 +30,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
 )
 from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
 
 if TYPE_CHECKING:
     from tldw_chatbook.UI.Wizards.first_run_speech_step import SpeechSetupStep
@@ -144,7 +145,14 @@ def _engine_block(step: "SpeechSetupStep") -> Iterator[Widget]:
     )
 
 
-def _language_select(step: "SpeechSetupStep") -> Select:
+def _language_select(step: "SpeechSetupStep") -> PruneSafeSelect:
+    """The one-row Language select.
+
+    Review LV1-F2: prune-safe (TASK-1960). The step recomposes on show, on
+    reload and on every install state, and a recompose or teardown that
+    prunes a stock ``Select`` inside its own mount raises ``NoMatches`` out
+    of a message handler.
+    """
     options = [
         (
             option.display_name + (" (recommended)" if option.code == "en" else ""),
@@ -155,7 +163,7 @@ def _language_select(step: "SpeechSetupStep") -> Select:
         )
         if option.selectable
     ]
-    return Select(
+    return PruneSafeSelect(
         options,
         value=step._selected_language,
         allow_blank=False,
