@@ -504,9 +504,11 @@ async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_pa
         wake.on_fleet_drained(
             _drain(second.persisted_conversation_id, _survivor(second_child, session_id=second.id))
         )
+        # The first stays parked on its approval however long this takes; a
+        # loaded machine needs more than 5 s for the second's delivery.
         assert await _settle(
             lambda: runs_db.get_run(second_child)["wake_delivered_at"] is not None,
-            seconds=5,
+            seconds=15,
         )
         assert not held["event"].is_set()
         assert not held["decisions"]

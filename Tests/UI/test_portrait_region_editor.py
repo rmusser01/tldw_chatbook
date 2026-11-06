@@ -944,7 +944,14 @@ async def test_save_completion_drops_removed_validation_control(
                 Button.Pressed(modal.query_one("#portrait-regions-save", Button))
             )
         )
-        await asyncio.wait_for(entered.wait(), 15)
+        try:
+            await asyncio.wait_for(entered.wait(), 15)
+        except TimeoutError:
+            raise AssertionError(
+                "the held save was never reached: "
+                f"retired={modal._retired} saving={modal._saving} "
+                f"current={modal._current()} draft={controller.draft is not None}"
+            ) from None
         await modal.query_one("#portrait-regions-validation").remove()
         release.set()
         await saving
