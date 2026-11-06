@@ -140,7 +140,10 @@ def test_normal_resolution_collapses_library_then_items(
 
 @pytest.mark.parametrize(
     ("priority", "expected_library_width", "expected_items_width"),
-    [("library", LIBRARY_MIN_WIDTH, 0), ("items", 0, ITEMS_MIN_WIDTH)],
+    # TASK-38981: an explicitly opened list beside an open item (the default
+    # ``reader_has_item``) takes the stage at 70 columns, where its minimum
+    # used to leave the Reader 28 cells.
+    [("library", LIBRARY_MIN_WIDTH, 0), ("items", 0, 70 - MEDIA_GRIP_CELLS)],
 )
 def test_explicit_open_collapses_other_pane_first_and_uses_requested_minimum(
     priority: str,
@@ -168,8 +171,10 @@ def test_reader_can_drop_below_comfort_after_explicit_open_without_overflow() ->
     )
 
     assert layout.items_open is True
-    assert layout.items_width == ITEMS_MIN_WIDTH
-    assert layout.reader_width == 60 - MEDIA_GRIP_CELLS - ITEMS_MIN_WIDTH
+    # TASK-38981: beside an open item the list takes the stage instead of
+    # leaving the Reader an 18-cell sliver (its old 32 + 18 split).
+    assert layout.items_width == 60 - MEDIA_GRIP_CELLS
+    assert layout.reader_width == 0
     assert layout.reader_width < READER_COMFORT_WIDTH
 
 
@@ -189,7 +194,8 @@ def test_returning_width_restores_target_widths_not_intermediate_widths() -> Non
     wide = resolve_media_reader_layout(160, preferences, previous=narrow)
 
     assert wide.library_width == project_default_library_width(160)
-    # The intermediate width this test guards against is the narrow 32 above.
+    # The intermediate width this test guards against is the narrow step's
+    # list above (32 cells before TASK-38981; 70 now that it holds the stage).
     # The width the return restores is the automatic one for 160 columns:
     # ITEMS_TARGET_WIDTH (40) before task-31633, the growth ceiling now that
     # Media's list shares the Reader's surplus (AC#1).
@@ -197,7 +203,9 @@ def test_returning_width_restores_target_widths_not_intermediate_widths() -> Non
         MEDIA_READER_LAYOUT_PROFILE.list_comfort_width,
         MEDIA_READER_LAYOUT_PROFILE.list_max_width,
     )
-    assert wide.items_width > narrow.items_width
+    # TASK-38981: the narrow step's list now holds the whole 80-column stage
+    # (70 cells), so the return is pinned as "not the intermediate width".
+    assert wide.items_width != narrow.items_width
     assert wide.priority_pane is None
 
 
@@ -208,7 +216,8 @@ def test_explicit_open_priority_survives_narrow_resize_resolution() -> None:
     resized = resolve_media_reader_layout(81, preferences, previous=opened)
 
     assert resized.items_open is True
-    assert resized.items_width == ITEMS_MIN_WIDTH
+    # TASK-38981: the inherited list priority keeps the stage at 81 too.
+    assert resized.items_width == 81 - MEDIA_GRIP_CELLS
     assert resized.priority_pane == "items"
 
 

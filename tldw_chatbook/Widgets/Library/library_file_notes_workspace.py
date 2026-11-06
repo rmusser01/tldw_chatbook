@@ -231,6 +231,10 @@ def resolve_file_note_status_channels(
         content, safe = "No file open.", None
     else:
         content, safe = "Saved", None
+    if unavailable and root is not None and (conflict or save_failed or saving or dirty):
+        # TASK-38983: an unsaved draft refuses a folder change, and Save Copy
+        # writes into the same unreachable folder, so neither step works.
+        safe = "Reconnect the folder"
 
     if git_failure:
         failure_lower = git_failure.casefold()
@@ -304,6 +308,8 @@ ROOT_CHANGE_TIMEOUT_SECONDS = 30.0
 #: beside a folder change, long enough not to spin.
 SERVICE_LOCK_POLL_SECONDS = 0.05
 ROOT_CHANGE_CANCELLED_COPY = "Folder change cancelled · previous folder kept"
+#: TASK-38983: the leave guard refused a folder change; it used to say nothing.
+ROOT_CHANGE_DRAFT_COPY = "Folder not changed · your draft is not saved yet."
 ROOT_CHANGE_TIMEOUT_COPY = (
     "Folder change timed out · previous folder kept. "
     "Try again or choose a different folder."
@@ -1420,6 +1426,7 @@ class LibraryFileNotesWorkspace(Vertical):
        Truncation is defined at every width. */
     .file-notes-toolbar Button,
     #file-notes-new,
+    #file-notes-navigator-manage,
     #file-notes-back,
     #file-notes-session-changes {
         width: auto;
@@ -1670,6 +1677,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._action_detail = ""
         self._initialized = False
         self._root_offline: bool | None = None
+        #: TASK-38982: a failed background reconcile, until the next healthy pass.
+        self._refresh_failure = ""
         self._narrow = False
         self._narrow_view: Literal["navigator", "editor"] = "navigator"
         # TASK-38757: the user chose the narrow navigator (Back or the Files
@@ -1793,10 +1802,17 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _build_reader_items_pane(self) -> Widget:
         """Build the retained Folder navigator role once."""
+        # TASK-38982: the hidden work pane's Manage (and Session Git), shown
+        # only while the narrow navigator hides that pane.
+        self._navigator_manage = Button(
+            "Manage", id="file-notes-navigator-manage", compact=True
+        )
+        self._navigator_manage.display = False
         return Vertical(
             Horizontal(
                 Static("Folder files", classes="destination-section", markup=False),
                 Button("New", id="file-notes-new", compact=True),
+                self._navigator_manage,
                 id="file-notes-tree-header",
             ),
             # task-32621 AC#2 (A cap 29, B cap 35): the tree silently omitted
@@ -1926,6 +1942,11 @@ class LibraryFileNotesWorkspace(Vertical):
                     Button(
                         "Resolve conflict",
                         id="file-notes-resolve-conflict",
+                        compact=True,
+                    ),
+                    Button(
+                        "Retry save",
+                        id="file-notes-recovery-retry",
                         compact=True,
                     ),
                     Button(
@@ -2683,6 +2704,8 @@ class LibraryFileNotesWorkspace(Vertical):
         authority_running = ""
         if self._root is not None and self._root_offline is True:
             authority_failure = "Folder unavailable"
+        elif self._refresh_failure:
+            authority_failure = "Refresh failed"
         elif self._runtime_warning:
             authority_uncertain = "Folder warning"
         elif self._root_transitioning:
@@ -3297,6 +3320,7 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         self._deleted_paths = deleted
         self._root_offline = result.offline
+        self._clear_refresh_failure()
         self._runtime_warning = "; ".join(
             warning
             for warning in (result.replica_warning, additional_warning)
@@ -3349,10 +3373,18 @@ class LibraryFileNotesWorkspace(Vertical):
         self._deleted_paths = deleted
         self._root_offline = result.offline
         self._runtime_warning = result.replica_warning or ""
+        self._clear_refresh_failure()
         return self._render_projection(
             offline=result.offline,
             rebuild_tree=navigator_changed,
         )
+
+    def _clear_refresh_failure(self) -> None:
+        """A healthy pass ends a failed reconcile's report (TASK-38982)."""
+        if self._refresh_failure:
+            self._refresh_failure = ""
+            if self._action_detail.startswith("Refresh failed:"):
+                self._action_detail = ""
 
     def _show_root_row_button(
         self,
@@ -3444,9 +3476,9 @@ class LibraryFileNotesWorkspace(Vertical):
             shell.items.display = linked and shell.effective_layout.items_open
             shell.items_grip.display = linked
             shell.library_grip.display = linked
-            shell.work.display = linked and not self._navigator_hides_work(
-                shell.effective_layout
-            )
+            hides_work = self._navigator_hides_work(shell.effective_layout)
+            shell.work.display = linked and not hides_work
+            self._navigator_manage.display = linked and hides_work
         try:
             body = self.query_one("#file-notes-body")
         except NoMatches:
@@ -5787,6 +5819,9 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_detail = detail
         if state != "conflict":
             self._conflict_resolution_active = False
+        if state == "saved" and self._root_action_reason == ROOT_CHANGE_DRAFT_COPY:
+            self._root_action_reason = ""
+            self._update_root_surface()
         if self._active and self.is_mounted:
             status = self.query_one("#file-notes-save-status", Static)
             status.set_class(state == "conflict", "-conflict")
@@ -6028,6 +6063,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-save-copy",
                 "file-notes-recovery-save-copy",
                 "file-notes-recovery-reload",
+                "file-notes-recovery-retry",
                 "file-notes-refresh",
                 "file-notes-maintenance-toggle",
             }
@@ -6147,6 +6183,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 reload_button.parent.refresh(layout=True)
         recovery_reload.label = reload_label
         recovery_reload.disabled = reload_button.disabled
+        self.query_one("#file-notes-recovery-retry", Button).disabled = (
+            reload_button.disabled
+        )
         self._sync_editor_action_visibility()
         self.query_one(
             "#file-notes-reload-cancel", Button
@@ -6264,6 +6303,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
             ),
             "file-notes-refresh": has_service,
+            "file-notes-recovery-retry": has_document and self._save_state == "error",
             "file-notes-recovery-reload": (
                 has_document and self._save_state in {"conflict", "error"}
             ),
@@ -6548,6 +6588,8 @@ class LibraryFileNotesWorkspace(Vertical):
         if not self._active or self._path_transitioning or self._shutdown:
             return False
         if not await self.flush_pending_work():
+            if self._save_state in {"conflict", "error"}:
+                self._report_root_change_reason(ROOT_CHANGE_DRAFT_COPY)
             return False
         if not self._active or self._path_transitioning or self._shutdown:
             return False
@@ -6834,6 +6876,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     )
                 )
             except Exception as error:
+                self._refresh_failure = str(error)
                 self._set_action_status(f"Refresh failed: {error}")
                 # A failed reconcile never earns backoff: stay active so
                 # the first healthy pass is picked up immediately.
@@ -7787,7 +7830,16 @@ class LibraryFileNotesWorkspace(Vertical):
     def _back_to_navigator(self, event: Button.Pressed) -> None:
         event.stop()
         self._navigator_chosen = True
+        # TASK-38982: Back hides itself in the navigator view, and the Files
+        # pane is still closed (disabled) until the layout reopens it. Park
+        # focus on the Files grip first, so it is never None; the files take
+        # it once their pane shows.
+        shell = self._reader_shell
+        if shell is not None:
+            self.screen.set_focus(shell.items_grip, scroll_visible=False)
         self._set_narrow_view("navigator")
+        results = self._search_results_widget
+        self._focus_once_shown(results if results.display else self._tree_widget)
 
     @on(Button.Pressed, "#file-notes-session-changes")
     def _session_git_pressed(self, event: Button.Pressed) -> None:
@@ -9100,6 +9152,13 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_work_mode()
         self.call_after_refresh(self._editor_widget.focus)
 
+    @on(Button.Pressed, "#file-notes-navigator-manage")
+    def _show_manage_from_navigator(self, event: Button.Pressed) -> None:
+        """Open Manage from a navigator that hides the work pane (TASK-38982)."""
+        # Hand focus on before this button hides with the navigator view.
+        self.screen.set_focus(self.query_one("#file-notes-manage", Button))
+        self._show_manage_mode(event)
+
     @on(Button.Pressed, "#file-notes-manage")
     def _show_manage_mode(self, event: Button.Pressed) -> None:
         event.stop()
@@ -9781,6 +9840,18 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-recovery-reload")
     async def _reload_from_recovery(self, event: Button.Pressed) -> None:
         await self._reload_file(event)
+
+    @on(Button.Pressed, "#file-notes-recovery-retry")
+    def _retry_failed_save(self, event: Button.Pressed) -> None:
+        """Re-run a failed save from the unchanged editor text (TASK-38983)."""
+        event.stop()
+        if self._save_state != "error" or self._opened is None:
+            return
+        # The button hides as the state leaves "error"; move focus first
+        # (synchronously, so the hide's focus fallback sees it).
+        self.screen.set_focus(self._editor_widget)
+        self._set_save_state("dirty")
+        self._start_autosave()
 
     @on(Button.Pressed, "#file-notes-resolution-save-new")
     async def _save_conflict_draft_as_new_note(

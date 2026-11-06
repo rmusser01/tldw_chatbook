@@ -515,6 +515,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_CREATE_SKILL,
     library_disabled_action_label,
 )
+from ...Utils.adaptive_reader_state import list_holds_the_stage
 from ...Widgets.Library import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     LibraryMediaCanvas,
@@ -2266,6 +2267,8 @@ class LibraryMediaController:
         # holds a document (or its loading banner) and must reclaim the width
         # the list-view widening handed to the Items list. The in-place viewer
         # patch above does not re-run the resolver.
+        if immediate:
+            self._hand_the_list_stage_to_the_reader()
         self._restore_library_media_reader_width_on_open()
         if immediate:
             self._dispatch_library_media_detail_request(
@@ -3606,6 +3609,17 @@ class LibraryMediaController:
         """Open the previous browse item in the Reader (task-28005)."""
         self._select_library_media_adjacent_item(-1)
 
+    def _hand_the_list_stage_to_the_reader(self) -> None:
+        """TASK-38981 review: an item OPENED from the list holding the stage
+        (an immediate select: Enter, a click, ``]``/``[``, a review-set walk)
+        takes the stage back instead of loading behind it. A focus move's
+        preview select is not immediate and keeps the list (browsing)."""
+        layout = self._media_state.reader_layout
+        if list_holds_the_stage(layout):
+            self._media_state.reader_layout = dataclasses.replace(
+                layout, priority_pane=None
+            )
+
     def _select_library_media_adjacent_item(self, direction: int) -> None:
         if not self._library_media_item_traversal_active():
             return
@@ -4572,6 +4586,21 @@ class LibraryMediaController:
             self._library_media_progress_restored_id = loaded_id
             self._queue_after_library_media_viewer_recompose(
                 partial(self._restore_library_media_loaded_progress, loaded_id),
+                viewer,
+            )
+        if loaded_id is not None and self._screen._library_stage_pick_landing == (
+            "media",
+            str(loaded_id),
+        ):
+            # TASK-38981: a pick from the list holding the stage lands once
+            # the opened item's controls exist.
+            self._queue_after_library_media_viewer_recompose(
+                partial(
+                    self._screen._land_stage_pick,
+                    "media",
+                    loaded_id,
+                    ".library-media-route",
+                ),
                 viewer,
             )
         return True

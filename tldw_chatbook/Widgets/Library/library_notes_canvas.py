@@ -1851,6 +1851,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             before != self._toolbar_decisions(self._effective_pane_width())
             or self._tree_actions_need_repack()
         ):
+            # TASK-38981 re-review: a widen that ends the list's narrow stage
+            # reshapes the toolbar; keep the user's list focus (the filter, a
+            # row) on its rebuilt same-id control instead of Textual's reset.
+            self.preserve_same_id_focus_after_recompose()
             self.refresh(recompose=True)
 
     def _keep_delete_prompt_in_view(self) -> None:

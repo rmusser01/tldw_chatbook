@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "pass_added_modules": 557,
-  "pass_added_loc": 426539,
+  "pass_added_modules": 556,
+  "pass_added_loc": 426388,
   "routes": {
     "acp": {
       "loc": 535,
@@ -11,7 +11,7 @@
       ]
     },
     "ccp": {
-      "loc": 59869,
+      "loc": 59888,
       "modules": [
         "tldw_chatbook.Backup_Recovery.persona_visual_participants",
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
@@ -191,7 +191,7 @@
       ]
     },
     "library": {
-      "loc": 132480,
+      "loc": 132530,
       "modules": [
         "tldw_chatbook.Audio.meeting_session",
         "tldw_chatbook.Chunking",
@@ -414,7 +414,7 @@
       ]
     },
     "meetings": {
-      "loc": 4403,
+      "loc": 4404,
       "modules": [
         "tldw_chatbook.Audio.meeting_owner",
         "tldw_chatbook.Audio.system_audio_tap",
@@ -489,7 +489,7 @@
       ]
     },
     "settings": {
-      "loc": 78645,
+      "loc": 78630,
       "modules": [
         "tldw_chatbook.Audio.voice_process_types",
         "tldw_chatbook.Backup_Recovery.rag_definition_participant",
@@ -556,7 +556,7 @@
       ]
     },
     "stts": {
-      "loc": 21413,
+      "loc": 21211,
       "modules": [
         "tldw_chatbook.Audio.dictation_service_lazy",
         "tldw_chatbook.Audio.duplex_contracts",
@@ -584,7 +584,6 @@
         "tldw_chatbook.UI.Speech.speech_synthesis_mixin",
         "tldw_chatbook.UI.stts_playground_catalog",
         "tldw_chatbook.Widgets.audio_troubleshooting_dialog",
-        "tldw_chatbook.Widgets.prune_safe_select",
         "tldw_chatbook.Widgets.voice_blend_dialog"
       ]
     },
@@ -603,7 +602,7 @@
       ]
     },
     "watchlists_collections": {
-      "loc": 34180,
+      "loc": 34176,
       "modules": [
         "tldw_chatbook.Subscriptions.briefing_audio",
         "tldw_chatbook.Subscriptions.briefing_export",

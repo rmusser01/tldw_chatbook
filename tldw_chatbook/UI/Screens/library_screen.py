@@ -110,6 +110,7 @@ from ...Utils.adaptive_reader_state import (
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
     PaneName,
+    list_holds_the_stage,
     normalize_adaptive_reader_preferences,
     resolve_adaptive_reader_layout,
 )
@@ -1634,6 +1635,8 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT = (("enter", "choose version"),)
     #: M-2: read on suspend, so a screen built by ``__new__`` has it too.
     _library_notes_filter_row_handoff: tuple[str, bool] | None = None
+    #: TASK-38981: ``(destination, item id)`` of a stage pick still to land.
+    _library_stage_pick_landing: tuple[str, str] | None = None
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
@@ -11239,6 +11242,9 @@ class LibraryScreen(BaseAppScreen):
             stage = self._library_notes_focus_stage(focused)
             relevant = bool(
                 self._library_notes_workflow_active()
+                # TASK-38957: and Folder files, so a user's move there vetoes
+                # a compact transition's deferred focus restore too.
+                or self._file_notes_active()
                 or stage == "rail"
                 or (
                     self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
@@ -23966,6 +23972,8 @@ class LibraryScreen(BaseAppScreen):
             return
         # task-31273: an explicit row open wins over a pending auto-resume.
         self._cancel_pending_review_set_resume()
+        if list_holds_the_stage(self._media_state.reader_layout):
+            self._arm_stage_pick_landing("media", media_id)
         self._open_library_media_viewer(media_id)
 
     @on(Button.Pressed, "#library-media-select-toggle")
@@ -25423,6 +25431,8 @@ class LibraryScreen(BaseAppScreen):
         """
         if handoff := self._library_notes_filter_row_handoff:
             self._library_notes_filter_row_handoff = (handoff[0], False)
+        # TASK-38981: and a pick's landing in the opened item.
+        self._library_stage_pick_landing = None
         if self._notes_state.pending_focus_identity is not None:
             self._notes_state.pending_focus_identity = None
             self._notes_state.pending_focus_waits_for_snapshot = False
@@ -27953,6 +27963,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if type(prompt_id) is not int or prompt_id < 1:
             return
+        picked_from_stage = list_holds_the_stage(self._prompts_state.reader_layout)
         if not await self._flush_library_prompt_save():
             # task-32461: the row press was refused in silence, which reads
             # as a dead row. Same copy as Back/Escape and the rail-row
@@ -27969,6 +27980,8 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
         self._prompts_state.view = "editor"
+        if picked_from_stage:
+            self._arm_stage_pick_landing("prompts", prompt_id)
         # Exclusive in its own group so rapidly switching rows cancels
         # the previous in-flight detail fetch instead of letting a
         # slower older fetch finish and overwrite the newer selection's
@@ -27982,6 +27995,44 @@ class LibraryScreen(BaseAppScreen):
             group="library_prompt_detail",
         )
         _sync_library_canvas(self, "prompts")
+
+    def _arm_stage_pick_landing(self, destination: str, item_id: object) -> None:
+        """Remember a pick from the list holding the stage (TASK-38981).
+
+        The pick rebuilds the list, and the opened item's controls mount only
+        once its detail lands, so focus would rest on whatever Textual's reset
+        chose. The destination's detail path calls
+        ``_land_stage_pick`` once those controls are mounted; the user's own
+        input in between withdraws the landing
+        (``_withdraw_library_notes_pending_focus_handoffs``).
+        """
+        self._library_stage_pick_landing = (destination, str(item_id))
+
+    def _land_stage_pick(
+        self, destination: str, item_id: object, shell_selector: str
+    ) -> None:
+        """Focus the opened item's first control, once, if still pending.
+
+        Until that control shows, the landing stays pending for the next
+        detail sync of the same item.
+        """
+        if self._library_stage_pick_landing != (destination, str(item_id)):
+            return
+        try:
+            shell = self.query_one(shell_selector, LibraryAdaptiveReaderShell)
+        except (NoMatches, QueryError):
+            return
+        target = next(
+            (
+                candidate
+                for candidate in self.focus_chain
+                if shell.work.display and shell.work in candidate.ancestors_with_self
+            ),
+            None,
+        )
+        if target is not None:
+            self._library_stage_pick_landing = None
+            self.set_focus(target)
 
     def _invalidate_library_prompt_detail_generation(self) -> None:
         return self._prompts_controller._invalidate_library_prompt_detail_generation()

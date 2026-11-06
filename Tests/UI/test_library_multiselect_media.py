@@ -16,6 +16,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
+from tldw_chatbook.UI.Library_Modules.library_media_state import LibraryMediaState
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Library.row_selection import RowSelection
@@ -121,6 +122,8 @@ def _media_fake(
             # every scripted confirm press unconditionally.
             bulk_delete_in_flight=bulk_delete_in_flight,
             selection_notice="",
+            # A layout in which the list does not hold the stage (TASK-38981).
+            reader_layout=LibraryMediaState().reader_layout,
         ),
         app_instance=SimpleNamespace(notify=lambda msg, **k: notified.append((msg, k))),
         _notified=notified,

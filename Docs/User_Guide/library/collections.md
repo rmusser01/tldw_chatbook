@@ -156,7 +156,11 @@ that the highlight was saved but the list could not refresh; reopen
 
 Saving a capture note keeps its Save action focused and visible, scrolling Work
 when needed. At narrow sizes, use the pane grips and vertical scrolling to reach
-controls outside the current viewport.
+controls outside the current viewport. Below 64 columns with no capture open,
+the capture list takes the whole stage. With a capture open on a narrow
+terminal (up to 82 columns), the list grip gives the list the whole stage
+rather than squeezing the reader beside it, and the same grip returns to the
+capture with focus in it.
 
 ## Features & controls
 

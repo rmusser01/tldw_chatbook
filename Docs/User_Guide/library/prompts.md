@@ -408,6 +408,12 @@ The fixed action area shows only actions valid for the current lifecycle:
 | Version conflict | **Save as new**, **Reload** |
 | Mutation in progress | The relevant actions remain in place but are disabled with a readable reason |
 
+Below 64 columns, with no prompt open, the list takes the whole stage, as in
+Notes and Media; opening a prompt hands the width to the editor. With a
+prompt open on a narrow terminal (up to 82 columns), reopening the list
+with its grip gives the list the stage instead of squeezing the editor beside
+it, and the same grip returns to the prompt with focus in it.
+
 Opening **New prompt** also loads the Items pane. After the first save, Items
 and the rail count refresh while your text fields stay open. Basic, Advanced
 and Info reflect the saved record; **Back to list** clears the editor and

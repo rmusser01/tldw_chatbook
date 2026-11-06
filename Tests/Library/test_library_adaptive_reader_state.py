@@ -30,6 +30,9 @@ from tldw_chatbook.Library.library_media_reader_state import (
     resolve_media_reader_layout,
 )
 from tldw_chatbook.UI.Library_Modules import screen_constants
+from tldw_chatbook.UI.Library_Modules.library_artifacts_controller import (
+    ARTIFACT_READER_PROFILE,
+)
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
     LIBRARY_COLLECTIONS_READER_PROFILE,
     LIBRARY_CONVERSATION_READER_PROFILE,
@@ -851,7 +854,12 @@ def test_an_items_priority_still_reopens_a_closed_list_below_the_floor(
 def test_an_items_priority_is_untouched_once_the_work_pane_has_something(
     width: int,
 ) -> None:
-    """The drop is gated on an EMPTY work pane; a read item resolves as before."""
+    """The drop is gated on an EMPTY work pane; a read item keeps the priority.
+
+    TASK-38981: this used to also pin ``reader_width > 0``, the
+    ``width - 42`` sliver the open item was left. With an item open the list
+    now takes the stage and the item waits behind it.
+    """
     for profile in (
         MEDIA_READER_LAYOUT_PROFILE,
         screen_constants.LIBRARY_NOTES_READER_PROFILE,
@@ -864,7 +872,93 @@ def test_an_items_priority_is_untouched_once_the_work_pane_has_something(
             reader_has_item=True,
         )
         assert layout.priority_pane == "items"
-        assert layout.reader_width > 0
+        assert (layout.items_width, layout.reader_width) == (width - 10, 0)
+
+
+_LIST_STAGE_PROFILES = (
+    pytest.param(MEDIA_READER_LAYOUT_PROFILE, id="media"),
+    pytest.param(screen_constants.LIBRARY_NOTES_READER_PROFILE, id="notes"),
+    pytest.param(screen_constants.LIBRARY_PROMPTS_READER_PROFILE, id="prompts"),
+    pytest.param(screen_constants.LIBRARY_SKILLS_READER_PROFILE, id="skills"),
+    pytest.param(
+        screen_constants.LIBRARY_COLLECTIONS_READER_PROFILE, id="collections"
+    ),
+    pytest.param(
+        screen_constants.LIBRARY_CONVERSATION_READER_PROFILE, id="conversations"
+    ),
+    pytest.param(ARTIFACT_READER_PROFILE, id="artifacts"),
+)
+
+
+@pytest.mark.parametrize("profile", _LIST_STAGE_PROFILES)
+def test_an_opened_list_beside_an_open_item_never_leaves_it_a_sliver(
+    profile,
+) -> None:
+    """TASK-38981: every Library destination but File Notes resolved an
+    opened list beside an open item as 32 cells of list and ``width - 42`` of
+    work (1 at 40). From 40 to 82 (where the whole stage still fits the list's
+    72-cell ceiling) the work pane now has no columns, the list taking the
+    stage, or at least the profile's floor."""
+    for width in range(40, 83):
+        layout = resolve_adaptive_reader_layout(
+            width,
+            AdaptiveReaderLayoutPreferences(),
+            profile,
+            priority="items",
+            reader_has_item=True,
+        )
+        assert layout.items_open, width
+        assert layout.reader_width == 0 or layout.reader_width >= (
+            profile.work_min_width
+        ), (width, layout)
+        assert layout.items_width + layout.reader_width == width - 10, width
+
+
+def test_file_notes_keeps_its_own_narrow_navigator_split() -> None:
+    """The flag is opt-in: File Notes resolves its narrow navigator with the
+    same priority and keeps its 18-cell work pane at 60 (TASK-38757)."""
+    layout = resolve_adaptive_reader_layout(
+        60,
+        AdaptiveReaderLayoutPreferences(),
+        screen_constants.LIBRARY_FILE_NOTES_READER_PROFILE,
+        priority="items",
+    )
+    assert (layout.items_width, layout.reader_width) == (32, 18)
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        pytest.param(screen_constants.LIBRARY_PROMPTS_READER_PROFILE, id="prompts"),
+        pytest.param(screen_constants.LIBRARY_SKILLS_READER_PROFILE, id="skills"),
+        pytest.param(
+            screen_constants.LIBRARY_COLLECTIONS_READER_PROFILE, id="collections"
+        ),
+        pytest.param(
+            screen_constants.LIBRARY_CONVERSATION_READER_PROFILE, id="conversations"
+        ),
+    ],
+)
+def test_an_empty_narrow_stage_goes_to_the_list_for_every_list_destination(
+    profile,
+) -> None:
+    """TASK-38981 AC#4 (Prompts) and TASK-34851 (Collections, Conversations,
+    Skills): below 64 columns with nothing open the list keeps the stage, as
+    Notes and Media already do, whether or not the list view asks for it."""
+    preferences = AdaptiveReaderLayoutPreferences()
+    for width in (40, 50, 60, 63):
+        for priority in (None, "items"):
+            layout = resolve_adaptive_reader_layout(
+                width,
+                preferences,
+                profile,
+                priority=priority,
+                reader_has_item=False,
+            )
+            assert layout.items_open, (width, priority)
+            assert layout.items_width == min(
+                preferences.items_width, width - 10
+            ), (width, priority, layout)
 
 
 # ---------------------------------------------------------------------------

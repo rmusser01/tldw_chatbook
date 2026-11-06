@@ -2442,3 +2442,83 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_
 # read its provider widget (TASK-33007.6); a bare screen, ~3 s alone. Appended
 # at the tail.
 Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_reads_a_fresh_models_capability_from_its_listing
+# TASK-38983 (2026-11-06): a failed save into a folder renamed away names a
+# step that works, a refused folder change says why on the folder row, and
+# Retry save writes the unchanged draft once the folder is back (1.4-1.5 s).
+# Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_failed_save_names_a_working_step_and_retries_unchanged
+# TASK-38982 (2026-11-06): on the real Library screen ‹ Files leaves focus on a
+# visible Files-pane control at every width 40-79 (one node per ten widths,
+# 17-23 s each at -n 4, load 22), Session Git is reached from the 50-column
+# navigator by keyboard, and a failed refresh shows on the authority line
+# beside the hidden work pane (4-9 s). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[40]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[50]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[60]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[70]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_session_git_is_reachable_from_the_narrow_navigator
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_failed_refresh_shows_beside_the_hidden_work_pane
+# TASK-38981 (2026-11-06): an explicitly opened list beside an open item takes
+# the stage instead of leaving the item a sliver, on the real Library screen:
+# Notes and Media at every width 40-79 (ten widths per node, 16-18 s each at
+# -n 4, load 13-18), the other list destinations at 60 and 44 (11-30 s), the
+# Prompts list's narrow stage, and Collections and Skills keeping their list
+# at 60x24 with nothing open (TASK-34851; 9-10 s). Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes-40]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes-50]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes-60]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes-70]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-40]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-50]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-60]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-70]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[prompts]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[skills]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[conversations]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_list_destination_keeps_the_list_at_60x24[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_list_destination_keeps_the_list_at_60x24[skills]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_prompts_list_takes_the_narrow_stage_and_an_open_prompt_takes_it_back
+# TASK-38957 (2026-11-06): in Folder files a user's focus change between the
+# compact transition's two restores keeps the user's focus (11-12 s; 20 of 20
+# at -n 4, load 21-25). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_folder_files_user_focus_between_compact_restores_is_kept
+# TASK-38981 review (2026-11-06): an item picked from the list holding the
+# stage takes the stage back (six destinations at 60 columns), an empty
+# narrow stage leaves no invisible work-pane Tab stop, and Items opened beside
+# an open artifact take the stage with F6 still revealing the reader. TASK-38983
+# review: Retry after a disk change ends in Conflict and writes nothing.
+# Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[notes]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[media]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[conversations]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[skills]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[prompts]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[skills]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[prompts]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[conversations-empty]
+Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size0]
+Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size1]
+Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size2]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_retry_after_the_file_changed_on_disk_ends_in_conflict
+# TASK-38981 re-review (2026-11-06): Media's ] and [ open the adjacent item
+# on the stage, and Notes keeps the user's reader focus across a wide step
+# after the list held the stage (11-25 s each). Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_media_adjacent_item_keys_open_the_next_item_on_the_stage[right_square_bracket]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_media_adjacent_item_keys_open_the_next_item_on_the_stage[left_square_bracket]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_reader_focus_survives_a_wide_step_after_the_list_stage
+# TASK-38981 re-review 3 (2026-11-06): a widen that ends the Notes list's
+# narrow stage keeps focus in the list (160, 211 and 235 columns; 6-8 s each).
+# Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide0]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide1]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide2]
+# TASK-38981 re-review 4 (2026-11-06): a user's Shift+Tab to the Items grip
+# during or after a Prompts or Media stage pick's landing keeps focus there
+# (7-9 s each). Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[prompts-loading]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[prompts-landed]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-loading]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-landed]

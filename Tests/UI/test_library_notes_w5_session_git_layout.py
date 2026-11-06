@@ -134,7 +134,9 @@ async def test_the_trust_dialog_never_breaks_the_path_it_asks_consent_for(
         await pilot.pause()
         await pilot.pause()
         label = pilot.app.screen.query_one(".dialog-message")
-        painted = [line.rstrip() for line in painted_lines(label)]
+        # TASK-38984: ``.dialog-message`` is centred, so each folded line
+        # paints with leading padding too; only the text is the path.
+        painted = [line.strip() for line in painted_lines(label)]
         path_lines = [line for line in painted if line.startswith("/") or "/" in line]
         assert "".join(path_lines) == path, painted
         for line in path_lines[:-1]:

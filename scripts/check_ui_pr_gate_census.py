@@ -827,6 +827,32 @@ MINIMUM_FILES = 1700
 # TASK-38966 (2026-11-06): append the Settings discovery-row capability node
 # at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1701
+# TASK-38983 (2026-11-06): append the failed-save next-step node at the tail.
+# The floor is the measured entry count.
+MINIMUM_FILES = 1702
+# TASK-38982 (2026-11-06): append the six narrow-navigator focus, Session
+# Git and refresh-failure nodes at the tail. The floor is the measured entry
+# count.
+MINIMUM_FILES = 1708
+# TASK-38981 (2026-11-06): append the fifteen list-beside-item, Prompts and
+# empty-list nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1723
+# TASK-38957 (2026-11-06): append the Folder files focus-supersede node at
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1724
+# TASK-38981 / TASK-38983 review (2026-11-06): append the fourteen
+# stage-pick, empty-stage, Artifacts-stage and Retry-conflict nodes at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1738
+# TASK-38981 re-review (2026-11-06): append the Media adjacent-key and Notes
+# wide-step nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1741
+# TASK-38981 re-review 3 (2026-11-06): append the three Notes widen nodes at
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1744
+# TASK-38981 re-review 4 (2026-11-06): append the four stage-pick
+# user-move nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1748
 
 
 def read_census(path: Path) -> list[str]:

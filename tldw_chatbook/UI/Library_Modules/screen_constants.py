@@ -47,10 +47,20 @@ LIBRARY_SKILLS_IMPORT_WORKER_GROUP = "library_skills_import"
 
 
 # All destinations retain the shared five-cell collapse controls.
-LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile()
+# TASK-38981: every destination but File Notes gives an explicitly opened list
+# the stage rather than leave an open item a sliver
+# (``list_stage_over_starved_work``). With nothing open, the list keeps the
+# narrow stage (``list_first_when_empty``): Prompts by TASK-38981 AC#4, and
+# Collections, Conversations and Skills by TASK-34851.
+LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile(
+    list_first_when_empty=True,
+    list_stage_over_starved_work=True,
+)
 LIBRARY_COLLECTIONS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,
     work_comfort_width=56,
+    list_first_when_empty=True,
+    list_stage_over_starved_work=True,
 )
 # task-32127: Notes joined Media on `list_grows` and raised its comfort
 # ceiling to 64. At 235 columns the list was pinned at the 40-cell target
@@ -64,6 +74,7 @@ LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(
     # to the list -- applied below the 64-column floor too. Live at 60x24
     # the notes reader laid out 32/18 with nothing in the work pane.
     list_first_when_empty=True,
+    list_stage_over_starved_work=True,
 )
 # task-32614: was ``work_min_width=30`` -- the lowest floor of any Library
 # destination, and the reason a 100-column terminal split this pane 56/34 and
@@ -72,9 +83,15 @@ LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(
 # 235 and 60 nothing moves. Kept in step with the standalone-harness profile
 # in ``library_file_notes_workspace._apply_responsive_layout``.
 LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile()
-LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
+LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(
+    work_min_width=48,
+    list_first_when_empty=True,
+    list_stage_over_starved_work=True,
+)
 LIBRARY_SKILLS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,
+    list_first_when_empty=True,
+    list_stage_over_starved_work=True,
 )
 LIBRARY_CONVERSATION_READER_MAX_CHARS = 8000
 LIBRARY_SOURCE_PAGE_SIZES = {

@@ -825,7 +825,13 @@ _BUDGETS: dict[str, int] = {
     # failure keeps the work pane in view through a resize.
     # TASK-38757 rev3, 2026-11-05 (same waiver): 9779 -> 9802 (+23). An
     # explicit navigator choice (Back, the Files grip) wins over a failure.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9802,
+    # TASK-38983, 2026-11-06 (same waiver): 9802 -> 9835 (+33). A refused
+    # folder change says why, offline drafts name a step that works, and a
+    # failed save offers Retry save.
+    # TASK-38982, 2026-11-06 (same waiver): 9835 -> 9873 (+38). ‹ Files keeps
+    # focus, the narrow navigator offers Manage, and a failed refresh shows
+    # on the authority line.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
@@ -960,7 +966,9 @@ _BUDGETS: dict[str, int] = {
     # one-hop link-back on the Notes canvas). Owner rule "expand limits,
     # don't contort code".
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
+    # TASK-38981 re-review 3, 2026-11-06 (owner size waiver): 4738 -> 4742
+    # (+4). The list's resize reshape keeps the user's focused control.
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4516,

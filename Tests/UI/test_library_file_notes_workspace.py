@@ -912,6 +912,96 @@ async def test_folder_files_automatic_items_priority_does_not_steal_focus_or_per
 
 
 @pytest.mark.asyncio
+async def test_folder_files_user_focus_between_compact_restores_is_kept(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38957: the compact transition restores the focus it captured, then
+    again a few turns later. In Folder files a user's focus change in between
+    did not advance the Notes focus generation (only Database Notes, the rail,
+    Media and Conversations did), so the settled restore took focus back.
+    Here the settled restore is held, the user Tabs to the editor, and the
+    restore then runs: the editor keeps focus. (Tab, not a click: a click's
+    focus reaches the screen before its MouseDown ends the resize settling,
+    so it is classified programmatic in every Notes mode; see the task.)"""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "draft.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source chooser did not mount",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "Folder Files did not mount",
+        )
+        assert await workspace.open_path("draft.md")
+        shell = workspace.query_one(
+            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        screen.set_focus(workspace.query_one("#file-notes-tree", Tree))
+        await pilot.pause()
+        shell.items_grip.press()
+        await _wait_until(
+            pilot,
+            lambda: not shell.effective_layout.items_open,
+            "Manual Items close did not settle",
+        )
+
+        held: list[tuple[object, tuple, dict]] = []
+        controller_type = type(screen._notes_controller)
+        settled_restore = controller_type._restore_library_notes_settled_focus
+
+        def hold(controller, *args, **kwargs):
+            held.append((controller, args, kwargs))
+
+        monkeypatch.setattr(
+            controller_type, "_restore_library_notes_settled_focus", hold
+        )
+        await pilot.resize_terminal(79, 30)
+        await _wait_until(
+            pilot,
+            lambda: workspace.narrow and bool(held) and editor.region.width > 0,
+            "the compact transition did not queue its settled restore",
+        )
+        for _ in range(20):  # the user's own choice, between the restores
+            if editor.has_focus:
+                break
+            await pilot.press("tab")
+            await pilot.pause()
+        assert editor.has_focus, screen.focused
+        controller, args, kwargs = held.pop(0)
+        settled_restore(controller, *args, **kwargs)
+        for _ in range(3):
+            await pilot.pause()
+        assert editor.has_focus, screen.focused
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_folder_files_forced_recompose_recovers_inflight_autosave_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -6638,9 +6728,10 @@ async def test_high_stakes_file_notes_states_keep_explicit_labels_and_classes(
         )
         assert root_status.has_class("-offline")
         assert root_status.has_class("-warning")
+        # TASK-38983: Save Copy writes into the offline folder, so it fails.
         assert _static_text(workspace, "#file-notes-save-status") == (
             "Conflict — the disk file changed; your draft is preserved. "
-            "Next: Save Copy."
+            "Next: Reconnect the folder."
         )
         assert _static_text(workspace, "#file-notes-save-detail") == (
             "Content detail: file changed on disk"
@@ -7406,6 +7497,155 @@ async def test_file_notes_narrow_navigator_choice_wins_on_the_library_screen(
         assert not unseen, unseen
 
 
+@pytest.mark.parametrize("decade", ["40", "50", "60", "70"])
+@pytest.mark.asyncio
+async def test_file_notes_back_leaves_focus_on_a_visible_navigator_control(
+    tmp_path: Path,
+    decade: str,
+) -> None:
+    """TASK-38982 AC#1: ‹ Files hid itself (the navigator view drops Back) and
+    nothing took focus, so it fell to None at every width 40-79 on the real
+    Library screen. Now it lands on a visible control in the Files pane. One
+    case per ten widths, so each stays well inside the lane's entry budget."""
+    first = int(decade)
+    async with _library_folder_files(tmp_path, (first + 9, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        back = workspace.query_one("#file-notes-back", Button)
+        for width in range(first, first + 10):
+            await pilot.resize_terminal(width, 24)
+            assert await workspace.open_path("one.md"), width
+            await _wait_until(
+                pilot,
+                lambda: workspace.editor_visible and _seen_cells(back) > 0,
+                f"{width}: the narrow editor did not show ‹ Files",
+            )
+            back.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.navigator_visible
+                    and screen.focused is not None
+                    and shell.items in screen.focused.ancestors
+                    and _seen_cells(screen.focused) > 0
+                ),
+                f"{width}: ‹ Files left focus on {screen.focused!r}",
+            )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_session_git_is_reachable_from_the_narrow_navigator(
+    tmp_path: Path,
+) -> None:
+    """TASK-38982 AC#2: below 60 columns the navigator hides the work pane,
+    which holds Manage and Session Git, so with no file open neither could be
+    reached. Tab from the tree reaches a visible Manage; Enter on it and on
+    Review session changes opens Session Git, all by keyboard."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
+        assert workspace.current_path == ""
+
+        async def tab_to(predicate: Callable[[Widget], bool], what: str) -> None:
+            for _ in range(20):
+                focused = screen.focused
+                if focused is not None and predicate(focused):
+                    return
+                await pilot.press("tab")
+                await pilot.pause()
+            raise AssertionError(f"Tab never reached {what}")
+
+        workspace.query_one("#file-notes-tree", Tree).focus()
+        await pilot.pause()
+        await tab_to(
+            lambda widget: (
+                isinstance(widget, Button)
+                and str(widget.label) == "Manage"
+                and _seen_cells(widget) > 0
+            ),
+            "a visible Manage",
+        )
+        await pilot.press("enter")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        await _wait_until(
+            pilot,
+            lambda: shell.work.display and _seen_cells(entry) > 0,
+            "Manage did not show Session Git",
+        )
+        await tab_to(lambda widget: widget is entry, "Review session changes")
+        await pilot.press("enter")
+        panel = workspace.query_one("#file-notes-git-panel", LibraryFileNotesGitPanel)
+        await _wait_until(
+            pilot,
+            lambda: panel.display and _seen_cells(panel) > 0,
+            "Review session changes did not open Session Git",
+        )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_failed_refresh_shows_beside_the_hidden_work_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38982 AC#3: a failed background reconcile wrote "Refresh failed"
+    only into the work pane, which the 50-column navigator hides. It shows on
+    the authority line instead, without moving the view, and the next
+    healthy pass clears it."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
+        service = workspace._service
+        assert service is not None
+        healthy = service.reconcile
+
+        def fail() -> object:
+            raise OSError("disk went away")
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        monkeypatch.setattr(service, "reconcile", fail)
+        assert not await workspace.refresh_files()  # what the poll runs
+        await _wait_until(
+            pilot,
+            lambda: "Refresh failed"
+            in _painted_text_in_region(pilot.app, authority.region),
+            "the failed reconcile was not shown beside the navigator",
+        )
+        assert workspace.navigator_visible and not shell.work.display
+
+        monkeypatch.setattr(service, "reconcile", healthy)
+        assert await workspace.refresh_files()
+        await _wait_until(
+            pilot,
+            lambda: "Refresh failed"
+            not in _painted_text_in_region(pilot.app, authority.region),
+            "the next healthy pass did not clear the failure",
+        )
+        assert "Refresh failed" not in _static_text(
+            workspace, "#file-notes-action-status"
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(40, 20), (120, 40), (160, 45)])
 async def test_library_notes_source_choices_render_and_switch_by_keyboard(
@@ -7915,18 +8155,143 @@ async def test_file_notes_combined_non_ready_authority_matrix_paints_at_60x20(
             assert "Git · 1" not in painted
             if push_copy:
                 assert push_copy not in painted
+            # TASK-38983: offline, neither Choose folder (the draft refuses
+            # it) nor Save Copy (same folder) works.
             expected_next = (
-                "Next: Save Copy."
-                if save_state == "conflict"
-                else (
-                    "Next: Choose folder."
-                    if root_state == "offline"
-                    else "Next: Save Copy."
-                )
+                "Next: Reconnect the folder."
+                if root_state == "offline"
+                else "Next: Save Copy."
             )
             assert expected_next in content_words
 
     await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_failed_save_names_a_working_step_and_retries_unchanged(
+    tmp_path: Path,
+) -> None:
+    """TASK-38983: with the folder renamed away under a failed autosave, the
+    hint names a step that works (not Choose folder, which the leave guard
+    refuses), a refused folder change says why on the folder row, and once
+    the folder is back Retry save writes the unchanged draft."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    other = tmp_path / "other"
+    other.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("one.md")
+        _replace_editor_text(workspace._editor_widget, "draft kept")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "dirty", "edit was not dirty"
+        )
+        away = tmp_path / "away"
+        root.rename(away)
+        workspace._start_autosave()  # what the autosave timer runs
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "error", "save did not fail"
+        )
+        await workspace.refresh_files()  # the poll marks the folder offline
+        assert workspace._root_offline is True
+        status = _static_text(workspace, "#file-notes-save-status")
+        assert "Next: Reconnect the folder." in status, status
+
+        linked = workspace.root
+        assert not await workspace.set_root(other)
+        assert workspace.root == linked
+        assert _static_text(workspace, "#file-notes-root-status") == (
+            "Folder not changed · your draft is not saved yet."
+        )
+
+        away.rename(root)
+        assert await workspace.refresh_files()
+        assert workspace._root_offline is False
+        assert "Next: Save Copy." in _static_text(workspace, "#file-notes-save-status")
+        retry = workspace.query_one("#file-notes-recovery-retry", Button)
+        assert retry.display and not retry.disabled
+        assert str(retry.label) == "Retry save"
+        retry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "saved", "Retry did not save"
+        )
+        assert (root / "one.md").read_text(encoding="utf-8") == "draft kept"
+        assert workspace._editor_widget.text == "draft kept"
+        assert workspace._editor_widget.has_focus, workspace.app.focused
+        assert "Linked" in _static_text(workspace, "#file-notes-root-status")
+        assert await workspace.set_root(other)
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_retry_after_the_file_changed_on_disk_ends_in_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38983 review: Retry save re-runs the guarded save. When the file
+    changed on disk after the failed save, Retry ends in Conflict and writes
+    nothing; the conflict keeps Save Copy and Reload, without Retry."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    note = root / "one.md"
+    note.write_text("first", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("one.md")
+        _replace_editor_text(workspace._editor_widget, "draft kept")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "dirty", "edit was not dirty"
+        )
+        service = workspace._service
+        assert service is not None
+        healthy = service.save_file
+
+        def refuse(*_args: object, **_kwargs: object) -> object:
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr(service, "save_file", refuse)
+        workspace._start_autosave()  # what the autosave timer runs
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "error", "save did not fail"
+        )
+        monkeypatch.setattr(service, "save_file", healthy)
+        note.write_text("changed on disk", encoding="utf-8")
+
+        retry = workspace.query_one("#file-notes-recovery-retry", Button)
+        retry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "conflict",
+            f"Retry did not end in Conflict ({workspace.save_state})",
+        )
+        await pilot.pause()
+        assert note.read_text(encoding="utf-8") == "changed on disk"
+        assert workspace._editor_widget.text == "draft kept"
+        assert not retry.display
+        assert workspace.query_one("#file-notes-recovery-save-copy", Button).display
+        assert workspace.query_one("#file-notes-recovery-reload", Button).display
+
+    await workspace.shutdown()
+    replica.close()
 
 
 @pytest.mark.asyncio
@@ -8644,6 +9009,7 @@ async def test_file_notes_primary_actions_follow_editor_state(
                 "file-notes-recovery-save-copy",
             },
             "error": {
+                "file-notes-recovery-retry",
                 "file-notes-recovery-reload",
                 "file-notes-recovery-save-copy",
             },
