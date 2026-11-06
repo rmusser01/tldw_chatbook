@@ -258,8 +258,16 @@ async def test_promotion_previews_exact_pin_without_private_examples(native):
         assert "revision 1" in host.screen.message
         assert "Missing proof" not in host.screen.message
         host.screen.query_one("#confirm-button", Button).press()
-        for _ in range(10):
-            await pilot.pause()
+        # The write runs in the manager's worker after the dialog closes
+        # (TASK-38980): wait for it to settle, bounded, not a pause count.
+        for _ in range(200):
+            await pilot.pause(0.05)
+            if (
+                host.screen is modal
+                and not modal._busy
+                and rules.store.list_bindings(global_scope)
+            ):
+                break
         assert rules.store.list_bindings(global_scope)[0].revision == 1
         assert rules.store.list_drafts(global_scope) == ()
 
@@ -536,8 +544,15 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
             assert isinstance(host.screen, ConfirmationDialog)
             preview = host.screen.message
             host.screen.query_one("#confirm-button", Button).press()
-            for _ in range(15):
-                await pilot.pause()
+            # The write runs in the manager's worker (TASK-38980): bounded wait.
+            for _ in range(200):
+                await pilot.pause(0.05)
+                if (
+                    host.screen is modal
+                    and not modal._busy
+                    and rules.store.list_bindings(rules.scopes(session.id)[2])
+                ):
+                    break
             binding = rules.store.list_bindings(rules.scopes(session.id)[2])[0]
             assert binding.revision == 2, preview
             assert "revision 2" in preview and "Edited evidence definition" in preview
