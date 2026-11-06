@@ -322,10 +322,14 @@ async def test_a_poll_tick_reuses_the_build_its_predecessor_made(monkeypatch):
         builds = _count_builds(monkeypatch, console)
         assert await _fresh_build_then_poll_tick(console, pilot, builds) == 0
         # The reuse is spent: the next completed tick builds.
-        before = len(builds)
-        result = await _poll_tick(console)
-        if result is True:
-            assert len(builds) - before == 1
+        for _ in range(8):  # A cold checked display defers some ticks.
+            before = len(builds)
+            if await _poll_tick(console) is True:
+                break
+            await pilot.pause()
+        else:
+            raise AssertionError("no poll tick completed after the reuse")
+        assert len(builds) - before == 1
 
 
 @pytest.mark.asyncio
@@ -661,3 +665,203 @@ async def test_a_reused_workspace_state_builder_renews_stale_requests(monkeypatc
         renewed.clear()
         controller._build_console_workspace_context_state()  # The builder's memo hit.
         assert renewed == [controller._console_registry_reads_view()]
+
+
+@pytest.mark.asyncio
+async def test_the_builder_memo_follows_a_conversation_switch():
+    """The memo is keyed on the current conversation too: the selected-chat
+    row's 'Conversation id' tooltip (``scope_detail``) shows the new id."""
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        controller = console._workspace
+        original = controller._current_conversation_id_accessor
+        try:
+            for conversation_id in ("conv-memo-1", "conv-memo-2"):
+                controller._current_conversation_id_accessor = (
+                    lambda conversation_id=conversation_id: conversation_id
+                )
+                state = controller._build_console_workspace_context_state()
+                assert state.scope_detail == conversation_id
+        finally:
+            controller._current_conversation_id_accessor = original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", ["server adapter", "acp handoff", "folder bindings"])
+async def test_the_builder_memo_follows_each_of_its_other_inputs(changed):
+    from tldw_chatbook.Workspaces.display_state import (
+        ConsoleWorkspaceACPHandoffState,
+        ConsoleWorkspaceServerAdapterState,
+    )
+
+    app, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        controller = console._workspace
+        controller._build_console_workspace_context_state()  # The memo is warm.
+        with _CallCounter(build_console_workspace_state) as counter:
+            if changed == "server adapter":
+                app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
+                    available=False, detail="Adapter down (test)."
+                )
+                state = controller._build_console_workspace_context_state()
+                assert state.server_readiness_label == "Server: unavailable"
+            elif changed == "acp handoff":
+                app.workspace_acp_handoff_state = ConsoleWorkspaceACPHandoffState(
+                    status="ready", detail="Ready (test)."
+                )
+                state = controller._build_console_workspace_context_state()
+                assert state.acp_handoff_label == "ACP task/run: ready"
+            else:
+                controller._workspace_files_runtime_bindings_by_id = (
+                    workspace_module.MappingProxyType(
+                        dict(controller._workspace_files_runtime_bindings_by_id)
+                    )
+                )
+                controller._build_console_workspace_context_state()
+        assert counter.calls == {"build_console_workspace_state": 1}, (
+            f"a changed {changed} reused the memo: {counter.calls}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4. Outside a run tick, the cheaper reads still ask for the build's re-reads
+# ---------------------------------------------------------------------------
+
+
+def _run_idle_sync(console, sync: str) -> bool:
+    """Run one of the syncs an idle Console runs; False when it deferred."""
+    if sync == "settings summary":
+        console._sync_console_settings_summary()
+        return True
+    if sync == "control bar":
+        return console._sync_console_control_bar() is True
+    console._console_agent_section_last = None  # Force the full derivation.
+    console._sync_console_agent_section()
+    return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync", ["settings summary", "control bar", "agent section"])
+async def test_an_idle_sync_past_the_ttls_still_rereads_folder_availability_and_saved_rows(
+    sync,
+):
+    """TASK-36571.1 review: idle, each of these syncs built the workspace context
+    on the base, and each build asked for the folder-availability snapshot (1 s
+    TTL) and the saved Conversations rows (10 s TTL) once they aged. The label
+    and open-flag reads that replaced those builds asked for neither, so an idle
+    Console showed a deleted folder, or a conversation written elsewhere, only
+    once some event-driven sync built.
+    """
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        controller = console._workspace
+        for _ in range(8):  # A cold checked display defers the control-bar sync.
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            if (
+                controller._workspace_files_availability_refresh_in_flight
+                or controller._console_persisted_rows_refresh_key is not None
+            ):
+                continue  # A re-read some other sync asked for is still landing.
+            # As if the Console had sat idle past both TTLs.
+            controller._workspace_files_availability_cached_at = 0.0
+            controller._console_persisted_rows_cache_at = 0.0
+            if _run_idle_sync(console, sync):
+                break
+        else:
+            raise AssertionError(f"no {sync} sync completed")
+        asked = {
+            "folder availability": (
+                controller._workspace_files_availability_refresh_in_flight
+            ),
+            "saved rows": controller._console_persisted_rows_refresh_key is not None,
+        }
+        assert asked == {"folder availability": True, "saved rows": True}, (
+            f"the idle {sync} sync asked for {asked}"
+        )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert controller._workspace_files_availability_cached_at > 0.0
+        assert controller._console_persisted_rows_cache_at > 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_run_ticks_label_and_open_flag_reads_ask_for_no_reread():
+    """Inside a run tick the tick's own build asks (or a reuse of a build that
+    just asked), so the projection's several cheap reads add nothing."""
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        controller = console._workspace
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        controller._workspace_files_availability_cached_at = 0.0
+        controller._console_persisted_rows_cache_at = 0.0
+        with _CallCounter(
+            workspace_module.ConsoleWorkspaceController._request_workspace_files_availability_refresh,
+            workspace_module.ConsoleWorkspaceController._sync_persisted_console_browser_rows,
+        ) as counter:
+            with controller.tick_workspace_build_scope():
+                controller.console_workspace_label()
+                console._current_console_agent_section_open()
+        assert counter.calls == {
+            "_request_workspace_files_availability_refresh": 0,
+            "_sync_persisted_console_browser_rows": 0,
+        }, counter.calls
+
+
+@pytest.mark.asyncio
+async def test_an_idle_read_rereads_the_browsers_aged_subagent_counts(tmp_path):
+    """The third re-read a build asks for once it ages: the sub-agent counts of
+    the rows the last count read covered (TASK-36571.1 review). A real bridge
+    over a real run store takes the off-loop path, whose landing publishes."""
+    from Tests.UI.test_console_agent_controller import (
+        _bridge_over,
+        _seed_done_primary_with_subagents,
+    )
+
+    db_path = tmp_path / "agent_runs.db"
+    _seed_done_primary_with_subagents(db_path, tasks=("t1",))
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        bridge = _bridge_over(db_path)
+        console._console_agent_bridge = bridge
+        queries = []
+        original = bridge._db.count_subagents_by_conversation
+
+        def counting(ids):
+            if sorted(ids) == ["conv-A"]:  # Not the mounted browser's own rows.
+                queries.append(sorted(ids))
+            return original(ids)
+
+        bridge._db.count_subagents_by_conversation = counting
+        rows = (SimpleNamespace(conversation_id="conv-A"),)
+        agent = console._agent
+        workspace = console._workspace
+        agent._console_subagent_counts_for_rows(bridge, rows)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        assert queries == [["conv-A"]]
+        # The last count read (a build's): fresh, so nothing is re-read.
+        assert agent._console_subagent_counts_for_rows(bridge, rows) == {"conv-A": 1}
+        state = agent._console_subagent_counts_read[frozenset({"conv-A"})]
+        workspace.request_due_console_context_rereads()
+        assert state["pending"] is False, "fresh counts were re-read"
+
+        state["at"] = 0.0  # Aged past the TTL.
+        workspace.request_due_console_context_rereads()
+        assert agent._console_subagent_counts_read[frozenset({"conv-A"})]["pending"]
+        await host.workers.wait_for_complete()
+        assert queries == [["conv-A"], ["conv-A"]], "the aged counts were not re-read"
+
+        agent._console_subagent_counts_for_rows(bridge, rows)
+        agent._console_subagent_counts_read[frozenset({"conv-A"})]["at"] = 0.0
+        console._console_agent_bridge = _bridge_over(db_path)  # A new bridge.
+        workspace.request_due_console_context_rereads()
+        await host.workers.wait_for_complete()
+        assert len(queries) == 2, "the replaced bridge's rows were re-read"
