@@ -26495,3 +26495,12 @@ and keep the first run and repeat beside the instrumented comparison.
 - After each restore, verify the tree: `git diff -- <dir> | cmp - saved.patch`, and `cmp` each copied file. Stop the loop on a mismatch.
 - Dry-run every mutation plus its restore once before the timed runs.
 - Check that each mutation's text is the only line enforcing the guard. In this task, a mutation that blanked a membership `if` changed nothing, because the next line's `list.index()` raised for the same input.
+
+## A flake's failure rate swings with the host, so compare it only in interleaved pairs (TASK-33620.15.41, 2026-11-05)
+
+**Incident.** In TASK-33620.15.41's branch-against-dev comparison, `test_console_library_pause_recovery.py::test_the_shelf_never_offers_a_send_the_card_is_sending[stream]` failed on the branch and passed on dev. Further runs seemed to confirm it: six alternating pairs gave 5 failures on the branch against 2 on dev, and a dev-only batch failed 1 of 8. Then dev with only the branch's Library changes applied failed 8 of 8, although the test uses a stub search service and a probe in the real one never fired. Ten more alternating pairs, at a higher load, failed once on dev and never on the branch: over all sixteen pairs, 3 failures on dev and 5 on the branch. The rate followed the host, which other sessions loaded and unloaded every few minutes, and not the tree. The test was already red on dev: its [search] case failed every run (TASK-33621.143).
+
+**What to do.**
+- Before blaming a branch for a flake, run the two trees in strictly alternating pairs and count failures per arm, and run enough of them: six pairs still read 5 against 2. Sequential batches confound the tree with whatever the host was doing at the time.
+- Check whether the test can reach the changed code at all: a probe in the changed function settles it faster than more samples.
+- Record the dev rate in the follow-up task, so the next reader does not rediscover it as a regression.
