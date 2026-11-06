@@ -1,59 +1,46 @@
-"""Setup's key checks, in the provider's own words (TASK-34100.2 AC#3, AC#5).
+"""Setup's key verdicts in the provider's own words (TASK-34100.2 AC#3, AC#5).
 
-The Provider step's Enter/Test ran Settings' OpenAI-compatible probe. That
-probe cannot fail a key a model list answers without -- OpenRouter, Hugging
-Face, NVIDIA NIM and Novita list models for any key, so a wrong OpenRouter key
-read '✓ Reached the server' -- and it has no target at all for Gemini,
-Anthropic or Hugging Face, which read 'Enter a valid endpoint before testing.'
-beside 'Key staged -- it will be checked when you continue. Connection testing
-is unavailable for this provider.' Those providers' keys are checked by the
-shared discovery the Model step already uses
+The Provider step's 'Check key' (TASK-34100.6, ``first_run_provider_check``)
+runs the shared discovery the Model step already uses
 (``LocalLLMProviderCatalogService.discover_models``): Google's native
-models.list, OpenRouter's /api/v1/key, Hugging Face's whoami-v2 and
-Anthropic's authenticated listing. This module says which providers use it
-and words its verdict, so the Provider step, the Model step and the Summary
-speak with one voice:
+models.list, Anthropic's authenticated listing, and -- for a provider whose
+model list answers without a valid key -- the provider record's key check
+(OpenRouter's /api/v1/key, Hugging Face's whoami-v2), which sets
+``ModelDiscoveryResult.key_verified``. That step words the verdict
+(``key_check_line``); this module adds what TASK-34100.2 owns on top of it:
 
-* '✓ Google accepted this key -- found 15 model(s).'
-* '✗ OpenRouter rejected this key: User not found.'
-* 'Found 81 model(s) for NVIDIA NIM -- key not checked: its model list answers
-  without a valid key.' (never ✓)
+* a rejected key's line carries the provider's own reason
+  ('✗ OpenRouter rejected this key: User not found.', ``with_provider_reason``);
+* the Model step's line and 'Continue anyway?' body quote that reason
+  (``model_failure_line``, ``confirm_prompt``);
+* the Summary never ticks a key nothing could check (``mark_unchecked_listing_keys``):
+  NVIDIA NIM and Novita have no key check, and OpenRouter and Hugging Face
+  only tick when theirs passed.
 
-The provider's words are text, never markup: the Provider step's status
-parses Textual markup, so its line is escaped here (a masked key's
+The provider's words are text, never markup: the Provider step's status line
+parses Textual markup, so its reason is escaped here (a masked key's
 '[redacted]' vanished as a style tag, and a '[/docs]' raised MarkupError
 inside the handler). The Model step's status line (TASK-33008.5) and the
 'Continue anyway?' body render with markup off, so ``rejected_text`` and
 ``continue_prompt`` stay plain.
 
 One mechanism with TASK-33008's wizard copy (``first_run_setup_state``'s
-``PROBE_FAILURE_COPY``, ``first_run_model_discovery``'s ``failed_listing``,
-``note_probe_*`` and ``staged_key_line``): those classify a failed check and
-move the Authentication mark for every provider; this module only puts the
-provider's own words on a rejected key (a 401 -- a 403 rejects no key) and
-says which keys a model list can and cannot prove.
-
-The Provider and Model step modules are pinned at their exact size
-(``Tests/Architecture/test_module_size_ratchet.py``); their hooks are one-line
-calls into here.
+``PROBE_FAILURE_COPY``, ``first_run_model_discovery``'s ``failed_listing`` and
+``note_probe_*``): those classify a failed check and move the Authentication
+mark for every provider; this module only puts the provider's own words on a
+rejected key (a 401 -- a 403 rejects no key) and says which keys a model list
+can and cannot prove.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
 from textual.markup import escape as escape_markup
 
-#: Providers whose key only the shared discovery can check in setup: their
-#: model list needs the key (Google's native list, Anthropic's x-api-key
-#: listing). Public-listing providers join them (``uses_shared_key_check``).
-_KEYED_LISTING_PROVIDERS = frozenset({"google", "anthropic"})
 _UNCHECKED_SUFFIX = "(key not checked)"
-#: The name a key verdict uses where it differs from the display name: the
-#: shared discovery's own Gemini messages say 'Google rejected this key'.
-_KEY_CHECK_NAMES = {"google": "Google"}
 
 
 def _key(provider_key: object) -> str:
@@ -70,95 +57,15 @@ def _public_listing(provider_key: object) -> bool:
     return _key(provider_key) in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
 
 
-def uses_shared_key_check(provider_key: object) -> bool:
-    """Whether setup checks this provider's key through the shared discovery.
-
-    Args:
-        provider_key: The selected provider.
-
-    Returns:
-        True for Google, Anthropic and every public-listing provider.
-    """
-    return _key(provider_key) in _KEYED_LISTING_PROVIDERS or _public_listing(
-        provider_key
-    )
-
-
 def key_can_be_checked(provider_key: object) -> bool:
-    """Whether the shared discovery can prove or reject this provider's key.
+    """Whether a public listing's key can be proved: the record names a key check.
 
-    A public listing proves nothing unless the record names a key endpoint
-    (OpenRouter, Hugging Face); NVIDIA NIM and Novita have none.
+    OpenRouter and Hugging Face have one; NVIDIA NIM and Novita have none.
     """
     from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
-    key = _key(provider_key)
-    if key in _KEYED_LISTING_PROVIDERS:
-        return True
-    record = RECORDS_BY_KEY.get(key)
+    record = RECORDS_BY_KEY.get(_key(provider_key))
     return bool(record is not None and record.key_check_url)
-
-
-def unchecked_key_line(provider_key: object) -> str:
-    """The Provider step's line for a typed key no check has answered yet.
-
-    Args:
-        provider_key: The selected provider.
-
-    Returns:
-        For a provider the shared discovery checks, the prompt to check it
-        now (Enter runs that check) or, when its model list cannot prove a
-        key, that it is not checked; otherwise ``""`` (the step keeps
-        TASK-33008's 'it will be checked when you continue').
-    """
-    if not uses_shared_key_check(provider_key):
-        return ""
-    from tldw_chatbook.Chat.provider_catalog import provider_display_name
-
-    display = provider_display_name(_key(provider_key))
-    if key_can_be_checked(provider_key):
-        return (
-            f"Key staged — press Enter to check it with {display} now "
-            "(it is also checked when you continue)."
-        )
-    return (
-        f"Key staged — key not checked: {display}'s model list answers "
-        "without a valid key, so your first message checks it."
-    )
-
-
-def answered_key_line(provider_key: object, outcome: Any) -> str:
-    """The line for a typed key whose listing answered, or ``""``.
-
-    A public listing answers any key, so its success says nothing about the
-    key unless the provider's key endpoint passed it: then the line keeps
-    'key not checked', never TASK-33008's 'the server did not refuse it'.
-    """
-    if not _public_listing(provider_key):
-        return ""
-    if getattr(outcome, "key_verified", False) is True:
-        return ""
-    from tldw_chatbook.Chat.provider_catalog import provider_display_name
-
-    display = provider_display_name(_key(provider_key))
-    return (
-        f"Key staged — key not checked: {display}'s model list answers "
-        "without a valid key, so your first message checks it."
-    )
-
-
-def key_verified(provider_key: object, result: Any, *, key_sent: bool) -> bool:
-    """Whether a discovery result proves the key it was sent.
-
-    ``ModelDiscoveryResult.key_verified`` is set by a key endpoint or Google's
-    native list. An authenticated listing (Anthropic) that succeeded with a
-    key proves it too; a public listing never does.
-    """
-    if getattr(result, "status", None) != "success" or not key_sent:
-        return False
-    if getattr(result, "key_verified", False) is True:
-        return True
-    return _key(provider_key) in _KEYED_LISTING_PROVIDERS
 
 
 def _refused_key(result: Any) -> bool:
@@ -199,81 +106,28 @@ def rejected_key_message(display: str, result: Any) -> str:
     return message if reason else ""
 
 
-def discovery_status_copy(
-    provider_key: object,
-    display: str,
-    result: Any,
-    *,
-    models: Iterable[str],
-    failed: bool,
-    attempted: bool,
-    key_sent: bool,
-    failure_copy: Callable[[], str],
-) -> str:
-    """The Provider step's line once its discovery settles.
+def with_provider_reason(line: str, result: Any) -> str:
+    """The Provider step's rejected-key line, with the provider's own reason.
+
+    ``first_run_provider_check`` words a rejected key for where it came from
+    ('✗ OpenRouter rejected this key.', '... rejected the key in
+    OPENROUTER_API_KEY.'); AC#3 adds the reason the provider gave, escaped
+    for the step's markup status line.
 
     Args:
-        provider_key: The selected provider.
-        display: Its display name.
-        result: The typed discovery outcome, or ``None``.
-        models: The model ids found.
-        failed: Whether discovery failed.
-        attempted: Whether any discovery ran.
-        key_sent: Whether a key went with it.
-        failure_copy: The step's own wording for a failure that is not a
-            key verdict ('Couldn't discover models for X. ...').
+        line: The step's own rejected-key line.
+        result: The settled ``ModelDiscoveryResult`` (or anything else).
 
     Returns:
-        The status line ("" when nothing ran), escaped for a markup Static.
+        ``line`` with ': <reason>' in place of its final period, or ``line``
+        unchanged when the provider gave no reason or rejected no key.
     """
-    return escape_markup(
-        _discovery_status_text(
-            provider_key,
-            display,
-            result,
-            models=models,
-            failed=failed,
-            attempted=attempted,
-            key_sent=key_sent,
-            failure_copy=failure_copy,
-        )
-    )
-
-
-def _discovery_status_text(
-    provider_key: object,
-    display: str,
-    result: Any,
-    *,
-    models: Iterable[str],
-    failed: bool,
-    attempted: bool,
-    key_sent: bool,
-    failure_copy: Callable[[], str],
-) -> str:
-    """``discovery_status_copy`` before escaping."""
-    count = len(tuple(models))
-    if count:
-        if key_verified(provider_key, result, key_sent=key_sent):
-            name = _KEY_CHECK_NAMES.get(_key(provider_key), display)
-            return f"✓ {name} accepted this key — found {count} model(s)."
-        if key_sent and _public_listing(provider_key):
-            return (
-                f"Found {count} model(s) for {display} — key not checked: its "
-                "model list answers without a valid key."
-            )
-        return f"Found {count} model(s) for {display}."
-    if failed:
-        # Review round 1 (live F1): a keyed provider's listing answers 401
-        # before any key is typed. That is no verdict on a key -- only a key
-        # that was sent can be rejected.
-        if key_sent and _refused_key(result):
-            # The provider's own reason, or the step's TASK-33008 line.
-            return f"✗ {rejected_key_message(display, result) or failure_copy()}"
-        return failure_copy()
-    if attempted:
-        return f"Checked {display}; no models were reported."
-    return ""
+    if not _refused_key(result):
+        return line
+    reason = str(getattr(getattr(result, "error", None), "provider_reason", "") or "").strip()
+    if not reason:
+        return line
+    return f"{line.rstrip().removesuffix('.')}: {escape_markup(reason)}"
 
 
 def recorded_outcome(wizard: Any, discovery_key: object) -> Any:
@@ -441,57 +295,3 @@ def mark_unchecked_listing_keys(
     )
 
 
-def settle_discovery_status(
-    step: Any,
-    provider_key: str,
-    discovery_key: Any,
-    result: Any,
-    provider_draft: Any,
-    *,
-    models: Iterable[str],
-    failed: bool,
-    attempted: bool,
-) -> None:
-    """Write the Provider step's line once its discovery settles.
-
-    TASK-33008's flow -- ``failed_listing`` classifies a failure as the Model
-    step does, ``note_probe_failure``/``note_probe_reached`` move the
-    Authentication mark -- with this module's words for the providers the
-    shared discovery checks (``discovery_status_copy``). A key is "sent" by
-    TASK-33008's one rule (``discovery_sends_a_key``).
-    """
-    from tldw_chatbook.Chat.provider_catalog import provider_display_name
-    from tldw_chatbook.UI.Wizards import first_run_model_discovery as model_discovery
-    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-
-    display = provider_display_name(provider_key)
-    status = step.query_one("#setup-provider-probe-status")
-    models = tuple(models)
-    if failed and not models:
-        line, failure = model_discovery.failed_listing(
-            step, display, result, provider_draft
-        )
-    else:
-        line, failure = "", wizard_state.PROVIDER_PROBE_NONE
-    if uses_shared_key_check(provider_key):
-        # Only a 401 to a key that was sent is the provider's verdict on it.
-        rejected = failure == wizard_state.PROVIDER_PROBE_AUTH
-        line = discovery_status_copy(
-            provider_key,
-            display,
-            result if rejected or not failed else None,
-            models=models,
-            failed=failed,
-            attempted=attempted,
-            key_sent=wizard_state.discovery_sends_a_key(provider_draft),
-            failure_copy=lambda: line,
-        )
-    elif models:
-        line = f"Found {len(models)} model(s) for {display}."
-    elif not failed:
-        line = f"Checked {display}; no models were reported." if attempted else ""
-    status.update(line)
-    if models or (attempted and not failed and result is not None):
-        model_discovery.note_probe_reached(step, discovery_key)
-    elif failed:
-        model_discovery.note_probe_failure(step, failure, discovery_key)
