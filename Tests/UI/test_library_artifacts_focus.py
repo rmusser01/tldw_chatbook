@@ -1,5 +1,7 @@
 """Artifacts participate in the shared Library layout and global focus cycle."""
 
+import time
+
 import pytest
 
 from Tests.private_profile import private_profile_test
@@ -206,6 +208,13 @@ async def test_items_opened_beside_an_open_artifact_take_the_stage(
             assert cells > 0, (size, focused.id, cells, controller.layout)
 
 
+async def _until(pilot, predicate, what: str, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        await pilot.pause(0.02)
+
+
 def _visible_cells(screen, widget) -> int:
     """The cells of ``widget`` inside its compositor clip (lessons-textual)."""
     clip = screen.find_widget(widget).clip
@@ -226,12 +235,15 @@ async def test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control(
     the body at -1 to -21 visible cells."""
     async with artifact_library(tmp_path, size=size, reports=0) as (screen, pilot):
         controller = screen._artifacts_controller
-        assert controller.page is not None and not controller.page.items
+        # Under load the empty page can land after the helper's 3 s wait, and
+        # the list's focus lands a refresh after ``focus_items``: wait for
+        # both, bounded, before reading them.
+        await _until(pilot, lambda: controller.page is not None, "the empty page")
+        assert not controller.page.items
         assert controller.selected is None
         controller.focus_items()
-        await pilot.pause()
         rows = screen.query_one("#library-artifacts-list")
-        assert screen.focused is rows
+        await _until(pilot, lambda: screen.focused is rows, "focus on the list")
         assert controller.layout.items_open
         assert controller.layout.reader_width == 0, controller.layout
         stops = []

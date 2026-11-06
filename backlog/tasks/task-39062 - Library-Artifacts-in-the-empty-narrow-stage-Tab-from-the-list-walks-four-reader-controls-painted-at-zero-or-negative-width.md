@@ -68,5 +68,9 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
   - **Green** after it.
 - **AC#2.** The whole Artifacts focus and canvas files pass: 28 passed at `-n 4`, load 43 on 18 CPUs. That includes `test_items_opened_beside_an_open_artifact_take_the_stage[3 sizes]`, `test_narrow_f6_reveals_reader_and_returns_through_items_grip[2 sizes]` and `test_narrow_empty_items_skips_zero_width_reader`.
 - **AC#3.** Both nodes are appended at the census tail, and the floor is the measured count (1753). They took about 11 s each at `-n 4` under load 43. A temporary 10-repeat parametrize (since removed) gave 20 of 20 at `-n 4` in 100.6 s, at load 19-40.
+- **Hardening after a flake.** One run of both nodes, alongside the listener file at `-n 3` and load 54, failed `[50x25]` in its child within 9 s. I did not capture the assertion. The failure did not recur in 25 later runs of each size: 15 runs of the pair, then a 10-repeat of each size.
+  - The test read two things that can land late under load: the page, which the helper waits for only 3 s, and the list's focus, which lands a refresh after `focus_items` while the test gave it one pause.
+  - Both reads are now bounded condition waits (15 s), not timers.
+  - The hardened test is still red on the base shell, with the same stops, and passes 20 of 20 at `-n 4` (73.5 s, load 23-27).
 - **User Guide.** `Docs/User_Guide/artifacts.md` ("Browse and read") says that Tab and F6 bring the reader forward on a narrow terminal, and that with nothing selected Tab skips the reader.
 - Files: `tldw_chatbook/Widgets/Library/library_artifacts_reader_shell.py`, `Tests/UI/test_library_artifacts_focus.py`, `Tests/UI/test_library_artifacts_canvas.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/artifacts.md`.
