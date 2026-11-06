@@ -426,3 +426,36 @@ async def test_an_untouched_step_writes_nothing_when_the_config_moves_after_comp
         "splash_screen": {"enabled": True, "duration": look.SHORT_SPLASH_SECONDS}
     }
     assert writes == 1
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_step_writes_nothing_after_mirroring_welcomes_saved_reduce_motion() -> None:
+    """Review TE-1 (TASK-34100.13): V2's Welcome-mirror half. Welcome's
+    "Reduce motion" is saved on its Next and mirrored into app_config; when
+    Appearance shows it, that saved value is the baseline too. Without that,
+    an untouched Appearance wrote the same value a second time; a later
+    untick writes only the change."""
+    app_config = {
+        "appearance": {"reduce_motion": False},
+        "COMPREHENSIVE_CONFIG_RAW": {"appearance": {"reduce_motion": False}},
+    }
+    wizard, step = _step(app_config)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        box = step.query_one("#setup-appearance-reduce-motion", Checkbox)
+        assert box.value is False
+        # Welcome's Next saved reduce_motion = true and mirrored it.
+        app_config["appearance"]["reduce_motion"] = True
+        step.on_show()
+        await pilot.pause()
+        mirrored = box.value
+        ok, _ = await step.commit()
+        untouched_writes = wizard.commit_config.await_count
+        box.value = False
+        await pilot.pause()
+        await step.commit()
+        unticked = wizard.commit_config.await_args.args[0]
+    assert mirrored is True
+    assert ok
+    assert untouched_writes == 0
+    assert unticked == {"appearance": {"reduce_motion": False}}
