@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -378,7 +380,7 @@ def test_budgeted_literal_catalog_still_refuses_extra_native_index(
     assert path.read_bytes() == before
 
 
-def test_native_toml_reservation_precedes_codec_and_keeps_default(monkeypatch):
+def test_native_toml_reservation_precedes_codec_and_keeps_default():
     import tomllib
 
     from tldw_chatbook.Backup_Recovery.mobile_preview_budget import toml_loads
@@ -389,21 +391,54 @@ def test_native_toml_reservation_precedes_codec_and_keeps_default(monkeypatch):
     )
 
     raw = b'[native]\nvalue="unchanged"\n'
-    assert toml_loads(raw) == {"native": {"value": "unchanged"}}
     calls = []
     native = tomllib.loads
+    code, caller, owner = native.__code__, toml_loads.__code__, threading.get_ident()
+    monitor = sys.monitoring
+    tool = next((i for i in range(1, 6) if monitor.get_tool(i) is None), None)
+    assert tool is not None
 
-    def observed(value):
-        calls.append(value)
-        return native(value)
+    def observed(_code, _offset):
+        if threading.get_ident() == owner and sys._getframe(1).f_back.f_code is caller:
+            calls.append(True)
 
-    monkeypatch.setattr(tomllib, "loads", observed)
-    budget = _TraceReadBudget()
-    with _preview_reads(_read_budget=budget):
-        budget.reserve(budget._remaining)
-        with pytest.raises(_TraceReadLimit):
-            toml_loads(raw)
-    assert not calls
+    monitor.use_tool_id(tool, "native-preview-toml-decode")
+    try:
+        assert monitor.get_events(tool) == 0
+        assert (
+            monitor.register_callback(tool, monitor.events.PY_START, observed) is None
+        )
+        monitor.set_local_events(tool, code, monitor.events.PY_START)
+        assert toml_loads(raw) == {"native": {"value": "unchanged"}}
+        assert calls == [True]
+        assert tomllib.loads is native
+        assert tomllib.loads("unrelated = 1") == {"unrelated": 1}
+        assert calls == [True]
+        calls.clear()
+        budget = _TraceReadBudget()
+        with _preview_reads(_read_budget=budget):
+            budget.reserve(budget._remaining)
+            with pytest.raises(_TraceReadLimit):
+                toml_loads(raw)
+        assert not calls
+    finally:
+        primary = sys.exception()
+        try:
+            with ExitStack() as cleanup:
+                cleanup.callback(monitor.free_tool_id, tool)
+                cleanup.callback(
+                    monitor.register_callback, tool, monitor.events.PY_START, None
+                )
+                cleanup.callback(monitor.set_local_events, tool, code, 0)
+        except BaseException as cleanup_error:
+            if primary is not None:
+                primary.add_note(f"TOML observer cleanup failed: {cleanup_error!r}")
+                raise primary from cleanup_error
+            raise
+    assert monitor.get_tool(tool) is None
+    assert monitor.get_local_events(tool, code) == 0
+    assert tomllib.loads is native
+    assert tomllib.loads("unrelated = 1") == {"unrelated": 1}
 
 
 def test_budgeted_subscription_native_catalog_keeps_default_acceptance(
