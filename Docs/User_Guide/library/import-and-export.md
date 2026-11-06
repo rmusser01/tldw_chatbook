@@ -35,11 +35,14 @@ In server mode the **Export** rail row is disabled, with the tooltip
 
 **Import media**, top to bottom:
 
-- **Header** — "Import media", then a target line ("Imports run on this
-  machine." / "Imports run on the server."). When a server is available, a
-  switch button ("Import on the server" ↔ "Import on this machine")
-  follows the line.
-- **Path field** — "Path to a local file or a URL…", with "Browse…" and
+- **Header** — "Import media". When a server is configured, a target line
+  follows ("Imports run on this machine." / "Imports run on the server.", or,
+  while the Library is local, "Imports run on this machine. Switch the
+  Library to server mode to import on the server."), and in server mode a
+  switch button ("Import on the server" ↔ "Import on this machine") follows
+  the line. With no server configured there is no target line.
+- **Path field** — labelled "File, folder or URL to import", with the
+  placeholder "Path to a local file or a URL…", "Browse…" and
   (once something is typed) "Clear". On a fresh visit, two orientation
   lines sit below: "Import a file, a whole folder, or a URL. Supported:
   PDF documents, Word/Office documents, audio/video files, e-books,

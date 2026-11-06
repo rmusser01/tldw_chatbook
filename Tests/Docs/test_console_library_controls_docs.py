@@ -39,7 +39,7 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
         "per-conversation Library controls",
         "Conversation defaults",
         "Automatic retrieval",
-        "Assistant access",
+        "Agent Library access",
         "Allowed Library access",
     ),
     "Docs/User_Guide/library/search-and-rag.md": (

@@ -37,7 +37,7 @@ can sync with a tldw server you configure).
 | Ctrl+3 | [Library](library.md) | Source material, imports, notes, media, conversations, prompts, skills, Search/RAG — plus hand-offs to Study for flashcards and quizzes. |
 | Ctrl+4 | [Roleplay](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
 | Ctrl+5 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
-| Ctrl+6 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
+| Ctrl+6 | [Library ▸ Artifacts](artifacts.md) 🚧 | All artifacts, Chatbooks, and Reports. Not a screen of its own: Ctrl+6 opens this Library section, and it has no nav label. |
 | Ctrl+7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
 | Ctrl+9 | [Settings ▸ Tools & MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and history. Not a screen of its own: Ctrl+9 opens this Settings category, and it has no nav label. |

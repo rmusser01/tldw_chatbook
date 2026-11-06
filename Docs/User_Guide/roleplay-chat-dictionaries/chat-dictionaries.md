@@ -42,8 +42,9 @@ turned off · space to undo".
   outcome of whatever you just did.
 - **"Try it — substitution preview"** (below the tabs, this mode only) — a
   sample-text box, a **Run preview** button, the before/after result.
-- **Inspector** (right) — for a dictionary it offers only **Delete**, and its
-  readiness line reads "Console blocked: attach arrives in a later update".
+- **Inspector** (right) — for a dictionary it offers **Duplicate**, **Delete**
+  and the Buddy controls, and its readiness line reads "Console chat is for
+  characters and personas."
   You attach a dictionary from its own **Attachments** tab (or from Console)
   rather than from the Inspector.
 

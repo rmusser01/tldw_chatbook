@@ -13,7 +13,8 @@ images with `/generate-image`, and how to dictate into the draft with the
 
 Everything on this page lives in the Console composer — the input strip at
 the bottom of the Console screen (**Ctrl+2**). The buttons referenced here
-are **Send**, **Mic**, **Attach**, and **Save**, to the right of the draft.
+are **Send** and **Dictate** (the Mic button), to the right of the draft, and
+the composer's **Menu**, left of the draft, which holds **Attach file**.
 
 ## Layout tour
 
@@ -21,15 +22,15 @@ are **Send**, **Mic**, **Attach**, and **Save**, to the right of the draft.
 
 With a file staged, the composer shows a **📎** indicator between the draft
 and the buttons — `📎 photo.png · 184 B` for one file, or `📎 3 files` for
-several — the **Attach** button relabels to **Attach +**, and a **✕**
-button appears for clearing what's staged. While dictating, a status chip
+several — and a **✕** button appears after **Dictate** for clearing what's
+staged. While dictating, a status chip
 (for example `● 0:07` plus the words heard so far) appears in the same area.
 
 ## Features & controls
 
 ### Three ways to attach a file
 
-1. **Attach** button — opens the **"Select File to Attach"** picker, with
+1. **Menu ▸ Attach file** — opens the **"Select File to Attach"** picker, with
    file-type filter rows: **All Supported Files**, **Image Files**,
    **Document Files**, **E-book Files**, **Text Files**, **Code Files**,
    **Data Files**, and **All Files**.
@@ -72,7 +73,8 @@ not the file picker. (That control is labeled **Context rail** as of
 
 - The **📎** indicator names a single staged file with its size; two or
   more collapse to a count (`📎 3 files`).
-- **Attach +** stages another file (its tooltip tracks the count).
+- **Menu ▸ Attach file** stages another file; the **📎** indicator shows the
+  new count.
 - **✕** removes **everything** staged at once — toast "Attachment cleared".
   There is no per-file removal; to drop one of three, clear all and
   re-attach the two you want.
@@ -284,7 +286,7 @@ confirmed app quit are their cancellation boundaries.
 
 ## Common tasks
 
-1. **Attach an image and ask about it** — click **Attach**, pick the image
+1. **Attach an image and ask about it** — choose **Menu ▸ Attach file**, pick the image
    in "Select File to Attach" (the **Image Files** filter helps), confirm
    the `📎` indicator appears, type your question, press Enter.
 2. **Paste a screenshot** — take the screenshot to the clipboard, focus the
@@ -342,7 +344,7 @@ On macOS, use the switch.
   actually processed (task-222).
 - **Alt+V says "Clipboard images aren't readable on this platform — use
   Attach or drop a file."** — clipboard image capture isn't available in
-  this environment; use **Attach** or drop the file instead.
+  this environment; use **Menu ▸ Attach file** or drop the file instead.
 - **Dropping several files attaches only the first** — drop the rest one at
   a time, or copy them and use **Alt+V**, which attaches up to the limit.
 - **"No audio was captured from the microphone."** after stopping —

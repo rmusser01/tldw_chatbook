@@ -37,6 +37,7 @@ from .console_preparation_reads import (
 __all__ = (
     "ConsoleHookAttemptRead",
     "ConsoleHookPreparationRead",
+    "HookCheckOwnerChanged",
     "bind_hook_preparation_session",
     "drain_hook_preparation_reads",
     "hook_preparation_reads_for",
@@ -45,6 +46,14 @@ __all__ = (
     "observe_hook_preparation_reads",
     "run_hook_preparation_read",
 )
+
+
+class HookCheckOwnerChanged(RuntimeError):
+    """The chat a hook check read for moved; the read is void, not failed.
+
+    TASK-38751: ``console_automatic_submission`` turns it into "send again"
+    copy, never hooks advice.
+    """
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -187,7 +196,11 @@ def capture_hook_preparation_source(self, session_id, permissions):
 
 
 def require_hook_preparation_source(self, source):
-    self._raise_if_disposed_or_session_fenced(source.session_id)
+    try:
+        self._raise_if_disposed_or_session_fenced(source.session_id)
+    except RuntimeError as error:
+        # TASK-38751: a close fence or disposal that lands mid-check voids it.
+        raise HookCheckOwnerChanged(str(error)) from error
     session = (
         next(
             (row for row in source.store.sessions() if row.id == source.session_id),
@@ -242,7 +255,7 @@ def require_hook_preparation_source(self, source):
             )
         )
     ):
-        raise RuntimeError("Console hook preparation owner changed.")
+        raise HookCheckOwnerChanged("Console hook preparation owner changed.")
 
 
 async def read_hook_preparation(self, callback, source):

@@ -18,7 +18,7 @@ layout tour). Everything on this page lives in two places:
   "Conversation" title above the transcript.
 - The **"Console context"** rail on the left — its separate **Workspaces**,
   **Conversations**, **Character**, and **Details** sections. If the rail is
-  collapsed, click the **Context->** handle at the left edge to open it when
+  collapsed, click the **Context ▸** handle at the left edge to open it when
   the viewport can retain a usable transcript.
 
 ## Layout tour

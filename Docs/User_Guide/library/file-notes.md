@@ -50,8 +50,6 @@ goes.)
 
 ## Layout tour
 
-![File Notes workspace](../images/library/file-notes.svg)
-
 - **Source strip** (above the workspace) — **Library notes** | **Folder
   files**, with **Folder files** marked as the selected source. At wide sizes
   the strip stays visible while you are in Folder files: it is a mode of

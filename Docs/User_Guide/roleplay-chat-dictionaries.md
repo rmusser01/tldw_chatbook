@@ -47,11 +47,9 @@ Top to bottom:
   it to open Settings › Providers & Models); and where your data lives:
   **Local**, or **Server: \<name\> · read-only**. The header never says
   "Ready".
-- **Purpose line** — one line describing the active mode; it is the same
-  text as that mode's chip tooltip, and it changes every time you switch
-  modes.
-- **Status row** — "Characters: N" in Characters mode, "Personas: N" in
-  Personas mode, and "Mode: Dictionaries" / "Mode: Lore" in the other two.
+- **Purpose line** — one line describing the active mode, with its item
+  count after it ("Characters — who the AI plays · 3"). The description is
+  that mode's chip tooltip, and the line changes every time you switch modes.
 - **Modes:** — the chip strip. All four modes are live; none is a
   placeholder.
 
@@ -71,7 +69,7 @@ Below the chips sit three panes:
   counts it ("Characters 349"). The **<** button collapses the rail to a
   slim **Library** handle; click the handle to bring it back.
 - The **centre pane** — the detail view or editor for whatever you
-  selected. Empty until you pick something. In Characters and Personas
+  selected. On a fresh visit it opens on the first item in the list. In Characters and Personas
   modes it starts with a **Try a test chat (nothing saved)** toggle for
   trying the selection out without saving anything; in Dictionaries and
   Lore modes the equivalent is a **Try it** preview.
@@ -264,7 +262,7 @@ button you pressed.
 
 Which action buttons appear depends on what you selected:
 
-| Selection | Attach to Console | Start Chat | Include assigned voice profile | Export JSON | Export PNG | Delete |
+| Selection | Send to Console draft | Chat now | Include assigned voice profile | Export JSON | Export PNG | Delete |
 |---|---|---|---|---|---|---|
 | Character | shown | shown | shown | shown | shown | shown |
 | Persona | shown | shown | hidden | shown | hidden | shown |
@@ -280,17 +278,17 @@ effect once that character has a voice assigned — see
 The **Readiness** line is the single source of truth for why a Console
 action won't fire:
 
-- "Console ready" — both actions will work.
-- "Console blocked: select an item" — nothing is selected yet.
-- "Console blocked: select a character or persona" — a lore book is
-  selected; only characters and personas go to Console.
-- "Console blocked: attach arrives in a later update" — a dictionary is
-  selected.
-- "Console blocked: unsaved edits" — save (or discard) first.
-- "Start Chat blocked: \<reason\>" — the selection is fine, but the chat
-  provider the handoff would use isn't ready. Attach still works; Start
-  Chat doesn't. The header shows **No chat provider · Settings ›** whenever
-  that provider isn't ready, whatever is selected.
+- "Ready to chat in Console." — both actions will work.
+- "Pick a character or persona to start chatting." — nothing is selected yet.
+- "Console chat is for characters and personas." — a dictionary or lore
+  book is selected; only characters and personas go to Console.
+- "Save or discard your edits to chat in Console." — save (or discard) first.
+- "Chat now and Send to Console draft blocked: \<reason\>" — something else
+  closes both actions.
+- "Chat now blocked: \<reason\>" — the selection is fine, but the chat
+  provider the handoff would use isn't ready. **Send to Console draft**
+  still works; **Chat now** doesn't. The header shows **No chat provider ·
+  Settings ›** whenever that provider isn't ready, whatever is selected.
 
 ### Sending to Console
 
@@ -298,11 +296,11 @@ Both actions stage a card built from the item's full record (its name,
 description, personality, scenario, and system prompt) — they don't send
 anything by themselves.
 
-- **Attach to Console** stages it as context for your next message, with
+- **Send to Console draft** stages it as context for your next message, with
   the suggested prompt "Use \<name\> to guide the next response." Console
   confirms with "Staged in Console." This stays available even when the
   provider isn't ready — you're only staging.
-- **Start Chat** opens Console on a fresh chat with the suggested prompt
+- **Chat now** opens Console on a fresh chat with the suggested prompt
   "Respond as \<name\>." and confirms with "Chat staged in Console." It
   refuses to run while the provider is unready.
 
@@ -347,8 +345,8 @@ answer it, Chatbook stays open and says "Quit cancelled."
    type. Press Enter to drop into the results list, then Enter again
    (or click) on a row to open it.
 4. **Send a character to Console.** Select the character, check the
-   Inspector reads "Console ready", then press **Attach to Console** (or
-   **Ctrl+Enter**) to stage it as context, or **Start Chat** to open
+   Inspector reads "Ready to chat in Console.", then press **Send to Console
+   draft** (or **Ctrl+Enter**) to stage it as context, or **Chat now** to open
    Console on a new chat as that character.
 5. **Give the centre pane more room.** Click **<** in the Library header
    and **>** in the Inspector header. Click the **Library** or
@@ -370,7 +368,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | [ / ] | Previous / next mode — **only when focus is not in a text box** (in a text box they type the bracket) |
 | Ctrl+N | Open the **New** chooser (the current kind's Blank is highlighted) |
 | Ctrl+F | Focus the search box; Enter there moves into the list and puts the cursor on the first match once the results appear |
-| Ctrl+Enter | Attach to Console — only with a saved character or persona selected |
+| Ctrl+Enter | Send to Console draft — only with a saved character or persona selected |
 | Ctrl+S | Save — character and persona editors only |
 | Escape | Back: cancels the open editor, returns from a conversation transcript to the card, or moves focus from the search box to the list (while a search matches nothing, Escape in the box clears it instead). On the list or its marks bar it clears an active search and tag first, then the current kind's marks. It never leaves the screen. |
 | Enter | Open the highlighted item (Library list) |

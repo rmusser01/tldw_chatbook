@@ -46,11 +46,14 @@ approvals or failures pending.", "Nothing running right now.",
 ![Home idle, nothing needing attention](images/home/idle.svg)
 
 With nothing needing attention, the canvas *is* the suggestion: a title like
-"Resume last conversation" (or "Start a conversation" on a fresh profile), the
-reason ("Pick up where you left off." / "Console is ready for a task."), a
-content-count line ("Conversations: 2 · Notes: 1 · Media: 1" — only non-zero
-counts appear), and buttons — **Resume conversation/note/reading: \<title\>
-(\<age\>)** for the thing you touched last, and the suggestion itself.
+"Resume last conversation" ("Start a conversation" when the newest thing you
+touched is not a conversation; "Import Library sources" while the Library is
+still empty), the reason ("Pick up where you left off." / "Console is ready for
+a task."), a content-count line ("Conversations: 2 · Notes: 1 · Media: 1" —
+only non-zero counts appear), and buttons — **Resume conversation/note/reading:
+\<title\> (\<age\>)** for the thing you touched last, **Start a
+conversation** (unless that is already the suggestion), and the suggestion
+itself.
 
 ## Features & controls
 

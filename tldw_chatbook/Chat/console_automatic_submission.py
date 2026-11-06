@@ -269,16 +269,19 @@ async def prepare_submission_hooks(
                 session_id=session_id,
             )
             raise
-        except Exception:  # noqa: BLE001 -- hook boundary
+        except Exception as error:  # noqa: BLE001 -- hook boundary
+            from .console_hook_preparation import HookCheckOwnerChanged
+
+            copy = (
+                _HOOK_ADMISSION_OWNER_CHANGED
+                if isinstance(error, HookCheckOwnerChanged)
+                else "Required hook initialization failed."
+            )
             controller._set_run_state(
-                ConsoleRunState(
-                    ConsoleRunStatus.BLOCKED, "Required hook initialization failed."
-                ),
+                ConsoleRunState(ConsoleRunStatus.BLOCKED, copy),
                 session_id=session_id,
             )
-            return ConsoleSubmitResult(
-                False, False, "Required hook initialization failed."
-            )
+            return ConsoleSubmitResult(False, False, copy)
     return None
 
 
@@ -350,6 +353,13 @@ async def legacy_submission_hook_input(controller, draft, session_id, hook_read=
     )
 
 
+#: TASK-38751: the chat, runtime or permission owner moved during a hook
+#: check (``HookCheckOwnerChanged``). Nothing is wrong with the hooks, so
+#: this copy gives no hooks advice.
+_HOOK_ADMISSION_OWNER_CHANGED = "Chat changed during the hook check; send again."
+_HOOKS_UNAVAILABLE = "Hooks unavailable; review or disable hooks before sending."
+
+
 def hook_admission_reason(controller) -> str | None:
     from tldw_chatbook.Agents.run_hooks import inspect_hooks_config
     from tldw_chatbook.config import read_hooks_config_snapshot
@@ -397,7 +407,7 @@ def hook_admission_reason(controller) -> str | None:
             return None
         return "Hook review required; permission owner unavailable."
     except Exception:  # noqa: BLE001 -- unavailable authority must refuse admission
-        return "Hooks unavailable; review or disable hooks before sending."
+        return _HOOKS_UNAVAILABLE
 
 
 def run_hooks_engine(controller):
@@ -458,6 +468,7 @@ async def read_hook_admission_result(self) -> tuple[str | None, Any]:
     """
     from types import MethodType
     from .console_hook_preparation import (
+        HookCheckOwnerChanged,
         hook_preparation_session_for,
         run_hook_preparation_read,
     )
@@ -543,7 +554,7 @@ async def read_hook_admission_result(self) -> tuple[str | None, Any]:
                     )
                 )
             ):
-                raise RuntimeError("Console hook admission owner changed.")
+                raise HookCheckOwnerChanged("Console hook admission owner changed.")
 
         observers = () if runtime is None else (runtime._preparation_reads,)
         reason = await run_hook_preparation_read(
@@ -556,10 +567,12 @@ async def read_hook_admission_result(self) -> tuple[str | None, Any]:
             source=source,
         )
         return reason, source.read
+    except HookCheckOwnerChanged:
+        return _HOOK_ADMISSION_OWNER_CHANGED, None
     except Exception:
         # Keep the existing public reason-return contract; cancellation is
         # BaseException and escapes only after its real native read retires.
-        return "Hooks unavailable; review or disable hooks before sending.", None
+        return _HOOKS_UNAVAILABLE, None
 
 
 def shared_hook_owner(self, session_id: str | None) -> Any:
