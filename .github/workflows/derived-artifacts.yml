@@ -1086,10 +1086,16 @@ jobs:
       # PR2921: bounded privacy, native recovery and actual dispatch contracts.
       # TASK-36532: this step also hosts Tests/Chat/test_local_server_discovery.py
       # (sandboxed, ~15 s) because pr-fast-lane is at its 35-min cap.
+      # TASK-38758: and Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py
+      # (sandboxed, ~30 s serial), for the same reason. TASK-38759 adds the
+      # vLLM profile file and, FIRST, the history participant lifetimes file:
+      # its pauses drain every live lease in the process, and five Guardian
+      # nodes in this step leave storage leases open.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
           pytest \
+            Tests/Backup_Recovery/test_async_file_participant_lifetimes.py \
             Tests/Dreams/test_dispatch_currentness.py \
             Tests/Dreams/test_cycle_service.py::test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets \
             Tests/Dreams/test_cycle_service.py::test_no_goal_mark_or_list_marker_ever_reaches_the_search \
@@ -1113,6 +1119,8 @@ jobs:
             Tests/Chat/test_provider_tls_failures.py \
             Tests/Architecture/test_guarded_modal_quit_census.py \
             Tests/Chat/test_console_rail_state_prune.py \
+            Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py \
+            Tests/LLM_Management/test_vllm_profiles.py \
             --timeout=180 \
             --tb=short
 

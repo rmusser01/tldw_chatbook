@@ -338,6 +338,10 @@ FAST_LANE_TARGETS = (
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
 DREAMS_BOUNDARY_TARGETS = (
+    # TASK-38759: the history participant lifetimes file, red on dev in no PR
+    # lane. First, because its pauses drain every live lease in the process
+    # and five Guardian nodes here leave storage leases open. Sandboxed.
+    "Tests/Backup_Recovery/test_async_file_participant_lifetimes.py",
     "Tests/Dreams/test_dispatch_currentness.py",
     "Tests/Dreams/test_cycle_service.py::test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets",
     "Tests/Dreams/test_cycle_service.py::test_no_goal_mark_or_list_marker_ever_reaches_the_search",
@@ -372,6 +376,12 @@ DREAMS_BOUNDARY_TARGETS = (
     # not in pr-fast-lane, which is at its 35-min cap (as TASK-36532).
     "Tests/Architecture/test_guarded_modal_quit_census.py",
     "Tests/Chat/test_console_rail_state_prune.py",
+    # TASK-38758: the guarded raw-evidence reuse oracle was red on dev in no
+    # PR lane. Sandboxed, ~30 s serial; this job had the headroom (median 6.2
+    # / max 7.2 min of its 20 over 25 PR runs to 2026-11-05).
+    "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py",
+    # TASK-38759: the vLLM repair-path file, red locally in no PR lane.
+    "Tests/LLM_Management/test_vllm_profiles.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"

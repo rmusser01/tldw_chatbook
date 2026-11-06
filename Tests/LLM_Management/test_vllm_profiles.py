@@ -441,7 +441,9 @@ def test_profile_rejects_invalid_source_values_before_any_write(
 
 
 def test_profile_accepts_nonexistent_safe_local_directory_for_repair(tmp_path: Path):
-    selected = tmp_path / "models" / "not-downloaded-yet"
+    # Not under tmp_path: the shape check refuses any component that starts
+    # with "-", and a scratch basetemp can contain one.
+    selected = Path(tmp_path.anchor) / f"tldw-vllm-repair-{uuid4().hex}" / "models"
 
     saved = VllmProfileRepository(tmp_path / "profiles.json").save(
         profile_named(

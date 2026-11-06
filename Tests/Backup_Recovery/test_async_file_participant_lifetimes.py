@@ -692,14 +692,16 @@ def test_history_participant_validation_does_not_invert_config_storage_locks(
     participant = raw._raw_participant(history)
     validating = threading.Event()
     failures = []
-    original = raw._participant_state
+    # Since 3e618d7119 close_admission validates identity only, under the
+    # storage lock, and no longer calls _participant_state.
+    original = raw.participant_identity
 
     def observed(candidate):
         if candidate is participant:
             validating.set()
         return original(candidate)
 
-    monkeypatch.setattr(raw, "_participant_state", observed)
+    monkeypatch.setattr(raw, "participant_identity", observed)
 
     def close_history():
         try:
