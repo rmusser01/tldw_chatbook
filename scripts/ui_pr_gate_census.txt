@@ -2522,3 +2522,7 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[prompts-landed]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-loading]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-landed]
+# TASK-39051 (2026-11-06): the Library Notes Session Git layout file, in no
+# PR lane until now. Whole file, 10 nodes, 15.6-20.5 s serially. Appended at
+# the tail.
+Tests/UI/test_library_notes_w5_session_git_layout.py

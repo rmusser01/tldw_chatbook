@@ -853,6 +853,9 @@ MINIMUM_FILES = 1744
 # TASK-38981 re-review 4 (2026-11-06): append the four stage-pick
 # user-move nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1748
+# TASK-39051 (2026-11-06): append the Library Notes Session Git layout file
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1749
 
 
 def read_census(path: Path) -> list[str]:
