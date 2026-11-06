@@ -804,7 +804,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-38757 re-review, 2026-11-05 (same waiver): 9730 -> 9779 (+49). A
     # cancelled New returns to the navigator and focuses New, and a standing
     # failure keeps the work pane in view through a resize.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9779,
+    # TASK-38757 rev3, 2026-11-05 (same waiver): 9779 -> 9802 (+23). An
+    # explicit navigator choice (Back, the Files grip) wins over a failure.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9802,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.

@@ -2432,3 +2432,8 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-escape]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-cancel-open]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[resize-failure]
+# TASK-38757 rev3 (2026-11-05): at 50 columns on the Library screen an
+# explicit navigator choice wins: ‹ Files during a failure with no way out,
+# and the Files grip from the narrow editor (3-7 s each). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[offline-back]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[grip-from-editor]

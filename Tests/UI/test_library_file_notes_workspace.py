@@ -7123,6 +7123,51 @@ async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
     replica.close()
 
 
+@asynccontextmanager
+async def _library_folder_files(tmp_path: Path, size: tuple[int, int]):
+    """Open Library ▸ Notes ▸ Folder files on the real screen at ``size``.
+
+    Yields ``(pilot, screen, workspace, shell)`` once the workspace has
+    mounted, with ``one.md`` and ``gone.md`` in the linked folder.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    (root / "gone.md").write_text("gone", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    async with LibraryHarness(app, screen=screen).run_test(size=size) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        shell = workspace.query_one(
+            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+        yield pilot, screen, workspace, shell
+    await workspace.shutdown()
+
+
 _NEW_CASES = ("new", "new-create", "new-cancel", "new-escape", "new-cancel-open")
 
 
@@ -7155,45 +7200,18 @@ async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
     keeps the editor view; cancelling that New (button or Escape, with or
     without a file open) returns to the navigator with New focused. A failure
     shown beside the navigator at 65 columns stays shown after a resize to
-    55."""
-    root = tmp_path / "notes"
-    root.mkdir()
-    (root / "one.md").write_text("first", encoding="utf-8")
-    (root / "gone.md").write_text("gone", encoding="utf-8")
-    workspace = LibraryFileNotesWorkspace(
-        root=root,
-        replica_path=tmp_path / "owned.sqlite",
-        poll_interval=10,
-        autosave_delay=30,
-    )
-    app = _build_test_app()
-    _seed_conversations(
-        app,
-        _two_conversations(),
-        notes=[{"title": "Database note", "id": "db-note-1"}],
-    )
-    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    55; ‹ Files then still reaches the navigator, and opening another file is
+    refused and brings the failure forward again."""
 
     def refuse(*_args: object, **_kwargs: object) -> object:
         raise PermissionError("permission denied")
 
-    async with LibraryHarness(app, screen=screen).run_test(size=(50, 24)) as pilot:
-        await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query("#library-notes-source-files")),
-            "Notes source strip did not compose",
-        )
-        screen.query_one("#library-notes-source-files", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: workspace.initialized and workspace.is_mounted,
-            "File Notes workspace did not mount",
-        )
-        shell = workspace.query_one(
-            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
-        )
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
         new = workspace.query_one("#file-notes-new", Button)
 
         async def back_to_navigator(*, work_shown: bool) -> None:
@@ -7267,19 +7285,19 @@ async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
             f"{case}: {expected!r} did not come forward",
         )
         if case == "resize-failure":
-            # While the failure stands, Back cannot hide it either.
-            workspace.query_one("#file-notes-back", Button).press()
-            for _ in range(5):
-                await pilot.pause()
+            # TASK-38757 re-review: an explicit ‹ Files still wins; the
+            # failure stays reachable because another open is refused and
+            # brings it forward again.
+            await back_to_navigator(work_shown=False)
+            assert not await workspace.open_path("gone.md")
             await _wait_until(
                 pilot,
                 lambda: (
                     workspace.editor_visible
                     and shell.work.display
-                    and not shell.effective_layout.items_open
                     and expected in _painted_text_in_region(pilot.app, target.region)
                 ),
-                "Back hid the standing failure",
+                "a refused open did not bring the standing failure forward",
             )
         if case == "deleted":
             assert target in screen.focus_chain
@@ -7323,7 +7341,69 @@ async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
             )
             if case == "new-cancel-open":
                 assert workspace.current_path == "one.md"
-    await workspace.shutdown()
+
+
+@pytest.mark.parametrize("case", ["offline-back", "grip-from-editor"])
+@pytest.mark.asyncio
+async def test_file_notes_narrow_navigator_choice_wins_on_the_library_screen(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    """TASK-38757 re-review: at 50 columns an explicit navigator choice wins.
+    ‹ Files reaches the navigator during a failure with no way out in the
+    editor (the folder renamed away under a draft), and the Folder files grip
+    pressed in the editor view gives the navigator the stage instead of
+    reopening it beside an 8-cell work pane."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        assert await workspace.open_path("one.md")
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.editor_visible
+                and shell.work.display
+                and not shell.effective_layout.items_open
+            ),
+            "opening a file did not show the narrow editor",
+        )
+        if case == "offline-back":
+            _replace_editor_text(workspace._editor_widget, "draft before offline")
+            await _wait_until(
+                pilot,
+                lambda: workspace.save_state == "dirty",
+                "the edit did not mark the draft dirty",
+            )
+            root = workspace.root
+            assert root is not None
+            root.rename(tmp_path / "renamed away")
+            workspace._start_autosave()  # what the autosave timer runs
+            await _wait_until(
+                pilot,
+                lambda: workspace.save_state in {"error", "conflict"},
+                "saving into the renamed-away folder did not fail",
+            )
+            workspace.query_one("#file-notes-back", Button).press()
+        else:
+            shell.items_grip.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.navigator_visible
+                and not shell.work.display
+                and shell.items.region.width == 50 - 2 * shell.items_grip.grip_width
+            ),
+            f"{case}: the navigator did not take the narrow stage",
+        )
+        unseen = [
+            widget.id
+            for widget in screen.focus_chain
+            if workspace in widget.ancestors and _seen_cells(widget) <= 0
+        ]
+        assert not unseen, unseen
 
 
 @pytest.mark.asyncio

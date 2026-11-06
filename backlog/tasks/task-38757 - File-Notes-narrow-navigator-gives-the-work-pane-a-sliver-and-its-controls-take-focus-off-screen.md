@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-05 07:11
-updated_date: 2026-11-05 23:38
+updated_date: 2026-11-06 00:15
 labels:
 - follow-up
 - library
@@ -42,7 +42,7 @@ So between 40 and 79 columns the navigator shows a work pane too thin to use, an
 - [x] #3 In the narrow editor view (after opening a file, and after Back), the work pane and its controls still show and take focus as before
 - [x] #4 A width-sweep test over 40-79, in the navigator and editor views, pins #1-#3 and is red before the change
 - [x] #5 If the narrow layout changes, the File Notes User Guide page describes it
-- [x] #6 When the narrow navigator hides the work pane, anything that must be seen there brings it forward on the real Library screen too: a selected deleted note (Restore visible and focusable), New's path field, and an open or save that fails or is refused (its message and recovery painted). Cancelling a New that brought the pane forward returns to the navigator with New focused, and a standing save failure or conflict stays in view through a resize
+- [x] #6 When the narrow navigator hides the work pane, anything that must be seen there brings it forward on the real Library screen too: a selected deleted note (Restore visible and focusable), New's path field, and an open or save that fails or is refused (its message and recovery painted). Cancelling a New that brought the pane forward returns to the navigator with New focused, and a standing save failure or conflict stays in view through a resize. An explicit navigator choice (‹ Files, or the Folder files grip in the narrow editor) always reaches the navigator, with no work-pane sliver
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -83,10 +83,27 @@ So between 40 and 79 columns the navigator shows a work pane too thin to use, an
 ### Re-review fixes (r8f-rev2)
 
 - **Cancelling New left no focus at 40-59 columns.** `_open_path_task` records whether bringing the pane forward switched the view. A cancelled close (the Cancel button, the Library screen's Escape through `cancel_path_task`, or `_open_path_task("none")`) then calls `_set_narrow_view("navigator")`. After the refresh it focuses the opener, through `_focus_once_shown`, which retries until the screen has re-laid out its shell. A completed New opens the new file and stays in the editor (`cancelled` is False on that path).
-- **A resize could hide a standing failure.** `sync_reader_layout` no longer hides the work pane while the save state is `error` or `conflict`. It switches to the editor view instead, which re-resolves the layout. The same rule keeps **‹ Files** from hiding the failure below 60 columns until it is resolved; opening another file is refused then anyway.
+- **A resize could hide a standing failure.** `sync_reader_layout` no longer hides the work pane while the save state is `error` or `conflict`. It switches to the editor view instead, which re-resolves the layout. (rev3 reverses the side effect this had on ‹ Files; see below.)
 - **Optional recovery focus: not done.** Picking the recovery control (Save Copy or Reload) depends on the state and the mode, and each choice risks focusing a control that is hidden. The bring-forward leaves focus where it was.
 - **Tests.** The Library-screen test gains `[new-create]`, `[new-cancel]`, `[new-escape]`, `[new-cancel-open]` and `[resize-failure]`. `[resize-failure]` shows "Save failed" beside the navigator at 65 columns, resizes to 55, and also checks that Back keeps it in view; it passed 3 of 3 runs serially. All 9 cases pass in 15 s with `-n 4`.
 - **Red evidence on `85fb887559`.** `[new-cancel]`, `[new-escape]` and `[new-cancel-open]` fail with "cancelling New did not return to the navigator", and `[resize-failure]` fails with "'Save failed' did not come forward". The four rev1 cases pass there.
 - Covering run after these fixes (the same files as in rev1, `-n 4`): 670 passed, 6 failed. The 6 are TASK-32185's known reds, and they fail the same way on the exact-base worktree `fu-base29592`.
 - The five new nodes are appended at the census tail, with literal parametrize ids so the census checker can resolve them. The module-size row goes 9730 -> 9779. The User Guide bullet adds a conflict with the file on disk, a cancelled New, and a standing failure staying in view.
+
+### Re-review fixes (r8f-rev3)
+
+- **An explicit ‹ Files always wins** (the coordinator's ruling). The rev2 guard made ‹ Files do nothing during a standing failure below 60 columns. Two states had no way out at all: a folder renamed away, and an unreadable file in a read-only folder. A new `_navigator_chosen` flag fixes this. Back sets it, and the Files grip (below) sets it too. It is cleared when the save state changes or the view switches to the editor. The `sync_reader_layout` guard keeps the work pane in view only while the flag is clear, so it now acts only on the automatic paths: a failure starting, and a resize. During the failure, opening another file is still refused, and that refusal brings the pane forward again (`_set_narrow_view("editor")` clears the flag), so the failure is never hidden for good.
+- **The Files grip reopened Files beside an 8-cell work sliver.** On the Library screen at 50x24 in the narrow editor view, the items grip resolves `priority="items"`, which gave items 32 cells and work 8. `sync_reader_layout` now treats "narrow, items open, work under 18 cells" while the view says editor as a navigator choice: it switches the view, sets the flag and hides Back. Then the AC#1 hide applies.
+- **Tests.** `[resize-failure]` now checks that ‹ Files reaches the navigator after the resize keeps the failure in view, and that opening `gone.md` is refused and brings "Save failed" forward again. A new `test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[offline-back|grip-from-editor]` covers the other two cases:
+  - `offline-back`: rename the folder away under a dirty draft, run the autosave until it fails (error or conflict), press ‹ Files.
+  - `grip-from-editor`: press the items grip from the narrow editor.
+
+  Both assert that the navigator takes the stage (work pane hidden, items `50 - 10` cells) and that no focusable widget in the workspace is outside its clip. The setup of both Library-screen tests moved into a shared `_library_folder_files` context manager.
+- **Red on `3331c59fc5`:**
+  - `[resize-failure]` fails with "Back did not show the navigator (work pane shown: False)".
+  - `[offline-back]` and `[grip-from-editor]` fail with "the navigator did not take the narrow stage".
+
+  Green after: all 11 Library-screen cases, 2-7 s each at load 9.
+- Covering run (the same files, `-n 4`): 672 passed, 6 failed. The 6 are the same TASK-32185 known reds, red on `fu-base29592`.
+- The two new nodes are appended at the census tail. The module-size row goes 9779 -> 9802. In the User Guide, "even after a resize or ‹ Files" becomes "a resize keeps it in view; ‹ Files still returns to the navigator, and opening another file is refused and brings the failure back". It also says the grip gives the navigator the whole width.
 

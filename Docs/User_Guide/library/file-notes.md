@@ -124,14 +124,16 @@ goes.)
   navigator. From 60 columns the navigator keeps a narrow work area beside
   the **Files** pane. Below 60 the **Files** pane takes the whole width and
   the work area stays hidden until you open or select a file, so **Tab**
-  never lands on a control you cannot see. **New**, any open or save that
-  fails or is refused, and a conflict with the file on disk also bring the
-  work area forward, with its message and recovery (for example "Save
-  failed" and "Next: Save Copy."). Cancelling **New** returns to the
-  navigator with **New** focused. While a save failure or a conflict
-  stands, the work area stays in view below 60 columns, even after a resize
-  or **‹ Files**. **Manage**, and Session Git with it, is then reached by
-  opening a file first.
+  never lands on a control you cannot see. Reopening Folder files with its
+  grip from the work area gives the navigator the whole width too. **New**,
+  any open or save that fails or is refused, and a conflict with the file
+  on disk also bring the work area forward, with its message and recovery
+  (for example "Save failed" and "Next: Save Copy."). Cancelling **New**
+  returns to the navigator with **New** focused. While a save failure or a
+  conflict stands, a resize below 60 columns keeps the work area in view.
+  **‹ Files** still returns to the navigator; opening another file is then
+  refused and brings the failure back. **Manage**, and Session Git with it,
+  is reached by opening a file first.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **‹ Files** returns to the files.

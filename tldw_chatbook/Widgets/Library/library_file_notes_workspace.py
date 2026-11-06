@@ -1672,6 +1672,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_offline: bool | None = None
         self._narrow = False
         self._narrow_view: Literal["navigator", "editor"] = "navigator"
+        # TASK-38757: the user chose the narrow navigator (Back or the Files
+        # grip) since the save state last changed, so a standing failure does
+        # not pull the work pane back over that choice.
+        self._navigator_chosen = False
         self._navigator_mode: Literal["files", "search", "git"] = "files"
         self._navigator_mode_before_git: Literal["files", "search"] = "files"
         self._editor_action_layout_sync_scheduled = False
@@ -2048,12 +2052,26 @@ class LibraryFileNotesWorkspace(Vertical):
         manual_reopen: PaneName | None = None,
     ) -> None:
         """Patch the mounted shared shell without recomposing its roles."""
-        if self._navigator_hides_work(layout) and self._save_state in {
-            "conflict",
-            "error",
-        }:
+        if (
+            self._narrow
+            and self._narrow_view == "editor"
+            and layout.items_open
+            and layout.reader_width < _NARROW_WORK_MIN_WIDTH
+        ):
+            # TASK-38757 re-review: the Files grip reopened the navigator from
+            # the narrow editor. That is the navigator view, chosen as Back
+            # chooses it, so the work pane hides instead of keeping a sliver.
+            self._narrow_view = "navigator"
+            self._navigator_chosen = True
+            self.query_one("#file-notes-back", Button).display = False
+        if (
+            self._navigator_hides_work(layout)
+            and self._save_state in {"conflict", "error"}
+            and not self._navigator_chosen
+        ):
             # TASK-38757 re-review: a resize must not hide a failure; show the
             # work pane through the editor view (this re-resolves the layout).
+            # An explicit navigator choice (Back, the Files grip) still wins.
             self._set_narrow_view("editor")
             return
         if self._navigator_hides_work(layout):
@@ -2090,6 +2108,8 @@ class LibraryFileNotesWorkspace(Vertical):
         it (TASK-38757 review: a selected deleted note stayed hidden).
         """
         self._narrow_view = view
+        if view == "editor":
+            self._navigator_chosen = False
         self._apply_responsive_layout(self.size.width)
         if self._reader_shell_external:
             self._sync_body_panes()
@@ -5761,6 +5781,8 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
         entering_failure = state in {"conflict", "error"} and state != self._save_state
+        if state != self._save_state:
+            self._navigator_chosen = False
         self._save_state = state
         self._save_detail = detail
         if state != "conflict":
@@ -7764,6 +7786,7 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-back")
     def _back_to_navigator(self, event: Button.Pressed) -> None:
         event.stop()
+        self._navigator_chosen = True
         self._set_narrow_view("navigator")
 
     @on(Button.Pressed, "#file-notes-session-changes")
