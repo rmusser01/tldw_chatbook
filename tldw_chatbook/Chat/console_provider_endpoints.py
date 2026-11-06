@@ -343,11 +343,15 @@ def safe_endpoint_display(url: str | None) -> str:
     parsed_endpoint = _parse_http_endpoint(url)
     if parsed_endpoint is None:
         return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
+    has_scheme, _scheme, hostname, port, _path = parsed_endpoint
+    if not (has_scheme or port is not None or _is_loopback_name(hostname)):
+        # TASK-39042: typed without a scheme or a port, a remote value may be
+        # a pasted key, such as ZAI's ``<32 hex>.<16>``.
+        return _INVALID_ENDPOINT_DISPLAY
     resolution = _display_resolution(url)
     if resolution.persisted_endpoint is not None:
         return resolution.normalized_input
     legacy_display = _format_endpoint(parsed_endpoint, drop_default_port=False)
-    has_scheme = parsed_endpoint[0]
     legacy_resolution = _display_resolution(legacy_display)
     if legacy_resolution.persisted_endpoint is not None:
         return legacy_resolution.normalized_input if has_scheme else legacy_display
@@ -357,6 +361,15 @@ def safe_endpoint_display(url: str | None) -> str:
         if explicit_legacy_resolution.persisted_endpoint is not None:
             return legacy_display
     return _INVALID_ENDPOINT_DISPLAY
+
+
+def _is_loopback_name(hostname: str) -> bool:
+    if hostname == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def _display_resolution(value: str):

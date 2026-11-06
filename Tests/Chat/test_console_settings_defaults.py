@@ -1635,7 +1635,10 @@ def test_build_default_intent_quick_materializes_displayed_effective_values() ->
             "Remote",
         ),
         ("host.example:443/path", "host.example:443", "Remote/unknown"),
-        ("printer.local/api", "printer.local", "LAN"),
+        # TASK-39042, rewritten on purpose: a remote value typed without a
+        # scheme needs a port (Console display's rule); "printer.local/api"
+        # is refused below.
+        ("printer.local:631/api", "printer.local:631", "LAN"),
         # TASK-36517 review: a Docker Compose name; the modal dropped it.
         ("http://kobold_cpp:5001/v1", "kobold_cpp:5001", "Remote/unknown"),
         ("https://My_Proxy.corp/v1", "my_proxy.corp", "Remote/unknown"),
@@ -1673,6 +1676,7 @@ def test_endpoint_preview_exposes_only_authority_and_network_class(
         "https://example.com;evil/v1",
         "https://ex\x00ample.com/v1",
         "https://café.example/v1",
+        "printer.local/api",
         "",
     ],
 )

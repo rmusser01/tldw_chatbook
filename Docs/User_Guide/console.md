@@ -778,10 +778,19 @@ For KoboldCpp, **Save endpoint & use model** saves only its native
 `/api/v1/generate` address: a bare root or an OpenAI path such as `/v1` is
 refused with "KoboldCpp needs its native /api/v1/generate address. For an
 OpenAI-compatible server, choose Custom instead." and nothing is written.
-For every provider it writes only an address **s** in Settings would accept.
-For one **s** refuses, such as an address with a query (`?api_key=…`), a
-fragment or an ambiguous path, it shows the reason **s** gives, such as
-"Endpoint URL must not include a query.", and submits nothing.
+For every provider it writes only an address **s** in Settings would accept,
+in the form **s** writes it. For one **s** refuses, such as an address with a
+query (`?api_key=…`), a fragment or an ambiguous path, it shows the reason
+**s** gives, such as "Endpoint URL must not include a query.", and submits
+nothing.
+An address typed without `http://` or `https://` is read as **s** reads it.
+`localhost`, `127.0.0.1` or `[::1]`, such as `localhost:8080`, is read as
+`http://`, so for vLLM **Save endpoint & use model** writes
+`http://localhost:8080/v1/chat/completions`. Any other address typed without
+a scheme, such as `gpu-box.lan:8080`, reads "Invalid URL", for llama.cpp too.
+A value typed without a scheme and without a port is shown as "invalid
+endpoint" unless it is on this computer (`localhost`, `127.0.0.1`), because it
+could be a key pasted into the field.
 A Docker Compose service name, such as `http://kobold_cpp:5001` or
 `http://vllm/v1`, is an endpoint like any other: two different ones are
 different servers, so a chat on one that is not saved is blocked until you

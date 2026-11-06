@@ -1640,6 +1640,107 @@ _DEFAULT_WRITE_PROVIDERS = {
 }
 
 
+#: TASK-39042: loopback endpoints typed without a scheme, which **s** saves.
+_SCHEMELESS_LOOPBACK_ENDPOINTS = ("localhost:8080", "127.0.0.1:8080/v1", "[::1]:8080/v1")
+#: TASK-39042: a synthetic ZAI-shaped key (``<32 hex>.<16>``) pasted into an
+#: endpoint field, with ``/v1`` appended and with an ``sk-`` prefix.
+_DOTTED_KEY = "0123456789abcdef0123456789abcdef.ABCDEFGHijklmnop"
+_DOTTED_KEY_ENDPOINTS = (_DOTTED_KEY, f"{_DOTTED_KEY}/v1", f"sk-{_DOTTED_KEY}")
+
+
+@pytest.mark.parametrize("provider", ["vllm", "ollama", "custom"])
+@pytest.mark.parametrize("endpoint", _SCHEMELESS_LOOPBACK_ENDPOINTS)
+def test_chat_settings_reads_a_schemeless_loopback_endpoint_as_the_save_does(
+    provider, endpoint
+):
+    """TASK-39042 AC#1: readiness ran ``validate_url``, which needs a typed
+    scheme, so Chat settings read "Invalid URL" for ``localhost:8080`` and
+    could not save what **s** saves."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        validate_console_session_settings,
+    )
+
+    settings = ConsoleSessionSettings(provider=provider, model="m", base_url=endpoint)
+    app_config = {"api_settings": {provider: dict(_DEFAULT_WRITE_PROVIDERS[provider])}}
+    readiness = build_console_settings_readiness(
+        settings, app_config=app_config, environ={}
+    )
+
+    assert _saved_endpoint(provider, endpoint) is not None
+    assert readiness.label != "Invalid URL", readiness
+    assert readiness.blocker != "endpoint_invalid", readiness
+    assert validate_console_session_settings(settings, app_config=app_config) == []
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["gpu-box.lan:8080", "192.168.1.20:8080", *_DOTTED_KEY_ENDPOINTS]
+)
+def test_llamacpp_readiness_refuses_a_remote_endpoint_typed_without_a_scheme(
+    endpoint,
+):
+    """TASK-39042 AC#2: llama.cpp's ``normalize_llamacpp_base_url`` added
+    ``http://`` first, so readiness read Ready for a remote host the save
+    refuses ("Remote endpoint URLs must include an HTTP or HTTPS scheme.")."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        build_console_settings_summary_state,
+        ConsoleSettingsContextEstimate,
+    )
+
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="m", base_url=endpoint
+    )
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config={"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
+        environ={},
+    )
+
+    assert _saved_endpoint("llama_cpp", endpoint) is None
+    assert readiness.label != "Ready", readiness
+    assert readiness.blocker == "endpoint_invalid", readiness
+    # AC#3: the Chat settings Endpoint row never names the value.
+    row = build_console_settings_summary_state(
+        settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
+    ).endpoint_row
+    assert row == "Endpoint: Not configured"
+
+
+@pytest.mark.parametrize("endpoint", _DOTTED_KEY_ENDPOINTS)
+def test_a_schemeless_dotted_key_is_never_shown_as_a_host(endpoint):
+    """TASK-39042 AC#3: a value without a scheme displayed as itself whenever
+    ``http://<value>`` resolved, so a pasted ZAI-shaped key read as a host,
+    lower-cased, in the display, the unsaved copy and the preview."""
+    assert safe_endpoint_display(endpoint) == "invalid endpoint"
+    assert local_discovery_module.endpoint_display(endpoint) == "invalid endpoint"
+    copy = unsaved_endpoint_copy(endpoint, {"api_url": "http://127.0.0.1:9099"})
+    assert "Selected endpoint: invalid endpoint." in copy
+    assert defaults_module.parse_console_endpoint_preview(endpoint) is None
+    assert defaults_module.format_console_endpoint_preview(endpoint) is None
+    for text in (copy, safe_endpoint_display(endpoint)):
+        assert _DOTTED_KEY.lower()[:12] not in text.lower()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "shown"),
+    [
+        ("http://gpu-box.lan/v1", "http://gpu-box.lan/v1"),
+        ("https://api.example.com", "https://api.example.com"),
+        ("localhost:8080", "http://localhost:8080"),
+        ("127.0.0.1/v1", "http://127.0.0.1/v1"),
+        ("[::1]:8080/v1", "http://[::1]:8080/v1"),
+        ("local-service:9090/v1", "local-service:9090/v1"),
+        ("gpu-box.lan:8080", "gpu-box.lan:8080"),
+    ],
+)
+def test_values_with_a_scheme_a_port_or_a_loopback_host_display_as_before(
+    endpoint, shown
+):
+    """TASK-39042 AC#4: only a schemeless, port-less remote value changed."""
+    assert safe_endpoint_display(endpoint) == shown
+
+
 #: Review r10e-rev4 (the reviewer's probe16): shapes **s** refuses, with an
 #: authority the Console default writer took.
 _REFUSED_PATHS_AND_PORTS = (
@@ -1663,6 +1764,8 @@ _REFUSED_PATHS_AND_PORTS = (
         ("gpu-box.lan:8000/v1", False),
         *((value, False) for value in _REFUSED_PATHS_AND_PORTS),
         ("http://127.0.0.1:8001/v1", True),
+        # TASK-39042: Chat settings read these as "Invalid URL".
+        *((value, True) for value in _SCHEMELESS_LOOPBACK_ENDPOINTS),
     ],
 )
 def test_make_default_never_writes_an_endpoint_the_contract_refuses(
@@ -1701,7 +1804,11 @@ def test_make_default_never_writes_an_endpoint_the_contract_refuses(
     if written:
         assert outcome.runtime_published is True, outcome
         saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-        assert endpoint in saved["api_settings"][provider].values()
+        # TASK-39042, rewritten on purpose: the writer wrote the typed value
+        # ("localhost:8080" with no scheme); it writes what **s** writes.
+        assert _saved_endpoint(provider, endpoint) in (
+            saved["api_settings"][provider].values()
+        )
     else:
         assert outcome.file_replaced is False
         assert config_path.read_bytes() == before
