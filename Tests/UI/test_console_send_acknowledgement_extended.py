@@ -180,7 +180,13 @@ async def test_failed_durable_commit_releases_the_row_and_restores_send():
 
 @pytest.mark.asyncio
 async def test_second_enter_during_admission_never_starts_a_second_provider_call():
-    """AC#4: the first send is visibly in flight; a repeat is refused, not sent."""
+    """AC#4: the first send is visibly in flight, and neither repeat sends.
+
+    The Enter during admission repeats the running capture: the visible send
+    holds it silently and drops it once that send settles. The press during
+    validation is refused with "Preparing the current turn…" and keeps the
+    draft.
+    """
     host, gateway, _timeline = build()
     notices: list[str] = []
     async with host.run_test(size=(160, 45)) as pilot:
@@ -211,14 +217,18 @@ async def test_second_enter_during_admission_never_starts_a_second_provider_call
                 gate.release.set()
                 await until(gateway.validation_started.is_set)
                 # The repeat Enter was held as a repeat of the running capture
-                # and dropped once that send settled: it never started a send.
+                # and dropped once that send settled: it never started a send,
+                # and said nothing.
                 assert len(sends) == 1, sends
+                assert notices == [], notices
                 # TASK-38994: the pressed draft stays until durable acceptance
                 # (077e5bfa09, ADR-230), which comes after validation, so this
                 # press is on the draft being sent.
                 assert composer.draft_text() == DRAFT
                 press(host, "enter", "\r")
-                await until(lambda: len(notices) >= 1)
+                await until(
+                    lambda: any("Preparing the current turn" in n for n in notices)
+                )
                 await pilot.pause()
                 in_flight = paint_state(host)
                 assert in_flight.user_row and not in_flight.header_idle, in_flight

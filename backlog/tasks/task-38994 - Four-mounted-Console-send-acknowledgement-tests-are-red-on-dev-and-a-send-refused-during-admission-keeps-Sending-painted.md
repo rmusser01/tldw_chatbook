@@ -3,7 +3,7 @@ id: TASK-38994
 title: "Four mounted Console send-acknowledgement tests are red on dev, and a send refused during admission keeps Sending… painted"
 status: Done
 assignee: ['@claude']
-updated_date: '2026-11-06 05:15'
+updated_date: '2026-11-06 06:50'
 created_date: 2026-11-05 21:35
 labels:
 - follow-up
@@ -62,7 +62,9 @@ TASK-38718 (Done) recorded these four as "Not mine": red on its base b8608e4cdb 
 **Each of the four (AC#2).**
 - `test_refused_admission_rolls_the_sending_row_back_and_keeps_the_draft`: product defect, the gate token above.
 - `test_turn_refused_before_its_echo_releases_the_row_and_offers_recovery`: product defect, the same cause. After the fix, 1 run in 40 (load ~83) failed its shelf assertion. The "Not sent:" shelf is the queue strip, painted after the transcript row had already gone, so the test now waits for the shelf with `until` and no longer asserts it in the same frame.
-- `test_second_enter_during_admission_never_starts_a_second_provider_call`: test drift. Since 077e5bfa09 (2026-10-31, ADR-230 "PR3050 current-owner reconciliation"), only the pressed snapshot retires its draft, after durable acceptance, and that comes after provider validation. The wait for an empty composer during held validation could never succeed. The test now asserts the draft is still shown then, that a press on it is refused with a notice ("Preparing the current turn…") and the draft stays, that there is one provider call, and that the composer is empty once the turn is accepted.
+- `test_second_enter_during_admission_never_starts_a_second_provider_call`: test drift. Since 077e5bfa09 (2026-10-31, ADR-230 "PR3050 current-owner reconciliation"), only the pressed snapshot retires its draft, after durable acceptance, and that comes after provider validation. The wait for an empty composer during held validation could never succeed. The test now asserts the following. The repeat Enter during admission is held silently and dropped: it starts no send and raises no notice. The draft is still shown during validation. A press on it then is refused with the notice "Preparing the current turn…", which the test checks by its copy, and the draft stays. There is one provider call, and the composer is empty once the turn is accepted. The two notice checks were added after review r10s-rev1, and each was shown red under a temporary edit:
+  - With the three "Preparing the current turn" refusals removed, the copy wait times out, because the next layer says "A run is already running in this tab."
+  - With the repeat scheduled at once and the sends check off, the silent-hold check fails with `['Hook review or Send is already in progress.'] == []`.
 - `test_failed_durable_commit_releases_the_row_and_restores_send`: test drift, from the same commit. The claim's `_draft_transfer_revision` is recorded only when the accepted draft is taken out (`sent_draft.take_out_sent_draft`), never before validation. The test now asserts that no transfer exists before acceptance and that the store and composer still hold the draft. It also asserts that the draft is still in the composer after the failed commit (ADR-230: "failed acceptance keeps the draft and refuses dispatch").
 
 **Red evidence.** At base e8eeae7db9, the whole file under `-n 4`: 4 failed, 4 passed (48.3 s). With the fix removed (control A), the two refusal tests and the new lean unit test are red. The realigned drift tests are green with or without the fix. I added `test_a_release_reopens_the_transcript_gate_the_paint_went_past` to the gated core file `Tests/UI/test_console_send_acknowledgement.py`, a lane file, so CI guards the fix; the extended file stays out of the lanes. It is red without the fix: `assert ("the gate's token from before Enter",) is None`.
@@ -97,7 +99,7 @@ So one fix, this one, closes both paths: every release reopens the gate, whateve
 
 The earlier attempts to produce a second provider call are in `backlog/docs/lessons-testing-evidence.md` (2026-11-06). There, a sequential second turn in this harness also ends before the provider ("Local conversation storage is unavailable."): `_build_console_send_test_app` has no `local_chat_conversation_service`.
 
-After the change, `Tests/UI/test_console_send_acknowledgement_extended.py` under `-n 4`, 3 of 3 runs: 8 passed each, 19.7-21.2 s, load ~20.
+After the change, `Tests/UI/test_console_send_acknowledgement_extended.py` under `-n 4`, 3 of 3 runs: 8 passed each, 19.7-21.2 s, load ~20. After the review fixes (r10s-rev1), 3 of 3 runs again: 8 passed each, 30.1-35.4 s, load ~27-32.
 
 **Docs.** No copy changes. `Docs/User_Guide/console/chat-basics.md` already says a refused turn's **Sending…** row disappears and the draft is kept, and the fix restores that behaviour. I added a lesson to `backlog/docs/lessons-testing-evidence.md` (the one-turn harness trap).
 
