@@ -414,6 +414,10 @@ def _resync(screen: Any) -> None:
     if _torn_down(screen):
         return
     screen._last_native_transcript_refresh_key = None
+    # TASK-38994: the paint pushed the row past the tick gate, so the gate can
+    # still hold the token from before Enter. A refusal that writes no store
+    # row (accept_turn raising, a hook refusal) then matched it and skipped.
+    screen._console_transcript_sync_token = None  # past TASK-34958's gate
     # Re-arms the running sync pass for this request, or starts one.
     request_console_repaint(screen)
 

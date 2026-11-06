@@ -614,6 +614,30 @@ def test_acknowledgement_released_when_dispatch_admits_no_turn():
     assert released == [1, 1]
 
 
+def test_a_release_reopens_the_transcript_gate_the_paint_went_past():
+    """TASK-38994: a refusal that writes no store row still repaints.
+
+    The paint pushes the pending row straight to the transcript, so the tick
+    gate can still hold its token from before Enter. A release that changes
+    nothing else the gate compares (``accept_turn`` raising, a hook refusal)
+    matched that token, and "Sending…" stayed painted on an idle Console.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    screen = SimpleNamespace(
+        _console_transcript_sync_token=("the gate's token from before Enter",),
+        _last_native_transcript_refresh_key=("refresh key",),
+        _console_sync_in_progress=True,  # a running pass is re-armed
+        _console_sync_requested=False,
+    )
+    module._resync(screen)
+    assert screen._console_transcript_sync_token is None
+    assert screen._last_native_transcript_refresh_key is None
+    assert screen._console_sync_requested
+
+
 def test_acknowledgement_marks_its_tab_running_but_keeps_approval():
     from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker as Marker
 
