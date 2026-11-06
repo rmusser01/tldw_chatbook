@@ -1989,7 +1989,7 @@ class RAGService:
             max_retries = 2
 
             while retry_count <= max_retries:
-                pool = get_connection_pool(str(db_path), pool_size=pool_size)
+                pool = get_connection_pool(str(db_path), pool_size=pool_size, user=self)
                 try:
                     search_results = await loop.run_in_executor(
                         pool_executor(pool),
@@ -4460,10 +4460,10 @@ class RAGService:
             # Release vector-store clients, including persistent SQLite handles.
             self.vector_store.close()
 
-            # Close all database connection pools
-            from .db_connection_pool import close_all_pools
+            # Release only this service's pools; shared ones stay (TASK-38956).
+            from .db_connection_pool import release_pools
 
-            close_all_pools()
+            release_pools(self)
 
             # Clear cache
             if hasattr(self, "cache"):
