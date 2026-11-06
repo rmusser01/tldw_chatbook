@@ -834,6 +834,9 @@ MINIMUM_FILES = 1702
 # Git and refresh-failure nodes at the tail. The floor is the measured entry
 # count.
 MINIMUM_FILES = 1708
+# TASK-38981 (2026-11-06): append the fifteen list-beside-item, Prompts and
+# empty-list nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1723
 
 
 def read_census(path: Path) -> list[str]:

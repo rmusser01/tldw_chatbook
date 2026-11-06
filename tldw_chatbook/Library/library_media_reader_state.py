@@ -43,6 +43,8 @@ MEDIA_READER_LAYOUT_PROFILE = AdaptiveReaderLayoutProfile(
     # the LIST rather than an empty Reader (60x24 showed neither a list nor a
     # way back to the rail).
     list_first_when_empty=True,
+    # TASK-38981: an explicitly opened list beside the viewer takes the stage.
+    list_stage_over_starved_work=True,
 )
 normalize_media_reader_preferences = normalize_adaptive_reader_preferences
 

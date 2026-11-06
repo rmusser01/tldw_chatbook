@@ -123,7 +123,10 @@ editor's own Back control returns to its list.
   its width back. The same rule holds below 64 columns, where there is no
   room for two panes at all: with nothing open the list is the whole stage
   instead of sharing it with an empty work area, and opening a note gives
-  the stage to the note. Its own grip collapses or restores the list without
+  the stage to the note. Reopening the list with its grip while a note is open
+  (under about 80 columns) gives the list the whole stage rather than leaving
+  the note a sliver beside it; the note stays open behind the list, and
+  closing the list returns to the note with focus in it. Its own grip collapses or restores the list without
   changing the Folder files tree choice. When a rename SAVES, the note's list
   row catches up immediately, even while the title field still has focus — the
   row beside the editor is the only durable receipt on screen, so it is not

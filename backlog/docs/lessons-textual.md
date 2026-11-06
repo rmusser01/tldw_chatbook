@@ -2517,3 +2517,13 @@ The first overflow probe reported no overflow at all. `Strip.cell_length` gave t
 **What to do.**
 - In a `Horizontal` that pairs a title with controls, give the title `width: 1fr`, and give each control a width that fits (`width: auto; min-width: 0`, or the compact group the pane already uses).
 - To check that a control can be seen, measure the cells of its region inside its compositor clip: `clip = screen.find_widget(w).clip`, then `min(region.right, clip.right) - max(region.x, clip.x) > 0`. `region.width > 0`, `display` and `in focus_chain` do not show it is visible.
+
+## Focusing a widget in a closed shell pane does nothing, and `Button.press()` never moves focus (TASK-38982, TASK-38981, 2026-11-06)
+
+**Incident 1.** File Notes' ‹ Files hides itself in the navigator view, so the fix moved focus to the files tree first. On the real Library screen focus still fell to None at every width from 40 to 79. The Library screen re-resolves the shared shell a message after the view switch, and until then the Files pane is closed. `AdaptivePaneShell.sync_layout` sets `pane.disabled = not open`, and `Widget.focusable` rejects a disabled ancestor, so `screen.set_focus(tree)` returned without doing anything. Back's own hide then reset focus to None. The working fix parks focus on the Files grip, which is never disabled, before the switch, and hands it to the tree once the pane shows (`_focus_once_shown`).
+
+**Incident 2.** The TASK-38981 Library sweep closed and reopened lists with `shell.items_grip.press()`. On Media, focus sat on `nav-home` at every width, outside the destination altogether. The real user path never ran: `Button.press()` posts `Pressed` but does not focus the button, so the shell's grip-focused branches (automatic reopen into the pane, and the return into the work pane) were never taken. `pilot.click(grip)` focuses the grip and then presses it, as a user does.
+
+**What to do.**
+- Before handing focus to a widget in a pane the layout is about to open, check `widget.focusable`. If it is False, park focus on something that is focusable now, and move it once the pane shows.
+- Drive grips, and anything whose behaviour depends on what holds focus, with `pilot.click`, and put focus where the user would have it first. A green test that uses `.press()` says nothing about focus.

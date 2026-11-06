@@ -83,6 +83,14 @@ rewriting your settings. Explicitly reopening a pane takes effect immediately.
   width while you are there — selecting **Media** again returns to the list
   and its **‹ Library** control, so the two are a round trip rather than a
   one-way door.
+- **Opening Items beside an open item gives the list the stage.** Where the
+  terminal is too narrow for the list and a usable Reader side by side (under
+  about 80 columns), the Items grip opens the list across the whole width
+  instead of leaving the item a few columns beside it. The item stays open
+  behind the list, and the same grip closes the list again and returns to the
+  item with focus inside it. Conversations do the same, and below 64 columns
+  with no conversation open the Conversations list keeps the stage, as Media's
+  does.
 
 *Verified against fix/media-crit6-layout — 2026-09-07 (task-31979: the
 empty-reader widening. Pinned in tests at 235x52 and 100x30 — with no item

@@ -225,6 +225,55 @@ async def test_closing_a_focused_pane_moves_focus_to_its_grip() -> None:
         assert app.focused is shell.library_grip
 
 
+class _WorkFocusShellApp(App):
+    def compose(self) -> ComposeResult:
+        yield shared.AdaptivePaneShell(
+            Vertical(Button("Nav action", id="probe-nav-action")),
+            Vertical(Button("Items action", id="probe-items-action")),
+            Vertical(Button("Work action", id="probe-work-action")),
+            _layout(nav_open=False, items_open=False),
+            id_prefix="probe",
+            library_label="Characters",
+            items_label="Lore books",
+            destination=PROBE_CLASSES,
+            id="probe-shell",
+        )
+
+
+async def test_a_pane_given_the_whole_stage_hides_the_work_pane_and_returns_to_it() -> (
+    None
+):
+    """TASK-38981: a layout with no work columns left the work pane displayed
+    at zero width, so its controls stayed in the focus chain off screen. It
+    hides now, focus moves into the pane that took the stage, and showing the
+    work pane again returns focus to where it was in it."""
+    app = _WorkFocusShellApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", shared.AdaptivePaneShell)
+        work_action = app.query_one("#probe-work-action", Button)
+        work_action.focus()
+        await pilot.pause()
+        stage = ars.AdaptivePaneLayout(
+            library_open=False,
+            items_open=True,
+            library_width=0,
+            items_width=70,
+            reader_width=0,
+            priority_pane="items",
+        )
+        shell.sync_layout(stage)
+        await pilot.pause()
+        assert shell.work.display is False
+        assert work_action not in app.screen.focus_chain
+        assert app.focused is app.query_one("#probe-items-action", Button)
+
+        shell.sync_layout(_layout(nav_open=False, items_open=False))
+        await pilot.pause()
+        assert shell.work.display is True
+        assert app.focused is work_action
+
+
 def test_the_shared_module_carries_no_library_class_and_imports_no_library_code() -> (
     None
 ):

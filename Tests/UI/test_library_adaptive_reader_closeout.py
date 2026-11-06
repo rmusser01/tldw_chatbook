@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from textual.containers import Vertical
+from textual.errors import NoWidget
 from textual.widgets import Button, Input, TextArea
 
 from Tests.UI.test_library_conversation_reader import (
@@ -1822,3 +1823,262 @@ async def test_notes_explicit_close_never_resolves_against_stale_allocation(
 
         assert screen._notes_state.reader_preferences.library_open is False
         assert screen._notes_state.reader_layout == before
+
+
+def _work_cells(widget) -> int:
+    """Columns of ``widget`` painted inside its compositor clip (TASK-38981)."""
+    screen = widget.screen
+    try:
+        clip = screen.find_widget(widget).clip
+    except NoWidget:
+        return 0
+    region = widget.region
+    return min(region.right, clip.right, screen.size.width) - max(region.x, clip.x, 0)
+
+
+#: The profile floor (``work_min_width``) each destination's work pane keeps
+#: when it stays beside an opened list.
+_WORK_FLOORS = {
+    "notes": 48,
+    "media": 46,
+    "prompts": 48,
+    "skills": 48,
+    "collections": 48,
+    "conversations": 44,
+}
+
+
+async def _open_the_list_beside_the_open_item(
+    screen, pilot, destination: str, widths
+) -> None:
+    """Open, check and close the list beside the open item at each width."""
+    selector = DESTINATION_CONTRACT[destination][1]
+    layout_name = DESTINATION_CONTRACT[destination][4]
+    floor = _WORK_FLOORS[destination]
+
+    def layout():
+        return operator.attrgetter(layout_name)(screen)
+
+    for width in widths:
+        await pilot.resize_terminal(width, 30)
+
+        def settled() -> bool:
+            resolved = layout()
+            return screen.size.width == width and screen.query_one(
+                selector
+            ).region.width == (
+                resolved.library_width
+                + resolved.items_width
+                + resolved.reader_width
+                + 2 * resolved.grip_width
+            )
+
+        await _wait_for_condition(
+            pilot, settled, message=f"{width}: the layout did not settle"
+        )
+        await pilot.pause()
+        shell = screen.query_one(selector)
+        if layout().items_open:
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: not layout().items_open and shell.work.display,
+                message=f"{width}: the open item did not take the stage",
+            )
+        # The user is in the open item, then clicks the list grip.
+        reading = next(
+            target
+            for target in screen.focus_chain
+            if shell.work in target.ancestors and _work_cells(target) > 0
+        )
+        screen.set_focus(reading)
+        await pilot.pause()
+        await pilot.click(shell.items_grip)
+        await _wait_for_condition(
+            pilot,
+            lambda: layout().items_open and shell.items.display,
+            message=f"{width}: the list did not open",
+        )
+        await pilot.pause()
+        work = shell.work
+        assert not work.display or _work_cells(work) >= floor, (
+            width,
+            _work_cells(work),
+        )
+        unseen = [
+            target.id
+            for target in screen.focus_chain
+            if work in target.ancestors and _work_cells(target) <= 0
+        ]
+        assert not unseen, (width, unseen)
+        focused = screen.focused
+        assert focused is not None and _work_cells(focused) > 0, (width, focused)
+
+        await pilot.click(shell.items_grip)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not layout().items_open
+                and shell.work.display
+                and screen.focused is not None
+                and shell.work in screen.focused.ancestors
+                and _work_cells(screen.focused) > 0
+            ),
+            message=(
+                f"{width}: closing the list left focus on "
+                f"{screen.focused!r}, not inside the open item"
+            ),
+        )
+
+
+@private_profile_test
+@pytest.mark.asyncio
+# TASK-38981: each case covers ten widths, to keep a census entry short.
+@pytest.mark.parametrize("decade", ["40", "50", "60", "70"])
+@pytest.mark.parametrize("destination", ["notes", "media"])
+async def test_opening_the_list_beside_an_open_item_leaves_no_work_sliver(
+    destination: str,
+    decade: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981: with an item open, the list grip at 40-79 columns resolved
+    a 32-cell list and a ``width - 42`` work pane (1 cell at 40), whose
+    controls Tab reached off screen. The list now takes the stage (the work
+    pane hides, the item stays open) or the work pane keeps the profile's
+    floor; closing the list returns to the item with focus inside it."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    first = int(decade)
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, destination)
+            await _open_the_list_beside_the_open_item(
+                screen, pilot, destination, range(first, first + 10)
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "destination", ["prompts", "skills", "collections", "conversations"]
+)
+async def test_every_other_list_destination_gives_an_opened_list_the_stage(
+    destination: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 AC#1 for the other shared-shell destinations, at 44 and 60
+    columns (the Notes and Media sweep covers every width)."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, destination)
+            await _open_the_list_beside_the_open_item(
+                screen, pilot, destination, (60, 44)
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination", ["collections", "skills"])
+async def test_an_empty_list_destination_keeps_the_list_at_60x24(
+    destination: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-34851: at 60x24 with nothing open, Collections and Skills gave the
+    whole stage to an empty work pane. They show their list, as Media does.
+    (Conversations opens its first conversation on entry, so it has no empty
+    state to check here; its profile carries the same rule.)"""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    rail, selector, _row, preferences_name, layout_name = DESTINATION_CONTRACT[
+        destination
+    ]
+    try:
+        async with host.run_test(size=(60, 24)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one(rail, Button).press()
+            shell = await _wait_for_selector(screen, pilot, selector)
+            preferences = operator.attrgetter(preferences_name)(screen)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    operator.attrgetter(layout_name)(screen).items_open
+                    and shell.items.display
+                    and shell.items.region.width
+                    == min(preferences.items_width, 60 - 10)
+                ),
+                message=(
+                    f"{destination}: the list did not keep the 60-column stage "
+                    f"({operator.attrgetter(layout_name)(screen)})"
+                ),
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_prompts_list_takes_the_narrow_stage_and_an_open_prompt_takes_it_back(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 AC#4: below 64 columns the Prompts list kept an empty work
+    pane (8 cells at 50, 18 at 60) beside its 32-cell floor. It now takes the
+    stage as Notes and Media do, and opening a prompt hands the width back."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(60, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts", Button).press()
+            await _open_prompts_list(screen, pilot)
+            shell = await _wait_for_selector(
+                screen, pilot, "#library-prompts-reader-shell"
+            )
+            preferences = screen._prompts_state.reader_preferences
+            for width in (63, 60, 50, 44, 40):
+                await pilot.resize_terminal(width, 30)
+                # The list takes its preferred width, or all the grips leave
+                # (the Notes and Media rule); no empty work pane keeps a share.
+                stage = min(preferences.items_width, width - 10)
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        screen.size.width == width
+                        and screen._prompts_state.reader_layout.items_open
+                        and shell.items.region.width == stage
+                    ),
+                    message=(
+                        f"{width}: the Prompts list did not take the stage "
+                        f"({screen._prompts_state.reader_layout})"
+                    ),
+                )
+            rows = list(screen.query(".library-prompt-row"))
+            assert rows
+            rows[0].press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._prompts_state.detail is not None
+                    and not screen._prompts_state.reader_layout.items_open
+                    and shell.work.display
+                    and shell.work.region.width == 40 - 10
+                ),
+                message="opening a prompt did not hand the width back",
+            )
+    finally:
+        prompt_db.close()

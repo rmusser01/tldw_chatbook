@@ -392,6 +392,9 @@ class AdaptivePaneShell(Horizontal):
         }
         self.effective_layout = layout
         self._applied_layout: AdaptivePaneLayout | None = None
+        #: TASK-38981: the last work-pane focus, so a work pane that a list
+        #: given the whole stage hid can take focus back where it was.
+        self._last_focused_work: Widget | None = None
 
     def compose(self) -> ComposeResult:
         """Compose retained navigation, items, grips, and work widgets."""
@@ -420,6 +423,8 @@ class AdaptivePaneShell(Horizontal):
             if self._is_valid_focus_target(pane, target):
                 self._last_focused_descendant[pane_name] = target
                 return
+        if target is not None and self.work in target.ancestors_with_self:
+            self._last_focused_work = target
 
     def _pane_focus_chain(self, pane: Widget) -> list[Widget]:
         """Return currently reachable pane targets in Textual focus order."""
@@ -521,6 +526,35 @@ class AdaptivePaneShell(Horizontal):
             self.work.add_class("w-fill")
             self.work.styles.min_width = 0
             self.work.add_class("h-full")
+        # TASK-38981: a list explicitly given the whole stage (no work columns)
+        # hides the work pane, so none of its controls stay in the focus chain
+        # at zero width. Its item stays mounted; showing it again returns focus
+        # there. Only the explicit list priority: an empty list's narrow stage
+        # keeps its zero-width work pane, which Artifacts' F6 reveals.
+        work_shown = not (
+            layout.reader_width == 0
+            and layout.items_open
+            and layout.priority_pane == "items"
+        )
+        work_return_target: Widget | None = None
+        if self.work.display != work_shown:
+            if not work_shown:
+                if focused is not None and self.work in focused.ancestors_with_self:
+                    evacuation_target = next(
+                        iter(self._pane_focus_chain(self.items)), self.items_grip
+                    )
+                self.work.display = False
+            else:
+                self.work.display = True
+                remembered = self._last_focused_work
+                chain = self._pane_focus_chain(self.work)
+                if focused is None or focused in (
+                    self.items_grip,
+                    self.library_grip,
+                ) or evacuation_target is not None:
+                    work_return_target = (
+                        remembered if remembered in chain else next(iter(chain), None)
+                    )
         for pane_name, was_open, now_open in (
             (
                 "library",
@@ -536,7 +570,9 @@ class AdaptivePaneShell(Horizontal):
             if was_open != now_open:
                 self.post_message(PaneVisibilityChanged(pane_name, now_open))
         self._applied_layout = layout
-        if evacuation_target is not None:
+        if work_return_target is not None:
+            self.screen.set_focus(work_return_target, scroll_visible=False)
+        elif evacuation_target is not None:
             self.screen.set_focus(evacuation_target, scroll_visible=False)
         elif manual_reopen_pane is not None and manual_reopen_name is not None:
             focus_chain = self._pane_focus_chain(manual_reopen_pane)

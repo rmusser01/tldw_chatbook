@@ -79,6 +79,16 @@ class AdaptiveReaderLayoutProfile:
             ``False`` (the pre-task-32065 behaviour); only Media opts in
             today, where 60x24 painted "Select a media item to read it here."
             with no list to select from.
+        list_stage_over_starved_work: When ``True``, an explicit list request
+            (``priority="items"``) with an item open that would leave the
+            work pane under ``work_min_width`` gives the list the whole stage
+            instead, while it fits under ``list_max_width``; the work pane's
+            width is 0 and the shell hides it, the item stays open behind the
+            list, and closing the list hands the stage back (TASK-38981: a
+            ``width - 42`` sliver, 1 cell at 40 columns, whose controls Tab
+            reached off screen). Default ``False``: File Notes resolves its
+            narrow navigator with this priority and keeps its own rule
+            (TASK-38757).
         grip_width: Width of EACH of the two pane grips -- both what a grip
             paints and what the resolver holds back for it, so the two can
             never disagree (the resolved layout carries this width to the
@@ -94,6 +104,7 @@ class AdaptiveReaderLayoutProfile:
     work_comfort_width: int = 44
     list_grows: bool = False
     list_first_when_empty: bool = False
+    list_stage_over_starved_work: bool = False
     grip_width: int = PANE_GRIP_WIDTH
 
 
@@ -420,6 +431,14 @@ def resolve_adaptive_reader_layout(
                     ),
                     max(width - grip_width - work_min_width, items_width),
                 )
+                if (
+                    profile.list_stage_over_starved_work
+                    and reader_has_item
+                    and width - grip_width - items_width < work_min_width
+                    and width - grip_width <= profile.list_max_width
+                ):
+                    # TASK-38981: see ``list_stage_over_starved_work``.
+                    items_width = max(width - grip_width, 0)
             return AdaptiveReaderEffectiveLayout(
                 library_open=library_open,
                 items_open=items_open,

@@ -2458,3 +2458,24 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[70]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_session_git_is_reachable_from_the_narrow_navigator
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_failed_refresh_shows_beside_the_hidden_work_pane
+# TASK-38981 (2026-11-06): an explicitly opened list beside an open item takes
+# the stage instead of leaving the item a sliver, on the real Library screen:
+# Notes and Media at every width 40-79 (ten widths per node, 16-18 s each at
+# -n 4, load 13-18), the other list destinations at 60 and 44 (11-30 s), the
+# Prompts list's narrow stage, and Collections and Skills keeping their list
+# at 60x24 with nothing open (TASK-34851; 9-10 s). Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes-40]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes-50]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes-60]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes-70]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-40]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-50]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-60]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-70]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[prompts]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[skills]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[conversations]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_list_destination_keeps_the_list_at_60x24[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_list_destination_keeps_the_list_at_60x24[skills]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_prompts_list_takes_the_narrow_stage_and_an_open_prompt_takes_it_back
