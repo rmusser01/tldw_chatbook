@@ -12,10 +12,39 @@ import pytest
 _CONFIG_SOURCE_INSTALLS: list[tuple[ModuleType, ModuleType, set[str]]] = []
 
 
+class _AddedStartups(dict):
+    """Startup admissions selections added: lease -> ``_startups`` key.
+
+    TASK-39059: a selection's config import admits its own bootstrap root,
+    once per fresh HOME, and holds it until exit. ``install_config_source``
+    enters each lease with ``monkeypatch.setitem``, whose undo deletes a new
+    key; the delete releases the admission while ``_startups`` still holds
+    that lease, so one a test already popped (``bound_config``) is left alone.
+    """
+
+    def __delitem__(self, lease) -> None:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        key = self.pop(lease)
+        with storage._lock:
+            if storage._startups.get(key) is not lease:
+                return
+            del storage._startups[key]
+        lease.close()
+
+
+_ADDED_STARTUPS = _AddedStartups()
+
+
 def install_config_source(monkeypatch):
-    """Import a real selected source, preserving existing participant registries."""
+    """Import a real selected source, preserving existing participant registries.
+
+    The startup admission the import adds is released when ``monkeypatch``
+    is undone; one it did not add stays.
+    """
     import tldw_chatbook
     from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
     existing_consumers = {
         name for name in sys.modules if name.startswith("tldw_chatbook.")
@@ -25,7 +54,19 @@ def install_config_source(monkeypatch):
     monkeypatch.setitem(sys.modules, spec.name, module)
     monkeypatch.setattr(tldw_chatbook, "config", module)
     _CONFIG_SOURCE_INSTALLS.append((config, module, existing_consumers))
-    spec.loader.exec_module(module)
+    with storage._lock:
+        startups = dict(storage._startups)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        with storage._lock:
+            added = [
+                (lease, key)
+                for key, lease in storage._startups.items()
+                if startups.get(key) is not lease
+            ]
+        for lease, key in added:
+            monkeypatch.setitem(_ADDED_STARTUPS, lease, key)
     return module
 
 

@@ -1134,9 +1134,11 @@ class _StorageLeaseGuard:
     the leak. Registered for ``--storage-lease-guard``, which the
     dreams-boundary step passes. The autouse fixture is set up before, and
     torn down after, the test's own function fixtures; leases of wider-scoped
-    fixtures are already in ``before``. Startup admissions are left out, as
-    the drain leaves them: one per selected profile (``select_config_source``
-    selects a fresh one), each held until exit by design.
+    fixtures are already in ``before``. Startup admissions are left out of
+    that count, as the drain leaves them, and reported on their own: a
+    selection's config import admits its fresh profile, and the selection's
+    undo releases it (``config_test_support``, TASK-39059), so one still held
+    would make a later in-process backup refuse to retire its startup.
     """
 
     @staticmethod
@@ -1145,6 +1147,13 @@ class _StorageLeaseGuard:
 
         with storage._lock:
             return set(storage._live_leases) - set(storage._startups.values())
+
+    @staticmethod
+    def _startups() -> dict:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        with storage._lock:
+            return dict(storage._startups)
 
     @staticmethod
     def _describe(lease) -> str:
@@ -1157,16 +1166,27 @@ class _StorageLeaseGuard:
 
     @pytest.fixture(autouse=True)
     def _no_new_live_storage_lease(self, request):
-        before = self._live()
+        before, startups = self._live(), self._startups()
         yield
         leaked = self._live() - before
+        kept = sorted(
+            key[1]
+            for key, lease in self._startups().items()
+            if startups.get(key) is not lease
+        )
+        findings = []
         if leaked:
             where = sorted(self._describe(lease) for lease in leaked)
-            pytest.fail(
-                f"{request.node.nodeid} left {len(leaked)} new live storage "
-                f"lease(s) open: {where}",
-                pytrace=False,
+            findings.append(
+                f"left {len(leaked)} new live storage lease(s) open: {where}"
             )
+        if kept:
+            findings.append(
+                f"left {len(kept)} new startup admission(s) held, admission "
+                f"root(s): {kept}"
+            )
+        if findings:
+            pytest.fail(f"{request.node.nodeid} " + "; ".join(findings), pytrace=False)
 
 
 def pytest_configure(config):
@@ -1941,6 +1961,32 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             _restore_bootstrap_profile_config(
                 config, bootstrap_config_path, bootstrap_config_before
             )
+        if not keep_bootstrap_profile:
+            _release_profile_startups(test_data_dir)
+
+
+def _release_profile_startups(profile_dir: Path) -> None:
+    """Release the startup admissions of one test's own fresh profile.
+
+    TASK-39059: a module that admits at its first import (``TTS``, MCP's
+    server) admits the fresh profile of the test that first imports it, and
+    holds it until exit, though nothing uses that profile again. Any startup
+    left beside the process's own makes ``_LocalPause.retire_startup`` refuse
+    (``runtime_startup_scope_unqualified``). Selections release their own
+    earlier (``config_test_support``).
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    with storage._lock:
+        held = [
+            (key, lease)
+            for key, lease in storage._startups.items()
+            if key[0] == os.getpid() and Path(key[1]).is_relative_to(profile_dir)
+        ]
+        for key, _ in held:
+            del storage._startups[key]
+    for _, lease in held:
+        lease.close()
 
 
 # ========== Test Data Fixtures ==========

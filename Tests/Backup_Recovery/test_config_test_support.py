@@ -27,6 +27,46 @@ def test_selected_config_uses_real_custody_and_refuses_later_retarget(
     assert not other.exists()
 
 
+def test_selection_releases_only_the_startup_admission_it_added(tmp_path):
+    """TASK-39059: a fresh-HOME selection's config import files a startup
+    admission for its own bootstrap root, and nothing released it before
+    process exit, so an in-process RuntimeMaintenance backup after such tests
+    refused (``runtime_startup_scope_unqualified``). A nested selection on
+    the same root adds none, so it releases none."""
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    for name in ("outer.toml", "inner.toml"):
+        (tmp_path / name).write_text('[general]\nusers_name = "Selected"\n')
+    before = dict(storage._startups)
+    with pytest.MonkeyPatch.context() as outer:
+        config_test_support.select_config_source(outer, tmp_path / "outer.toml")
+        added = dict(storage._startups)
+        with pytest.MonkeyPatch.context() as inner:
+            config_test_support.select_config_source(inner, tmp_path / "inner.toml")
+        after_inner = dict(storage._startups)
+    config_test_support.restore_config_source_consumers()
+
+    # (admissions added, the inner undo kept the outer's, all released)
+    assert (len(added.keys() - before.keys()), after_inner == added) == (1, True)
+    assert storage._startups == before
+
+
+@pytest.mark.bootstrap_profile
+def test_selection_in_the_bootstrap_profile_keeps_the_process_admission(tmp_path):
+    """TASK-39059: the process's own startup admission was not added by the
+    selection, so undoing the selection must leave it in place."""
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    before = dict(storage._startups)
+    assert before
+    with pytest.MonkeyPatch.context() as selected:
+        config_test_support.select_config_source(selected, tmp_path / "selected.toml")
+        during = dict(storage._startups)
+    config_test_support.restore_config_source_consumers()
+
+    assert (during, storage._startups) == (before, before)
+
+
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("nested", [False, True])
 def test_newly_imported_guarded_consumer_restores_after_source_teardown(
