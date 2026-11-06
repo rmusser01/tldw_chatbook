@@ -1535,6 +1535,27 @@ class PromptScopeService:
             return await value
         return value
 
+    async def _run_local(self, service: Any, call: Any, *, native_runner: Any = None) -> Any:
+        """Run one finite local Prompts call off the event loop (TASK-38686).
+
+        A ':memory:' database runs inline instead: a worker thread's own
+        connection to it would be a fresh, empty database (TASK-38749).
+        """
+        if getattr(getattr(service, "prompt_db", None), "is_memory_db", False):
+            return await self._maybe_await(call())
+        from functools import partial
+
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        def complete() -> Any:
+            result = call()
+            return asyncio.run(result) if inspect.isawaitable(result) else result
+
+        callback = partial(run_finite_local_worker, complete)
+        if native_runner is not None:
+            return await native_runner(callback)
+        return await asyncio.to_thread(callback)
+
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
@@ -1798,14 +1819,8 @@ class PromptScopeService:
                 "Server prompt counts are not supported; use list_prompts for a scoped total."
             )
         service = self._service_for_mode(normalized_mode)
-
-        def count_local_prompts() -> Any:
-            result = service.count_prompts(**({"artifact_type": artifact_type} if artifact_type is not None else {}))
-            return asyncio.run(result) if inspect.isawaitable(result) else result
-
-        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
-
-        return int(await asyncio.to_thread(run_finite_local_worker, count_local_prompts))
+        kwargs = {"artifact_type": artifact_type} if artifact_type is not None else {}
+        return int(await self._run_local(service, lambda: service.count_prompts(**kwargs)))
 
     async def get_library_user_content_evidence(
         self, *, mode: PromptBackend | str = "local"
@@ -1968,13 +1983,11 @@ class PromptScopeService:
         ):
             raise PromptCapabilityError(normalized_mode.value, "mix-in snapshot reads")
         service = self._service_for_mode(normalized_mode)
-        from functools import partial
-
-        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
-        callback = partial(run_finite_local_worker, service.read_mixin_records, record_uuids)
-        if _native_runner is not None:
-            return await _native_runner(callback)
-        return await asyncio.to_thread(callback)
+        return await self._run_local(
+            service,
+            lambda: service.read_mixin_records(record_uuids),
+            native_runner=_native_runner,
+        )
 
     async def get_prompt(
         self,
@@ -2091,27 +2104,14 @@ class PromptScopeService:
             validate_prompt_request_size(payload, capabilities)
         from functools import partial
 
-        from tldw_chatbook.Backup_Recovery.participants import (
-            run_finite_local_worker,
-        )
-
         write = (
             partial(service.create_prompt, payload)
             if action == "create"
             else partial(service.update_prompt, prompt_identifier, payload)
         )
-        database = getattr(service, "prompt_db", None)
-        # A worker thread's own ":memory:" connection would be an empty database.
-        if normalized_mode == PromptBackend.LOCAL and not getattr(
-            database, "is_memory_db", False
-        ):
-            # A contended local write waits up to SQLite's busy timeout
-            # (TASK-38686): run it off the event loop, as read_mixin_records does.
-            def complete_write() -> Any:
-                result = write()
-                return asyncio.run(result) if inspect.isawaitable(result) else result
-
-            response = await asyncio.to_thread(run_finite_local_worker, complete_write)
+        if normalized_mode == PromptBackend.LOCAL:
+            # A contended local write waits up to SQLite's busy timeout.
+            response = await self._run_local(service, write)
         else:
             response = await self._maybe_await(write())
         return self._normalize_prompt_record(response, backend=normalized_mode.value)

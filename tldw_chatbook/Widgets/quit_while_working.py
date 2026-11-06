@@ -31,7 +31,9 @@ instead of sitting over finished work with Escape still refused: the fork
 dialog, the Trace export, both personal-context reviews, the Console
 Prompts apply and the session switcher's fallback-open and Library-recovery
 closes through ``dismiss_safe_once_when_on_top``; ProfileInterviewScreen
-through its own ``_close_with``, because its quit hook reads that close.
+through its own ``_close_with``, because its quit hook reads that close; and
+the Console Prompts mix-in leave (a Discard, Close or Browse held for its
+Library save) through the modal's own ``on_screen_resume``.
 
 Known limits. The refused activity is remembered on the modal for its
 lifetime, so after one refusal a later operation with the same words in the

@@ -5,7 +5,7 @@ title: >-
   raw_source_selection_changed when run on their own
 status: To Do
 assignee: []
-updated_date: '2026-11-02 21:52'
+updated_date: '2026-11-05 21:10'
 created_date: '2026-10-30 05:56'
 labels:
   - tests
@@ -23,6 +23,8 @@ Found during the TASK-33621.8/.9 review on origin/dev ff815f8559. Run one file p
 For test_trace_export_ui.py the traceback is: Tests/UI/conftest.py _disable_model_catalog_refresh monkeypatches tldw_chatbook.app.TldwCli, which imports tldw_chatbook.app for the first time inside the per-test profile; the app module runs load_settings() at import, and config admission refuses with RecoveryRequired('raw_source_selection_changed'). This is the same class as the eager imports Tests/conftest.py already makes (Chunking, RAG config profiles, model capabilities) and the per-file list in that fixture. The other files were reported with the same error and need their own traceback read.
 
 **Added 2026-11-02 (dev 88af9f9379).** `Tests/Wizards/test_first_run_setup_integration.py` has the same error and belongs on this list. Run on its own through the scratch-profile wrapper, with `-n 4` or serially, 17 of its tests error at setup with `RecoveryRequired: raw_source_selection_changed`. Each one errors in the file's `temp_config` fixture (:25), which redirects `TLDW_CONFIG_PATH` and then calls `load_cli_config_and_ensure_existence(force_reload=True)`. That is a different path from test_trace_export_ui.py's import-time `load_settings()`. b68d242b4d gave `TestWizardAtomicProviderHandoff` its own fixture, which brought the count down from 31 on 2026-10-31. The file's 6 assertion failures are a separate product regression, TASK-38642.
+
+**Added 2026-11-05 (dev 29592ecc9b, recorded by TASK-38756).** `Tests/Prompt_Management/test_prompt_improvement_service.py` belongs on this list. Run on its own through the scratch-profile wrapper with `-n 4`, 49 tests fail and 3 error, every one with `RecoveryRequired: raw_source_selection_changed` (`raw_participants.py:307`); its own assertions all pass. Two paths, both read from the file's own tracebacks: the 3 setup errors come from its `scratch_cli_config` fixture (:55-67), which redirects `TLDW_CONFIG_PATH` and calls `config.load_settings(force_reload=True)` (the wizard file's shape); the 49 failures come from a config read inside the code under test, `prompt_improvement_prompts.py:86` -> `Internal_Prompts/resolver.py:147` -> `config.get_cli_setting` -> `load_cli_config_and_ensure_existence`. With a temporary module-level `bootstrap_profile` marker the 49 pass and the 3 fixture errors remain.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

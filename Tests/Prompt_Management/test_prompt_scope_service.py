@@ -2853,3 +2853,79 @@ async def test_local_save_over_an_in_memory_database_creates_and_updates():
         assert database.fetch_prompt_details("Memory")["user_prompt"] == "two"
     finally:
         database.close_connection()
+
+
+_LITERAL_MIXIN = {
+    "kind": "text_mixin",
+    "schema_version": 3,
+    "body": " literal ",
+    "placement": "before",
+}
+
+
+async def _save_prompt_and_mixin(service):
+    await service.save_prompt(mode="local", name="Plain", user_prompt="one")
+    return await service.save_prompt(
+        mode="local",
+        name="Mixin",
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition=_LITERAL_MIXIN,
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_reads_over_an_in_memory_database_see_its_rows():
+    """Count and mix-in reads over ':memory:' run inline (TASK-38749).
+
+    A worker thread's own ':memory:' connection is a fresh, empty database.
+    """
+    database = PromptsDatabase(":memory:", client_id="scope-memory-reads")
+    service = PromptScopeService(
+        local_service=LocalPromptService(database), server_service=None
+    )
+    try:
+        mixin = await _save_prompt_and_mixin(service)
+        assert await service.count_prompts(mode="local") == 2
+        assert await service.count_prompts(mode="local", artifact_type="mixin") == 1
+        records = await service.read_mixin_records(
+            mode="local", record_uuids=(mixin["uuid"],)
+        )
+        assert [record["uuid"] for record in records] == [mixin["uuid"]]
+        assert records[0]["prompt_definition"] == _LITERAL_MIXIN
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_file_backed_local_reads_stay_off_the_event_loop(tmp_path):
+    """A file-backed count and mix-in read run in a worker thread (TASK-38749)."""
+    import threading
+
+    database = PromptsDatabase(tmp_path / "reads.db", client_id="scope-file-reads")
+    local = LocalPromptService(database)
+    service = PromptScopeService(local_service=local, server_service=None)
+    loop_thread = threading.get_ident()
+    threads = {}
+
+    def recording(name, method):
+        def call(*args, **kwargs):
+            threads[name] = threading.get_ident()
+            return method(*args, **kwargs)
+
+        return call
+
+    try:
+        mixin = await _save_prompt_and_mixin(service)
+        local.count_prompts = recording("count", local.count_prompts)
+        local.read_mixin_records = recording("mixins", local.read_mixin_records)
+        assert await service.count_prompts(mode="local") == 2
+        records = await service.read_mixin_records(
+            mode="local", record_uuids=(mixin["uuid"],)
+        )
+        assert [record["uuid"] for record in records] == [mixin["uuid"]]
+        assert set(threads) == {"count", "mixins"}
+        assert loop_thread not in threads.values()
+    finally:
+        database.close_connection()

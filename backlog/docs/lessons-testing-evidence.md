@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
+
+**Incident.** Two Prompts DB privacy pins forbid `str(second_id)` in a log that must contain `count=2`, and the filed task called them self-contradictory: `second_id` was 2. The tests meant to seed ids 71,234,567 and 81,234,567 by INSERTing a `sqlite_sequence` row. The v5->v6 mix-in migration (7970fbcada) rebuilds `Prompts` and keeps its sequence, so a fresh database already has a `('Prompts', 0)` row; SQLite reads the first row and ignored the test's second, and the ids fell back to 1 and 2. Dropping the id check, the obvious "fix", would have weakened a privacy pin. The negative controls then found a second hole: stored keywords are lower-cased, so `"PRIVATE KEYWORD"` never matched a leaked keyword (2 passed with the keyword logged).
+
+**What to do.** Seed `sqlite_sequence` with UPDATE, then INSERT only when no row changed (`Tests/Chatbooks/test_chatbook_prompt_round_trip.py` already does), and assert the seeded id, so the seed cannot decay silently. Prove a privacy pin with one temporary leak per private field, read through the raw connection so a DEBUG query line cannot leak the id first, and compare case-insensitively when storage normalizes case.
+
 ## A worker-thread SQLite handle can be proven closed from the test thread with the `in_transaction` getter (TASK-38714, 2026-11-05)
 
 **Incident.** Four TASK-38714 tests had to show that a connection a store opened on a pool thread was closed after the owner's close ran elsewhere. The thread-local slot belongs to a thread that has already exited, and TASK-31993's lesson says SQLite's thread check fires before its closed check. So the first plan was to probe on each opening thread. The kernel stores (`AgentRunsDB`) use `check_same_thread=True`, but `sqlite3.Connection.in_transaction.__get__(conn)` only checks that the connection is open, not which thread asks. Called from the test thread, it returned normally for the leaked handles at base (`DID NOT RAISE`, red) and raised "Cannot operate on a closed database" after the fix (green). Statements such as `execute` are the calls that check the thread first.

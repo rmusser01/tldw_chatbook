@@ -292,7 +292,11 @@ def _service(
 def test_task10_gateway_signature_and_application_cap_are_reused() -> None:
     signature = inspect.signature(ConsoleProviderGateway.complete_auxiliary)
 
-    assert tuple(signature.parameters) == ("self", "request", "route")
+    # rule_lease joined for native response rules (d24c4c04b2); improvement
+    # calls without it, so it must stay an optional keyword.
+    assert tuple(signature.parameters) == ("self", "request", "route", "rule_lease")
+    assert signature.parameters["rule_lease"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert signature.parameters["rule_lease"].default is None
     assert MAX_AUXILIARY_OUTPUT_TOKENS == 16_384
     assert UNKNOWN_MODEL_CONTEXT_CAP_TOKENS == 32_768
 
