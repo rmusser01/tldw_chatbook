@@ -55,7 +55,10 @@ from tldw_chatbook.UI.Library_Modules.prompt_collections import (
 from tldw_chatbook.UI.Library_Modules.skill_import_choice_modal import (
     SkillImportChoiceModal,
 )
+from tldw_chatbook.Notes.recovery_review import NotesRecoveryReview
+from tldw_chatbook.Skills_Interop.recovery_activation import RecoveryReview
 from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+    SkillRecoveryReviewModal,
     SkillTrustBootstrapModal,
     SkillTrustPassphraseModal,
 )
@@ -76,12 +79,14 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     FileNotesConflictCompareDialog,
+    FileNotesHistoryDialog,
     FileNotesRootDetailsDialog,
 )
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
 )
+from tldw_chatbook.Widgets.Library.notes_recovery_dialog import NotesRecoveryDialog
 from tldw_chatbook.Widgets.Library.library_review_set_picker import (
     LibraryReviewSetPickerDialog,
 )
@@ -274,6 +279,21 @@ def _contract_conflict_compare_dialog() -> FileNotesConflictCompareDialog:
     return FileNotesConflictCompareDialog("note.md", comparison)
 
 
+def _contract_notes_recovery_dialog() -> NotesRecoveryDialog:
+    async def approve(_review: object) -> None:
+        raise AssertionError("pairing approval was not requested")
+
+    review = NotesRecoveryReview(
+        "file_notes",
+        "fixture",
+        Path("/tmp"),
+        (("note.md", "retained"),),
+        (),
+        (),
+    )
+    return NotesRecoveryDialog(review, current=lambda: True, approve=approve)
+
+
 _FOCUS_POSTCONDITION = "restore the exact eligible opener identity"
 
 
@@ -324,6 +344,53 @@ LIBRARY_MODAL_CONTRACTS = (
         _assert_none,
         str,
         _assert_exact("secret"),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    # TASK-38985: the restored-skills review b5251e9a6e added (TASK-32628).
+    LibraryModalContract(
+        SkillRecoveryReviewModal,
+        lambda: SkillRecoveryReviewModal(
+            RecoveryReview("fixture", (), ("/tmp", 0, 0), (), (), (), "fixture"),
+            Path("/tmp/library-modal-contract-skills-trust"),
+            lambda: True,
+        ),
+        "#skills-recovery-review",
+        "#skills-recovery-cancel",
+        _assert_none,
+        bool,
+        _assert_exact(True),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    # TASK-38985: the File Notes revision history d521686cb8 added
+    # (task-34381), hidden behind the two recovery reviews' aborts.
+    LibraryModalContract(
+        FileNotesHistoryDialog,
+        lambda: FileNotesHistoryDialog(
+            "note.md", (), "note-restored.md", None, 0  # type: ignore[arg-type]
+        ),
+        "#file-notes-history-dialog",
+        "#file-notes-history-close",
+        _assert_none,
+        type(None),
+        None,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    # TASK-38985: the File Notes pairing review b5251e9a6e added (TASK-32628),
+    # hidden behind the SkillRecoveryReviewModal abort until that row landed.
+    LibraryModalContract(
+        NotesRecoveryDialog,
+        _contract_notes_recovery_dialog,
+        "#notes-recovery-dialog",
+        "#notes-recovery-close",
+        _assert_none,
+        type(None),
+        None,
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -664,6 +731,12 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         SkillTrustBootstrapModal,
     ),
     _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_review_restored_skill_trust",
+        SkillRecoveryReviewModal,
+    ),
+    _edge(
         _PROMPTS_CONTROLLER_FILE,
         "LibraryPromptsController",
         "handle_library_prompts_import_browse",
@@ -699,11 +772,13 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         "_push_library_note_import_picker",
         FileOpen,
     ),
+    # TASK-38985: the lasting-folder picker became a SelectDirectory while the
+    # discovery walk was aborting earlier, so this edge went stale unseen.
     _edge(
         _NOTES_CONTROLLER_FILE,
         "LibraryNotesController",
         "handle_library_notes_lasting_folder_requested",
-        FileOpen,
+        SelectDirectory,
     ),
     _edge(
         _INGEST_CONTROLLER_FILE,
@@ -800,6 +875,18 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         "LibraryFileNotesWorkspace",
         "_show_root_details",
         FileNotesRootDetailsDialog,
+    ),
+    _edge(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        "_review_pairing",
+        NotesRecoveryDialog,
+    ),
+    _edge(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        "_show_history",
+        FileNotesHistoryDialog,
     ),
     _edge(
         _FILE_NOTES_WORKSPACE_FILE,
@@ -1628,7 +1715,7 @@ def test_library_modal_contract_table_covers_every_discovered_concrete_type() ->
     contract_types = [row.concrete_type for row in LIBRARY_MODAL_CONTRACTS]
     edge_types = {edge.concrete_type for edge in LIBRARY_MODAL_LAUNCH_EDGES}
 
-    assert len(contract_types) == len(set(contract_types)) == 21
+    assert len(contract_types) == len(set(contract_types)) == 24
     assert edge_types == set(contract_types)
     assert set(ENHANCED_PICKER_COMPATIBILITY_TYPES).isdisjoint(contract_types)
     assert {SessionGitTrustDialog}.issubset(contract_types)
@@ -1686,7 +1773,7 @@ def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> Non
     declared = set(LIBRARY_MODAL_LAUNCH_EDGES)
 
     _assert_exact_library_modal_inventory(discovered, declared)
-    assert len(discovered) == len(declared) == 35
+    assert len(discovered) == len(declared) == 38
 
 
 @pytest.mark.parametrize(
@@ -1900,6 +1987,8 @@ async def _drive_public_positive(modal: ModalScreen[Any], pilot: Any) -> None:
         modal.query_one("#skill-trust-bootstrap-input", Input).value = "secret"
         modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = "secret"
         await pilot.click("#skill-trust-bootstrap-submit")
+    elif isinstance(modal, SkillRecoveryReviewModal):
+        await pilot.click("#skills-recovery-continue")
     elif isinstance(modal, ModelInstallModal):
         await pilot.click("#model-install-confirm")
     elif isinstance(modal, (FileOpen, FileSave, SelectDirectory)):

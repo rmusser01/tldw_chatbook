@@ -1125,6 +1125,7 @@ jobs:
             Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py \
             Tests/LLM_Management/test_vllm_profiles.py \
             Tests/Chat/test_qwencloud_provider_contract.py \
+            Tests/UI/test_library_modal_dismissal.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short

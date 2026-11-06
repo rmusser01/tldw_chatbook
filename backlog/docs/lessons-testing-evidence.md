@@ -24734,3 +24734,9 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - When a Pilot test slows down on every OS at once, time the node and sample stacks before suspecting a hang or the runner. Look for a worker group that keeps restarting.
 - Judge a local run by its duration as well as its result. A `--timeout` overrun can still be reported as passed.
 - Install diagnostic patches at `pytest_runtest_call`, not at session start, in modules that capture function identities at import.
+
+## A discovery walk that asserts on the first unresolved item hides the next one (TASK-38985, 2026-11-06)
+
+**Incident.** The Library modal inventory was red on dev with one message, "unresolved modal constructor … `_review_restored_skill_trust` (SkillRecoveryReviewModal(…))", and the task was filed as one missing contract row. With that row added, all six nodes still failed, now on `LibraryFileNotesWorkspace._review_pairing` (NotesRecoveryDialog), which the same commit (b5251e9a6e, TASK-32628) had added. With that one fixed, they failed on a third, `_show_history` (FileNotesHistoryDialog, task-34381), and then on an edge that had gone stale meanwhile (a picker changed from FileOpen to SelectDirectory). `_discover_library_modal_edges` asserts inside its walk, so the first gap aborts it and no later gap is ever reported. The second modal was also not a safe-dismissal modal, which is a production change rather than a table row. A probe that registered each unresolved name and re-ran the walk listed the rest in one pass.
+
+**What to do.** When a walk or inventory fails on its first unresolved entry, size the work only after a run that gets past it. Fix the first entry (or skip it temporarily) and rerun before calling the gap one row, and say in the task when there may be more behind it.
