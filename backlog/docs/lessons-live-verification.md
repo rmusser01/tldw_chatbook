@@ -5676,5 +5676,5 @@ the shipped bar exactly, after joining the runs. Check each image's references b
 recapturing it; delete an image no page uses. A real-`TldwCli` capture in
 `run_test` can sit for 300 s at interpreter exit after `save_screenshot` (the
 executor joining a worker thread). End a capture script with `os._exit(0)` after
-saving. Give runs that can overlap different run.sh labels: they share a label's
-HOME, and a capture that resets its profile wipes the other run's.
+saving. Parallel capture runs need separate HOME/profile directories: a capture
+that resets its profile wipes a concurrent run's.

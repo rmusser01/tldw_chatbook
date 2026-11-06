@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: '2026-11-05 22:15'
+updated_date: '2026-11-06 00:03'
 labels:
 - follow-up
 - docs
@@ -69,4 +69,16 @@ Not in scope: the badge table and the category map in settings.md are TASK-35013
 - **AC#4** `console/agent-runs-and-tools.md`: the "**Always** applies to MCP tools *and* local workspace tools" paragraph is now the only statement of what Always covers. Deleted the "**Always allow** (MCP tools only)" paragraph, the stray "install and run-script confirm cards follow the same rule)." fragment, and two more remnants of the same rebased commit (6a6242ce3a) in that section: a truncated duplicate "Bulk controls" bullet with the retired-label decision bullet ("Approve once / Approve for session / Always allow"), and the stray "flags reads that could exfiltrate…" fragment.
 - Checks: `Tests/Docs`, `Tests/MCP/test_mcp_documentation_contract.py` and three more doc-reading files: 8 failed and 368 passed, the same 8 failing with dev's content (README/media-and-conversations contract pins, RecoveryRequired, a Python-version pin). All SVGs parse as XML.
 - The capture scripts stayed in the scratchpad; they are not a repo tool.
+- **Review round 1.**
+  - `home/idle.svg` was recaptured after making a note (Library ▸ New note ▸ Blank note, Save) and then a conversation (a Console send) through the UI. It shows "Resume last conversation", "Conversations: 1 · Notes: 1" and the Resume button. `home.md` now says an empty Library shows "Import Library sources", and lists the **Start a conversation** button (`_home_idle_canvas_controls`).
+  - Prose that a recaptured image contradicted is corrected from the code:
+    - `console.md`: the Sessions section is gone (TASK-23199), with its table row and its 15-row limit, and the pinned **Terminal** button is added. The rail controls are **Context ◂** / **▸ Inspect** on open rails and **Context ▸** / **◂ Inspect** on collapsed handles (`console_rail_handle.py`, `left_rail.py`, `right_rail.py`). The control bar gains **⚓**, the hook-permissions button, in the layout tour and the control table. The header badge lists the states that take the place of the readiness word (`console_workbench_state.py`).
+    - `chat-basics.md` and `sessions-tabs-workspaces.md`: the same handle names.
+    - `attachments-images-voice.md`: **Attach file** now lives in the composer Menu, the "Attach +" relabel is gone (`console_composer_bar.py`), and the composer buttons are **Send** and **Dictate**.
+    - `roleplay-chat-dictionaries.md`: the item count is in the purpose line (`roleplay_frame_state.purpose_line`) and the Status row is gone. The centre pane opens on the first item (F-031). The Inspector actions are **Chat now** / **Send to Console draft**, and the readiness copy is the current set.
+    - `characters-and-personas.md`: the card has Edit and Conversations (N) buttons, the docked panels read ▸ Dictionaries (N) / ▸ World Books (N), and the action names are updated.
+    - `chat-dictionaries.md` and `lore-books.md`: the Inspector copy.
+    - `settings.md`: the **Plugins** button row.
+    - `settings/rag.md`: the field is **Agent Library access**. The `Tests/Docs/test_console_library_controls_docs.py` pin for rag.md is updated to match.
+    - `import-and-export.md`: the target line only shows with a server, and the path field is labelled.
 <!-- SECTION:NOTES:END -->

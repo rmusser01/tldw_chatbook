@@ -38,8 +38,9 @@ yet, the rail reads "No lore books yet - use New or Import to add one."
 - **Try it — injection preview** (below the tabs) — a sample-text box and a
   **Run preview** button that shows exactly what this book would inject.
 - **Inspector** (right) — for a lore selection it shows "Type: lore",
-  "Console blocked: select a character or persona", and a single **Delete**
-  action; Console handoffs are a character/persona feature.
+  "Console chat is for characters and personas.", and **Duplicate**,
+  **Delete** and the Buddy controls; Console handoffs are a
+  character/persona feature.
 
 ## Features & controls
 

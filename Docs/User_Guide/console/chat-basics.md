@@ -143,7 +143,7 @@ chat_defaults.stream_stall_timeout_seconds in config.toml."
 
 ### Collapsed rail labels
 
-Collapsed Console rails use horizontal **Context->** and **<-Inspect** handles
+Collapsed Console rails use horizontal **Context ▸** and **◂ Inspect** handles
 by default. If you prefer to save horizontal space, open **Settings > Console
 Behavior > Rail presentation**, turn on **Stack collapsed rail labels**, and
 save the category. The opt-in style stacks the upright letters inside narrower

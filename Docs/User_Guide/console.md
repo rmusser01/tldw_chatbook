@@ -35,22 +35,28 @@ This page is the orientation tour; the details live on the child pages below:
 Top to bottom:
 
 - **Header** — the title "Console", the subtitle "— Chat, source handoffs,
-  live runs, and control actions.", and a status badge with the active
-  chat's readiness word (see **Readiness words** below), or **Running** while
-  a reply is generating. Below 84 columns, where the word does not fit, the
+  live runs, and control actions.", and a status badge. The badge shows the
+  active chat's readiness word (see **Readiness words** below), or
+  **Running** while a reply is generating. A few states take the readiness
+  word's place: **Blocked** for a blocked turn, **Held · emergency stop**
+  while an emergency stop holds new runs, **Next send pauses to compact**
+  when the next send will compact first, and **Compaction forecast
+  unavailable** when the current tools and input cannot be measured for a
+  compaction forecast. Below 84 columns, where the word does not fit, the
   badge reads **Ready** or **Blocked**.
-- **Control bar** — one row of buttons: **New tab**, **Settings**,
-  **Context rail**, **Search Library**, **Help**. (**Save as Chatbook**
-  lives in the composer's **Menu** button, left of the draft.)
-- **Left rail: "Console context"** — separate sections for **Sessions**
-  (the active chat), **Workspaces** (named workspaces and their
-  conversations), **Conversations** (Default and unassigned conversations),
-  **Model**, **Agent**, and **Details**, plus **Character** when character
-  avatars are enabled. **Sessions** and **Conversations** start open; the
-  rest start collapsed, so the whole rail fits without scrolling on an
-  ordinary terminal. The full-width **Context ◂** header button collapses
-  the rail; while collapsed, the **Context->** handle on the far left
-  brings it back. With focus anywhere in the rail, **Ctrl+Shift+←**
+- **Control bar** — one row of buttons: **New tab**, **Settings**, **⚓**
+  (hook permissions), **Context rail**, **Search Library**, **Help**.
+  (**Save as Chatbook** lives in the composer's **Menu** button, left of
+  the draft.)
+- **Left rail: "Console context"** — a pinned **Terminal** button, then
+  separate sections for **Workspaces** (named workspaces and their
+  conversations), **Conversations** (Default and unassigned conversations;
+  the active chat is the row marked "active session"), **Model**, **Agent**,
+  and **Details**, plus **Character** when character avatars are enabled.
+  **Conversations** starts open; the rest start collapsed, so the whole rail
+  fits without scrolling on an ordinary terminal. The full-width
+  **Context ◂** header button collapses the rail; while collapsed, the
+  **Context ▸** handle on the far left brings it back. With focus anywhere in the rail, **Ctrl+Shift+←**
   collapses every section and **Ctrl+Shift+→** expands them all.
   Colour in the rail follows your theme and carries four meanings: the
   theme's **primary** hue marks what you are *in* (the active workspace
@@ -67,10 +73,10 @@ Top to bottom:
   "Conversation | \<session title\>" once a session is active.
   Above it sits the session tab strip: one button per tab (each with a
   **✕** close button) ending in **New tab**.
-- **Right rail: "Inspector"** — collapsed by default. Its **<-Inspect**
+- **Right rail: "Inspector"** — collapsed by default. Its **◂ Inspect**
   handle on the right edge grows small badges when something needs you
   (pending approvals, an available artifact). Opened, its full-width
-  **Inspect|--------->** header button collapses it, and the body holds
+  **▸ Inspect** header button collapses it, and the body holds
   **Sources**, the retrieval scope row ("Scope: everything" until you
   narrow it), a run status line, groups such as **Run**, **Tools**,
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
@@ -134,7 +140,7 @@ Top to bottom:
 ### Rail scrolling and focus
 
 Context sections keep complete reading bodies up to their own limits: 15 rows
-for Sessions, Model, Agent, and Details; 20 for Workspaces and Conversations;
+for Model, Agent, and Details; 20 for Workspaces and Conversations;
 and 35 for Character. Inspector sections keep a 20-row limit. **▼ more —
 scroll** means more content remains inside the current section. In the
 Context rail the outer hint names what is below the fold instead — **▼ Agent
@@ -465,6 +471,7 @@ composer-level strip below shows once setup completes.
 |---|---|
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
 | **Settings** | Opens **Chat settings** (provider, model, generation, and context and memory). |
+| **⚓** | Opens hook permissions: saved hook commands and what they may run. It shows a count (for example **⚓ 2**) while hooks need review — see [Run hooks](console/agent-runs-and-tools.md#run-hooks--your-own-commands-at-session-lifecycle-points). |
 | **Context rail** | Opens the "Console context" rail (source staging is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
@@ -502,10 +509,9 @@ fails without playing a truncated file.
 
 | Control | What it does |
 |---|---|
-| **Context ◂** / **Inspect\|--------->** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
-| **Context->** handle | Reopens the collapsed "Console context" rail when the viewport can retain a usable transcript. |
-| **<-Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready) — F1 lists this legend. |
-| **Sessions** section | Names the active chat. Hovering it shows the durable conversation id. |
+| **Context ◂** / **▸ Inspect** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
+| **Context ▸** handle | Reopens the collapsed "Console context" rail when the viewport can retain a usable transcript. |
+| **◂ Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready) — F1 lists this legend. |
 | **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
 | **Conversations** section | Independently searches, starts, and resumes only Default and unassigned conversations; favourited entries sort first and are marked beside the title. Each row carries an **\*** that opens its action menu — Favourite, Change status, Archive, Rename, and More ▸ Delete. See [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
 | **Model** section | Read-only Temperature / Max tokens / Streaming (On or Off) lines, the chat's readiness word (red only when Not ready), the system-prompt line and **Change  Alt+M**, which opens Switch model. The rows follow the chat through Apply, a new chat and switching chats. The active provider and model are read from the status bar, which shows them at every width. |

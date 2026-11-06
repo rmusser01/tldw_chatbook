@@ -67,6 +67,7 @@ you touch them; some are read-only and point you elsewhere.
 | Region | What it shows |
 |---|---|
 | **Header line** | "Settings \| Global preferences, appearance, storage, and app behavior \| Local". |
+| **Plugins button** | "Plugins — installation and marketplaces", under the header line. It opens the Plugins screen (**F8**). |
 | **Mode strip** | "Mode: \<category\>" — on Overview only, it adds "\| Runtime controls are in Tools & MCP and ACP". |
 | **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (12)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its twelve rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. The row with keyboard focus also shows a thick bar at its left edge, in the theme's primary text colour. |
 | **Detail pane** (middle, untitled) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |

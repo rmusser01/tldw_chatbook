@@ -26,15 +26,16 @@ instead — see [Keyboard & commands](#keyboard--commands)).
 Three panes: the **Library** rail, the centre pane, and the **Inspector**
 rail. The rails behave the same in every mode and are described on the
 [parent page](../roleplay-chat-dictionaries.md); this page is about the
-centre, which shows either **the character card** (read-only, with a single
-**Edit** button; "No character loaded. Select one from the library." before
-you pick one) or **the character editor**, headed "Character Editor". Below
-either sit two docked panels, **"Dictionaries (copied into this character)"**
-and **"World Books (copied into this character)"**. The rail's **+ New**
-opens the New chooser and its **Import…** the one Import picker (both
-described on the parent page); the Inspector's **Attach to Console**,
-**Start Chat**, **Export JSON**, **Export PNG**, **Duplicate** and
-**Delete** act on the current selection: the open item, never the marked
+centre, which shows either **the character card** (read-only, with **Edit**
+and **Conversations (N)** buttons; "No character loaded. Select one from the
+library." before you pick one) or **the character editor**, headed
+"Character Editor". Below either sit two collapsed panels, **▸ Dictionaries
+(N)** and **▸ World Books (N)**: the dictionaries and world books copied into
+this character as snapshots. The rail's **+ New** opens the New chooser and
+its **Import…** the one Import picker (both described on the parent page);
+the Inspector's **Chat now**, **Send to Console draft**, **Export JSON**,
+**Export PNG**, **Export Actor Pack**, **Duplicate** and **Delete** act on
+the current selection: the open item, never the marked
 rows. To export or delete several items at once, mark them in the list and
 use the marks bar (see [Marks and the marks bar](../roleplay-chat-dictionaries.md#marks-and-the-marks-bar)).
 
@@ -48,8 +49,8 @@ For the complete setup, movement, voice, and troubleshooting workflow, see the
 A fresh local profile includes **pixel-migu** in both **Characters** and
 **Personas**. No art import or image-generation setup is required.
 
-- For character chat, select **pixel-migu** in Characters and choose **Start
-  Chat**. Its avatar follows the idle, thinking, speaking, and error states.
+- For character chat, select **pixel-migu** in Characters and choose **Chat
+  now**. Its avatar follows the idle, thinking, speaking, and error states.
   The Console reaction picker offers all 18 expressions, including happy,
   surprised, confused, wave, celebrate, and love.
 - For the animated companion, select **pixel-migu** in Personas and choose
@@ -387,9 +388,9 @@ that starts on, over **Save** / **Cancel**. Save toasts "Persona saved.", and
 the unsaved-changes dialog behaves as it does for characters. What is
 *missing* compared to characters: **no Duplicate** (hidden for personas)
 and **no Export PNG** — only Export JSON. **Import…** is offered in this
-mode too; a file lands in its own kind (a card in Characters). Attach to
-Console and Start Chat stage the persona's Description and System prompt
-the same way.
+mode too; a file lands in its own kind (a card in Characters). **Send to
+Console draft** and **Chat now** stage the persona's Description and System
+prompt the same way.
 
 ### Placeholders in your text
 
@@ -421,8 +422,8 @@ previews on this screen, `{{user}}` comes out as the literal word "User".
    you (unless you have unsaved edits or moved on meanwhile: then the toast
    says where it went); if a lorebook came with it, the toast says so.
 5. **Start a chat as the character.** Select it, then Inspector →
-   **Start Chat** ("Chat staged in Console."). If it is blocked, read the
-   readiness line and fix the model — or use **Attach to Console** instead.
+   **Chat now** ("Chat staged in Console."). If it is blocked, read the
+   readiness line and fix the model — or use **Send to Console draft** instead.
 6. **Make a persona.** **Personas** chip (or **p**) → **+ New** →
    **Enter** on "Persona · Blank" → fill in Name, Description and System
    prompt → **Save**.

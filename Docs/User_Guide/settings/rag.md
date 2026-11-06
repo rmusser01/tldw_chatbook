@@ -40,7 +40,8 @@ collapsed by default), then **RAG** — or skip the expanding entirely: press
 
 The detail pane begins with two Console cards. **New Console conversations**
 owns the future **Conversation defaults**: **Automatic retrieval**
-(`Never` / `Automatic`) and **Assistant access** (`Blocked` / `Allowed`).
+(`Never` / `Automatic`) and **Agent Library access** (`Blocked` /
+`Allowed`).
 These values apply only to conversations created after the next save; use the
 Console Library chip to change an existing conversation. **Allowed Library
 access** owns the Direct/RAG selector and explains what an Allowed assistant
@@ -66,7 +67,7 @@ in your config file.
 
 Choose the defaults for future Console conversations, then press **Save (s)**.
 **Automatic retrieval** controls whether an ordinary send performs the fixed
-Notes, Media, and Conversations search. **Assistant access** controls whether
+Notes, Media, and Conversations search. **Agent Library access** controls whether
 the assistant receives any Library tool schema. The **Allowed Library access**
 checkbox chooses Direct tools or the single Library RAG tool only when access
 is Allowed. Existing conversations retain their own device-local choices.
