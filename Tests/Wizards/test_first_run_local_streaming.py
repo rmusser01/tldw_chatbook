@@ -84,3 +84,122 @@ def test_saving_a_template_sample_provider_clears_its_marker() -> None:
     mutation = _commit("custom", "http://127.0.0.1:9099/v1")
 
     assert mutation.section_values["api_settings.custom"]["template_sample"] is False
+
+
+# --- Review F2: the committed section's first reply, streamed and not ---------
+#
+# The tests above stop at config. These send a real request through the same
+# dispatcher Console uses (``chat_api_call``) to the handler the committed
+# Custom section names, at a loopback stub that answers a streamed request
+# with SSE and any other request with one JSON completion. The stub records
+# what the handler asked for, so the non-streaming fallback is pinned at the
+# wire: one plain request, one parsed reply.
+
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+class _ChatStub:
+    """An OpenAI-compatible /v1/chat/completions: SSE when asked to stream."""
+
+    def __init__(self) -> None:
+        stub = self
+        self.requests: list[dict] = []
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - http.server API
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                stub.requests.append({"path": self.path, "body": body})
+                if body.get("stream") is True:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.end_headers()
+                    for piece in ("Par", "is"):
+                        chunk = {"choices": [{"index": 0, "delta": {"content": piece}}]}
+                        self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+                        self.wfile.flush()
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    return
+                payload = json.dumps(
+                    {
+                        "id": "cmpl-stub",
+                        "object": "chat.completion",
+                        "model": body.get("model"),
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": "Paris"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args: object) -> None:
+                return None
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.base_url = f"http://127.0.0.1:{self._server.server_address[1]}/v1"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "_ChatStub":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+def _reply_text(reply) -> str:
+    """The assistant text of a non-streamed reply (a string or a completion)."""
+    if isinstance(reply, str):
+        return reply
+    return reply["choices"][0]["message"]["content"]
+
+
+def _streamed_text(reply) -> str:
+    text = ""
+    for event in reply:
+        data = event.strip().removeprefix("data:").strip()
+        if data and data != "[DONE]":
+            text += json.loads(data)["choices"][0]["delta"].get("content", "")
+    return text
+
+
+# The handler reads the runtime config snapshot, which needs the
+# collection-time profile (as Tests/Chat/test_rate_limit_reads_as_rate_limit.py).
+@pytest.mark.bootstrap_profile
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("streaming", [True, False], ids=("streamed", "non-streaming"))
+def test_a_wizard_committed_local_provider_replies_streamed_and_not(streaming) -> None:
+    """Review F2 (AC#10): the committed Custom section streams its first
+    reply, and with streaming off (the non-streaming fallback) the same
+    handler sends one plain request and returns the parsed reply."""
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    with _ChatStub() as stub:
+        section = _commit("custom", stub.base_url).section_values["api_settings.custom"]
+        assert section["streaming"] is True  # what setup commits
+        reply = chat_api_call(
+            "custom-openai-api",
+            messages_payload=[{"role": "user", "content": "Capital of France?"}],
+            model=section["model"],
+            streaming=streaming,
+            api_base_url=section["api_url"],
+        )
+        text = _streamed_text(reply) if streaming else _reply_text(reply)
+
+    assert text == "Paris"
+    assert len(stub.requests) == 1
+    request = stub.requests[0]
+    assert request["path"] == "/v1/chat/completions"
+    assert request["body"]["model"] == "qwen2.5-0.5b"
+    assert request["body"]["stream"] is streaming
