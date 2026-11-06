@@ -159,7 +159,12 @@ MAX_PASS_ADDED_MODULES = 558
 #: (personas_screen +44, roleplay_list_window_state +6, including PR #3427's
 #: review fix round 1); no new module), pinned
 #: at the measurement, LOC only, modules unchanged (556); ADR-097 ledger.
-MAX_PASS_ADDED_LOC = 426_438
+#: 426,438 -> 426,484 (2026-11-06 owner decision ("Re-pin per PR (Rec.)", B2b
+#: follow-up burn-down PR 4, stacked on #3427): TASK-33910.39/.41/.43 add +46
+#: LOC in the ccp route, all in `personas_screen` (`_switch_mode`, the
+#: `await_read` switch path, the prevented Input.Changed); no new module),
+#: pinned at the measurement, LOC only, modules unchanged (556); ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 426_484
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration keeps the current pin above instead. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
