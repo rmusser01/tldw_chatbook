@@ -390,6 +390,43 @@ DREAMS_BOUNDARY_TARGETS = (
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
+#: TASK-38989: Architecture guards red on dev in no PR lane, in their own job.
+#: The profile inventory runs by node, without its CLI test: preflight runs the
+#: same CLI (without `--print-occurrences`, so that one check is unlaned).
+ARCHITECTURE_GUARD_TARGETS = (
+    "Tests/Architecture/test_actor_pack_boundary.py",
+    "Tests/Architecture/test_app_extracted_patch_targets.py",
+    "Tests/Architecture/test_bare_chat_screen_shells_wire_their_controllers.py",
+    "Tests/Architecture/test_console_fleet_ownership.py",
+    "Tests/Architecture/test_framework_armed_clock_inventory.py",
+    "Tests/Architecture/test_library_cluster_membership_census.py",
+    "Tests/Architecture/test_library_export_wiring.py",
+    "Tests/Architecture/test_persona_buddy_boundary.py",
+    "Tests/Architecture/test_persona_visual_runtime_boundary.py",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_inventory_scanner_class_names_follow_public_style_contract",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_reports_embedded_and_multiline_physical_lines",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_detects_direct_indirect_and_join_function_roots",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_detects_join_components_that_contain_a_complete_root",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_distinguishes_matching_join_shapes_by_owner_context",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_ignores_comments_and_actual_docstrings",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_reconcile_rejects_duplicates_new_counts_and_stale_rules",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_reconcile_describes_duplicate_and_empty_exception_rules",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_reconcile_rejects_a_scanner_detected_duplicate_literal",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_production_profile_owned_path_inventory_is_exact",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_exception_rules_are_sorted_by_inventory_identity",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_shared_asset_exceptions_are_explicit",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_base_data_dir_census_detects_qualified_and_aliased_consumers",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners",
+    "Tests/Architecture/test_progress_widget_clock_guard.py",
+    "Tests/Architecture/test_recovery_entrypoints.py",
+    "Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py",
+    "Tests/Architecture/test_worker_exclusive_group_inventory.py",
+    # TASK-38989 review r10a-rev4: the forwarder's exception_type pins. The
+    # boundary file runs one chosen node, not "all but" a list, so it needs no
+    # completeness pin: its other tests stay off while one is red on dev.
+    "Tests/Persona_Buddy/test_controller_failure_logging.py",
+    "Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type",
+)
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
     "Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop",
@@ -783,6 +820,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "console-p0-gate",
         "dreams-boundary",
         "dreams-tracking",
+        "architecture-guards",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -814,6 +852,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("pr-fast-lane-admission-3", "Require successful PR fast lane (admission-sensitive 3)"),
         ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
+        ("architecture-guards", "Require successful Architecture guard contracts"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -828,6 +867,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "pr-fast-lane-admission-3",
         "dreams-boundary",
         "dreams-tracking",
+        "architecture-guards",
     ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
@@ -1171,6 +1211,74 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     assert others == []
 
 
+def test_architecture_guards_lane_is_one_serial_minimal_python_312_job() -> None:
+    """TASK-38989: the Architecture guards run in their own job on every PR."""
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["architecture-guards"]
+
+    assert job["name"] == "Architecture guard contracts"
+    assert job["needs"] == ["preflight"]
+    assert job["if"] == LANES
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 20
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    assert shlex.split(install) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    )
+    step = _named_step(job, "Run Architecture guard contracts")
+    assert "if" not in step
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *ARCHITECTURE_GUARD_TARGETS,
+        "--timeout=180",
+        "--tb=short",
+    )
+    assert len(set(ARCHITECTURE_GUARD_TARGETS)) == len(ARCHITECTURE_GUARD_TARGETS)
+    for target in ARCHITECTURE_GUARD_TARGETS:
+        assert (PROJECT_ROOT / target.split("::", 1)[0]).is_file()
+    # The by-node listing is complete: a new test in the profile inventory
+    # cannot silently run on no lane (review r10a-rev2).
+    profile = "Tests/Architecture/test_profile_owned_path_inventory.py"
+    tree = ast.parse((PROJECT_ROOT / profile).read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.ClassDef) and node.name.startswith("Test")
+        for node in tree.body
+    ), "class-scoped tests need their own node ids here"
+    defined = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test")
+    }
+    listed = {
+        target.split("::", 1)[1]
+        for target in ARCHITECTURE_GUARD_TARGETS
+        if target.startswith(profile + "::")
+    }
+    # Bare names: a parametrized test runs every case from its function id.
+    assert all("[" not in name for name in listed)
+    assert listed == defined - {"test_cli_prints_the_real_source_census_and_enforces_it"}
+    # Each target runs once: no other PR-lane step lists its file.
+    files = {target.split("::", 1)[0] for target in ARCHITECTURE_GUARD_TARGETS}
+    others = [
+        f"{key}: {candidate['name']}"
+        for key, other in workflow["jobs"].items()
+        if key != "architecture-guards"
+        for candidate in other.get("steps", ())
+        if files & {
+            target.split("::", 1)[0]
+            for target in _pytest_targets(str(candidate.get("run", "")))
+        }
+    ]
+    assert others == []
+
+
 def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
     """Require the approved exact pytest targets without nested selections."""
     workflow = _workflow("derived-artifacts.yml")
@@ -1352,6 +1460,9 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("dreams-tracking", None),
         ("dreams-tracking", "Run the Dreams tracking tests"),
         ("derived-artifacts", "Require successful Dreams tracking tests"),
+        ("architecture-guards", None),
+        ("architecture-guards", "Run Architecture guard contracts"),
+        ("derived-artifacts", "Require successful Architecture guard contracts"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("dreams-boundary", None),

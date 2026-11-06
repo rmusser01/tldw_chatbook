@@ -21,10 +21,10 @@ def test_fleet_policy_has_one_non_dom_owner():
         for n in owner.body
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    moved = WAVE6_GROUPS["fleet"].moved - {
-        "_console_screen_displayed",
-        "_console_wake_probe_composer",
-    }
+    # TASK-38988 review: the two DOM-reading probes the screen kept now live
+    # on the controller too, reading through wired accessors (no DOM calls,
+    # checked below), so the whole moved group belongs to the owner.
+    moved = WAVE6_GROUPS["fleet"].moved
     assert moved <= methods
     screen = ast.parse((ROOT / "tldw_chatbook/UI/Screens/chat_screen.py").read_text())
     screen_class = next(
@@ -36,10 +36,6 @@ def test_fleet_policy_has_one_non_dom_owner():
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert not moved & screen_methods
-    assert {
-        "_console_screen_displayed",
-        "_console_wake_probe_composer",
-    } <= screen_methods
     assert not any(
         isinstance(n, ast.Attribute)
         and n.attr in {"query_one", "query", "mount", "draft_text"}

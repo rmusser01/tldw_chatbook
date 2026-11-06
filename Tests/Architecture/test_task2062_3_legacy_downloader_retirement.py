@@ -222,6 +222,13 @@ def test_model_download_dir_is_only_config_and_installed_legacy_scan_wiring() ->
     # the TOML default is pinned by the next test.
     assert set(_production_python_with("model_download_dir")) == {
         "tldw_chatbook/UI/LLM_Management_Window.py",
+        # TASK-38989 review: Backup & Recovery name the key only to classify
+        # it as an external user location (inventory "external.models",
+        # config-location keys, detached-layout skip); none reads or writes
+        # the directory (b5251e9a6e, e350634a8a).
+        "tldw_chatbook/Backup_Recovery/config_adapter.py",
+        "tldw_chatbook/Backup_Recovery/detached_layout.py",
+        "tldw_chatbook/Backup_Recovery/inventory.py",
     }
 
 

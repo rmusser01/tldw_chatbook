@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import ConfigLoadFailure
 from tldw_chatbook.Utils.instance_lock import InstanceLockStatus
@@ -162,7 +163,9 @@ def test_subscriptions_starter_reads_no_config_on_the_ui_loop(monkeypatch, tmp_p
         raise AssertionError("the starter read config on the UI loop")
 
     checked, started = [], []
-    monkeypatch.setattr(app_module, "get_subscriptions_db_path", config_read)
+    # TASK-38989: on every app module that binds it, so a starter that moves
+    # out of app.py still trips the trap.
+    set_app_global(monkeypatch, "get_subscriptions_db_path", config_read)
     monkeypatch.setattr(
         activation,
         "execution_allowed",

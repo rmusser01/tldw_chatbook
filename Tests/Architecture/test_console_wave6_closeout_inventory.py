@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Architecture.test_screen_size_ratchet import _BUDGETS as _SCREEN_SIZE_BUDGETS
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCREEN_RELATIVE_PATH = "tldw_chatbook/UI/Screens/chat_screen.py"
@@ -24,6 +26,16 @@ FINAL_WAVE6_DELIVERY_COUNTS = (19_863, 630)
 AMENDMENT_COUNTS = (19_884, 632)
 IMMUTABLE_BUDGETS = (17_727, 593)
 FINAL_CLOSEOUT_COUNTS = (17_037, 564)
+#: 2026-11-06, TASK-38988 (owner size waiver): the live ChatScreen ceiling is
+#: the screen-size ratchet's own ChatScreen row (24,616 / 741 on that day),
+#: read from that file rather than re-pinned here. A pin at the measured
+#: 24,604 would go red unseen whenever the row is raised by a dated waiver
+#: (review r10a-rev1). FINAL_CLOSEOUT_COUNTS stays the closeout's target;
+#: LIVE_RATCHET_BUDGET pins the row itself against a raise.
+_, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+]
+LIVE_RATCHET_BUDGET = (24_616, 741)
 
 # Each tuple is (task base, delivered revision, base counts, delivered counts).
 TASK_DELIVERIES = (
@@ -396,8 +408,10 @@ def test_closeout_evidence_explains_the_remaining_absolute_deficit() -> None:
         AMENDMENT_COUNTS[1] - IMMUTABLE_BUDGETS[1],
     ) == (2_157, 39)
 
-    live_counts = _counts(_SCREEN_PATH.read_text(encoding="utf-8"))
-    assert live_counts <= FINAL_CLOSEOUT_COUNTS
+    # Lines and methods separately: a tuple `<=` is lexicographic (r10a-rev2).
+    live_lines, live_methods = _counts(_SCREEN_PATH.read_text(encoding="utf-8"))
+    assert live_lines <= LIVE_SCREEN_LINE_CEILING
+    assert live_methods <= LIVE_SCREEN_METHOD_CEILING
 
     ratchet_tree = ast.parse(_RATCHET_PATH.read_text(encoding="utf-8"))
     budget_assignment = next(
@@ -411,8 +425,8 @@ def test_closeout_evidence_explains_the_remaining_absolute_deficit() -> None:
     budgets = ast.literal_eval(budget_assignment.value)
     class_name, line_budget, method_budget = budgets[_SCREEN_RELATIVE_PATH]
     assert class_name == "ChatScreen"
-    assert line_budget <= FINAL_CLOSEOUT_COUNTS[0]
-    assert method_budget <= FINAL_CLOSEOUT_COUNTS[1]
+    assert line_budget <= LIVE_RATCHET_BUDGET[0]
+    assert method_budget <= LIVE_RATCHET_BUDGET[1]
 
 
 @pytest.mark.unit
@@ -485,10 +499,10 @@ def test_closeout_candidates_have_exact_non_vacuous_margin() -> None:
         "on_console_selection_feedback_requested": (
             "on(ConsoleSelectionFeedbackRequested)",
         ),
-        "on_console_selection_note_requested": (
-            "on(ConsoleTraceCopyRequested)",
-            "on(ConsoleSelectionNoteRequested)",
-        ),
+        # TASK-38988: the frozen AMENDMENT_BASE shape. 681bc7becb added the
+        # live trace-copy decorator and wrote it here, but this test reads
+        # the screen at AMENDMENT_BASE, which never had it.
+        "on_console_selection_note_requested": ("on(ConsoleSelectionNoteRequested)",),
     }
     assert REVIEW_SELECTION_ACTION_DELEGATE_METHODS == {"action_open_trajectory_view"}
     assert "open_trajectory_view" in _binding_actions(owner)

@@ -172,7 +172,10 @@ _BUDGETS: dict[str, int] = {
     # over this row at 1484 (one of dev's own pre-existing ratchet reds);
     # this task adds 8 lines -- the Media authoring forms' dirty refusal
     # beside the Export… opener's note flush (C-1).
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1492,
+    # 2026-11-06, TASK-38989 (owner size waiver): 1492 -> 1501. The export
+    # body gains the local-content lifetime span that only the screen's
+    # stale duplicate carried; library_screen.py drops 79 lines with it.
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1501,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a

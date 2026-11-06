@@ -23,6 +23,7 @@ from tldw_chatbook.UI.Screens import chat_screen
 from Tests.UI.console_controller_stubs import (
     stub_fleet_controller,
     stub_library_activity_controller,
+    stub_session_controller,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
@@ -90,6 +91,7 @@ def _video_action_screen(tmp_path, *, container="mp4"):
     # owners and initializes Session before the store attachment.
     stub_fleet_controller(screen, context="video actions bare screen")
     stub_library_activity_controller(screen, context="video actions bare screen")
+    stub_session_controller(screen, context="video actions bare screen")
     build_console_controllers(
         screen,
         resume_screen_is_torn_down=lambda: chat_screen._console_screen_is_torn_down(

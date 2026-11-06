@@ -1,8 +1,10 @@
 ---
 id: TASK-35306
 title: 'Re-baseline the stale ChatScreen review-projection ceiling test'
-status: To Do
-assignee: []
+status: Done
+assignee:
+- '@claude'
+updated_date: '2026-11-06 06:19'
 created_date: '2026-10-17 09:11'
 labels:
 - follow-up
@@ -25,7 +27,15 @@ Seen while checking PR #3144 (Phase 8); red on dev as well as on the branch. At 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test passes at dev, either with ceilings re-measured and reviewed against the screen-size ratchet row, or retired in favour of that row with the reason recorded
-- [ ] #2 If kept, it still fails when chat_screen.py grows past its ceiling (negative control recorded in the notes)
-- [ ] #3 No screen-size ratchet row rises (ADR-097)
+- [x] #1 The test passes at dev, either with ceilings re-measured and reviewed against the screen-size ratchet row, or retired in favour of that row with the reason recorded
+- [x] #2 If kept, it still fails when chat_screen.py grows past its ceiling (negative control recorded in the notes)
+- [x] #3 No screen-size ratchet row rises (ADR-097)
 <!-- AC:END -->
+
+## Implementation Notes
+
+Closed by TASK-38988, which owns the same node; see its notes.
+- `test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise` now holds the live screen to the measured (24,604, 709) and the ratchet row to `("ChatScreen", 24_616, 741)`. Both re-pins are dated 2026-11-06 under the owner size waiver. The 2026-08-27 projection constants remain as the historical target.
+- Negative controls: one appended chat_screen.py line turns the node red, and so does raising the row to 24617.
+- No screen-size ratchet row rose.
+

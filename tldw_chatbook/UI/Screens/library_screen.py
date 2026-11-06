@@ -20854,93 +20854,14 @@ class LibraryScreen(BaseAppScreen):
         progress_callback=None,
         cancel_check=None,
     ) -> dict[str, Any]:
-        """Execute one export through ``service``, synchronously: zip first, registry only on success.
-
-        Runs both of ``service``'s async-signature/sync-body methods
-        through ``asyncio.run`` -- they never touch the app's own event
-        loop, so this is only ever safe to call from a genuine OS thread
-        (never the UI thread, which already owns a running loop). Exposed
-        as its own (non-``@work``) static method so tests can call it
-        directly with a fake ``service`` and assert call ordering /
-        the include_media invariant without booting a real thread.
-
-        ``create_chatbook`` (the registry record) is attempted ONLY when
-        ``export_chatbook`` reports ``success`` -- the F4 plan's Global
-        Constraints' "zip first, registry record only on success". A
-        registry-recording failure AFTER a successful zip does not flip
-        the overall outcome to failure (the artifact genuinely exists on
-        disk; only the bookkeeping failed) -- ``registry_recorded``
-        reports that separately for callers/tests that care.
-
-        Returns a plain dict: ``success``, ``message``, ``path``,
-        ``dependency_info``, ``registry_recorded``.
-        """
-        from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
-            operation,
-            run_async,
+        return LibraryExportController._run_library_export_via_service(
+            service,
+            payload,
+            name=name,
+            description=description,
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
         )
-
-        paths = (getattr(service, "registry_path", None), payload.get("output_path"))
-        with operation(paths):
-            try:
-                export_result = run_async(
-                    service.export_chatbook(
-                        payload,
-                        progress_callback=progress_callback,
-                        cancel_check=cancel_check,
-                    )
-                )
-            except Exception as exc:
-                logger.opt(exception=True).warning(
-                    "Library export service call failed."
-                )
-                return {
-                    "success": False,
-                    "message": f"Export failed: {exc}",
-                    "path": "",
-                    "dependency_info": {},
-                    "registry_recorded": False,
-                    "cancelled": False,
-                }
-
-            if not export_result.get("success"):
-                return {
-                    "success": False,
-                    "message": str(export_result.get("message") or "Export failed."),
-                    "path": export_result.get("path") or payload.get("output_path", ""),
-                    "dependency_info": export_result.get("dependency_info") or {},
-                    "registry_recorded": False,
-                    "cancelled": bool(export_result.get("cancelled", False)),
-                }
-
-            output_path = export_result.get("path") or payload.get("output_path", "")
-            dependency_info = export_result.get("dependency_info") or {}
-            registry_recorded = False
-            try:
-                run_async(
-                    service.create_chatbook(
-                        name=name,
-                        description=description,
-                        file_path=output_path,
-                        tags=["library-export"],
-                    )
-                )
-                registry_recorded = True
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Library export succeeded but registry recording failed for {output_path!r}."
-                )
-
-            return {
-                "success": True,
-                "message": export_result.get("message") or "",
-                "path": output_path,
-                "dependency_info": dependency_info,
-                "registry_recorded": registry_recorded,
-                "cancelled": False,
-                "item_count": export_result.get("item_count"),
-                "size_bytes": export_result.get("size_bytes"),
-            }
 
     @work(thread=True, exclusive=True, group="library_export")
     def _run_library_export_worker(

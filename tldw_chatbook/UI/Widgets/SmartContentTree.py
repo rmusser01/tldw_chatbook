@@ -190,7 +190,10 @@ class SmartContentTree(Container):
         # population hops back via call_from_thread.
         if self.load_content_callback:
             self.run_worker(
-                self._load_content_worker, exclusive=True, thread=True
+                self._load_content_worker,
+                exclusive=True,
+                thread=True,
+                group="smart-content-tree-load",
             )
 
     def _load_content_worker(self) -> None:

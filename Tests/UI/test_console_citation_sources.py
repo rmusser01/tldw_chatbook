@@ -29,6 +29,7 @@ from Tests.UI.console_controller_stubs import (
     stub_image_controller,
     stub_library_activity_controller,
     stub_message_controller,
+    stub_session_controller,
 )
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -504,12 +505,13 @@ def _bare_screen(
         app_instance=NO_APP,
     )
     # Session extraction added view hooks before the store setter attaches.
-    # This detached citation fixture has no project-instruction projection.
-    screen._session = SimpleNamespace(
-        _project_project_instruction_binding=lambda *_args, **_kwargs: None,
-        _project_project_instruction_dispatch=lambda *_args, **_kwargs: None,
-        _dismiss_project_instruction_decision_projection=lambda *_args, **_kwargs: None,
-        _ensure_console_chat_store=lambda: screen._console_chat_store,
+    # This detached citation fixture has no project-instruction projection;
+    # the raiser-wired stub provides the hooks (TASK-38988).
+    stub_session_controller(
+        screen,
+        context="_bare_screen",
+        app_instance=NO_APP,
+        chat_store_accessor=lambda: screen._console_chat_store,
     )
     screen._console_chat_store = _FakeStore(messages)
     screen._review_selection = ConsoleReviewSelectionController(

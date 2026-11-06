@@ -499,6 +499,7 @@ def test_source_scope_survives_a_screen_state_round_trip():
         NO_APP,
         stub_fleet_controller,
         stub_library_activity_controller,
+        stub_session_controller,
         stub_message_controller,
     )
 
@@ -516,9 +517,15 @@ def test_source_scope_survives_a_screen_state_round_trip():
             # Same no-harness-app declaration as the message stub below.
             app_instance=NO_APP,
         )
+        # TASK-38988: the hook build reads `_session` during this setter.
+        stub_session_controller(
+            screen, context="rag settings bare screen", app_instance=NO_APP
+        )
         screen._console_chat_store = store
         screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
-        screen._console_visible_draft_session_id = None
+        # The `__new__` session lacks the attribute its `__init__` seeds, and the
+        # screen proxy's setter reads it first (TASK-38988).
+        screen._session._console_visible_draft_session_id = None
         screen._console_composer_or_none = lambda: None
         screen._task_resume_state = TaskResumeState()
         # `_restore_native_console_state` calls the three

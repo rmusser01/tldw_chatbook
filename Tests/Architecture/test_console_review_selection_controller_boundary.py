@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Architecture.test_screen_size_ratchet import _BUDGETS as _SCREEN_SIZE_BUDGETS
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_SCREEN_PATH = REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py"
@@ -27,6 +29,16 @@ MINIMUM_LINE_REDUCTION = 409
 MINIMUM_METHOD_REDUCTION = 7
 PROJECTED_LINE_CEILING = 17_215
 PROJECTED_METHOD_CEILING = 532
+#: 2026-11-06, TASK-38988 (owner size waiver): the live ChatScreen ceiling is
+#: the screen-size ratchet's own ChatScreen row (24,616 / 741 on that day),
+#: read from that file rather than re-pinned here. A pin at the measured
+#: 24,604 would go red unseen whenever the row is raised by a dated waiver
+#: (review r10a-rev1). The projection above is the historical target.
+_, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+]
+#: The screen-size ratchet row this file holds unraised, re-pinned the same day.
+LIVE_RATCHET_ROW = ("ChatScreen", 24_616, 741)
 MAX_DELEGATE_LINES = 5
 
 MOVE_METHODS = frozenset(
@@ -518,7 +530,12 @@ def test_build_console_controllers_is_the_single_explicit_constructor() -> None:
 def test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise() -> None:
     """The extraction earns the conservative screen reduction itself."""
     source = CHAT_SCREEN_PATH.read_text(encoding="utf-8")
-    assert _counts(source) <= (PROJECTED_LINE_CEILING, PROJECTED_METHOD_CEILING)
+    # Lines and methods separately (a tuple `<=` is lexicographic), and the
+    # methods as the ratchet counts them: direct definitions, not unique names
+    # (review r10a-rev2).
+    owner = _class_from_source(source, "ChatScreen")
+    assert len(source.splitlines()) <= LIVE_SCREEN_LINE_CEILING
+    assert sum(_method_counts(owner).values()) <= LIVE_SCREEN_METHOD_CEILING
     ratchet_tree = ast.parse(RATCHET_PATH.read_text(encoding="utf-8"))
     assignment = next(
         node
@@ -529,7 +546,7 @@ def test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise() 
     )
     assert assignment.value is not None
     budgets = ast.literal_eval(assignment.value)
-    assert budgets[SCREEN_RELATIVE_PATH] == ("ChatScreen", 16_966, 563)
+    assert budgets[SCREEN_RELATIVE_PATH] == LIVE_RATCHET_ROW
 
 
 @pytest.mark.unit

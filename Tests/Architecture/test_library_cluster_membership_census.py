@@ -75,6 +75,9 @@ _STAYED: dict[str, frozenset[str]] = {
             "_apply_library_export_success",
             "_build_library_export_state",
             "_library_export_status_line",
+            # TASK-38989: task-31249 (3cee32b3d0) projection, run after the
+            # press dispatch returns; the controller forwards to the screen.
+            "_project_library_export_canvas",
             "_run_library_export_counts_worker",
             "_run_library_export_worker",
             "_start_library_export_counts_worker",
@@ -88,6 +91,10 @@ _STAYED: dict[str, frozenset[str]] = {
             "_library_collections_count_is_current",
             "_library_collections_rail_count",
             "_read_library_collections_count",
+            # TASK-38989 (masked by the export drift above): a screen @on
+            # handler (0f69e0ba96) forwarding to the controller's
+            # differently named retain_reader_annotation_draft.
+            "retain_library_collection_annotation_draft",
         }
     ),
     "conversations_reader": frozenset(),
@@ -102,6 +109,9 @@ _STAYED: dict[str, frozenset[str]] = {
             "_library_conversation_workspace_block",
             "_mirror_library_conversation_reader_preference",
             "_set_library_conversation_link_receipt",
+            # TASK-38989 (masked by the export drift): ef610f3a77's receipt
+            # projection beside its setter; reads the app's active workspace.
+            "_library_conversation_visible_link_receipt",
             "_start_library_conversation_reader_selection",
             "_sync_library_conversation_reader",
             "_sync_library_conversation_reader_layout_from_shell",

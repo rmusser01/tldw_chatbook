@@ -1808,7 +1808,7 @@
     },
     {
       "call_count": 32,
-      "diagnostic_digest": "d5f84dbd7b13e8f624e4",
+      "diagnostic_digest": "20481b96ee06977c0ce2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Logging_Config.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2046,7 +2046,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "14ff99ccf9fbaefb5c4d",
+      "diagnostic_digest": "6dafbe5f9f85270cade6",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Persona_Buddy/controller.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3299,7 +3299,7 @@
     },
     {
       "call_count": 8,
-      "diagnostic_digest": "8c075a9763a450d3a22c",
+      "diagnostic_digest": "a16224656c9d45fd6385",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_export_controller.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3662,8 +3662,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 86,
-      "diagnostic_digest": "9f573e45c551194e3bd0",
+      "call_count": 84,
+      "diagnostic_digest": "49786240c288c175a2f0",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -8996,7 +8996,7 @@
     {
       "candidates": [
         {
-          "call_digest": "358d34263671aa86",
+          "call_digest": "7bd8327ac3b2bf2f",
           "method": "log",
           "path_expressions": [
             "extra"
@@ -9005,7 +9005,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "68f5b31e48f95802",
+          "call_digest": "d81188eb2f617f46",
           "method": "log",
           "path_expressions": [
             "extra"
@@ -10380,7 +10380,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "a681fe8e3d43c47b",
+          "call_digest": "09b684f3bdc82193",
           "method": "warning",
           "path_expressions": [
             "output_path"
@@ -10423,15 +10423,6 @@
             "raw_path"
           ],
           "scope": "LibraryScreen._resolve_ingest_source",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "09b684f3bdc82193",
-          "method": "warning",
-          "path_expressions": [
-            "output_path"
-          ],
-          "scope": "LibraryScreen._run_library_export_via_service",
           "status": "legacy_unreviewed"
         },
         {
