@@ -761,6 +761,11 @@ _BUDGETS: dict[str, int] = {
     # (m-1): 8952 -> 9037 (measured).
     # 2026-11-06, rebased onto dev 2684e5453f: 7423 -> 9037 (polish-1b's
     # own +1614; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, PR #3423 re-review N-1/N-2/N-3 (same owner decision:
+    # expand limits, don't contort code): the bulk keyword worker commits
+    # each note in its own transaction and its receipt names a refusal's
+    # reason (``_bulk_keyword_refusal_reason`` and its copy):
+    # 9037 -> 9093 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
