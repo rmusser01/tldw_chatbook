@@ -95,7 +95,7 @@ from ...Chat.local_reasoning import (
     reasoning_override_key,
     supports_local_reasoning,
 )
-from ...Widgets.glyph_fallback import set_ascii_glyph_mode
+from ...Widgets.glyph_fallback import ascii_glyph_mode, set_ascii_glyph_mode
 from ...Widgets.state_checkbox import StateCheckbox
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
@@ -970,6 +970,10 @@ MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 # compact layout (fixed-width category sidebar, inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
 SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
+# TASK-38953: at or below this width the compact rail would leave the open
+# category under 30 content cells (it is the width minus 41: 19 at 60, 0 at
+# 40), so Settings shows one pane at a time, like Library below 64.
+SETTINGS_SINGLE_PANE_MAX_WIDTH = 70
 # TASK-33003.7: from this width the Scope Inspector keeps 36 columns
 # (.settings-inspector-floor) and the detail pane still keeps 56: a 24-cell
 # label plus a 20-cell field (test_settings_compact_fields). Rail and
@@ -4339,6 +4343,9 @@ class SettingsScreen(BaseAppScreen):
         # None = not yet synced; _sync_responsive_workbench() applies the
         # compact classes on first call (on_mount) and on every resize.
         self._workbench_compact: bool | None = None
+        #: TASK-38953: with one pane at a time, whether the category list is
+        #: the pane shown (else the open category, under "‹ Categories").
+        self._single_pane_list_open = False
         # set_reactive, NOT plain assignment: a plain assignment fires the
         # watcher on a not-yet-mounted screen. That used to schedule a full
         # recompose that survived into mount and re-composed the JUST-composed
@@ -5190,6 +5197,44 @@ class SettingsScreen(BaseAppScreen):
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
 
+    def _single_pane_now(self) -> bool:
+        return 0 < self.size.width <= SETTINGS_SINGLE_PANE_MAX_WIDTH
+
+    def _sync_single_pane(self, *, list_open: bool | None = None) -> None:
+        """Show one pane at a time when narrow (TASK-38953).
+
+        Args:
+            list_open: Show the category list (True) or the open category
+                (False); None keeps the pane shown now.
+        """
+        if list_open is not None:
+            self._single_pane_list_open = list_open
+        single = self._single_pane_now()
+        try:
+            workbench = self.query_one("#settings-workbench")
+            back = self.query_one("#settings-single-pane-back", Button)
+            rail = self.query_one("#settings-category-pane")
+        except QueryError:
+            return
+        if single and list_open is None and not workbench.has_class(
+            "settings-workbench-single"
+        ):  # narrowing: keep the pane that holds focus
+            focused = self.focused
+            self._single_pane_list_open = bool(focused) and (
+                rail in focused.ancestors_with_self
+            )
+        workbench.set_class(single, "settings-workbench-single")
+        workbench.set_class(
+            single and self._single_pane_list_open, "settings-single-list"
+        )
+        back.display = single and not self._single_pane_list_open
+
+    @on(Button.Pressed, "#settings-single-pane-back")
+    def handle_single_pane_back(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._sync_single_pane(list_open=True)
+        self._focus_category(self.active_category)
+
     def _inspector_floor_now(self) -> bool:
         return self.size.width >= SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH
 
@@ -5207,6 +5252,7 @@ class SettingsScreen(BaseAppScreen):
             )
         except QueryError:
             pass
+        self._sync_single_pane()
         compact = self._workbench_compact_now()
         if self._workbench_compact == compact:
             return
@@ -23858,6 +23904,19 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-category-label",
                     classes="destination-section",
                 )
+            single = self._single_pane_now()
+            if single:
+                workbench_classes += " settings-workbench-single"
+                if self._single_pane_list_open:
+                    workbench_classes += " settings-single-list"
+            back = Button(
+                "< Categories" if ascii_glyph_mode() else "‹ Categories",
+                id="settings-single-pane-back",
+                classes="form-button",
+                compact=True,
+            )
+            back.display = single and not self._single_pane_list_open
+            yield back
             with Horizontal(id="settings-workbench", classes=workbench_classes):
                 with Vertical(
                     id="settings-category-pane",
@@ -24017,8 +24076,11 @@ class SettingsScreen(BaseAppScreen):
         search.select_all()
 
     def _focus_category(self, category_value: str) -> None:
+        selector = f"#settings-category-{category_value}"
+        if self._single_pane_now() and not self._single_pane_list_open:
+            selector = "#settings-single-pane-back"  # TASK-38953: rail hidden
         try:
-            self.query_one(f"#settings-category-{category_value}", Button).focus()
+            self.query_one(selector, Button).focus()
         except QueryError:
             logger.debug("Unable to focus Settings category button: %s", category_value)
 
@@ -25755,6 +25817,7 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_theme_modified_widgets()
         category_changed = category_value != self.active_category
         self.active_category = category_value
+        self._sync_single_pane(list_open=False)  # TASK-38953: show it
 
         # task-1565: keep the selection visible -- the rail does not follow
         # the active category on its own, so deep categories (Schedules,

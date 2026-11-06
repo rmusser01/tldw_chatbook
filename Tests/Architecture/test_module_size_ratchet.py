@@ -538,7 +538,7 @@ _BUDGETS: dict[str, int] = {
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
     # 2026-11-06, TASK-38964: 35,669 -> 35,654; the koboldcpp route refusal
     # wrapper is gone, the save reads Provider_Contract's rule directly.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35657,  # 2026-11-06: +3, the model field ignores a stale mount echo after the vLLM/llama.cpp handoff (TASK-38975, owner waiver)
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35720,  # 2026-11-06: +63, one pane at a time at 70 columns and below (TASK-38953, owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

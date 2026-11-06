@@ -131,6 +131,23 @@
     display: none;
 }
 
+/* TASK-38953: at 70 columns and below the rail would leave the open category
+   under 30 cells (19 at 60, 0 at 40), so one pane shows at a time: the open
+   category under "‹ Categories", or the category list at full width. */
+#settings-workbench.settings-workbench-single #settings-category-pane,
+#settings-workbench.settings-workbench-single #settings-category-detail-divider {
+    display: none;
+}
+
+#settings-workbench.settings-workbench-single.settings-single-list #settings-category-pane {
+    display: block;
+    width: $ds-width-fill;
+}
+
+#settings-workbench.settings-workbench-single.settings-single-list #settings-detail-pane {
+    display: none;
+}
+
 #settings-workbench.settings-workbench-compact .settings-category-search-help,
 #settings-workbench.settings-workbench-compact .settings-category-search-status {
     display: none;
