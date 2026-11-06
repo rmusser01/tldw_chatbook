@@ -1,10 +1,10 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 598492,
+  "total": 598293,
   "per_source": {
     "screen_css_scoped.tcss": 12290,
     "screen_css_self.tcss": 2318,
-    "tldw_cli_modular.tcss": 427120,
+    "tldw_cli_modular.tcss": 426921,
     "widget_defaults_scoped.tcss": 74136,
     "widget_defaults_self.tcss": 82628
   },
@@ -33,7 +33,7 @@
     "screen_css_self.tcss::TraceFiltersDialog (UI/Widgets/trace_filter_bar.py)": 256,
     "screen_css_self.tcss::VoiceBlendDialog (Widgets/voice_blend_dialog.py)": 123,
     "tldw_cli_modular.tcss::(header)": 377,
-    "tldw_cli_modular.tcss::components/_agentic_terminal.tcss": 45883,
+    "tldw_cli_modular.tcss::components/_agentic_terminal.tcss": 45684,
     "tldw_cli_modular.tcss::components/_buttons.tcss": 1615,
     "tldw_cli_modular.tcss::components/_change_review.tcss": 4141,
     "tldw_cli_modular.tcss::components/_dialogs.tcss": 5660,
