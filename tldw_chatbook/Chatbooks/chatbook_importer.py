@@ -2770,7 +2770,7 @@ class ChatbookImporter:
                             expected_version=int(existing["version"]),
                         )
                         status.record_success(ContentType.NOTE)
-                        logger.debug(f"Replaced note in place: {note_title}")
+                        logger.debug("Replaced note {} in place", existing["id"])
                         continue
 
                 # Create note. Keywords are not a notes-table column: they
@@ -3119,7 +3119,8 @@ class ChatbookImporter:
                     )
                     status.record_success(ContentType.CHARACTER)
                     logger.debug(
-                        f"ChatbookImporter._import_characters: Replaced character in place: {char_name}"
+                        "ChatbookImporter._import_characters: Replaced character {} in place",
+                        existing["id"],
                     )
                     continue
 
