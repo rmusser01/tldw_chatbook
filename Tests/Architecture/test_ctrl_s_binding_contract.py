@@ -1,6 +1,6 @@
 """Ctrl+S is bound once in Library, as the editor Save, and nowhere new.
 
-TASK-34000.40 (N-33). The owner ruled (ADR-031 refinement 2026-10-03) that
+TASK-34000.40 (N-33). The owner ruled (ADR-299 refinement 2026-10-03) that
 Ctrl+S saves in every editor: it performs the focused editor's visible commit,
 flushes an autosaving editor, says why at the editor when it refuses, and is
 unbound outside editors. Library had four editors with four save models and a
@@ -38,7 +38,7 @@ LIBRARY_SCREEN = ROOT / "UI" / "Screens" / "library_screen.py"
 LIBRARY_EDITOR_SAVE = ("UI/Screens/library_screen.py", "library_editor_save")
 
 #: Ctrl+S bindings outside Library, each owned by TASK-34000.43 (conform the
-#: rest of the app to the amended ADR-031). Shrink it; never grow it.
+#: rest of the app to the amended ADR-299). Shrink it; never grow it.
 ALLOWLIST = {
     # TASK-34000.43: Roleplay's editor Save (R41) -- an editor, but its gate
     # and chip are still Roleplay's own; .43 brings it under the one rule.
@@ -183,7 +183,7 @@ def test_every_ctrl_s_binding_is_the_library_editor_save_or_allowlisted() -> Non
         row for row in rows if (row[0], row[1]) not in ALLOWLIST | {LIBRARY_EDITOR_SAVE}
     ]
     assert not unexpected, (
-        "a new ctrl+s binding: ADR-031 (refinement 2026-10-03) binds ctrl+s only "
+        "a new ctrl+s binding: ADR-299 (refinement 2026-10-03) binds ctrl+s only "
         f"as an editor's Save -- route it through that rule: {unexpected}"
     )
     seen = {(path, action) for path, action, _line in rows}

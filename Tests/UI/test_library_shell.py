@@ -34106,7 +34106,7 @@ def test_library_ctrl_s_is_one_gated_editor_save_binding() -> None:
     Rewritten 2026-10-27 from ``test_library_note_ctrl_s_is_unavailable_while_
     save_remains_explicit``, which pinned the opposite (Notes had no Ctrl+S,
     the skill editor owned the key) before the owner ruled that Ctrl+S saves
-    in every editor (ADR-031 refinement 2026-10-03). The Notes save action
+    in every editor (ADR-299 refinement 2026-10-03). The Notes save action
     is now reached through the one dispatcher (AC#4: nothing unreachable).
     """
     ctrl_s = [

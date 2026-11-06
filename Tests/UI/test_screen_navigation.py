@@ -2543,7 +2543,7 @@ def test_register_footer_shortcuts_advertises_skill_editor_working_keys():
     shortcut_dict = dict(shortcuts)
     assert shortcut_dict["esc"] == "back to skills list"
     # TASK-34000.40 (N-33, 2026-10-27): Ctrl+S is chipped only while the skill
-    # editor HOLDS FOCUS (ADR-031 rule (e)); nothing has focus on this
+    # editor HOLDS FOCUS (ADR-299 rule (e)); nothing has focus on this
     # unmounted screen. The focus test itself is pinned live by
     # ``test_library_ctrl_s_saves_in_every_editor_skills.py``.
     assert "ctrl+s" not in shortcut_dict

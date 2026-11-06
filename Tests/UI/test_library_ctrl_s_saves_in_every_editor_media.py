@@ -2,7 +2,7 @@
 N-33; TASK-34000.22 AC#7, deferred to .40 by the P1-A owner-question-1 ruling).
 
 Both forms already had a Save button; Ctrl+S did nothing in either, so a typed
-analysis waited on a mouse click. The owner's rule (ADR-031 refinement
+analysis waited on a mouse click. The owner's rule (ADR-299 refinement
 2026-10-03) makes Ctrl+S each form's visible Save -- only while focus is in
 that form, so a form left open on another Reader tab is never written by it.
 

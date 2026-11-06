@@ -1045,7 +1045,7 @@ _LIBRARY_SYNC_ROOTS_ENTER_LABELS = {
     "disconnect": "",
 }
 
-#: TASK-34000.40 (N-33): the six Library editors Ctrl+S saves (ADR-031
+#: TASK-34000.40 (N-33): the six Library editors Ctrl+S saves (ADR-299
 #: refinement 2026-10-03, owner ruling "ctrl-s should save in every editor").
 #: ``LibraryScreen._library_editor_save_target`` names at most one of them --
 #: the one holding focus -- and ``action_library_editor_save`` runs that
@@ -1109,7 +1109,7 @@ class LibraryScreen(BaseAppScreen):
         ("escape", "library_notes_escape", "Back"),
         # TASK-34000.40 (N-33): ONE Ctrl+S for the six Library editors --
         # notes, prompts, skills, Folder files and the Media reader's two
-        # forms (ADR-031 refinement 2026-10-03). It replaced task-424's
+        # forms (ADR-299 refinement 2026-10-03). It replaced task-424's
         # skill-only binding. ``check_action`` keeps it inactive unless an
         # editor holds focus (rule (d)), so F1 lists it only there. Not
         # priority: no focused Input/TextArea binds ctrl+s, so the key
@@ -8958,7 +8958,7 @@ class LibraryScreen(BaseAppScreen):
             if str(getattr(self.focused, "id", "") or "") != "library-note-body":
                 tier = tuple(pair for pair in tier if pair[0] != "ctrl+end")
             # TASK-34000.40 (N-33): Ctrl+S saves now -- "save now" because
-            # the editor also autosaves (ADR-031 rule (b)). Ahead of Ctrl+End:
+            # the editor also autosaves (ADR-299 rule (b)). Ahead of Ctrl+End:
             # the footer keeps a prefix, and at 80x24 one of the two drops.
             tier = (
                 tuple(pair for pair in tier if pair[0] != "ctrl+end")
@@ -9304,7 +9304,7 @@ class LibraryScreen(BaseAppScreen):
 
         TASK-34000.40 (N-33), reached through ``action_library_editor_save``.
         A refusal is said on the editor's own status line -- no toast, as the
-        other five editors answer -- and moves no focus (ADR-031 rule (c);
+        other five editors answer -- and moves no focus (ADR-299 rule (c);
         while unbound, the delete-confirm and conflict branches moved it to
         Cancel and to the callout); a conflict's callout is brought into view.
         Otherwise the commit is the Save press's own, LIB-14's "keep it"
@@ -9338,7 +9338,7 @@ class LibraryScreen(BaseAppScreen):
     def _library_editor_save_target(self) -> str | None:
         """The ONE editor whose visible commit Ctrl+S performs now, or None.
 
-        TASK-34000.40 (N-33), ADR-031 refinement 2026-10-03 (a)/(d): decided
+        TASK-34000.40 (N-33), ADR-299 refinement 2026-10-03 (a)/(d): decided
         from the editor that holds FOCUS, never from a view flag alone, so the
         key can never save an editor the user is not in -- a dirty note open
         beside a focused Notes list or tree (ruling T9-d), a prompt or skill
@@ -9428,7 +9428,7 @@ class LibraryScreen(BaseAppScreen):
     def _library_ctrl_s_chip(self, target: str) -> tuple[tuple[str, str], ...]:
         """``(("ctrl+s", verb),)`` for ``target``'s footer tier, or ``()``.
 
-        TASK-34000.40 (N-33), ADR-031 rule (e): the ONE chip seam every editor
+        TASK-34000.40 (N-33), ADR-299 rule (e): the ONE chip seam every editor
         tier -- and F1 (ruling T9-h) -- asks. Present only while ``target``
         holds focus AND the key would save there (ruling T9-j). Where it
         refuses (a conflict, an armed delete, a held Save) or has nothing to
@@ -9502,7 +9502,7 @@ class LibraryScreen(BaseAppScreen):
         return ""
 
     def _save_library_skill_from_key(self) -> None:
-        """Ctrl+S in the skill editor (TASK-34000.40 N-33, ADR-031 a/c).
+        """Ctrl+S in the skill editor (TASK-34000.40 N-33, ADR-299 a/c).
 
         The save itself is unchanged (``action_library_skill_save``). Held,
         the key says why on the editor's status line -- the conflict banner,

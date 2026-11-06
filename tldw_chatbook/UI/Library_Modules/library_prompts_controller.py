@@ -3261,7 +3261,7 @@ class LibraryPromptsController:
         return canvas.save_key_refusal()
 
     def _save_library_prompt_from_key(self) -> None:
-        """Ctrl+S in the prompt editor (TASK-34000.40 N-33, ADR-031 a/c).
+        """Ctrl+S in the prompt editor (TASK-34000.40 N-33, ADR-299 a/c).
 
         A held Save says why on the editor's status line; the conflict
         banner, which replaces that line and already names the way out, is

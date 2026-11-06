@@ -3,7 +3,7 @@
 The skill editor had owned Ctrl+S since task-424: it saved the open skill
 from ANYWHERE on the screen while a save was available, and did nothing,
 silently, on a clean skill -- though the editor's own hint line said
-"ctrl+s Save". Under the owner's rule (ADR-031 refinement 2026-10-03; settled
+"ctrl+s Save". Under the owner's rule (ADR-299 refinement 2026-10-03; settled
 2026-10-27) the key belongs to the editor that holds focus: it saves a dirty
 skill, says "Saved — no changes." on a clean one, and does nothing from
 the Skills list beside it.

@@ -1308,7 +1308,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         """An authoring form's own status line, hidden until it has words.
 
         TASK-34000.40 (N-33, review I-3/M-4): where a refused Save -- a press
-        or Ctrl+S -- answers at the form (ADR-031 rule (c)) instead of
+        or Ctrl+S -- answers at the form (ADR-299 rule (c)) instead of
         returning silently.
         """
         line = Static("", id=status_id, classes="destination-purpose", markup=False)

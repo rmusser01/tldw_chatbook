@@ -607,7 +607,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         """Why Ctrl+S would not run this editor's Save now, or "".
 
         TASK-34000.40 (N-33): read off the live Save button -- the visible
-        commit the key stands for (ADR-031 rule (a)) -- and, only while it is
+        commit the key stands for (ADR-299 rule (a)) -- and, only while it is
         shown but held, off the flags ``sync_lifecycle_actions`` builds its
         disabled rule from. ``"conflict"`` is a marker, never painted: the
         conflict banner already says what to do.
