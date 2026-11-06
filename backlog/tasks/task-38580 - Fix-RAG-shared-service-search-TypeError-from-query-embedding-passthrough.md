@@ -27,6 +27,8 @@ Every search through the shared RAG service raises TypeError because EnhancedRAG
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Added query_embedding to RAGService.search and threaded it to _semantic_search; new contract test drives the real V2-to-base chain so signature drift fails CI again. Commit 021251594f.
+
+**Rebased onto dev 2026-11-06 (PR #3361 rebuild).** dev had fixed the production TypeError on 2026-10-20 (`9206d1d395`) the other way round: `EnhancedRAGServiceV2.search` stops forwarding `query_embedding` and refuses a non-None vector, pinned by `Tests/Library/test_enhanced_rag_search_contract.py`. The branch keeps that public contract. It drops this task's V2 passthrough test, which asserted the opposite. It keeps the base `RAGService.search` parameter (used by its own semantic/hybrid fan-out) and the forwarded-kwargs contract tests, which catch the next forwarding drift.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

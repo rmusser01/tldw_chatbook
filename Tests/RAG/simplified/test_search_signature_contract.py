@@ -125,34 +125,9 @@ class TestRealV2SearchChain:
             service.close()
         assert [r.id for r in results] == ["docA_chunk_0", "docB_chunk_0"]
 
-    def test_query_embedding_passthrough_skips_embedding_and_reaches_store(
-        self, tmp_path
-    ):
-        """A precomputed vector is threaded to the store, no embed call."""
-        service = _build_real_v2_service(tmp_path / "profiles")
-        try:
-            results = _run(
-                service.search(
-                    "anything",
-                    include_citations=False,
-                    query_embedding=[1.0, 0.0, 0.0, 0.0],
-                )
-            )
-            assert service.embeddings.async_calls == 0
-            assert results, "store has two seeded documents"
-            assert results[0].id == "docA_chunk_0"  # aligned with the query
-
-            results_b = _run(
-                service.search(
-                    "anything else",
-                    include_citations=False,
-                    query_embedding=[0.0, 1.0, 0.0, 0.0],
-                )
-            )
-            assert results_b[0].id == "docB_chunk_0"
-            assert service.embeddings.async_calls == 0
-        finally:
-            service.close()
+    # A precomputed vector through the public V2 search is refused, not
+    # threaded to the store: dev's contract since 9206d1d395, pinned by
+    # Tests/Library/test_enhanced_rag_search_contract.py.
 
     def test_default_none_still_embeds_the_query(self, tmp_path):
         """`query_embedding=None` keeps the embed-per-call behavior."""
