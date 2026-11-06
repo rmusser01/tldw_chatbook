@@ -4,7 +4,7 @@ title: The Settings snapshot Save took over 5 s in a UI Fast Lane run, with its 
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-06 01:00
+updated_date: 2026-11-06 01:45
 created_date: 2026-10-24 00:26
 labels:
 - follow-up
@@ -76,7 +76,7 @@ The owner finished #3225 with three more commits (retained rail seeds: b78700971
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Cause (AC#2).** The save thread was short of the GIL. Nothing was queued in front of it. The test waited with `while not enabled: await pilot.pause(0.01)`. Each `pilot.pause()` walks all 477 Settings nodes on the event loop and posts a callback to each one. Measured here, a pause cost 13-15 ms of loop CPU per 10 ms, so the loop was busy about 55% of the time, and more on a slower CI core. The config write makes hundreds of syscalls, at storage-admission directory pins and descriptor opens, and gives up the GIL at each one. To get it back, it waits out the busy thread's switch interval.
+**Cause (AC#2).** The save thread was short of the GIL. Nothing was queued in front of it. The test waited with `while not enabled: await pilot.pause(0.01)`. Each `pilot.pause()` walks all 477 Settings nodes on the event loop and posts a callback to each one. Measured here, a pause took 23-25 ms, 13-15 ms of it loop CPU, so the loop was busy about 57-60% of the time. That a slower CI core made it busier still is inferred, not shown. The config write makes hundreds of syscalls, at storage-admission directory pins and descriptor opens, and gives up the GIL at each one. To get it back, it waits out the busy thread's switch interval.
 - One save on a thread with an idle main thread: 0.08-0.10 s.
 - The same save with a main thread spinning in Python: 2.6-11.8 s at the 5 ms switch interval, 2.3-3.1 s at 1 ms, 0.8-1.2 s at 0.2 ms.
 - A CPU-bound loop in the mounted test reproduced the CI note exactly: `(True, False, True, True)`, `loaded enabled: False`, worker RUNNING. It was in the write phase, with 10.2 s of loop CPU in 10.5 s.
@@ -135,7 +135,20 @@ Serial runs, 10 of each test:
 | First | 9/10 | 10/10 | 12.1-18.8 |
 | Second | 10/10 | 10/10 | 6.8-13.4 |
 
-The one failure, in the preserve test, was `_provider_draft()` None at the last assertion, on the staged model draft. I did not find its cause. A probe that logged every pop of that draft caught no pop in 136 runs. Unprobed parallel runs passed 56/56. In an alternating hunt, the old `pilot.pause` wait passed 48/48. That is about 1 failure in 240 runs of the new wait, which does not tell me whether the change caused it.
+The one failure, in the preserve test, was `_provider_draft()` None at the last assertion: the staged model draft was gone. Review r9s-rev1 found the cause, and it is present at base too. It is a staging race:
+- The test staged `model` with a direct `_stage_provider_value` after one `pilot.pause()`. That pause ran before the Providers & Models card was in the DOM.
+- The card's hidden model Input queues an `Input.Changed` for the saved model when it is built (the mount echo). Only `wait_for_idle`'s CPU heuristic ordered that echo before the staging.
+- When the echo landed late, `handle_model_value_changed` took it for a user edit. It restaged `model` to the saved value, and the now-clean draft was popped.
+
+**Fix.** The test waits for `#settings-model-value` to exist, then stages through the app's own writer, `_set_model_field_value(..., quiet=False)`, and waits until the draft holds the model. The write goes into the Input's own message queue behind the echo, so the echo is always handled first.
+
+Forced check, a temporary test edit that stages while the echo is still pending:
+- direct `_stage_provider_value`: 3/3 failed with the same signature (`'NoneType' object has no attribute 'is_dirty'`);
+- write through the Input: 3/3 passed.
+
+After the fix:
+- 20/20 serial runs passed under a temporary `@private_profile_test` marker (since removed), at load average 4.9-7.4 on 18 cores.
+- Dropping the visible-value check still fails the test (`assert '27' == '32'`).
 
 **Files:** `Tests/UI/test_llamacpp_snapshot_settings.py`, `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->

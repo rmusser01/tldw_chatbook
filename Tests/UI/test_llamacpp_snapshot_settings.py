@@ -303,7 +303,15 @@ async def test_f9_save_preserves_new_edits_while_persistence_waits(
         await app.push_screen(screen)
         screen._select_category("providers-models")
         await pilot.pause()
-        screen._stage_provider_value("model", "snapshot-review-model")
+        # Stage the model through its Input, as the app does. The card's mount
+        # echo (an Input.Changed for the saved model, queued when the Input is
+        # built) then always lands first. A direct _stage_provider_value raced
+        # a late echo, which restaged the saved model and dropped the draft.
+        await _until(lambda: len(screen.query("#settings-model-value")))
+        screen._set_model_field_value("snapshot-review-model", quiet=False)
+        await _until(
+            lambda: screen._provider_draft_value("model") == "snapshot-review-model"
+        )
         field = screen.query_one("#settings-snapshot-keep", Input)
         field.value = "027"
         await pilot.pause()
