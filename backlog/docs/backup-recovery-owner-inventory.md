@@ -200,7 +200,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The census contains 1571 rows (TASK-39053 reconciliation). Its qualified symbol is the locator-consumer
+The census contains 1609 rows (TASK-39053 reconciliation). Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -362,6 +362,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/DB/Subscriptions_DB.py | ensure_site_configs_schema | connect_private_sqlite | 1 | qualified | db.subscriptions |
 | tldw_chatbook/DB/Workspace_DB.py | WorkspaceDB | inherits:BaseDB | 1 | qualified | db.workspaces |
 | tldw_chatbook/DB/base_db.py | BaseDB._get_connection | connect_private_sqlite | 2 | unsupported | sqlite |
+| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | safe_dump | 1 | generic_boundary | eval.definitions phase8 exact default source; explicit exports ordinary; runtime composition pending |
 | tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_csv_dataset | open | 1 | external_input | evals |
 | tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_json_dataset | open | 1 | external_input | evals |
 | tldw_chatbook/Evals/dataset_validator.py | DatasetValidator._load_dataset | open | 3 | external_input | evals |
@@ -902,8 +903,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/app_entry.py | _load_css_build_manifest | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _save_css_build_manifest | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | main_cli_runner | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/config.py | _bind_config_interprocess_lock._config_interprocess_lock | create_private_text | 1 | unsupported | config |
-| tldw_chatbook/config.py | _bind_config_interprocess_lock._config_interprocess_lock | open_private_text_append_stream | 1 | unsupported | config |
+| tldw_chatbook/config.py | _bind_config_interprocess_lock._config_interprocess_lock | create_private_text | 2 | unsupported | config |
+| tldw_chatbook/config.py | _bind_config_interprocess_lock._config_interprocess_lock | open_private_text_append_stream | 2 | unsupported | config |
 | tldw_chatbook/config.py | _load_cli_config_bootstrap_unlocked | create_private_text | 2 | unsupported | config |
 | tldw_chatbook/config.py | _load_cli_config_bootstrap_unlocked | open_private_binary | 1 | unsupported | config |
 | tldw_chatbook/config.py | _load_cli_config_bootstrap_unlocked | secure_private_directory | 1 | unsupported | config |
@@ -2225,6 +2226,10 @@ asset reads here do not authorize arbitrary renderer/generation callbacks.
 | tldw_chatbook/Character_Chat/visual_identity.py | _write_private_publication_path | write | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Character_Chat/visual_identity.py | cleanup_visual_identity_publication_candidate | secure_private_directory | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Character_Chat/visual_identity.py | publish_visual_identity_candidate | secure_private_directory | 2 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | write_bytes | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._write_text_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/private_paths.py | _MCPAppendStream.write | write | 1 | generic_boundary | exact MCP history append native lifetime; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | _native_mkdir | mkdir | 2 | generic_boundary | private helper; exact visual secure-directory native bridge; other sources ordinary |
@@ -2863,34 +2868,56 @@ existing private activation publisher and are not restored execution authority.
 ## Census reconciliation (TASK-39053)
 
 This inventory had not matched production since it landed. Recomputed at dev
-2684e5453f, the census had 644 added, 194 gone and 12 changed producer rows,
-13 new SQLite members and 8 SQLite rows with no registry member. Three scanner
-blind spots hid live producers; all three are now counted:
+2684e5453f with the scanner as it was, the census had 644 added, 194 gone and 12
+changed producer rows, 13 new SQLite members and 8 SQLite rows with no registry
+member. Scanner blind spots hid live producers; these forms are now counted:
 
-- `from <module> import os` (60+ modules import `os` from `Utils/platform_files`)
+- `from <module> import os` (69 modules import `os` from `Utils/platform_files`)
   bound `os` without `import os`, so their `os.replace` / `os.unlink` calls left
   the census (24 of the 194 "gone" rows).
 - `fn, flags = libc.renameatx_np, 0x4` (tuple assignment) hid the native
   no-replace publication in `Backup_Recovery/native_platform.rename_noreplace`.
+  Assigned aliases are lexically scoped: they apply in the assigning function,
+  its nested functions and, for module-level assignments, everywhere.
 - The `Utils/atomic_file_ops` writers (`atomic_write_text`, `atomic_write_bytes`,
-  `atomic_write_json`, `atomic_copy`) were not in the vocabulary, so 19 modules'
-  callers, Model_Artifacts and the Chatbooks registry among them, were invisible.
+  `atomic_write_json`, `atomic_copy`) were not in the vocabulary. 19 modules call
+  them; 4 had rows that looked gone (`trajectory_export`, `model_discovery_disk_cache`,
+  `config_profiles`, `file_operation_tools`), the other 15 were never counted.
+- A producer passed by reference, such as `asyncio.to_thread(path.write_bytes, data)`
+  or `run_in_executor(None, atomic_write_text, ...)`: the Personas exports
+  (`_dictionary_export_worker`, `_export_expression_set`) had looked gone.
+- The yaml serializers `safe_dump`, `safe_dump_all` and `dump_all`:
+  `EvalConfigLoader.save` writes the `eval.definitions` source through
+  `yaml.safe_dump` into a stream from `raw.file(...)`.
+- `os.rename` and `os.link`, publication seams like `os.replace`.
 
-The classifications below are proposals pending owner sign-off of the cohort
-table in TASK-39053. They apply the rules this document already uses, in order:
+Known limits: a `x.open` / `x.connect` value passed as an argument is not counted
+(here it is widget state such as `header.open`, or `webbrowser.open`). `tempfile`
+creation (86 rows if counted), third-party writers such as pydub `AudioSegment.export`,
+subprocess outputs and dynamic bindings such as `Tools/local_tool_impls`'
+`file_os` are outside the vocabulary.
+
+With these forms counted, the drift is 716 added, 166 gone and 13 changed
+producer rows. The classifications below are proposals pending owner sign-off of
+the cohort table in TASK-39053. They apply the rules this document already uses,
+in order:
 
 1. **Moved or renamed producer**: a row whose code moved (same producer, new symbol
    or module) keeps its reviewed classification and cohort. Those rows replace
    the old rows in place, above.
-2. **Same mechanism in a reviewed module**: a new symbol that does what the
-   module's reviewed rows do (checked in source) takes that disposition. File-tool
-   helpers keep the old file-tool split: writes `external_input`, other calls
-   `unsupported`, cohort `external`.
+2. **Same mechanism in a reviewed module or symbol**: a new call in a reviewed
+   symbol, or a new symbol that does what the module's reviewed rows do (checked
+   in source), takes that disposition. File tools follow their reviewed split: a
+   symbol that writes into the user-selected root (write, mkdir and write-target
+   opens, as `WriteFileTool.execute`) is `external_input`; read, lock and verify
+   helpers stay `unsupported`, as the old `read_file` / `edit_file` opens. Cohort
+   `external`.
 3. **Generic boundary**: private path/SQLite/file utility modules (`generic` cohort).
 4. **Reviewed mechanisms in new modules** (each call line read in source):
-   `value.to_json()` into a column or payload and `Image.open(BytesIO(...))`
-   decodes are `memory`; child-stdin, own-stdio, pipe, pty and socket transport
-   writes are `process_artifact` / `process-transport`.
+   `value.to_json()` into a column or payload, `yaml.safe_dump(value)` with no
+   stream, and `Image.open(BytesIO(...))` decodes are `memory`; child-stdin,
+   own-stdio, pipe, pty and socket transport writes are `process_artifact` /
+   `process-transport`.
 5. **Registered SQLite owner**: rows in an owner's production module take the
    owner id as cohort. They are `unsupported` unless the owner's flags are
    `centralized_backup_allowed` and `recovery_capture_allowed` with an installed
@@ -2901,10 +2928,24 @@ table in TASK-39053. They apply the rules this document already uses, in order:
    Backup_Recovery pipeline producers are `unsupported` pending the backup
    owner's per-symbol review.
 
-Removed rows: of the 170 gone producer rows, 60 moved or were renamed (61 rows
-replace them in place), 53 more were in 13 deleted files, and 57 were removed or
-refactored code (for example the Notes `_ReceiptsAdapter`, now the installed
-`notes.sync_state` exclusion). Of the 8
+Removed rows: of the 166 gone producer rows, 61 moved or were renamed (62 rows
+replace them in place), 53 were in 13 deleted files and 17 were in symbols that no
+longer exist (for example the Notes `_ReceiptsAdapter`, now the installed
+`notes.sync_state` exclusion). The other 35 are in symbols that still exist:
+
+| Symbol | Where its producer went |
+| --- | --- |
+| `trajectory_export.write_trajectory_export`, `ModelCatalogDiskStore.save`, `ConfigProfileManager._save_one`, `WriteFileTool.execute` | `Utils/atomic_file_ops` writers (counted rows above) |
+| `local_tool_impls.edit_file` / `read_file` / `write_file`, `patch_tool_impls.patch_files` | descriptor-relative helpers `_edit_relative_file`, `_read_relative_descriptor`, `_atomic_write_target`, `_patch_relative_file` |
+| `KokoroTTSBackend._download_model_if_needed` / `_download_voice_if_needed` / `_initialize_onnx` (write) | `_kokoro_stream_download`; `_initialize_onnx` keeps its `makedirs` row |
+| `build_css.build_css` / `build_screen_css` / `build_widget_defaults` / `write_build_manifest` | `build_css._atomic_write_text` |
+| `config.get_user_data_dir`, `config.load_settings` | `_resolve_user_data_dir`, `_secure_default_data_dir`, `_load_settings_uncached` |
+| `Prompts_DB.export_prompts_formatted`, `LibraryScreen._write_library_*_export_file`, `Book_Ingestion_Lib.process_mobi` | `DB/prompt_export`, `UI/Library_Modules/library_file_export.write_export_text`, `local_file_ingestion.read_ingest_file_bytes` |
+| `handle_start_vllm_server_button_pressed`, `HiggsVoiceProfileManager.__init__` | no producer call left |
+| `SettingsScreen._handle_about_link` | `partial(webbrowser.open, ...)`: a reference, not a writer |
+| `AudioService.create_m4b_with_chapters` | its metadata write moved to `write_ffmetadata_file` and its temp cleanup to `Path.unlink`; it **still writes** a temporary `.m4a` (tempfile plus pydub) and the M4B (ffmpeg subprocess), outside the vocabulary |
+
+Of the 8
 SQLite rows with no registry member: `recovery.operations.receipts` was never a
 registry member (no registry commit adds it; it was written for this document
 in b5251e9a6e). The seven `settings.*` owners left with the Tools settings window:
@@ -2957,8 +2998,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Agents/code_review_store.py | ReviewStore.read_file | open | 1 | unsupported | agents |
 | tldw_chatbook/Agents/code_review_store.py | ReviewStore.write_verification_state | write | 1 | unsupported | agents |
 | tldw_chatbook/Agents/goal_iteration.py | _open_bound | open | 2 | unsupported | agents |
-| tldw_chatbook/Agents/hook_permissions.py | HookPermissions._bind_store_lock._store_lock | create_private_text | 1 | unsupported | agents |
-| tldw_chatbook/Agents/hook_permissions.py | HookPermissions._bind_store_lock._store_lock | open_private_text_append_stream | 1 | unsupported | agents |
+| tldw_chatbook/Agents/hook_permissions.py | HookPermissions._bind_store_lock._store_lock | create_private_text | 2 | unsupported | agents |
+| tldw_chatbook/Agents/hook_permissions.py | HookPermissions._bind_store_lock._store_lock | open_private_text_append_stream | 2 | unsupported | agents |
 | tldw_chatbook/Agents/hook_permissions.py | HookPermissions._read_state | open_private_binary | 1 | unsupported | agents |
 | tldw_chatbook/Agents/hook_permissions.py | HookPermissions._write_state | atomic_private_write_text | 1 | unsupported | agents |
 | tldw_chatbook/Agents/local_tool_provider.py | _hash_file | open | 1 | unsupported | agents |
@@ -2969,7 +3010,6 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Character_Chat/buddy_conversion.py | publish_buddy_character | open | 1 | unsupported | assets |
 | tldw_chatbook/Character_Chat/buddy_conversion.py | publish_buddy_character | secure_private_directory | 1 | unsupported | assets |
 | tldw_chatbook/Character_Chat/builtin_pixel_migu.py | _load_bundle.read_resource | open | 1 | unsupported | assets |
-| tldw_chatbook/Character_Chat/portrait_performance.py | normalize_performance_frame | open | 2 | unsupported | assets |
 | tldw_chatbook/Persona_Buddy/library.py | BuddyLibrary.publish_review | write_bytes | 1 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/builtin_pixel_migu.py | ensure_builtin_pixel_migu_buddy | secure_private_directory | 1 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/export.py | build_native_buddy_archive | ZipFile | 2 | unsupported | assets |
@@ -2980,7 +3020,6 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/RAG_Search/generation.py | _persist_dependencies | open | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._discard_unpublished_locks | os.unlink | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/bootstrap.py | _registry_read_lock | open | 1 | generic_boundary | backup_control_reader |
-| tldw_chatbook/Backup_Recovery/native_platform.py | linux_identity | renameatx_np | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/agent_worktree_storage.py | prepare_agent_worktrees_base | secure_private_directory | 1 | unsupported | backup_recovery own pipeline; owner review pending |
 | tldw_chatbook/Backup_Recovery/config_binding.py | preserve_owned_binding | os.replace | 1 | unsupported | backup_recovery own pipeline; owner review pending |
 | tldw_chatbook/Backup_Recovery/config_binding.py | preserve_owned_binding | os.unlink | 1 | unsupported | backup_recovery own pipeline; owner review pending |
@@ -3022,27 +3061,30 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/LLM_Provider_Catalog/models_dev_catalog.py | _write_cache_file | mkdir | 1 | disposable | diagnostics |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader._load_config | open | 1 | generic_boundary | eval.definitions phase8 exact default source; explicit exports ordinary; runtime composition pending |
 | tldw_chatbook/TTS/profile_sqlite_policy.py | require_native_close_policy_support | connect | 1 | memory | exact sqlite :memory: probe |
+| tldw_chatbook/Tools/local_tool_impls.py | _atomic_write_target | open | 2 | external_input | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _atomic_write_target | write | 1 | external_input | external |
+| tldw_chatbook/Tools/local_tool_impls.py | _mkdir_relative_directory | mkdir | 1 | external_input | external |
+| tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | open | 2 | external_input | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | write | 1 | external_input | external |
+| tldw_chatbook/Tools/remote_worker_bundle.py | _mkdir_relative_directory | mkdir | 1 | external_input | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _acquire_expected_target_lock | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _assert_expected_target_is_current | open | 1 | unsupported | external |
-| tldw_chatbook/Tools/local_tool_impls.py | _atomic_write_target | open | 2 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _edit_relative_file | open | 1 | unsupported | external |
-| tldw_chatbook/Tools/local_tool_impls.py | _mkdir_relative_directory | mkdir | 1 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _read_relative_descriptor | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _read_write_target | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/patch_tool_impls.py | _patch_relative_file | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _acquire_expected_target_lock | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _assert_expected_target_is_current | open | 1 | unsupported | external |
-| tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | open | 2 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _edit_relative_file | open | 1 | unsupported | external |
-| tldw_chatbook/Tools/remote_worker_bundle.py | _mkdir_relative_directory | mkdir | 1 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _patch_relative_file | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _read_relative_descriptor | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _read_write_target | open | 1 | unsupported | external |
 | tldw_chatbook/Agents/project_instruction_resolver.py | _read_promotion_target_state | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | os.link | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_revision_file | os.link | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_revision_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_revision_file | write | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.move_file | os.link | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_revision | open | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_revision | os.unlink | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_revision | write | 1 | external_input | external-notes-workspace-or-export |
@@ -3052,6 +3094,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Chunking/engine/templates.py | TemplateManager.load_template | open | 1 | unsupported | files |
 | tldw_chatbook/Chunking/engine/templates.py | TemplateManager.save_template | dump | 1 | unsupported | files |
 | tldw_chatbook/Chunking/engine/templates.py | TemplateManager.save_template | open | 1 | unsupported | files |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | replace | os.link | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/crypto.py | transform | os.link | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite_files.py | _open_artifact_fd | open | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite_files.py | _prepare_windows_artifact | open | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite_helper.py | _PrivatePipe.write | write | 1 | generic_boundary | generic |
@@ -3060,6 +3104,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/DB/store_kernel.py | SQLiteStoreKernel._open_connection | connect_private_sqlite | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | _discard_placeholder | os.unlink | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | _publish_no_clobber | open | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/atomic_file_ops.py | _publish_no_clobber | os.link | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | _publish_no_clobber | os.replace | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | _publish_no_clobber | os.unlink | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | open | 1 | generic_boundary | generic |
@@ -3070,7 +3115,10 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._create_temporary | open | 1 | unsupported | library.legacy_recovery |
 | tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._export_json_unverified | os.unlink | 1 | unsupported | library.legacy_recovery |
 | tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._open_export_parent | open | 1 | unsupported | library.legacy_recovery |
+| tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._publish_export | os.link | 1 | unsupported | library.legacy_recovery |
+| tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._publish_export | os.rename | 1 | unsupported | library.legacy_recovery |
 | tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._publish_export | os.unlink | 1 | unsupported | library.legacy_recovery |
+| tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._publish_export_path | os.link | 1 | unsupported | library.legacy_recovery |
 | tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._publish_export_path | os.replace | 1 | unsupported | library.legacy_recovery |
 | tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._publish_export_path | os.unlink | 1 | unsupported | library.legacy_recovery |
 | tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._read_transaction | connect_private_sqlite | 1 | unsupported | library.legacy_recovery |
@@ -3186,6 +3234,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/LLM_Management/snapshot_store.py | SnapshotStore.stage_restore | open_private_binary | 2 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Management/snapshot_store.py | SnapshotStore.stage_restore | open_private_text_append_stream | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Management/snapshot_store.py | _directory | secure_private_directory | 1 | unsupported | miscellaneous |
+| tldw_chatbook/LLM_Management/snapshot_store.py | _move_verified | os.rename | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Management/snapshot_store.py | _read_json | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Management/snapshot_store.py | _unlink_verified | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Management/snapshot_store.py | _write_chunk | write | 1 | unsupported | miscellaneous |
@@ -3219,6 +3268,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Personal_Context/link_key_custody.py | KeyringPersonalContextLinkKeyCustodian.load_or_create_storage_key | set_password | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Personal_Context/link_key_custody.py | KeyringPersonalContextLinkKeyCustodian.stage | set_password | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Personal_Context/link_key_custody.py | KeyringPersonalContextWrappingKeyProvider._private | set_password | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Petdex/review.py | review_petdex_import | write_bytes | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Petdex/review.py | write_native_export | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Petdex/review.py | write_native_export | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Petdex/sources.py | _folder_file | open | 3 | unsupported | miscellaneous |
@@ -3260,6 +3310,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._unlink_artifact | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.ensure_issued_metadata | open_private_binary | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.reset | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.reset | os.rename | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.retire_orphan_snapshots | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Plugins/authority_store.py | _directory | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Plugins/authority_store.py | _directory | secure_private_directory | 1 | unsupported | miscellaneous |
@@ -3307,9 +3358,11 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Tool_Packs/importer.py | _read_regular_archive | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | _digest_descriptor_relative | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | _digest_path | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Tool_Packs/publication.py | _link_supports_directory_descriptors | os.link | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | _open_parent | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | _remove_owned_temporary | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | publish_tool_pack | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Tool_Packs/publication.py | publish_tool_pack | os.link | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/publication.py | publish_tool_pack | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore._commit | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore._commit | write | 1 | unsupported | miscellaneous |
@@ -3333,6 +3386,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/UI/Chunking_Lab_Modules/sample_region.py | read_sample_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/markdown_export.py | _validate_and_write | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/markdown_export.py | _validate_and_write | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.link | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._require_external_video_pinned_capabilities | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Evals/snippet_editor.py | read_bounded_import_text | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/LLM_Management/llamacpp_setup_view.py | LlamaCppSetupView._render_diagnostics | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/LLM_Management/vllm_profiles.py | VllmProfileRepository._commit | atomic_write_json | 1 | unsupported | miscellaneous |
@@ -3343,14 +3398,21 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/UI/Library_Modules/library_export_controller.py | _read_export_artifact_facts | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Library_Modules/library_file_export.py | write_export_text | atomic_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Library_Modules/library_media_controller.py | LibraryMediaController._record_library_media_editor_draft | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Navigation/buddy_management.py | BuddyManagementCoordinator._review_petdex | write_bytes | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Persona_Modules/portrait_performance.py | PortraitPerformanceController.handle.read | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Persona_Modules/roleplay_import_sniff.py | sniff_import_file | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/artifacts_dreams_modal.py | DreamsStoryModal.action_export._write_story_export | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/artifacts_dreams_modal.py | DreamsStoryModal.action_export._write_story_export | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/artifacts_screen.py | ArtifactsScreen._write_report_export_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chunking_lab_screen.py | ChunkingLabScreen.file_operation.read | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chunking_lab_screen.py | _inspect_recovery | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chunking_lab_screen.py | _write_selected_file | atomic_private_write_bytes | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chunking_lab_screen.py | _write_selected_file | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/meetings_screen.py | MeetingsScreen._render_segment | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/meetings_screen.py | MeetingsScreen._repaint_log | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._lore_export_worker | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/research_workspace_screen.py | ResearchWorkspaceScreen._download_quick_note | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/watchlists_collections_screen.py | WatchlistsCollectionsScreen._write_briefing_export_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/tls_trust.py | _file_digest | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/tls_trust.py | _merged_bundle_path | atomic_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/tls_trust.py | _merged_bundle_path | mkdir | 1 | unsupported | miscellaneous |
@@ -3371,7 +3433,9 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Web_Server/webauthn_store.py | WebAuthnCredentialStore.save | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Server/webauthn_store.py | WebAuthnCredentialStore.save | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Server/webauthn_store.py | WebAuthnCredentialStore.save | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py | ConsoleExchangeExportDialog.export_selected | atomic_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_workspace_context.py | ConsoleWorkspaceContextTray._patch_in_place | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Workflows/authoring.py | WorkflowAuthoring._export | atomic_private_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Workflows/authoring.py | WorkflowAuthoring._read_import | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Workflows/authoring.py | WorkflowAuthoring.create | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Workflows/authoring.py | WorkflowAuthoring.export_file | open | 1 | unsupported | miscellaneous |
@@ -3398,7 +3462,10 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Model_Artifacts/machine_memory_probe.py | _read_bounded | open | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._commit_verified_staging | atomic_write_json | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._download_stage_for | atomic_write_json | 1 | unsupported | models |
+| tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._download_stage_for | os.rename | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._finalize_download_stage | atomic_write_json | 1 | unsupported | models |
+| tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._promote | os.rename | 1 | unsupported | models |
+| tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._retire_download_stage_operation | os.rename | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._write_readiness | atomic_write_json | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService.activate | atomic_write_json | 1 | unsupported | models |
 | tldw_chatbook/DB/recovery_dreams_guardian.py | _DreamsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
@@ -3418,6 +3485,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Character_Chat/buddy_conversion.py | _verified_timeline | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Character_Chat/expression_set_io.py | _resolve_native_expression_set | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Character_Chat/portrait_compositing.py | _open | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
+| tldw_chatbook/Character_Chat/portrait_performance.py | normalize_performance_frame | open | 2 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Chat/character_expression_playback.py | expression_image_size | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Chat/character_expression_playback.py | prepare_expression | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Chat/console_chat_fork.py | validate_console_fork_image_payload | open | 2 | memory | PIL-BytesIO decode; no-independent-file |
@@ -3438,6 +3506,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Utils/private_paths.py | open_private_lock_stream | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | unlink_private_file | open_private_binary | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | unlink_private_file | os.unlink | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.link | 1 | disposable | private staged credential rewrite |
 | tldw_chatbook/Agents/hooks_v2/command_executor.py | CommandExecutor._run | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Agents/run_hooks.py | _capture_hook | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Audio/diarizer_engine_onnx.py | _env_error | write | 1 | process_artifact | process-transport |
@@ -3499,6 +3568,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Skills_Interop/builtin_skills.py | snapshot_builtin_skill | write_bytes | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService.run_skill_script._run_in_scratch_dir | mkdir | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/skill_package_inspection.py | inspect_skill_zip | ZipFile | 1 | unsupported | skills |
+| tldw_chatbook/Subscriptions/briefing_audio.py | generate_script_audio | atomic_private_write_bytes | 1 | unsupported | subscriptions.assets |
 | tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._validate_same_identity_conversation | mkdir | 1 | disposable | tempfile.TemporaryDirectory compare scratch; context cleanup |
 | tldw_chatbook/Audio/meeting_session.py | LocalMeetingSink._rewrite_transcript | to_json | 1 | memory | to_json value serialization; no-independent-file |
 | tldw_chatbook/Audio/meeting_session.py | MeetingResult.to_json | to_json | 1 | memory | to_json value serialization; no-independent-file |
@@ -3550,3 +3620,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Workspaces/project_index/runtime.py | _AdmittedStoreFactory.__call__ | secure_private_directory | 2 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/project_index/service.py | ProjectIndexService._enroll_cleanup_owner | secure_private_directory | 1 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/project_index/service.py | ProjectIndexService.retry_detached_cleanup | secure_private_directory | 2 | unsupported | workspaces |
+| tldw_chatbook/Library/library_skills_state.py | compose_skill_markdown | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
+| tldw_chatbook/Notes/note_frontmatter.py | _dump | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
+| tldw_chatbook/Plugins/adapters/vendor.py | _branch_instruction | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
+| tldw_chatbook/Plugins/adapters/vendor.py | _integrated_instruction | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
