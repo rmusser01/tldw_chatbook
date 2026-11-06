@@ -507,7 +507,9 @@ class ConsoleReadinessConfigProjection:
         # TASK-38967: a proof handed back close to its expiry expired in the
         # FULL render that followed, which refused it and replayed the whole
         # sync 0.2 s later; re-read one past the run poll's refresh-ahead share.
-        self.run(lambda: None, life=self.max_age * REFRESH_AHEAD_SHARE)
+        # Not while reads fail: each failure arms a retry sync of its own.
+        ahead = None if self._retry_delay else self.max_age * REFRESH_AHEAD_SHARE
+        self.run(lambda: None, life=ahead)
         if self.pending:
             await self._settled.wait()
         return (

@@ -201,6 +201,19 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
                 "the render refused the display its warm-up had just handed back"
             )
 
+            # While reads fail, each failed re-read arms a retry sync, so the
+            # warm-up keeps the base rule: re-read only an expired display.
+            # Reading ahead there replayed an unparseable config's idle
+            # Console twice in 2 s (test_an_unparseable_config_...).
+            await until(lambda: not projection.pending, timeout=30)
+            projection._retry_delay = spend.RETRY_FIRST_DELAY  # A read failed.
+            read_at = projection.at
+            clock.now += projection.max_age * 0.6
+            assert await projection.warm()
+            assert projection.at == read_at and not projection.pending, (
+                "the warm-up read ahead while the display's reads were failing"
+            )
+
 
 @pytest.mark.asyncio
 async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_tick(
@@ -569,6 +582,40 @@ def test_a_warm_load_no_owner_saw_still_ends_the_cold_episode(monkeypatch):
     )
     assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [False] * 3
 
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_only_a_successful_config_load_counts_as_a_cache_install(request):
+    """TASK-38949: the install count moves on a good load and holds on a broken one.
+
+    ``defer_cold_live_read`` ends a cold episode when this count moves. A
+    broken config.toml must leave it where it is, or each owner would defer on
+    every call while the file stays unparseable.
+    """
+    from tldw_chatbook import config
+
+    path = config._get_effective_config_path()  # This child's own profile.
+    await asyncio.to_thread(config.load_settings, True)
+    good = path.read_bytes()
+    before = config._CONFIG_CACHE_INSTALLS
+    await asyncio.to_thread(config.load_settings, True)
+    loaded = config._CONFIG_CACHE_INSTALLS
+    try:
+        path.write_bytes(good + b"\n[unterminated\n")
+        await asyncio.to_thread(config.load_settings, True)
+        broken = config._CONFIG_CACHE_INSTALLS
+        await asyncio.to_thread(config.load_settings, True)
+        still_broken = config._CONFIG_CACHE_INSTALLS
+    finally:
+        path.write_bytes(good)
+        await asyncio.to_thread(config.load_settings, True)
+    fixed = config._CONFIG_CACHE_INSTALLS
+    assert loaded > before, f"a good load installed nothing: {before} -> {loaded}"
+    assert broken == still_broken == loaded, (
+        f"an unparseable file counted as an install: {loaded} -> {broken} -> {still_broken}"
+    )
+    assert fixed > still_broken, f"the fixed file installed nothing: {fixed}"
 
 def test_the_credential_poll_defers_a_cold_read_once_and_then_stays_idle(monkeypatch):
     """TASK-36511.4: the 0.25 s credential poll warms cold config off the loop.

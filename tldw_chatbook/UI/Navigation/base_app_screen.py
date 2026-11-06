@@ -62,7 +62,9 @@ class BaseAppScreen(Screen):
     #: the first paint, not just after a later resize). Every screen shares
     #: this base, so every DestinationHeader user gets the trigger with no
     #: per-screen code (`.shell-header-compact .workbench-header` in
-    #: components/_workbench.tcss is the only other half of the wiring).
+    #: components/_workbench.tcss is the only other half of the wiring),
+    #: except ChatScreen, which empties its own copy and applies these from
+    #: `on_resize`, restyling only what their rules style (TASK-38950).
     VERTICAL_BREAKPOINTS = [
         (0, "shell-header-compact"),
         (_DESTINATION_HEADER_COMPACT_FLOOR_HEIGHT + 1, "shell-header-normal"),

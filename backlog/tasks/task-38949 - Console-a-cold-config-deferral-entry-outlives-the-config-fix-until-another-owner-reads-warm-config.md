@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-06 16:17
+updated_date: 2026-11-06 22:29
 labels:
 - follow-up
 - console
@@ -50,13 +50,17 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 
 <!-- SECTION:NOTES:BEGIN -->
 **Approach.** A cold episode now ends when config loads warm, whoever loads it, not only when an owner happens to be called while config is warm.
-- `config.py` keeps `_CONFIG_CACHE_INSTALLS`, a count of successful cache installs. It goes up at the bootstrap cache's two install sites (`_load_cli_config_bootstrap_unlocked`, `_install_bootstrap_cache_from_raw`) and the settings cache's one (`_load_settings_guarded`). Each of those runs only after a successful load, so a failed load adds nothing.
+- `config.py` keeps `_CONFIG_CACHE_INSTALLS`, which takes a fresh number at every successful cache install. The installs happen at the bootstrap cache's two sites (`_load_cli_config_bootstrap_unlocked`, `_install_bootstrap_cache_from_raw`) and at the settings cache's one (`_load_settings_uncached`). Each of those runs only after a successful load, so a failed load takes no number.
+- Review r11c-rev1 pointed out that the three sites run under different locks: the settings site under `_SETTINGS_CACHE_LOCK`, the other two under the config-file lock. So the numbers come from `next()` on one module-level `itertools.count`, which is atomic. Two installs on different threads never share a number. If they assign out of order, the value can only change, which at worst starts one extra episode.
 - `defer_cold_live_read` records the count beside each screen's deferral set (`_console_cold_read_installs`). A set recorded under an older count belongs to a past episode, so it is cleared before the check. The existing clear on a warm call stays.
 - Why a counter rather than an identity token: a broken config clears both caches to `None` on each failed reload, so a token built from the cache objects reads the same before and after a fix-then-break cycle, and the bug stays.
 
 **Evidence.**
 - New test: `Tests/UI/test_console_projection_reads_off_loop.py::test_a_warm_load_no_owner_saw_still_ends_the_cold_episode`. Three owners defer once and then read live within one episode. Then a load warms config while no owner is called, and config goes cold again. On the base it was red on the assertion: `an owner read cold config live on its first call of a new episode: [False, False, False]`. With the fix it is green, and the bound holds in the new episode as well.
-- Real loader, through run.sh on a scratch profile (`r11c-installs-probe.py`, not committed): a good load moved the count 4 -> 6, two loads of an unparseable config.toml left it at 6, and the fixed file moved it to 8. So an unparseable file keeps one episode for as long as it stays broken.
+- Real loader, through run.sh on a scratch profile (a probe, not committed): a good load moved the count 4 -> 6, two loads of an unparseable config.toml left it at 6, and the fixed file moved it to 8. So an unparseable file keeps one episode for as long as it stays broken.
+- Review r11c-rev1 found the `config.py` half untested: deleting the three increments kept the suite green. New test: `test_only_a_successful_config_load_counts_as_a_cache_install`, in the same file under `@private_profile_test`. It runs real loads of its child's own profile: a good load must move the count, an unparseable file must leave it unchanged over two loads, and the fixed file must move it again.
+  - With the three increments deleted it was red: `a good load installed nothing: 0 -> 0`.
+  - With the `itertools.count` source it is green.
 - AC#2: the whole file passed at `-n 4` (18 passed, load 42-44), including `test_an_unparseable_config_leaves_an_idle_console_idle` (the mounted, real-file bound) and `test_the_credential_poll_defers_a_cold_read_once_and_then_stays_idle`.
 - Covering files (`test_console_response_rules.py`, `test_console_cost_chip_screen.py`, `test_console_credential_poll_gate.py`, `test_console_poll_tab_source_boundaries.py`, `Tests/test_config_read_fastpath_task21124.py`, `Tests/test_config_warm_read_no_handshake_task32804.py`), `-n 4`: 79 passed and 2 failed on head at load 44. The same command failed 9 on the base at load 48-50, including both of head's nodes. Those are load flakes in the response-rule and cost-chip files.
 

@@ -183,12 +183,13 @@ def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
         _paint_edge_region_focus(framed, focused_within, focus_control)
 
 
+def _app_style_inputs(app: Any) -> tuple:
+    return frozenset(app.classes), app.pseudo_classes
+
+
 def note_suspend_style_inputs(screen: Any) -> None:
     """Record the App's classes and pseudo-classes as the screen leaves (TASK-38950)."""
-    screen._console_suspend_style_inputs = (
-        frozenset(screen.app.classes),
-        screen.app.pseudo_classes,
-    )
+    screen._console_suspend_style_inputs = _app_style_inputs(screen.app)
 
 
 def skip_unchanged_resume_restyle(screen: Any, event: Any) -> None:
@@ -205,11 +206,19 @@ def skip_unchanged_resume_restyle(screen: Any, event: Any) -> None:
     and the App's classes and pseudo-classes are the ones it used and the ones
     the screen left with. This runs before Textual's handler (the dispatch
     walks the most derived class first), which still does all its other work.
+
+    Every ``pop_screen`` posts ``refresh_styles=False`` and Textual restyles
+    nothing. If the App's classes or pseudo-classes moved while the screen was
+    covered, its nodes may hold the old ones, so the next return restyles.
     """
-    if not event.refresh_styles:
-        return  # A modal's pop: Textual does not restyle, so nothing is learned.
     app = screen.app
-    inputs = (app.stylesheet.rules, frozenset(app.classes), app.pseudo_classes)
+    if not event.refresh_styles:
+        if _app_style_inputs(app) != getattr(
+            screen, "_console_suspend_style_inputs", None
+        ):
+            screen._console_resume_style_inputs = None
+        return
+    inputs = (app.stylesheet.rules, *_app_style_inputs(app))
     styled = getattr(screen, "_console_resume_style_inputs", None)
     if (
         styled is not None
@@ -243,11 +252,17 @@ def apply_scoped_breakpoints(
         return
     screen.update_classes(wanted, update=False)
     stylesheet = screen.app.stylesheet
-    names: set[str] = set()
-    for rule in stylesheet.rules:
-        selectors = rule.selectors
-        if any(f".{name}" in selectors for name in wanted):
-            names |= rule.selector_names
+    rules = stylesheet.rules
+    cached = getattr(screen, "_console_breakpoint_names", None)
+    if cached is not None and cached[0] is rules and cached[1] == frozenset(wanted):
+        names = cached[2]
+    else:  # One scan per parsed sheet: 5,843 selector strings cost 139 ms at load 86.
+        names = set()
+        for rule in rules:
+            selectors = rule.selectors
+            if any(f".{name}" in selectors for name in wanted):
+                names |= rule.selector_names
+        screen._console_breakpoint_names = (rules, frozenset(wanted), names)
     targets = [
         node
         for node in screen.walk_children(with_self=True)

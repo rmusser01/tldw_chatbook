@@ -47,6 +47,8 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.UI.Console_Modules.agent import apply_console_agent_status_state
+from tldw_chatbook.UI.Console_Modules.frame import apply_scoped_breakpoints
+from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchAction,
@@ -596,6 +598,11 @@ class _AwayScreen(Screen):
         yield Static("away")
 
 
+#: An App class only these tests set, and the one rule keyed on it.
+_PROBE_CLASS = "-resume-probe"
+_PROBE_CSS = f"App.{_PROBE_CLASS} #console-shell {{ tint: red 20%; }}"
+
+
 class _SwitchHarness(ConsolidatedCSSApp):
     """The ready Console, installed: a switch away suspends it, a switch back resumes it."""
 
@@ -607,6 +614,7 @@ class _SwitchHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         self.app_instance._ui_ready = True
+        self.stylesheet.add_source(_PROBE_CSS, read_from=(__file__, "_PROBE_CSS"))
         self.install_screen(ChatScreen(self.app_instance), "console")
         self.install_screen(_AwayScreen(), "away")
         await self.push_screen("console")
@@ -623,6 +631,17 @@ async def _switched_host(pilot, host):
     console = console.screen
     await pilot.pause(1.0)
     return console
+
+
+def _tinted(console) -> bool:
+    return console.query_one("#console-shell").styles.tint.a > 0
+
+
+def _assert_fully_styled(host, console, message: str) -> None:
+    """Every Console node holds the styles a full restyle computes now."""
+    shown = _styles(console)
+    host.update_styles(console)
+    assert shown == _styles(console), message
 
 
 async def _return_to(host, pilot, console, away=None) -> tuple[list, int]:
@@ -659,9 +678,10 @@ async def test_a_return_restyles_the_console_only_when_a_style_input_moved():
     harness). With no rule, App class or App pseudo-class changed while it was
     away, the Console now clears that flag before Textual's handler runs. That
     handler still does the rest of its work: the stack update count moves, and
-    a size change made while away lays the Console out at the new size. A theme
-    change made while away reparses the rules, so that return restyles in full
-    and shows the new theme (red under a variant that always skips).
+    a size change made while away lays the Console out at the new size. A rule
+    added or a theme changed while away reparses the rules, so that return
+    restyles in full and shows it (red under a variant that always skips, and
+    the added rule under one that drops the rules check).
     """
     host = _switch_host()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -689,6 +709,16 @@ async def test_a_return_restyles_the_console_only_when_a_style_input_moved():
         await _return_to(host, pilot, console, resize)
         await pilot.pause()
         assert console.size == host.size == (150, 40), "the return kept the old layout"
+
+        async def add_sheet():  # Rules alone: no theme, no App class moves.
+            host.stylesheet.add_source(
+                "#console-shell { tint: blue 30%; }", read_from=(__file__, "add_sheet")
+            )
+            await pilot.pause()
+
+        await _return_to(host, pilot, console, add_sheet)
+        assert _tinted(console), "a rule added while away did not show on return"
+        _assert_fully_styled(host, console, "a rule added while away left a stale style")
 
         before = _styles(console)
         theme = "textual-light" if host.theme != "textual-light" else "textual-dark"
@@ -763,3 +793,70 @@ async def test_a_header_breakpoint_flip_restyles_only_what_its_rules_style(monke
         await pilot.pause()
         assert console.has_class("shell-header-normal")
         assert not console.has_class("shell-header-compact")
+
+        # The rule scan is cached per parsed sheet and class set; each input
+        # changing alone must rebuild it. A new rule naming a breakpoint class:
+        host.stylesheet.add_source(
+            ".shell-header-compact #console-transcript-region { tint: blue 30%; }\n"
+            ".r11-breakpoint-probe #console-native-composer { tint: red 30%; }",
+            read_from=(__file__, "breakpoint cache"),
+        )
+        apply_scoped_breakpoints(console, BaseAppScreen.VERTICAL_BREAKPOINTS, 24)
+        transcript = console.query_one("#console-transcript-region")
+        assert transcript.styles.tint.a > 0, "a rule added to the sheet was not scanned"
+        assert console.query_one("#console-native-composer") not in (
+            transcript.walk_children(with_self=True)
+        )
+        # Another breakpoint class over the same sheet:
+        apply_scoped_breakpoints(console, [(0, "r11-breakpoint-probe")], 24)
+        composer = console.query_one("#console-native-composer")
+        assert composer.styles.tint.a > 0, "a new breakpoint class was not scanned"
+        flipped = _styles(console)
+        host.update_styles(console)
+        assert _styles(console) == flipped, "a cached scan left a stale style"
+
+
+@pytest.mark.asyncio
+async def test_an_app_class_that_moved_while_the_console_was_covered_shows_on_return():
+    """TASK-38950: an App class change the Console missed restyles it on return.
+
+    App-level class changes restyle only the screens on top. Two ways the
+    Console misses one:
+
+    * set while the Console is current, cleared while it is switched away:
+      the App classes on return match the last full restyle but not the ones
+      the Console left with (red when the suspend check is dropped);
+    * set while current, cleared under a pushed screen that then pops: Textual
+      posts every pop's ``ScreenResume`` with ``refresh_styles=False`` and
+      restyles nothing, so the next return must not skip either.
+    """
+    host = _switch_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = await _switched_host(pilot, host)
+        await _return_to(host, pilot, console)  # Settle the sheet (see above).
+
+        host.add_class(_PROBE_CLASS)
+        await pilot.pause()
+        assert _tinted(console), "the probe rule styles nothing in the Console"
+
+        async def clear_probe():
+            host.remove_class(_PROBE_CLASS)
+            await pilot.pause()
+
+        await _return_to(host, pilot, console, clear_probe)
+        assert not _tinted(console), "an App class cleared while away still styles the Console"
+        _assert_fully_styled(host, console, "a cleared App class left a stale style")
+
+        host.add_class(_PROBE_CLASS)
+        await pilot.pause()
+        assert _tinted(console)
+        await host.push_screen(_AwayScreen())
+        await pilot.pause()
+        await clear_probe()
+        await host.pop_screen()
+        await pilot.pause()
+        await _return_to(host, pilot, console)
+        assert not _tinted(console), (
+            "an App class cleared under a popped screen still styles the Console"
+        )
+        _assert_fully_styled(host, console, "a popped screen left a stale style")

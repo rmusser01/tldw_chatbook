@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-06 20:17
+updated_date: 2026-11-06 22:29
 labels:
 - follow-up
 - console
@@ -60,12 +60,14 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
   - the parsed rules are the very list its last full restyle used (`stylesheet.rules` is a new list after every parse);
   - the App node's classes and pseudo-classes are the ones that restyle used and the ones `on_screen_suspend` recorded as the Console left (`note_suspend_style_inputs`).
   - A suspended screen's own class and pseudo-class changes restyle at once, because Textual's `App.update_styles` handles non-App nodes immediately. Only those two inputs can go stale.
-  - A modal's pop already posts `refresh_styles=False`, so the handler learns nothing from it.
+  - Every `pop_screen` posts `refresh_styles=False` (Textual 8.2.8 `app.py:3112`), and Textual then restyles nothing. On such a resume the handler compares the App's classes and pseudo-classes with the suspend record. If they moved while the Console was covered, its nodes may hold the old ones, so the handler drops its restyle record and the next return restyles in full. The first version ignored pops entirely, and review r11c-rev1 found that gap.
   - Everything else Textual's handler does still runs.
 - **Breakpoints (AC#3).** ChatScreen sets `VERTICAL_BREAKPOINTS = []`, so `Screen._on_resize` skips its whole-screen `update_classes`.
   - `ChatScreen.on_resize` applies `BaseAppScreen.VERTICAL_BREAKPOINTS` with `apply_scoped_breakpoints`. It picks the same class as `Screen._get_breakpoint_classes` and sets it with `update=False`.
   - It then restyles the nodes whose selector names meet the `selector_names` of the rules that name a breakpoint class, with their subtrees. Those names are the key Textual's own `rules_map` matches nodes by, so no other node can be styled by those rules.
   - Today the matching rules are `.shell-header-compact .workbench-header` and `... .workbench-header-subtitle`.
+  - The scan over all 5,843 rules took 139 ms at load 86 (r11c-rev1), so its result is cached on the screen. The cache key is the identity of `stylesheet.rules` and the set of breakpoint classes.
+  - `BaseAppScreen`'s breakpoint comment now names ChatScreen's scoped override.
 
 **Measured (AC#1).**
 - Send harness at 160x45, Console installed and switched to a placeholder screen and back 8 times, through run.sh (scratch probe, not committed), base and branch interleaved at load 33-36.
@@ -92,6 +94,14 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 - `test_a_header_breakpoint_flip_restyles_only_what_its_rules_style` (AC#3) dispatches a Resize from 30 to 24 rows straight to the screen. Both heights are under 34, so `-console-compact` does not flip as well.
   - The nodes restyled must be exactly the nodes the breakpoint rules style (11 of 555), the styles must match a full restyle, and a real resize back must restore `shell-header-normal`.
   - Red with Textual's breakpoints restored (the base behaviour): `the flip restyled 555 of 555 nodes; its rules style 11`.
+- **Review r11c-rev1 fixes.** A theme switch moves the rules and the App classes together, so a mutant dropping either check passed the first suite. Each check now has a case of its own, and every mutant below was killed by a temporary edit of `frame.py` and run through run.sh:
+  - In the first test, a return after an `add_source` rule targeting `#console-shell` was added while away. M1 drops the rules-identity check and fails with `a rule added while away did not show on return`.
+  - New test `test_an_app_class_that_moved_while_the_console_was_covered_shows_on_return`, using a harness-local `App.-resume-probe #console-shell { tint }` rule:
+    - The App class is set while the Console is current and cleared while it is away. M2 drops the suspend comparison and fails with `an App class cleared while away still styles the Console`.
+    - The App class is set while current, then cleared under a pushed screen that pops. Before the pop fix (M3: the drop removed) it was red with `an App class cleared under a popped screen still styles the Console`.
+  - The breakpoint test now also adds a rule while the Console is current and flips again. A scan cache that ignores the rules (M4) fails with `a rule added to the sheet was not scanned`.
+  - It then applies another breakpoint class over the same sheet. A scan cache that ignores the class set (M5) fails with `a new breakpoint class was not scanned`. The first version of that check passed M5 by accident: its rule targeted `#console-shell`, whose subtree holds every node, so the check now targets `#console-transcript-region`.
+- After the review fixes, the changed test files at `-n 4` gave 50 passed (load about 110). Preflight passed, and `Tests/CI` gave 1215 passed and 1 skipped.
 - AC#2's other resume duties are untouched by construction, because only the flag changes. The suspended-screen class is `""` in this app, and the notifications and auto-focus are not asserted. `stack_updates` and the size-change relayout are asserted.
 - 4 repeats of the new tests, serial, at load 50-67: all passed.
 
@@ -115,5 +125,5 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
 
 **Not changed.** `#console-shell`'s `-console-compact` class (`_adapt_console_shell_to_height`) still restyles about 517 nodes when the height crosses 34 rows. It is the same shape, outside this task. Proposed as a follow-up.
 
-**Files:** `tldw_chatbook/UI/Console_Modules/frame.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_restyles.py`, `backlog/docs/lessons-textual.md`.
+**Files:** `tldw_chatbook/UI/Console_Modules/frame.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `tldw_chatbook/UI/Navigation/base_app_screen.py` (comment), `Tests/UI/test_console_projection_restyles.py`, `backlog/docs/lessons-textual.md`.
 <!-- SECTION:NOTES:END -->

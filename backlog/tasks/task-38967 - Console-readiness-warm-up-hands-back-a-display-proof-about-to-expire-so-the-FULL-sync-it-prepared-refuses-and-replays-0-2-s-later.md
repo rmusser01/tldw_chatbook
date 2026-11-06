@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-06 17:27
+updated_date: 2026-11-06 23:24
 labels:
 - follow-up
 - console
@@ -109,6 +109,16 @@ None of them is on a PR lane. Each passed 6 of 6 here.
 - Before this change, each file had passed 6 of 6 for the filer.
 
 **Covering.** 18 files that use the readiness projection, `prepare_console_presentation_sync` or the checked display, at `-n 4` with `-p no:randomly`, run on head and on base with the same command. Head: 2 failed, 244 passed. Base: 2 failed, 242 passed. The same 2 nodes failed on both (`test_console_readiness_config_projection.py::test_actual_mode_bar_defers_cold_confi…` and `test_console_shared_context_policy.py::test_actual_settings_open_waits_for_shared_c…`). Head's 2 extra passes are the new tests.
+
+**Review round (r11c-rev1).** While checking the review fixes, `test_an_unparseable_config_leaves_an_idle_console_idle` failed on this branch 3 times in a burst at load 100-170. Each time the idle Console replayed 2-3 full syncs in the 2 s window, against a bound of 1.
+- A probe that recorded `_CONFIG_CACHE_INSTALLS` across the cold window showed no install there (2 -> 2), so TASK-38949's episode key was not the cause.
+- One path this task added did amplify replays. With config unparseable, every re-read fails and arms its own retry sync (TASK-38649), and the warm-up's read-ahead added a failing re-read to every FULL sync that found a display at least 0.5 s old.
+  - The warm-up now reads ahead only while the last read succeeded (`_retry_delay` is 0). While reads fail, it keeps the base rule: re-read only an expired display.
+  - The test above gained a step: with a failed read recorded, a warm-up at 0.6 of the display's life must not re-read. It was red without the guard (`the warm-up read ahead while the display's reads were failing`) and is green with it.
+- The test is load-flaky on the base too, with the same message.
+  - Interleaved runs at load 68-99 after the guard: base failed 3 of 6, head failed 1 of 6.
+  - An earlier interleaved set at load 60-135: base 4 of 4 passed, head 4 of 4 passed.
+  - It is a whole-file census entry, so this is listed as a proposed follow-up.
 
 **Files:** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/UI/test_console_pending_facts_cold_readiness.py`, `Tests/UI/test_console_pending_facts_direct_control_cold_readiness.py`, `Tests/UI/test_first_persistence_getter_attribution.py`.
 <!-- SECTION:NOTES:END -->
