@@ -122,7 +122,7 @@ test exchange.
 |---|---|
 | "Context: whole character" ⟷ "Context: field + description" | Click to flip. Tooltip: "How much of the character the model sees when generating a single field" |
 | "Generate whole character…" | Opens the concept row. Tooltip: "Draft every empty field from a short concept" |
-| Concept row | An input reading "One-line concept, e.g. a drowned-library archivist", plus **Draft** and **Cancel** |
+| Concept row | An input reading "One-line concept, e.g. a drowned-library archivist", plus **Draft** and **Cancel**. It belongs to one draft: starting another character ("Character · Blank" or "From a portrait") or opening one with **Edit** closes it and empties the input; "From a concept" opens it again, empty |
 | Per-field **Generate** | Drafts that field alone; reads "Generating…" while it works |
 
 Everything here drafts with the model Console is set to use, and there are two

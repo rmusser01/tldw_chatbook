@@ -1076,6 +1076,49 @@ async def test_from_a_concept_focuses_the_concept_row(mock_app_instance, volume_
         assert pilot.app.focused.id == "personas-char-editor-concept"
 
 
+async def test_blank_after_from_a_concept_closes_the_concept_row(
+    mock_app_instance, volume_348
+):
+    """TASK-33910.50: Character · Blank after From a concept hides the row.
+
+    On origin/dev 29592ecc9b the row and its text stay on the blank draft
+    (B2b made it reachable from the New chooser); this PR fixes it. The row
+    comes back, empty and focused, only when From a concept is picked again.
+    """
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await start_new(pilot, "character:concept")
+        row = screen.query_one("#personas-char-editor-concept-row")
+        concept = screen.query_one("#personas-char-editor-concept", Input)
+        await wait_until(
+            pilot, lambda: pilot.app.focused is concept, what="the concept row"
+        )
+        await pilot.press(*"a drowned-library archivist")
+        assert row.display and concept.value == "a drowned-library archivist"
+
+        # Already in create mode: wait for the chooser's worker to finish the
+        # Blank pick, not for create mode (start_new's default).
+        await start_new(
+            pilot, "character:blank", until=lambda: not screen._new_chooser_open
+        )
+        await settle(pilot)
+        assert screen._edit_mode == "create"
+        assert not row.display
+        assert concept.value == ""
+
+        await start_new(
+            pilot, "character:concept", until=lambda: not screen._new_chooser_open
+        )
+        await wait_until(
+            pilot, lambda: pilot.app.focused is concept, what="the concept row again"
+        )
+        await settle(pilot)
+        assert row.display
+        assert concept.value == ""
+
+
 async def test_lore_book_from_characters_goes_through_the_guard(
     mock_app_instance, volume_348
 ):
