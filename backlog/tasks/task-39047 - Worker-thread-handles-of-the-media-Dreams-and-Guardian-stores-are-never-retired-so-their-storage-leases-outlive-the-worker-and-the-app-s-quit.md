@@ -111,6 +111,8 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 
 **Covering run.** I ran `Tests/DB`, `Tests/Dreams`, `Tests/Guardian`, 25 participant and owner files in `Tests/Backup_Recovery`, and five more covering files, at `-n 4` (load 26-37). Worktree: 273 failed, 4524 passed. Base `fu-base-r11`: 274 failed, 4511 passed. The failure sets differ only in nodes that flake on both trees: rerun twice on each tree, 3 or 8 of the same 20 nodes failed. The base failures are red on dev outside any lane, for example `LocalResearchService` has no `_connection`.
 
+**Diagnostic inventory.** `app_lifecycle.py`'s row changed (68 -> 68 calls): the two ChaChaNotes-only quit-close statements became `f"Error closing {label} at quit: {type(exc).__name__}"` and `f"{label} still in use at quit; its handles close with the process"`. `label` is one of four fixed store names and the other value is an exception type name, so no user content, secret, path or URL reaches the sink. `Docs/security/production-diagnostic-inventory.json` was regenerated with `--write` after that review.
+
 **Size waiver** (owner, 2026-11-06): `app_lifecycle.py` 2200 -> 2203 and `Client_Media_DB_v2.py` 9436 -> 9453 in `Tests/Architecture/test_module_size_ratchet.py`, each with a dated comment.
 
 **Files.** `tldw_chatbook/DB/base_db.py`, `tldw_chatbook/DB/store_kernel.py`, `tldw_chatbook/DB/Client_Media_DB_v2.py`, `tldw_chatbook/DB/Dreams_DB.py`, `tldw_chatbook/DB/Guardian_DB.py`, `tldw_chatbook/Backup_Recovery/participants.py`, `tldw_chatbook/app_lifecycle.py`, `Tests/DB/test_sync_log_retention.py`, `Tests/Architecture/test_module_size_ratchet.py`.
