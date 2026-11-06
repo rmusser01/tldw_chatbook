@@ -1549,6 +1549,13 @@ async def test_rapid_double_escape_during_first_render_keeps_skip_setup_open():
             _SettlingGuardedConfirmationDialog,
         )
 
+        # TASK-34100.13 review TE-2: under xdist load the first render (ten
+        # composed steps) can outlast one pause, so wait for the dialog to be
+        # pushed. A dialog the second Escape dismissed never comes back, so
+        # this still fails on the TASK-2314 regression.
+        await _until(
+            pilot, lambda: isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        )
         assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
         assert app.wizard_result == "UNSET"
 

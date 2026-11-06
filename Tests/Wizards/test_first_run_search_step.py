@@ -347,6 +347,58 @@ async def test_a_summary_whose_rows_are_pruned_mid_load_paints_nothing(monkeypat
     assert error is None, f"the row paint raised {error!r}"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_hidden_search_step_resolves_no_embedding_model(monkeypatch) -> None:
+    """Review TE-2 (TASK-34100.13): the Search step resolved RAG's embedding
+    model from on_mount, so every wizard -- the Quick track included, which
+    never shows the step -- imported the RAG config chain (~0.5 s cold) on an
+    executor thread during its first render. That GIL-bound import starved
+    the loop: on a cold process the reflexive double Escape (TASK-2314)
+    reached the confirm dialog after its 0.5 s grace and dismissed it, every
+    time. The model is now resolved when the step is first shown."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        FirstRunSetupWizard,
+        SetupWizardContainer,
+    )
+
+    calls: list[int] = []
+
+    def spy():
+        calls.append(1)
+        return LOCAL_MODEL
+
+    monkeypatch.setattr(rag_state, "resolve_active_embedding_model", spy)
+    app_instance = MagicMock()
+    app_instance.app_config = {}
+    wizard = FirstRunSetupWizard(app_instance)
+
+    class _WizardHost(App):
+        def compose(self) -> ComposeResult:
+            yield from ()
+
+        async def on_mount(self) -> None:
+            self.push_screen(wizard)
+
+    async with _WizardHost().run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.5)
+        while_hidden = len(calls)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(wizard_state.TRACK_FULL)
+        search = next(step for step in container.steps if isinstance(step, RagStep))
+        container.show_step(container.steps.index(search))
+        for _ in range(100):
+            if calls:
+                break
+            await pilot.pause(0.02)
+        container.show_step(0)
+        await pilot.pause()
+        container.show_step(container.steps.index(search))
+        await pilot.pause(0.2)
+    assert while_hidden == 0
+    assert len(calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_commit_reads_the_pressed_radio_without_a_changed_event() -> None:
     """review-tests F6 (the F-A pattern, ported to the new radio): a press
