@@ -3443,24 +3443,9 @@ class LibraryFileNotesGitPanel(Vertical):
     def _entry_focus_is_still_ours(self, anchor: Widget | None) -> bool:
         """Return whether the armed entry focus may still be taken.
 
-        Two ways it is still ours, and no third (review F1):
-
-        * nothing moved -- the exact widget focus was on when the status
-          landed still holds it; or
-        * the panel took that widget away AND focus is still in here.
-          Trust landing hides the trust button, and Textual moves focus
-          itself the moment the focused widget stops being focusable --
-          onto this panel's own next control. The user's focus was yanked
-          by US, so there is no deliberate choice left to protect. Asked
-          HERE and not when the control was hidden, because Textual does
-          not guarantee it moves focus inside the same call that flipped
-          ``display`` -- and when it did not, AC#1 silently stopped firing
-          (measured: 8 of 10 runs). Both halves are load-bearing: pressing
-          Edit ALSO hides the anchor (the whole Manage surface goes), and
-          that one is the user, which is why the landing place decides.
-
-        Anything else -- the user Tabbed away, pressed Edit, focused
-        another control in this panel -- is a focus move we must not undo.
+        Accept unchanged focus, or a hidden anchor with focus still in this panel.
+        Recheck after Textual relocates focus; preserve deliberate user moves.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         if anchor is None:
             return False

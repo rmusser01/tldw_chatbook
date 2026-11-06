@@ -377,12 +377,8 @@ _FILE_NOTES_WORKSPACE_BINDINGS = [
 class _FolderRowStatus(Static):
     """Folder-row status that fits itself again once layout changes its width.
 
-    TASK-38710: the fit is deferred with ``call_after_refresh``, which runs no
-    layout pass. When it ran before the layout that seats "Review…", it fitted
-    the old width and nothing fitted again. Layout sets this width (``1fr``,
-    one row, no wrap), so a refit cannot resize it. The prompt's
-    ``-empty-root`` auto width is never fitted, but it is still recorded: a
-    relink back to the old width must refit.
+    Refit after actual layout; record even the unfitted empty-root width.
+    See Docs/Architecture/notes-sync.md for the original incident rationale.
     """
 
     def __init__(self, *args: Any, refit: Callable[[], None], **kwargs: Any) -> None:
@@ -401,15 +397,8 @@ class _FolderRowStatus(Static):
 class FileNotesEditorTextArea(TextArea):
     """The Folder files editor, with document-end and document-start keys.
 
-    task-32552 AC#1: the same defect task-32247 fixed in the Library editor
-    (``NoteEditorTextArea``): Textual 8's ``TextArea`` binds ``end``/``home``
-    to the LINE ends and defines no ``ctrl+end`` binding or
-    ``cursor_document_end`` action at all, so Ctrl+End here was not
-    swallowed -- it did not exist, and the text typed after it landed at
-    the click (critique #3, B D9: ``NoteTAILEDITs`` on disk). The four lines
-    are copied rather than the class imported: that editor's priority Tab
-    pair is namespaced to the Library screen and is not this widget's
-    concern.
+    Keep missing document Home/End actions local; avoid Library-only Tab bindings.
+    See Docs/Architecture/notes-sync.md for the original incident rationale.
     """
 
     BINDINGS = _FILE_NOTES_EDITOR_BINDINGS
@@ -773,15 +762,8 @@ class FileNotesHistoryDialog(
 ):
     """Browse one protected file's bounded revision history and act on it.
 
-    task-34381: the dialog only PRESENTS the bounded listing and collects a
-    chosen action; every service call runs in the workspace under the same
-    transition guards as its other file actions, so a dialog opened against
-    one root can never publish into a root that changed beneath it.
-
-    TASK-36386 / ADR-097: the ``file-notes-history*`` rules in ``features/_notes.tcss``
-    leave the boot path: ``build_css.py`` splits them into the sheet this ``CSS_PATH``
-    loads on first open. Its ``App.-wide-viewport`` tier rule goes with them
-    (TASK-38719).
+    Service calls stay with the guarded workspace; its CSS loads lazily.
+    See Docs/Architecture/notes-sync.md for the original incident rationale.
     """
 
     BINDINGS = [("escape", "request_safe_cancel", "Close")]
@@ -1629,12 +1611,11 @@ class LibraryFileNotesWorkspace(Vertical):
         self._structural_wait: StructuralWait | None = None
         self._structural_wait_task: asyncio.Task[bool] | None = None
         self._structural_wait_timer: Timer | None = None
-        # task-32121: cancelling the asyncio task left the SCAN THREAD
-        # running under ``_service_lock``, so every later folder change
-        # queued behind it. Each attempt now carries its own cancel Event
-        # (created in ``_change_root_with_deadline``, handed to the thread
-        # and to the abandon seam) -- deliberately NOT widget state, so a
-        # superseding attempt can neither cancel itself nor miss its own
+        # task-32121: cancelling the asyncio task left the SCAN THREAD running under
+        # ``_service_lock``, so every later folder change queued behind it. Each attempt
+        # now carries its own cancel Event (created in ``_change_root_with_deadline``,
+        # handed to the thread and to the abandon seam) -- deliberately NOT widget
+        # state, so a superseding attempt can neither cancel itself nor miss its own
         # flag. The count and the extension drive the busy row's line.
         self._root_scan_entries = 0
         self._root_change_extension: float | None = None
@@ -1904,13 +1885,12 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-save-status",
                 markup=False,
             ),
-            # task-32615 AC#3: this is where an action RECEIPT belongs -- it
-            # was the pane's last child, so "Committed 1 session note as
-            # c1db79e…; unrelated changes untouched." and "Commit review
-            # ready." both painted directly under the Manage region's
-            # "Danger" heading (B caps 44/47/48). Under the breadcrumb and
-            # the save state, above both regions, it reads as what it is at
-            # every one of the three sizes.
+            # task-32615 AC#3: this is where an action RECEIPT belongs -- it was the
+            # pane's last child, so "Committed 1 session note as c1db79e…; unrelated
+            # changes untouched." and "Commit review ready." both painted directly under
+            # the Manage region's "Danger" heading (B caps 44/47/48). Under the
+            # breadcrumb and the save state, above both regions, it reads as what it is
+            # at every one of the three sizes.
             Static("", id="file-notes-action-status", markup=False),
             preview_status,
             Vertical(
@@ -2772,13 +2752,12 @@ class LibraryFileNotesWorkspace(Vertical):
             content = f"{content} Next: {channels.safe_next_action}."
         detail = self._save_detail.strip()
         # task-32552: acquire the whole header or render none of it, as
-        # ``_render_session_git_label`` already does. ``is_mounted`` above is
-        # true before ``compose``'s children have all landed, so a call from
-        # the initialize worker -- or from ``_probe_repository``, which this
-        # task added as a second entry point -- could raise ``NoMatches`` out
-        # of a worker and take the app down at teardown. Returning also keeps
-        # the three Statics consistent: the old order updated save status and
-        # then exploded on authority.
+        # ``_render_session_git_label`` already does. ``is_mounted`` above is true
+        # before ``compose``'s children have all landed, so a call from the initialize
+        # worker -- or from ``_probe_repository``, which this task added as a second
+        # entry point -- could raise ``NoMatches`` out of a worker and take the app down
+        # at teardown. Returning also keeps the three Statics consistent: the old order
+        # updated save status and then exploded on authority.
         try:
             status = self.query_one("#file-notes-save-status", Static)
             save_detail = self.query_one("#file-notes-save-detail", Static)
@@ -2897,12 +2876,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 await asyncio.shield(save_task)
             except (asyncio.CancelledError, Exception):
                 pass
-        # task-34382 (ADR-351): the session-end retention pass, after any
-        # in-flight save settles and before the owner/replica retire.
-        # PR #3016 review finding 10: the service reports replica cleanup
-        # failures as results, so the result is inspected too -- a failed
-        # session-end sweep must not leave zero trace. Both paths log via
-        # the module logger: shutdown routinely runs after the Textual app
+        # task-34382 (ADR-351): the session-end retention pass, after any in-flight save
+        # settles and before the owner/replica retire. PR #3016 review finding 10: the
+        # service reports replica cleanup failures as results, so the result is
+        # inspected too -- a failed session-end sweep must not leave zero trace. Both
+        # paths log via the module logger: shutdown routinely runs after the Textual app
         # has exited, where the DOM ``self.log`` raises NoActiveAppError.
         service = self._service
         if service is not None:
@@ -3179,10 +3157,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._root = root
                 self._session_binding = binding
                 self._service = service
-                # PR #3016 review finding 8: the export-deleted fallback
-                # belongs to THIS root's tombstone refusals only. A newly
-                # adopted root never inherits the marker -- not even when
-                # it carries a same-named tombstone.
+                # PR #3016 review finding 8: the export-deleted fallback belongs to THIS
+                # root's tombstone refusals only. A newly adopted root never inherits
+                # the marker -- not even when it carries a same-named tombstone.
                 self._restore_refusal_path = ""
                 self._clear_open_document(
                     announce_identity_cleared=previous_root == root
@@ -3194,10 +3171,9 @@ class LibraryFileNotesWorkspace(Vertical):
                     additional_warning=persistence_warning,
                 )
 
-            # Atomic file replacement is the point of no return. There is
-            # deliberately no await between observing it and synchronously
-            # aligning the owner, service, workspace, and scan projection under
-            # this reservation.
+            # Atomic file replacement is the point of no return. There is deliberately
+            # no await between observing it and synchronously aligning the owner,
+            # service, workspace, and scan projection under this reservation.
             with self._runtime_lock:
                 reservation.commit(publish)
             if previous_root != self._root:
@@ -3235,11 +3211,8 @@ class LibraryFileNotesWorkspace(Vertical):
     async def _read_replica(self, read: Callable[..., Any], *args: object) -> Any:
         """Run one direct replica read that quit can close behind (TASK-38711).
 
-        These reads skip the service lock. ``_core_closing`` silently refuses
-        to close a file-backed replica while one is in flight, and a closed one
-        reopens on its next use. So an owned replica's reads share its owner
-        thread, where the close queues behind them, and a read that starts once
-        quit has begun returns None without touching the replica.
+        Owner-thread reads serialize with close and refuse once quit begins.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
 
         def run() -> Any:
@@ -3378,13 +3351,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _structural_wait_line(self, wait: StructuralWait) -> str:
         """Return the busy row's line for one in-flight folder change.
 
-        task-32121: past the patience window the shared helper's line ends
-        in ``· Cancel``, which sat beside the actual Cancel button and read
-        as a second control with the same label. This surface reports how
-        far the scan has actually got instead, and the decisions are the
-        buttons in the same row -- measured, not stylistic: at 120 columns
-        the row leaves the status 46 cells, so a line naming both choices
-        as well elides to ``Changing folder… · sti...ting · Choose another``.
+        Show measured progress here; adjacent buttons already name decisions.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         now = monotonic()
         if not wait.is_slow(now):
@@ -3396,19 +3364,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _configured_sync_folder(self) -> Path | None:
         """Return the configured notes folder to offer by name, when usable.
 
-        task-32136: a user who already configured a notes folder should be
-        offered it by name instead of being sent to a file picker that
-        opens on their home directory.
-
-        task-32180: ``[file_notes] root`` -- the key this mode itself writes
-        on every successful folder change -- is read first; the legacy
-        ``[notes] sync_directory`` (TASK-21112 calls it that) stays the
-        fallback for a profile that has never linked a folder here.
-
-        Both are config-derived input, so they go through
-        ``path_validation`` (review round 2) rather than straight to
-        ``is_dir()``: a relative spelling would otherwise resolve against
-        whatever directory the app was launched from.
+        Validate file_notes.root first, then legacy notes.sync_directory.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         for section, key in (("file_notes", "root"), ("notes", "sync_directory")):
             raw = get_cli_setting(section, key, None)
@@ -3425,17 +3382,9 @@ class LibraryFileNotesWorkspace(Vertical):
     def _sync_body_panes(self) -> None:
         """Keep the Library rail; make only the file panes wait for a folder.
 
-        task-32173: Folder files is a mode of Notes (task-32136 user
-        decision), so its rail belongs on screen from the first frame, not
-        after a folder is linked. The body itself stays mounted --
-        display-gating it left the reader shell with zero width, so the
-        adaptive layout never resolved at all and the rail could not open
-        even at 235 columns.
-
-        Compact terminals are unchanged because the resolver already closes
-        the rail below the Library's compact breakpoint: at 60 and at 100
-        columns it reports ``library_open=False``, so the unlinked body
-        holds nothing to paint.
+        Keep the body mounted so its adaptive rail can resolve; the resolver
+        already hides the rail below the compact breakpoint.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         linked = self._root is not None
         shell = self._reader_shell
@@ -3481,11 +3430,10 @@ class LibraryFileNotesWorkspace(Vertical):
             structural_cancel = None
         slow = wait is not None and wait.is_slow(monotonic())
         if structural_cancel is not None:
-            # task-32102: the way out arrives when the row first admits it
-            # is slow -- the same patience boundary Keep waiting and Choose
-            # another already use. Revealed at t=0 it offered an escape from
-            # an operation that had not yet claimed to be stuck, while the
-            # line still read a bare "Changing folder…".
+            # task-32102: the way out arrives when the row first admits it is slow --
+            # the same patience boundary Keep waiting and Choose another already use.
+            # Revealed at t=0 it offered an escape from an operation that had not yet
+            # claimed to be stuck, while the line still read a bare "Changing folder…".
             structural_cancel.display = (
                 wait is not None and wait.cancel is not None and slow
             )
@@ -3521,13 +3469,12 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_status_summary = self._root_status_detail
             status.tooltip = None
             status.update(self._root_status_summary)
-            # Never the empty state's hug (fix round 1): task-2850's
-            # ``width: auto`` is for the short "Choose a notes folder."
-            # prompt, and a wait line wearing it hugs its own full length
-            # instead of eliding -- which pushed Keep waiting and Choose
-            # another off a 60-column row whenever the change started from
-            # an unlinked state. Same reasoning as the ``_root is None``
-            # branch below, which already excludes its own reason line.
+            # Never the empty state's hug (fix round 1): task-2850's ``width: auto`` is
+            # for the short "Choose a notes folder." prompt, and a wait line wearing it
+            # hugs its own full length instead of eliding -- which pushed Keep waiting
+            # and Choose another off a 60-column row whenever the change started from an
+            # unlinked state. Same reasoning as the ``_root is None`` branch below,
+            # which already excludes its own reason line.
             status.set_class(False, "-empty-root")
             # task-32102: and never the tint of the state the wait replaced
             # -- this branch returns before the resets below, so a warning
@@ -3550,10 +3497,9 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_status_summary = reason or self._root_status_detail
             status.tooltip = None
             status.update(self._root_status_summary)
-            # task-2850's hug-your-own-width rule is right for the short
-            # prompt and wrong for a folder-change reason four times its
-            # length: that one has to elide rather than push Choose folder…
-            # off the end of a narrow row.
+            # task-2850's hug-your-own-width rule is right for the short prompt and
+            # wrong for a folder-change reason four times its length: that one has to
+            # elide rather than push Choose folder… off the end of a narrow row.
             status.set_class(not reason, "-empty-root")
             status.set_class(False, "-warning")
             status.set_class(False, "-offline")
@@ -3618,14 +3564,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _fit_path_surfaces(self, width: int = 0) -> None:
         """Keep both identity lines on one row instead of folding them.
 
-        task-32614: a path is one long token, and Textual folds a token that
-        does not fit at whatever column it runs out of -- at the 34 cells a
-        100x30 terminal gave this pane, the breadcrumb broke at
-        "2026"/"-09-14" and the absolute path took six rows broken at
-        "…m80n2j152t"/"9gw3w8qwk…". ``elide_path_middle`` rather than a
-        plain truncate for the reason it was written: the basename is the
-        fragment the reader recognizes the file by, and a tail-cut spends
-        the row on ``/private/var/folders/...`` and hides it.
+        Middle-elide complete paths to preserve the recognizable basename.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
 
         Args:
             width: Settled work-pane width to fall back on when a widget has
@@ -3645,13 +3585,12 @@ class LibraryFileNotesWorkspace(Vertical):
                 target = self.query_one(selector, Static)
             except NoMatches:
                 continue
-            # Each line's OWN width, not the pane's: the breadcrumb shares
-            # its row with the Edit/Manage chips (31 of 49 cells at 60x24)
-            # until ``-stack-editor-actions`` gives it the row to itself
-            # (50), and a value fitted to the wrong one of those loses the
-            # basename it exists to show. The pane width is only the
-            # fallback for the paint that reveals a display-toggled region,
-            # where the widget still measures zero.
+            # Each line's OWN width, not the pane's: the breadcrumb shares its row with
+            # the Edit/Manage chips (31 of 49 cells at 60x24) until
+            # ``-stack-editor-actions`` gives it the row to itself (50), and a value
+            # fitted to the wrong one of those loses the basename it exists to show. The
+            # pane width is only the fallback for the paint that reveals a
+            # display-toggled region, where the widget still measures zero.
             own_width = target.content_region.width
             budget = (
                 own_width or width or max(self._reader_layout.reader_width - 1, 0)
@@ -3721,15 +3660,14 @@ class LibraryFileNotesWorkspace(Vertical):
             and not was_narrow
             and (self._opened is not None or self._selected_deleted_path)
         ):
-            # task-15790 (bisected to 4202930d6's era, born-green then
-            # regressed): `_narrow_view` was only ever set to "editor" when a
-            # document was opened WHILE ALREADY NARROW, so opening on a wide
-            # terminal and then shrinking routed the narrow shell to the
-            # NAVIGATOR -- hiding the pane out from under its own focused
-            # editor (the hide blurs it; focus fell to None). Entering narrow
-            # with an open document means the user's context is that
-            # document. Transition-only on purpose: while ALREADY narrow,
-            # Back's explicit navigator choice must keep winning.
+            # task-15790 (bisected to 4202930d6's era, born-green then regressed):
+            # `_narrow_view` was only ever set to "editor" when a document was opened
+            # WHILE ALREADY NARROW, so opening on a wide terminal and then shrinking
+            # routed the narrow shell to the NAVIGATOR -- hiding the pane out from under
+            # its own focused editor (the hide blurs it; focus fell to None). Entering
+            # narrow with an open document means the user's context is that document.
+            # Transition-only on purpose: while ALREADY narrow, Back's explicit
+            # navigator choice must keep winning.
             self._narrow_view = "editor"
             if self._reader_shell_external:
                 self.post_message(AdaptiveReaderShellResized())
@@ -3848,14 +3786,13 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             self._update_controls()
             cancel = self.query_one("#file-notes-reload-cancel", Button)
-            # task-15790: `call_after_refresh` here NEVER FIRED -- it waits
-            # for THIS widget's own refresh, and `_update_controls` patches
-            # children in place, so no workspace-level refresh ever comes.
-            # The cancel-first safety focus therefore never happened: the
-            # feature's own test was born red at 1fbd46ec6 and nobody saw
-            # it until the full-suite sweep. `call_later` orders on the
-            # message queue instead, which needs no repaint to flush; focus
-            # placement does not need paint.
+            # task-15790: `call_after_refresh` here NEVER FIRED -- it waits for THIS
+            # widget's own refresh, and `_update_controls` patches children in place, so
+            # no workspace-level refresh ever comes. The cancel-first safety focus
+            # therefore never happened: the feature's own test was born red at 1fbd46ec6
+            # and nobody saw it until the full-suite sweep. `call_later` orders on the
+            # message queue instead, which needs no repaint to flush; focus placement
+            # does not need paint.
             self.call_later(cancel.focus)
         if not was_active:
             self.post_message(self.ReloadConfirmationChanged(True))
@@ -4100,14 +4037,12 @@ class LibraryFileNotesWorkspace(Vertical):
         binding = self._session_binding
         changes: tuple[SequencedSessionChange, ...] = ()
         if binding is not None:
-            # task-11: one tuple compare decides whether anything was
-            # appended, merged, retired, cleared, or re-trusted since the
-            # last refresh. Equal means the snapshot below would be
-            # bit-identical for everything this method reads, so the
-            # coalesce, the tuple compare, the label validation, and the
-            # push-state rehydrate are all provably no-ops -- skip them.
-            # (Push operations have their own observer tasks; they do not
-            # ride this refresh.)
+            # task-11: one tuple compare decides whether anything was appended, merged,
+            # retired, cleared, or re-trusted since the last refresh. Equal means the
+            # snapshot below would be bit-identical for everything this method reads, so
+            # the coalesce, the tuple compare, the label validation, and the push-state
+            # rehydrate are all provably no-ops -- skip them. (Push operations have
+            # their own observer tasks; they do not ride this refresh.)
             revision = self._session_owner.session_revision()
             if revision == self._git_observed_change_version:
                 return
@@ -6188,12 +6123,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _sync_editor_visibility(self) -> None:
         """Show the editable body only when there is a file to edit.
 
-        task-32621 AC#1 (A cap 29): with nothing selected the right pane drew
-        a full, apparently editable box beside the words "No file selected".
-        Typing into it went nowhere, on the one surface whose promise is that
-        it edits the real file. Hidden rather than unmounted: every caller
-        queries ``#file-notes-editor`` unconditionally, and the editor is a
-        retained widget this workspace constructs once.
+        Hide the empty retained editor; callers still query its stable identity.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         editor = self._editor_widget
         visible = self._opened is not None
@@ -6437,19 +6368,9 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> ScanResult:
         """Scan a candidate root on a worker thread, cancellably and bounded.
 
-        Two halves of the same task-32121 wedge. The scan itself is now
-        cancellable, so an abandoned one lets go of ``_service_lock``
-        instead of holding it to the end of a home directory. And the wait
-        for that lock is bounded, so a scan stuck inside a single
-        uninterruptible syscall (a dead network mount) makes the NEXT
-        change report a timeout instead of queueing behind it silently.
-
-        That bound is the CALLER's deadline, not a second one down here
-        (review round 2): abandoning an attempt sets its cancel flag, and
-        ``Keep waiting`` extends the deadline that decides when to abandon.
-        A worker-side timeout of its own ended the change a moment after
-        the user asked for more time. A caller that passes no flag has
-        nobody to abandon it, so it keeps a bound of its own.
+        The caller owns cancellation and deadline extensions; an unowned scan
+        keeps its own lock-wait bound. Never add a competing worker deadline.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
 
         Args:
             service: Service bound to the candidate root.
@@ -6489,13 +6410,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _record_root_scan_progress(self, entries: int, *, generation: int) -> None:
         """Publish the running entry count from the scan thread.
 
-        A plain attribute store, deliberately: the busy row reads it on its
-        own repaint tick, so no cross-thread call is needed and a stale
-        read is at worst one tick behind. It is not a cross-attempt store,
-        though (PR #2549 review, finding 2): an abandoned scan's thread can
-        still be inside its file loop when the next change resets the
-        counter, and its next report would otherwise land on the new
-        attempt's row.
+        Publish only the owning generation's count; repaint may lag one tick.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
 
         Args:
             entries: Entries this scan has seen so far.
@@ -6509,11 +6425,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _report_root_change_reason(self, reason: str) -> None:
         """Keep one folder-change outcome visible until the next attempt.
 
-        task-32121: the timeout reason used to be written only into the
-        action-status line at the bottom of the editor pane, while the root
-        row -- the line the user is actually watching -- silently reverted
-        to the previously linked folder. The reason now owns the row until
-        another folder change starts.
+        Keep the outcome on the watched root row until the next attempt.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         self._root_action_reason = reason
         self._set_action_status(reason)
@@ -6619,10 +6532,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 if generation == self._root_generation:
                     self._report_root_change_reason(ROOT_CHANGE_TIMEOUT_COPY)
                 return False
-            # task-34382 (ADR-351): retention runs after the scan adopts the
-            # candidate and BEFORE Recently-deleted is read, so the listing
-            # never names entries the policy just expired. Failure warns; it
-            # never blocks the root change.
+            # task-34382 (ADR-351): retention runs after the scan adopts the candidate
+            # and BEFORE Recently-deleted is read, so the listing never names entries
+            # the policy just expired. Failure warns; it never blocks the root change.
             retention_warning = await self._enforce_retention(service, generation)
             if not self._active or generation != self._root_generation:
                 return False
@@ -6820,10 +6732,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 return False
             try:
                 result = await asyncio.to_thread(service.reconcile)
-                # task-11: the tombstone list cannot move while the vault
-                # signature is unchanged (only a full reconcile or a user
-                # restore/delete changes it, and both refresh it
-                # themselves), so the quiet tick reuses the retained
+                # task-11: the tombstone list cannot move while the vault signature is
+                # unchanged (only a full reconcile or a user restore/delete changes it,
+                # and both refresh it themselves), so the quiet tick reuses the retained
                 # tuple instead of re-reading the replica.
                 deleted = (
                     self._deleted_paths
@@ -6904,12 +6815,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _set_poll_interval(self, seconds: float) -> None:
         """Re-arm the poll timer only when the cadence changes (task-11).
 
-        Stopping and recreating is safe even from inside a tick callback:
-        Textual delivers the cancellation to the timer task after the
-        callback returns. Re-arming on every call would reset the phase, so
-        unchanged cadences are a no-op. Before mount (``_poll_timer`` is
-        None) only the interval value moves; ``on_mount`` arms the timer
-        with whatever the value is then.
+        Rearm only changed cadences; mount arms a previously unmounted timer.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         if self._poll_timer is not None and seconds == self._poll_interval:
             return
@@ -6936,14 +6843,13 @@ class LibraryFileNotesWorkspace(Vertical):
             self._set_poll_interval(self._poll_backoff_interval)
 
     def _start_poll(self) -> None:
-        # TASK-22219: skip the filesystem walk while this widget's screen is
-        # not the top of the stack (covered by a modal/pushed screen, or the
-        # Library screen is otherwise inactive). The timer itself keeps
-        # ticking -- a no-op fire every interval costs nothing, and it IS the
-        # resume path: the first tick after the screen is active again runs
-        # the catch-up reconcile, so no pause/resume bookkeeping can rot.
-        # Same gate as UI/Navigation/main_navigation.py's overflow tick;
-        # Textual 8.2.8 `Screen.is_active` is `app.screen is self`.
+        # TASK-22219: skip the filesystem walk while this widget's screen is not the top
+        # of the stack (covered by a modal/pushed screen, or the Library screen is
+        # otherwise inactive). The timer itself keeps ticking -- a no-op fire every
+        # interval costs nothing, and it IS the resume path: the first tick after the
+        # screen is active again runs the catch-up reconcile, so no pause/resume
+        # bookkeeping can rot. Same gate as UI/Navigation/main_navigation.py's overflow
+        # tick; Textual 8.2.8 `Screen.is_active` is `app.screen is self`.
         if (
             not self._active
             or not self.is_attached
@@ -7458,12 +7364,11 @@ class LibraryFileNotesWorkspace(Vertical):
             if current():
                 async def approve(expected):
                     return await call(service.approve_recovery, expected)
-                # TASK-32800.5: wait for the dialog, not just its mount.
-                # `push_screen` returns once the screen is mounted, so this
-                # coroutine fell straight out of the `try` while the review was
-                # still open -- and with the only `resume()` in the file living
-                # in the manual Refresh handler, the folder poll stayed paused
-                # for the rest of the mount.
+                # TASK-32800.5: wait for the dialog, not just its mount. `push_screen`
+                # returns once the screen is mounted, so this coroutine fell straight
+                # out of the `try` while the review was still open -- and with the only
+                # `resume()` in the file living in the manual Refresh handler, the
+                # folder poll stayed paused for the rest of the mount.
                 await self.app.push_screen_wait(NotesRecoveryDialog(
                     review, current=current, approve=approve
                 ))
@@ -7579,13 +7484,8 @@ class LibraryFileNotesWorkspace(Vertical):
     async def _change_root_with_deadline(self, path: Path) -> None:
         """Run one folder change under a deadline the user can cut short.
 
-        task-32055: ``set_root`` itself is unbounded -- it scans a folder
-        that may live on an unreachable network volume -- and while it ran,
-        every leave guard that consults ``_root_transitioning`` refused,
-        which is how a folder change swallowed Escape, the back cue and the
-        palette. The wait now owns a cancellable task, publishes an honest
-        status line, and always leaves the previously linked folder in
-        place when it does not complete.
+        The wait owns cancellation and preserves the old folder on refusal.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         previous_root = self._root
         cancel_event = Event()
@@ -7660,9 +7560,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._structural_wait_task = task
         if self._structural_wait_timer is not None:
             self._structural_wait_timer.stop()
-        # task-32121: repeating, not one-shot -- the running entry count
-        # the busy row reports has to keep moving while a big folder is
-        # still being walked.
+        # task-32121: repeating, not one-shot -- the running entry count the busy row
+        # reports has to keep moving while a big folder is still being walked.
         self._structural_wait_timer = (
             self.set_interval(
                 STRUCTURAL_WAIT_PATIENCE_SECONDS,
@@ -7693,40 +7592,16 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> None:
         """Cancel the wait's task and release the canvas in the same beat.
 
-        The transition flags are cleared HERE rather than in ``set_root``'s
-        own ``finally``: that only runs once the cancelled coroutine
-        unwinds, and every leave guard consulted in the meantime would
-        still refuse -- which is the swallowed-Escape bug. Bumping the
-        generation makes the abandoned run's late results stale, so it can
-        never commit the folder it was still scanning.
-
-        Invariant (task-32180): **every** way a folder change ends early
-        arrives here, and nothing else releases the previous scan's hold on
-        ``_service_lock``. Three call sites reach it: the deadline and the
-        ``CancelledError`` branch of ``_change_root_with_deadline``, and
-        the ``StructuralWait.cancel`` partial that Cancel, Escape, the back
-        cue, the navigation flush and ``Choose another`` all go through. A
-        re-entrant folder change arrives by the second of those: the worker
-        is ``exclusive=True`` in the ``file-notes-root-change`` group, so
-        picking a second folder cancels the first worker.
-
-        What it is NOT: synchronous. Textual's exclusive-worker cancel
-        delivers ``CancelledError`` on a later loop turn, so the new
-        attempt's ``set_root`` can reach ``_scan_for_root`` while the
-        abandoned scan still holds the lock. That overlap is covered, not
-        avoided: ``_scan_for_root`` polls the lock and gives up only on
-        THIS attempt's cancel flag, so the new attempt simply waits out
-        the microseconds the old one needs to notice its flag. Do not
-        write an assertion here claiming the previous attempt is already
-        finished -- it usually is not.
+        Clear transition flags and advance generation before cancellation unwinds.
+        Cancel only this attempt; the old worker may still hold its service lock.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
         """
         task.cancel()
-        # task-32121: the asyncio cancel never reached the scan THREAD,
-        # which kept ``_service_lock`` and wedged every later folder change
-        # for the rest of the session. This is the flag it watches -- THIS
-        # attempt's, passed in with its task: a superseding pick starts its
-        # own attempt before this one unwinds, so reading current widget
-        # state here cancelled the wrong scan (review round 1).
+        # task-32121: the asyncio cancel never reached the scan THREAD, which kept
+        # ``_service_lock`` and wedged every later folder change for the rest of the
+        # session. This is the flag it watches -- THIS attempt's, passed in with its
+        # task: a superseding pick starts its own attempt before this one unwinds, so
+        # reading current widget state here cancelled the wrong scan (review round 1).
         if cancel_event is not None:
             cancel_event.set()
         self._root_generation += 1
@@ -7759,10 +7634,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def cancel_structural_wait(self, *, leaving: bool = False) -> bool:
         """Abandon the in-flight structural wait, keeping the current folder.
 
-        The single seam for every exit: the Cancel button, Escape, the back
-        cue and the app's navigation flush all reach it, so a structural
-        wait can gate the WRITE (a second folder change) without ever
-        gating the way out.
+        Every exit shares this seam so a pending write cannot trap navigation.
+        See Docs/Architecture/notes-sync.md for the original incident rationale.
 
         Args:
             leaving: Whether this exit also leaves the surface, in which
@@ -9380,9 +9253,8 @@ class LibraryFileNotesWorkspace(Vertical):
             self._service is not request.service
             or self._root_generation != request.root_generation
         ):
-            # PR #3016 review finding 13: the root that supplied the listed
-            # revision is gone; acting now would target another root's
-            # same-named revision.
+            # PR #3016 review finding 13: the root that supplied the listed revision is
+            # gone; acting now would target another root's same-named revision.
             self._set_action_status(
                 "History action stopped: the File Notes root changed. "
                 "Reopen History for the current root."

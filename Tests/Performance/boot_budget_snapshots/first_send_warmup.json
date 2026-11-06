@@ -1,7 +1,7 @@
 {
   "_comment": "First-send warm-up payload census (the pre-import pass's last step, after the screen routes), counted from app + chat: an upper bound on what the warm-up adds. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
   "warmup_added_modules": 94,
-  "warmup_added_loc": 59793,
+  "warmup_added_loc": 59819,
   "listed": [
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
     "tldw_chatbook.UI.Console_Modules.sent_draft",
@@ -170,7 +170,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_automatic_submission": {
-      "loc": 684,
+      "loc": 697,
       "modules": [
         "tldw_chatbook.Chat.console_automatic_submission"
       ]
@@ -182,7 +182,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_hook_preparation": {
-      "loc": 438,
+      "loc": 451,
       "modules": [
         "tldw_chatbook.Chat.console_hook_preparation"
       ]
