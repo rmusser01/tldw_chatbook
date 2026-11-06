@@ -6,13 +6,16 @@ idle first-send warm-up had finished, every cold module load recorded with its
 thread): between Enter and the provider call, run start loaded
 ``Agents.agent_lesson_promotion`` (the managed-skill proposal gate, when the
 Library provider is on), ``Chat.console_review_delivery`` and, inside
-``compose_turn_review_provider``, ``Agents.code_review_models`` and
-``Chat.console_code_review`` with ``code_review_service``, ``code_review_source``,
-``code_review_store`` and ``code_review_guide`` on the UI loop. None is in the
+``compose_turn_review_provider``, ``Chat.console_code_review`` with
+``code_review_service``, ``code_review_source``, ``code_review_store`` and
+``code_review_guide`` on the UI loop. (``Agents.code_review_models`` was
+already resident: the Console's mount reads the automatic-work ledger, which
+imports it, and the send below does the same before it starts.) None is in the
 idle warm-up (``Chat/console_first_send_modules.py``), and ADR-097's
-``MAX_FIRST_SEND_WARMUP_ADDED_MODULES`` row has room for one module, not eight:
-the owner declined a raise on 2026-10-31. So run start imports them on a worker
-thread instead.
+``MAX_FIRST_SEND_WARMUP_ADDED_MODULES`` row had room for one module, not seven:
+the owner declined a raise on 2026-10-31. So the lesson-promotion module is
+warmed, an ordinary turn skips the review composition, and a review turn
+imports the review service on a worker thread.
 
 The send runs in a fresh interpreter (``sys.modules`` is process-global, and
 an earlier test importing these modules would hide the import) after the
@@ -40,7 +43,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 REVIEW_FAMILY = (
     "tldw_chatbook.Agents.agent_lesson_promotion",
     "tldw_chatbook.Chat.console_review_delivery",
-    "tldw_chatbook.Agents.code_review_models",
     "tldw_chatbook.Chat.console_code_review",
     "tldw_chatbook.Agents.code_review_service",
     "tldw_chatbook.Agents.code_review_source",
@@ -107,6 +109,21 @@ class Gateway(ConsoleProviderGateway):
         self.dispatched.append(messages)
         yield "plain answer"
 
+
+# Count run start's managed-skill proposal gates through the hook builder it
+# calls on the controller module (so no gate module is imported early here).
+import tldw_chatbook.Chat.console_chat_controller as controller_module
+
+gates_built = []
+real_gate_hook = controller_module.build_managed_skill_promotion_review_hook
+
+
+def counting_gate_hook(gate, *args, **kwargs):
+    gates_built.append(type(gate).__name__)
+    return real_gate_hook(gate, *args, **kwargs)
+
+
+controller_module.build_managed_skill_promotion_review_hook = counting_gate_hook
 
 main = threading.main_thread()
 loop_loads = {}
@@ -194,6 +211,7 @@ print(
     + json.dumps(
         {
             "warmed": warmed,
+            "gates_built": gates_built,
             "dispatched": len(gateway.dispatched),
             "answered": "plain answer" in contents,
             "loop_loads": loop_loads,
@@ -253,6 +271,18 @@ def _report(on_loop: dict[str, str]) -> str:
     return "\n".join(f"  {name}: {where}" for name, where in sorted(on_loop.items()))
 
 
+#: The review service's own modules, which an explicit review request needs.
+REVIEW_SERVICE = (
+    "tldw_chatbook.Chat.console_code_review",
+    "tldw_chatbook.Agents.code_review_service",
+    "tldw_chatbook.Agents.code_review_source",
+    "tldw_chatbook.Agents.code_review_store",
+    "tldw_chatbook.Agents.code_review_guide",
+)
+#: What composing a turn's review tools loads: the delivery seam and the service.
+REVIEW_COMPOSITION = ("tldw_chatbook.Chat.console_review_delivery", *REVIEW_SERVICE)
+
+
 @pytest.mark.integration
 def test_a_first_ordinary_agent_send_loads_no_review_module_on_the_ui_loop(
     tmp_path,
@@ -266,25 +296,20 @@ def test_a_first_ordinary_agent_send_loads_no_review_module_on_the_ui_loop(
     """
     record = _send_in_fresh_interpreter(tmp_path, "hello")
     # Non-vacuity: the send reached the provider, and run start built the
-    # managed-skill proposal gate (its module is loaded after the send).
+    # managed-skill proposal gate, the step that loaded its module live.
     assert record["dispatched"] == 1 and record["answered"], record
-    assert "tldw_chatbook.Agents.agent_lesson_promotion" in record["resident_after"]
+    assert record["gates_built"] == ["ManagedSkillProposalGate"], record
 
     on_loop = _loaded_on_the_loop(record, REVIEW_FAMILY)
     assert not on_loop, (
         "an ordinary first send loaded these review modules on the UI loop:\n"
         + _report(on_loop)
     )
-
-
-#: The review service's own modules, which an explicit review request needs.
-REVIEW_SERVICE = (
-    "tldw_chatbook.Chat.console_code_review",
-    "tldw_chatbook.Agents.code_review_service",
-    "tldw_chatbook.Agents.code_review_source",
-    "tldw_chatbook.Agents.code_review_store",
-    "tldw_chatbook.Agents.code_review_guide",
-)
+    # Not just off the loop: an ordinary turn composes no review tools, so it
+    # loads neither the delivery seam nor the service on any thread.
+    composed = set(REVIEW_COMPOSITION) & set(record["resident_after"])
+    composed -= set(record["warmed"])
+    assert not composed, f"an ordinary first send loaded {sorted(composed)}"
 
 
 @pytest.mark.integration
@@ -441,3 +466,90 @@ def test_the_review_word_gate_changes_no_stage_the_parser_finds():
 
     check()
     assert len(requests) >= 5, "the generated texts held almost no stage request"
+
+
+#: One clause per ``_explicit_stages`` return path, each meant as a request.
+_STAGE_CORES = (
+    "review",
+    "review my changes",
+    "review my resume",
+    "review and verify",
+    "review then verify the findings",
+    "review and consolidate",
+    "do a multi-model code review",
+    "do multi-model code review and verify",
+    "verify",
+    "verify them",
+    "verify the review",
+    "consolidate all findings",
+    "retry reviewer r2",
+    "retry the reviewer r3",
+    "retry verification",
+    "retry the verification",
+    "resume review",
+    "resume the review",
+    "resume this review",
+)
+#: Near misses: qualified, negated or quoted clauses the parser refuses.
+_REFUSED_CORES = (
+    "review if you can",
+    "don't review",
+    "verify later",
+    "never retry the verification",
+    '"review my changes"',
+)
+#: Text that is not the ASCII word, which ``re.I`` would case-fold to it.
+_LOOKALIKES = ("resume revıew", "reſume review", "retry the verıfication")
+
+
+def _stage_shaped_texts():
+    import itertools
+
+    prefixes = ("", "can you ", "please ", "can you please ", "$multi-model-review ")
+    suffixes = ("", ".", "!", "?")
+    cases = (str, str.upper, str.title, str.capitalize)
+    for prefix, core, suffix, case in itertools.product(
+        prefixes, _STAGE_CORES + _REFUSED_CORES + _LOOKALIKES, suffixes, cases
+    ):
+        yield case(prefix + core + suffix)
+
+
+def test_the_review_word_gate_changes_no_stage_on_any_stage_shaped_text():
+    """Every parser return path, enumerated, finds the same stages gated.
+
+    The random texts above rarely spell a whole stage clause, so a stage word
+    missing from ``REVIEW_REQUEST_WORDS`` would pass them; here each clause
+    the parser accepts is tried with every prefix, suffix, case and binding.
+    """
+    from unittest import mock
+
+    from tldw_chatbook.Chat import console_code_review
+
+    found = set()
+    for text in _stage_shaped_texts():
+        for bindings in ((), ("multi-model-review",)):
+            gated = console_code_review._explicit_stages(text, bindings)
+            with mock.patch.object(
+                console_code_review, "mentions_review_request", lambda _text: True
+            ):
+                ungated = console_code_review._explicit_stages(text, bindings)
+            assert gated == ungated, (text, bindings, gated, ungated)
+            found.add(gated)
+    # Non-vacuity: every return path was reached.
+    assert found >= {
+        frozenset(),
+        frozenset({"review"}),
+        frozenset({"review", "verify"}),
+        frozenset({"verify"}),
+        frozenset({"retry_reviewer"}),
+        frozenset({"retry_verification"}),
+        frozenset({"resume_review"}),
+    }, found
+
+
+@pytest.mark.parametrize("text", _LOOKALIKES)
+def test_a_lookalike_of_a_stage_word_requests_no_stage(text):
+    """Only the ASCII word requests a stage, as the run-start check assumes."""
+    from tldw_chatbook.Chat.console_code_review import _explicit_stages
+
+    assert not _explicit_stages(text, ("multi-model-review",)), text
