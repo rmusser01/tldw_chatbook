@@ -4588,6 +4588,21 @@ class LibraryMediaController:
                 partial(self._restore_library_media_loaded_progress, loaded_id),
                 viewer,
             )
+        if loaded_id is not None and self._screen._library_stage_pick_landing == (
+            "media",
+            str(loaded_id),
+        ):
+            # TASK-38981: a pick from the list holding the stage lands once
+            # the opened item's controls exist.
+            self._queue_after_library_media_viewer_recompose(
+                partial(
+                    self._screen._land_stage_pick,
+                    "media",
+                    loaded_id,
+                    ".library-media-route",
+                ),
+                viewer,
+            )
         return True
 
     @on(Button.Pressed, "#library-media-reader-retry")

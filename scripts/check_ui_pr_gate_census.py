@@ -850,6 +850,9 @@ MINIMUM_FILES = 1741
 # TASK-38981 re-review 3 (2026-11-06): append the three Notes widen nodes at
 # the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1744
+# TASK-38981 re-review 4 (2026-11-06): append the four stage-pick
+# user-move nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1748
 
 
 def read_census(path: Path) -> list[str]:

@@ -1324,7 +1324,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: holding the stage lands focus in the opened Prompts or Media item
     #: (``_focus_opened_item_once_shown``, with a short settle window, and
     #: ``_land_in_work_pane``): 38180 -> 38272 lines, 1375 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38272, 1375),
+    #: 2026-11-06, TASK-38981 re-review 4 (same waiver): the timer landing is
+    #: replaced by a one-shot pending landing the detail path runs
+    #: (``_arm_stage_pick_landing``, ``_land_stage_pick``), on the tree
+    #: stacked on the arch tip: exact measurement, 38149 lines, 1375 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38149, 1375),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

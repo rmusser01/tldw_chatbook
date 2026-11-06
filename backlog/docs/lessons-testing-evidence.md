@@ -24740,3 +24740,13 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 **Incident.** The Library modal inventory was red on dev with one message, "unresolved modal constructor … `_review_restored_skill_trust` (SkillRecoveryReviewModal(…))", and the task was filed as one missing contract row. With that row added, all six nodes still failed, now on `LibraryFileNotesWorkspace._review_pairing` (NotesRecoveryDialog), which the same commit (b5251e9a6e, TASK-32628) had added. With that one fixed, they failed on a third, `_show_history` (FileNotesHistoryDialog, task-34381), and then on an edge that had gone stale meanwhile (a picker changed from FileOpen to SelectDirectory). `_discover_library_modal_edges` asserts inside its walk, so the first gap aborts it and no later gap is ever reported. The second modal was also not a safe-dismissal modal, which is a production change rather than a table row. A probe that registered each unresolved name and re-ran the walk listed the rest in one pass.
 
 **What to do.** When a walk or inventory fails on its first unresolved entry, size the work only after a run that gets past it. Fix the first entry (or skip it temporarily) and rerun before calling the gap one row, and say in the task when there may be more behind it.
+
+## A focus test that never makes the user's move, or reports the wrong moment, proves nothing (TASK-38981, 2026-11-06)
+
+**Incident.** The test for "a user's Shift+Tab to the Items grip during a held pick keeps focus there" failed its Media case on the fixed tree. The pick's rebuild had already reset focus onto that grip, so the `shift_tab_to(grip)` helper returned without pressing anything. No user input happened, and the landing correctly took focus. The case was red on the buggy tree too, for the wrong reason. Its "right after the landing" case first passed on the buggy tree: `pilot.press` waits for idle (up to about 1 s), which outlived the 0.5 s window under test. Separately, a stress failure reported "focus on the grip, the item not loaded", but the `_wait_for_condition` message was an f-string, built before the 15 s wait began. It described the start state, not the state at the timeout.
+
+**What to do.**
+- When a helper drives the user to a target, make it press at least once. If focus is already on the target, Tab away and back.
+- For a timing window, act with the action itself (`screen.action_focus_previous()`) and plain `asyncio` polling, not `pilot.press`.
+- Pass a diagnostic as a callable (`message=lambda: ...`), so it reports the state at the timeout.
+- Show each case red on the buggy tree before trusting it green.

@@ -155,3 +155,39 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
   - Red with HEAD's `library_screen.py`: media and prompts fail, the other 4 pass. Green after, 3 of 3 runs for prompts and media.
 - The three widen nodes are appended at the census tail, floor 1743. Size rows and the pre-import record are re-pinned under the waiver (see the commit).
 
+### Re-review fixes (r10l-rev4)
+
+- **Important: the settle watch took back a user's move.** Shift+Tab to the Items grip, made while the pick loaded or just after it landed, was pulled back into the opened item.
+  - Test: `test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[prompts|media x loading|landed]`.
+    - It stages the list at 60 columns and picks another row with Enter.
+    - It then Shift+Tabs to the Items grip, at one of two points: while the pick's detail load is held, or right after the landing. The second uses Shift+Tab's own action, because Pilot's idle wait would let the 0.5 s window pass.
+    - Focus must stay on the grip.
+  - Red on 5554c8cf03, all four cases. Focus ends on `library-prompt-editor-content` or `library-media-back`. Green after.
+- **Important: no timer.** `_focus_opened_item_once_shown` and `_land_in_work_pane` are gone.
+  - A pick from the list that holds the stage arms a one-shot pending landing, `_library_stage_pick_landing` (destination, item id).
+  - Two hooks run it:
+    - Prompts: the detail sync's `then=arm_editor`.
+    - Media: the viewer sync's tail, whenever the loaded item matches the pending one, through `_queue_after_library_media_viewer_recompose`.
+  - It focuses the first focus-chain control in the shown work pane, then clears. Until that control shows, it stays pending for the next detail sync of the same item.
+  - Real input withdraws it (key, click, wheel, the Tab actions, suspend), in `_withdraw_library_notes_pending_focus_handoffs`. A landing therefore never overrides the user's move.
+  - The Media hook first rode the progress-restore gate. One stress run of 8 then left focus on the grip.
+    - The test's diagnostic was evaluated before its wait. It is now a callable, so it reports the state at the timeout.
+    - The hook now runs on every matching sync.
+  - Stress, with the closeout file at `-n 6` and the final code:
+    - 8 runs as two concurrent loops (load 20-25). Every run had the other 48 nodes green, including every stage-pick, user-move, adjacent-key and empty-stage node.
+    - 3 single runs (load 9-13): 49 of 49 each.
+  - The one failure under the concurrent load was `test_closeout_single_app_route_cycle`. A Notes draft autosaved during the slow cycle. It is not this change:
+    - 5554c8cf03 failed it 4 of 4 under the same load.
+    - In a paired run of that node alone under identical load, fu-r10-arch (b7c8e809b3) failed it 3 of 4 and this tree 2 of 4.
+- **Important: the scoped-sync fake.** `test_prompt_and_skill_row_handlers_route_to_their_canvas` failed with `SimpleNamespace has no attribute reader_layout`.
+  - Its `_prompts_state` now carries `LibraryPromptsState().reader_layout`, where the list does not hold the stage. Green.
+  - `test_library_multiselect_media.py`'s `_media_fake` gets the same field (`LibraryMediaState().reader_layout`).
+  - That file's 7 failures are the same 7 on fu-r10-arch and here:
+    - 4 are `RecoveryRequired: raw_source_selection_changed`;
+    - 3 are `no attribute _library_media_editor_dirty`, a fake the arch tip outgrew.
+  - A probe added that one attribute; the two row-open tests then passed through the new read. The probe was reverted.
+- **Minor: Media guide.** `]` / `[` and the arrow keys are stated as Media's. The other destinations are said to share two things: Enter or a click opens the item with focus in it, and a widen keeps focus in the list.
+- **Bookkeeping.**
+  - Four nodes appended at the census tail; floor 1748.
+  - Size rows re-pinned under the owner waiver: `LibraryScreen` 38149 lines and 1375 methods (exact, on the tree stacked on the arch tip); media controller 5275; prompts controller 5068.
+  - Pre-import: MAX 426,388 and the snapshot regenerated (`--only preimport`).

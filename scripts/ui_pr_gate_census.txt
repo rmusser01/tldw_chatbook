@@ -2515,3 +2515,10 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_reader_focus_survi
 Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide0]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide1]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide2]
+# TASK-38981 re-review 4 (2026-11-06): a user's Shift+Tab to the Items grip
+# during or after a Prompts or Media stage pick's landing keeps focus there
+# (7-9 s each). Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[prompts-loading]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[prompts-landed]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-loading]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-landed]

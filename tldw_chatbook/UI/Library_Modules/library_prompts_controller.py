@@ -2196,6 +2196,9 @@ class LibraryPromptsController:
 
         def arm_editor() -> None:
             self._arm_library_prompt_editor()
+            self._screen._land_stage_pick(
+                "prompts", prompt_id, "#library-prompts-reader-shell"
+            )
             if (
                 restore_history_focus
                 and self.focused is None

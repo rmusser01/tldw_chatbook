@@ -41,6 +41,9 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
+from tldw_chatbook.UI.Library_Modules.library_prompts_state import (
+    LibraryPromptsState,
+)
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -241,6 +244,8 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
             selected_prompt_id=None,
             select_mode=False,
             view="list",
+            # A layout in which the list does not hold the stage (TASK-38981).
+            reader_layout=LibraryPromptsState().reader_layout,
         ),
         _library_prompt_browse_controller=SimpleNamespace(freshness="fresh"),
         _flush_library_prompt_save=permitted,

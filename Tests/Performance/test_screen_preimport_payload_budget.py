@@ -148,7 +148,12 @@ MAX_PASS_ADDED_MODULES = 558
 #: list keeps its focus across a resize reshape) and
 #: `library_media_reader_state` +2. `Utils.adaptive_reader_state` is not in
 #: the route. Modules unchanged, pinned at the measurement.
-MAX_PASS_ADDED_LOC = 426_703
+#: 426,703 -> 426,388 (2026-11-06, TASK-38981 re-review 4; owner size
+#: waiver): re-measured on the tree stacked on the arch tip b7c8e809b3, which
+#: measured 426,432 before this change; `library_screen` then drops 44 lines
+#: (the timer landing becomes a one-shot pending landing). Modules unchanged
+#: (556), pinned at the measurement.
+MAX_PASS_ADDED_LOC = 426_388
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules

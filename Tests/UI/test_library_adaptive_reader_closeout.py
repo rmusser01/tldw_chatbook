@@ -2201,7 +2201,8 @@ async def test_an_item_picked_from_the_stage_list_takes_the_stage_back(
                     # opened item, as the others already did.
                     and current_work() in screen.focused.ancestors_with_self
                 ),
-                message=(
+                # A callable, so the report shows the state at the timeout.
+                message=lambda: (
                     f"{destination}: picking {picked!r} left "
                     f"{_open_item_identity(screen, destination)!r} open, "
                     f"work shown {current_work().display}, layout {layout()}, "
@@ -2445,5 +2446,149 @@ async def test_notes_list_focus_survives_a_widen_that_ends_the_stage(
                 focused,
             )
             assert shell.items in focused.ancestors and _work_cells(focused) > 0
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["loading", "landed"])
+@pytest.mark.parametrize("destination", ["prompts", "media"])
+async def test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept(
+    destination: str,
+    phase: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38981 re-review 4: a pick from the list holding the stage lands
+    focus in the opened item, but never over the user's own move. Shift+Tab
+    to the Items grip while the pick is still loading (the detail load is
+    held), or right after the landing, keeps focus on the grip."""
+    from tldw_chatbook.UI.Library_Modules.library_prompts_controller import (
+        LibraryPromptsController,
+    )
+
+    release = asyncio.Event()
+    if destination == "prompts":
+        original = LibraryPromptsController._refresh_library_prompt_detail
+
+        async def held(self, *args, **kwargs):
+            await release.wait()
+            return await original(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            LibraryPromptsController, "_refresh_library_prompt_detail", held
+        )
+    else:
+        original_media = library_screen_module.LibraryScreen._refresh_library_media_detail
+
+        async def held_media(self, *args, **kwargs):
+            await release.wait()
+            return await original_media(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            library_screen_module.LibraryScreen,
+            "_refresh_library_media_detail",
+            held_media,
+        )
+    if phase == "landed":
+        release.set()
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT[destination][1]
+    layout_name = DESTINATION_CONTRACT[destination][4]
+    row_selector, identity_attribute = _PICKED_ROWS[destination]
+
+    def layout():
+        return operator.attrgetter(layout_name)(screen)
+
+    def loaded() -> object:
+        if destination == "prompts":
+            return screen._prompts_state.loaded_id
+        return screen._media_state.reader_session.loaded_id
+
+    async def settle(turns: int = 12) -> None:
+        for _ in range(turns):
+            await pilot.pause(0.03)
+
+    async def shift_tab_to(target) -> None:
+        if screen.focused is target:
+            # The pick's rebuild may already have reset focus here; the user's
+            # move is then Tab away and Shift+Tab back.
+            await pilot.press("tab")
+            await pilot.pause()
+        for _ in range(60):
+            if screen.focused is target:
+                return
+            await pilot.press("shift+tab")
+            await pilot.pause()
+        raise AssertionError(f"Shift+Tab never reached {target.id}")
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            release.set()  # the destination's own first load is not held
+            await _open_destination(screen, pilot, destination)
+            if phase == "loading":
+                release.clear()
+            await pilot.resize_terminal(60, 30)
+            await settle()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await settle()
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open item",
+            )
+            before = str(_open_item_identity(screen, destination))
+            row = next(
+                candidate
+                for candidate in screen.query(row_selector)
+                if getattr(candidate, identity_attribute, None) is not None
+                and str(getattr(candidate, identity_attribute)) != before
+            )
+            picked = getattr(row, identity_attribute)
+            screen.set_focus(row)
+            await pilot.pause()
+            await pilot.press("enter")
+            await settle(4)
+            grip = screen.query_one(selector).items_grip
+            if phase == "loading":
+                await shift_tab_to(grip)
+                release.set()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: str(loaded()) == str(picked),
+                    message="the held pick never loaded",
+                )
+            else:
+                # Act at once after the landing: plain asyncio polling, and
+                # Shift+Tab's own action (Pilot's idle wait can take ~1 s).
+                for _ in range(500):
+                    focused = screen.focused
+                    if (
+                        str(loaded()) == str(picked)
+                        and focused is not None
+                        and screen.query_one(selector).work
+                        in focused.ancestors_with_self
+                    ):
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    raise AssertionError("the pick did not land in the opened item")
+                for _ in range(20):
+                    screen.action_focus_previous()
+                    await asyncio.sleep(0)
+                    if screen.focused is grip:
+                        break
+                else:
+                    raise AssertionError(f"Shift+Tab never reached {grip.id}")
+            await settle(30)  # longer than any landing window
+            assert screen.focused is grip, (phase, screen.focused)
     finally:
         prompt_db.close()

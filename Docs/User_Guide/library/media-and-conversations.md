@@ -88,12 +88,14 @@ rewriting your settings. Explicitly reopening a pane takes effect immediately.
   82 columns), the Items grip opens the list across the whole width
   instead of leaving the item a few columns beside it. The item stays open
   behind the list, and the same grip closes the list again and returns to the
-  item with focus inside it. Opening another item from that list (Enter, a
-  click, or **]** / **[** for the next or previous item) shows it across the
-  whole width, and Enter or a click puts focus in it; moving through the list
-  with the arrow keys keeps the list. Widening the terminal ends the list's stage and keeps focus
-  where it was in the list.
-  Conversations, Collections, Prompts and Skills do the same. In Artifacts
+  item with focus inside it. In Media, opening another item from that list
+  with Enter or a click shows it across the whole width with focus in it;
+  **]** / **[** (the next or previous item) also show it across the whole
+  width, and moving through the list with the arrow keys keeps the list.
+  Widening the terminal ends the list's stage and keeps focus where it was in
+  the list. Conversations, Collections, Prompts and Skills share two of these:
+  Enter or a click opens the item across the whole width with focus in it,
+  and widening keeps focus in the list. In Artifacts
   the list takes the stage too, and **F6**, or **Tab** onto the artifact's
   controls, returns to the open artifact. Below 64 columns with nothing open, each of these
   lists keeps the stage, as Media's does.

@@ -469,7 +469,9 @@ _BUDGETS: dict[str, int] = {
     # item opened from the list holding the narrow stage takes it back.
     # 2026-11-06, TASK-38981 re-review (same waiver): 5255 -> 5260 (+5): every
     # immediate select (``]``/``[`` and the review-set walk too) hands it back.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5260,
+    # 2026-11-06, TASK-38981 re-review 4 (same waiver): 5260 -> 5275 (+15):
+    # the viewer sync lands a pending stage pick once its item has loaded.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5275,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -729,7 +731,9 @@ _BUDGETS: dict[str, int] = {
     # 4998.
     # TASK-36454..36458: narrow save/install completion helpers reduce this owner.
     # PR3346: submission joins its existing save/ack owner; no ceiling increase.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5065,
+    # 2026-11-06, TASK-38981 re-review 4 (owner size waiver): 5065 -> 5068
+    # (+3): the detail sync's ``arm_editor`` lands a pending stage pick.
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5068,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
