@@ -863,6 +863,10 @@ MINIMUM_FILES = 1755
 # workspace state builder reuse, the view key, the cached label read and the
 # stale re-read renewal pins. The floor is the entry count.
 MINIMUM_FILES = 1763
+# TASK-36571.1 review fix (2026-11-06): the idle syncs' re-read pins, the run
+# tick's no-re-read guard, the sub-agent renewal pin and the builder memo's
+# conversation and identity pins join them. The floor is the entry count.
+MINIMUM_FILES = 1768
 
 
 def read_census(path: Path) -> list[str]:
