@@ -759,6 +759,9 @@ class PersonasCharacterEditorWidget(Container):
             self._populate_form(data)
         finally:
             self._loading = False
+        # The concept row belongs to one session; From a concept re-opens it.
+        self.set_concept_row_visible(False)
+        self.query_one("#personas-char-editor-concept", Input).value = ""
         if visual_identity_pending:
             self._reset_visual_identity_browser()
         else:
