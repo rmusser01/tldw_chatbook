@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 16:13
+updated_date: 2026-11-06 22:10
 labels:
 - follow-up
 - library
@@ -74,6 +74,12 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
   - `test_database_notes_click_between_compact_restores_is_kept`: 170x48 -> 100x30, click the title.
   - `test_folder_files_click_between_compact_restores_is_kept`: 160x45 -> 79x30, click the editor.
   - **Red** on the base source: `assert 1 > 1` (generation 1 -> 1) in both. With that assertion temporarily off, the held restore took focus back to `library-note-body` and to `library-file-notes-items-grip`, the task's probe results. **Green** with the fix.
+- **Review r11l-rev1, item 2: deadline-based setup.** The Folder files click test failed at its mount wait under load: 4 of 6 at load 35-55, in the reviewer's runs. That wait was the file's `_wait_until`, which counts 150 `pause(0.02)` calls.
+  - The click test and TASK-38957's Tab test now share one setup, `_folder_files_compact_transition`, in which every wait is a `_wait_for_condition` deadline (15 s).
+  - The change also fixes the sibling Tab test. The reviewer saw it fail the same way on dev, 4 of 4; I could not reproduce that on base in 10 runs at load 82-96.
+  - After the change: 20 of 20 (10 of each) at `-n 4`, at load 83-98.
+  - With the fix removed by an in-memory mutation: both click tests are red (`assert 1 > 1`), and the Tab test stays green.
+  - The whole workspace file at `-n 4` (load 64-80) fails only on 8 nodes. All 8 are red on base 2684e5453f with the same command: the authority switch and round trip nodes, the shipped-themes legibility node and the Database/Files switch node.
 - **AC#2.** TASK-38957's `test_folder_files_user_focus_between_compact_restores_is_kept` passes. I ran the Notes focus and canvas-sync files, plus the Media and Conversations files below, under a scratch `-p` plugin that adds `bootstrap_profile`, because of the local `RecoveryRequired` trap. The files: canvas-sync defects, canvas-sync gaps, removed-widget focus and its extended file, w5 keyboard focus, and the whole File Notes workspace file. Results:
   - 328 passed and 13 failed, at load 47. TASK-38957's four named pins (`test_converted_notes_site_keeps_focus_on_a_real_key_press`, `test_notes_row_press_to_editor_keeps_focus_inside_the_canvas`, `test_automatic_notes_reconcile_restores_richer_control_focus`, `test_overlapping_reconciles_retain_original_semantic_focus`) are among the passes.
   - Rerun with the fix reverted, the same 12 of the 13 fail. The 13th, a Conversations filter case, was a load flake.

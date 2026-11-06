@@ -912,19 +912,19 @@ async def test_folder_files_automatic_items_priority_does_not_steal_focus_or_per
     await workspace.shutdown()
 
 
-@pytest.mark.asyncio
-async def test_folder_files_user_focus_between_compact_restores_is_kept(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """TASK-38957: the compact transition restores the focus it captured, then
-    again a few turns later. In Folder files a user's focus change in between
-    did not advance the Notes focus generation (only Database Notes, the rail,
-    Media and Conversations did), so the settled restore took focus back.
-    Here the settled restore is held, the user Tabs to the editor, and the
-    restore then runs: the editor keeps focus. (Tab, not a click: a click's
-    focus reaches the screen before its MouseDown ends the resize settling,
-    so it is classified programmatic in every Notes mode; see the task.)"""
+@asynccontextmanager
+async def _folder_files_compact_transition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Folder files at 160x45, resized to 79x30 with the settled restore held.
+
+    Shared by TASK-38957's Tab case and TASK-39050's click case. Yields
+    ``(screen, pilot, workspace, editor, held, settled_restore)`` once the
+    compact transition has queued its settled restore. TASK-39050 review:
+    every wait is a wall-clock deadline (``_wait_for_condition``, 15 s); the
+    file's ``_wait_until`` counts 150 pauses, which ran out at the mount under
+    load 35-55.
+    """
     root = tmp_path / "notes"
     root.mkdir()
     (root / "draft.md").write_text("body", encoding="utf-8")
@@ -946,16 +946,16 @@ async def test_folder_files_user_focus_between_compact_restores_is_kept(
     async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        await _wait_until(
+        await _wait_for_condition(
             pilot,
             lambda: bool(screen.query("#library-notes-source-files")),
-            "Notes source chooser did not mount",
+            message="Notes source chooser did not mount",
         )
         screen.query_one("#library-notes-source-files", Button).press()
-        await _wait_until(
+        await _wait_for_condition(
             pilot,
             lambda: workspace.initialized and workspace.is_mounted,
-            "Folder Files did not mount",
+            message="Folder Files did not mount",
         )
         assert await workspace.open_path("draft.md")
         shell = workspace.query_one(
@@ -965,10 +965,10 @@ async def test_folder_files_user_focus_between_compact_restores_is_kept(
         screen.set_focus(workspace.query_one("#file-notes-tree", Tree))
         await pilot.pause()
         shell.items_grip.press()
-        await _wait_until(
+        await _wait_for_condition(
             pilot,
             lambda: not shell.effective_layout.items_open,
-            "Manual Items close did not settle",
+            message="Manual Items close did not settle",
         )
 
         held: list[tuple[object, tuple, dict]] = []
@@ -982,11 +982,35 @@ async def test_folder_files_user_focus_between_compact_restores_is_kept(
             controller_type, "_restore_library_notes_settled_focus", hold
         )
         await pilot.resize_terminal(79, 30)
-        await _wait_until(
+        await _wait_for_condition(
             pilot,
             lambda: workspace.narrow and bool(held) and editor.region.width > 0,
-            "the compact transition did not queue its settled restore",
+            message="the compact transition did not queue its settled restore",
         )
+        yield screen, pilot, workspace, editor, held, settled_restore
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_user_focus_between_compact_restores_is_kept(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38957: the compact transition restores the focus it captured, then
+    again a few turns later. In Folder files a user's focus change in between
+    did not advance the Notes focus generation (only Database Notes, the rail,
+    Media and Conversations did), so the settled restore took focus back.
+    Here the settled restore is held, the user Tabs to the editor, and the
+    restore then runs: the editor keeps focus. (TASK-39050 covers the click.)"""
+    async with _folder_files_compact_transition(tmp_path, monkeypatch) as (
+        screen,
+        pilot,
+        _workspace,
+        editor,
+        held,
+        settled_restore,
+    ):
         for _ in range(20):  # the user's own choice, between the restores
             if editor.has_focus:
                 break
@@ -998,8 +1022,6 @@ async def test_folder_files_user_focus_between_compact_restores_is_kept(
         for _ in range(3):
             await pilot.pause()
         assert editor.has_focus, screen.focused
-
-    await workspace.shutdown()
 
 
 @pytest.mark.asyncio
@@ -1066,68 +1088,14 @@ async def test_folder_files_click_between_compact_restores_is_kept(
     click's focus read as programmatic: the focus generation stayed put and the
     held settled restore took focus back to the Items grip. The click must
     advance the generation and keep the editor."""
-    root = tmp_path / "notes"
-    root.mkdir()
-    (root / "draft.md").write_text("body", encoding="utf-8")
-    workspace = LibraryFileNotesWorkspace(
-        root=root,
-        replica_path=tmp_path / "replica.sqlite",
-        poll_interval=10,
-        autosave_delay=30,
-    )
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=[])
-    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
-    monkeypatch.setattr(
-        library_screen_module,
-        "save_setting_to_cli_config",
-        lambda *_args, **_kwargs: True,
-    )
-
-    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
-        await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query("#library-notes-source-files")),
-            "Notes source chooser did not mount",
-        )
-        screen.query_one("#library-notes-source-files", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: workspace.initialized and workspace.is_mounted,
-            "Folder Files did not mount",
-        )
-        assert await workspace.open_path("draft.md")
-        shell = workspace.query_one(
-            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
-        )
-        editor = workspace.query_one("#file-notes-editor", TextArea)
-        screen.set_focus(workspace.query_one("#file-notes-tree", Tree))
-        await pilot.pause()
-        shell.items_grip.press()
-        await _wait_until(
-            pilot,
-            lambda: not shell.effective_layout.items_open,
-            "Manual Items close did not settle",
-        )
-
-        held: list[tuple[object, tuple, dict]] = []
-        controller_type = type(screen._notes_controller)
-        settled_restore = controller_type._restore_library_notes_settled_focus
-
-        def hold(controller, *args, **kwargs):
-            held.append((controller, args, kwargs))
-
-        monkeypatch.setattr(
-            controller_type, "_restore_library_notes_settled_focus", hold
-        )
-        await pilot.resize_terminal(79, 30)
-        await _wait_until(
-            pilot,
-            lambda: workspace.narrow and bool(held) and editor.region.width > 0,
-            "the compact transition did not queue its settled restore",
-        )
+    async with _folder_files_compact_transition(tmp_path, monkeypatch) as (
+        screen,
+        pilot,
+        _workspace,
+        editor,
+        held,
+        settled_restore,
+    ):
         # No input since the resize: the click below is the first.
         assert screen._notes_state.resize_settling
         assert not editor.has_focus, screen.focused
@@ -1140,8 +1108,6 @@ async def test_folder_files_click_between_compact_restores_is_kept(
         for _ in range(3):
             await pilot.pause()
         assert editor.has_focus, screen.focused
-
-    await workspace.shutdown()
 
 
 @pytest.mark.asyncio
