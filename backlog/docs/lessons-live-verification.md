@@ -1,5 +1,65 @@
 # Lessons: verifying against the real thing
 
+## A regression filed against a reviewed head can be gone from the merge: measure the merged code (TASK-33620.15.51, 2026-11-05)
+
+**Incident.** TASK-33620.15.51 was filed from TASK-33620.15.18's review. A first send's
+Enter to provider POST was a paired median +21 ms later on that branch's head
+f1b164cc2f than on origin/dev (16 pairs, slower in 10). That head froze the heap after
+every warm-up step, 54 freezes per launch. PR #3336 merged with one more commit
+(5a70ec1977), which removed those freezes and instead requested idle maintenance at the
+pass's end. The task's text, its suspects and its three-change list all described the
+reviewed head. On dev 29592ecc9b, paired against the same commit with #3336's runtime
+changes reverted by hand (16 pairs over two rounds, profiles swapped), dev was a paired
+median -60 ms (bootstrap 95% CI -176 to +18 ms) and slower in only 5 of 16 pairs.
+
+**What to do.** Before reproducing a regression filed during a review, diff the merged
+code against the head it was measured on (`git diff <head> <merge> -- <runtime paths>`).
+Then measure the merged code against a local revert of the PR's runtime changes. A
+PR's commit list can end with an integration commit the review never measured.
+
+## A wall-clock step during a launch moves every driver timestamp against the app's clock (TASK-33620.15.51, 2026-11-05)
+
+**Incident.** The p51 probe maps the driver's `time.time()` stamps into the app's
+`perf_counter()` through one (wall, perf) pair it records at startup. In 33 of 34
+launches, the first typed key reached Textual's driver thread 4-9 ms after its
+injection. In one launch (r1 s8-d) it arrived 199 ms *before* its injection, and the
+Enter 200 ms before its own. Enter to POST read 1,218 ms instead of 1,428 ms, and four
+of the send's UI-thread imports appeared to run before Enter. The wall clock had stepped
+during the launch, and every driver stamp moved with it.
+
+**What to do.** For each launch, check key arrival minus injection on an input whose
+arrival cannot be late, such as a typed burst on an idle loop. If it falls outside a
+few ms, re-anchor the mapping on that input instead of trusting or dropping the launch,
+and record the correction.
+
+## On a host other agents load in blocks, gate each live pair on the generator's processes, not on load1 (TASK-33620.15.51, 2026-11-05)
+
+**Incident.** From 13:24 to 15:20, sibling agents ran 88-process load generators (the
+`signal.alarm` busy loops described below) in 20-30 minute blocks. They held load1 at
+110-125, with gaps of a few minutes between blocks. A gate of load1 < 14 opened 2-3
+minutes into each gap, because load1 decays over minutes, and so missed most of it. A
+fallback that ran anyway after an hour of waiting started one pair at load 117, which
+was discarded. A second gate opened at once: the generator's processes absent for 15 s
+plus a 1 s `top` idle sample. Re-running any pair during which a generator appeared
+(checked before typing and 3 s after Enter) kept all 32 dev-against-revert pairs off
+generator load. Other agents' pytest and xdist runs alone held idle CPU at 20-60% that
+afternoon, so an idle threshold above about 40% would never have opened.
+
+A design mistake in the same task cost a round. Its first four-arm blocks gave dev the
+two oldest profiles (20+ launches each) and two other arms the two seeded that
+afternoon (3 launches each). Those two arms used 80-86 ms less UI-loop CPU between
+Enter and the POST than dev: the profiles' history, not their code.
+
+**What to do.**
+- Count the generator with `pgrep -f "signal[.]alarm"`; the brackets keep your own
+  shell's command line from matching. Check before each pair and just before each
+  measured input.
+- Record idle CPU per send.
+- Never fall back to running under a generator.
+- With more than two arms, rotate profiles across arms (a Latin square over blocks),
+  so that each arm meets each profile equally often. Swapping pairs of profiles
+  between halves is not enough.
+
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
 **Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:
