@@ -1122,3 +1122,90 @@ async def test_ctrl_q_waits_for_a_rule_test_then_asks_before_discarding_edits(
         await _ask_stay_then_quit(
             app, pilot, modal, "Discard changes and quit?", cleanups, kept
         )
+
+
+async def test_ctrl_q_waits_for_a_confirmed_rule_promote_being_written(
+    monkeypatch, native
+):
+    """Ctrl+Q during a confirmed Promote's write says still working (TASK-38980).
+
+    Before, the write ran inside the confirmation dialog's button handler with
+    the manager not busy, so the quit walk found nothing in flight and quit
+    mid-write. That handler also kept Pilot waiting, so while the write is held
+    this test sends Ctrl+Q through the app's own key path (what ``pilot.press``
+    calls first) and polls with plain sleeps; once it is released, Pilot again.
+    """
+    from textual.widgets import Static
+
+    from Tests.Chat.test_response_rules_runtime import activate
+    from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    chat, _workspace, global_scope = rules.scopes(session.id)
+    writing, release = asyncio.Event(), asyncio.Event()
+    original = rules.run_db_call
+
+    async def held(call, *args, **kwargs):
+        if call == rules.store.promote:
+            writing.set()
+            await release.wait()
+        return await original(call, *args, **kwargs)
+
+    async def until(predicate, what: str) -> None:
+        try:
+            async with asyncio.timeout(5.0):
+                while not predicate():
+                    await asyncio.sleep(0.02)
+        except TimeoutError as exc:
+            raise AssertionError(f"timed out waiting for {what}") from exc
+
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        modal = ResponseRulesModal(chat, rules.store, rules)
+        await app.push_screen(modal)
+        await _until(pilot, lambda: modal._selected is not None, "the rule to load")
+        modal.query_one("#rr-promote", Button).press()
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, ConfirmationDialog)
+                and bool(app.screen.query("#confirm-button"))
+            ),
+            "the promote confirmation",
+        )
+        rules.run_db_call = held
+        try:
+            app.screen.query_one("#confirm-button", Button).press()
+            await until(writing.is_set, "the promote write to start")
+
+            await app._press_keys(["ctrl+q"])
+            await until(
+                lambda: bool(_still_working_notices(app)) or bool(cleanups),
+                "Ctrl+Q during the promote write to answer",
+            )
+            assert cleanups == [], (
+                "Ctrl+Q quit straight past ResponseRulesModal while its "
+                "promote was still being written"
+            )
+            notices = _still_working_notices(app)
+            assert len(notices) == 1 and "response rule" in notices[0].lower()
+            await until(
+                lambda: app._quit_in_progress is False,
+                "the quit guard to clear after the still-working answer",
+            )
+            assert app.screen is modal and app._shutting_down is False
+        finally:
+            # Held, the write would keep the app from shutting down after a
+            # failure (on dev it ran in the dialog's button handler).
+            release.set()
+            rules.run_db_call = original
+        await _until(pilot, lambda: not modal._busy, "the promote to settle")
+        assert "promoted" in str(modal.query_one("#rr-status", Static).render())
+        assert rules.store.list_bindings(global_scope)[0].revision == 1
+        await _assert_ctrl_q_quits(
+            app, pilot, cleanups, "Ctrl+Q to quit once the promote was written"
+        )

@@ -58,6 +58,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._binding = None
         self._expected = 0
         self._busy = False
+        self._promoting = False
         self._dirty = False
         self._loaded_digest = None
         self._reload_generation = 0
@@ -553,7 +554,32 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
             expected = existing.binding_revision if existing else 0
 
-            async def commit() -> None:
+            async def claim() -> None:
+                # Confirm claims the manager before the dialog closes, so no
+                # Escape or Ctrl+Q lands between the answer and the write; the
+                # write runs below, in this worker, not in the dialog's
+                # button handler (TASK-38980).
+                self._busy = self._promoting = True
+                self._buttons()
+                self._status(
+                    f"Promoting revision {rule.revision} to {destination.kind}…"
+                )
+
+            # _action always runs in the manager's worker (action_pressed).
+            if not await self.app.push_screen_wait(
+                ConfirmationDialog(
+                    title="Promote response rule",
+                    message=f"Promote revision {rule.revision} to {destination.kind}?\n\n{rule.candidate.title}\nApplies: {rule.candidate.applicability.kind}\n{rule.candidate.applicability.criteria or ''}\nCheck: {rule.candidate.detector.kind}\n{rule.candidate.detector.criteria or chr(10).join(rule.candidate.detector.literals)}\nCorrection: {rule.candidate.feedback}\n\nThis changes future checks in that scope. Private source text and examples are not copied.",
+                    confirm_label="Promote revision",
+                    cancel_label="Cancel",
+                    confirm_callback=claim,
+                )
+            ):
+                return
+        self._busy = True
+        self._buttons()
+        try:
+            if action == "promote":
                 if not self._current_scope():
                     self._status("Scope changed. Promotion was cancelled.")
                     return
@@ -575,21 +601,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                     self._status(
                         "Couldn't promote: the binding changed or saving failed. Review and try again."
                     )
-
-            await self.app.push_screen(
-                ConfirmationDialog(
-                    title="Promote response rule",
-                    message=f"Promote revision {rule.revision} to {destination.kind}?\n\n{rule.candidate.title}\nApplies: {rule.candidate.applicability.kind}\n{rule.candidate.applicability.criteria or ''}\nCheck: {rule.candidate.detector.kind}\n{rule.candidate.detector.criteria or chr(10).join(rule.candidate.detector.literals)}\nCorrection: {rule.candidate.feedback}\n\nThis changes future checks in that scope. Private source text and examples are not copied.",
-                    confirm_label="Promote revision",
-                    cancel_label="Cancel",
-                    confirm_callback=commit,
-                )
-            )
-            return
-        self._busy = True
-        self._buttons()
-        try:
-            if action == "test":
+            elif action == "test":
                 candidate = self._candidate()
                 self.tested = None
                 self._status("Testing rule…")
@@ -682,7 +694,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                 "Couldn't save or test: the definition is invalid, its source/binding changed, or storage is unavailable. Your edits are retained; review and try again."
             )
         finally:
-            self._busy = False
+            self._busy = self._promoting = False
             from tldw_chatbook.Widgets.quit_while_working import forget_quit_refusal
 
             forget_quit_refusal(self)
@@ -690,6 +702,11 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                 self._buttons()
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
+        if self._promoting:
+            self._status(
+                "The revision is still being promoted. The manager stays open until it finishes."
+            )
+            return
         if self._busy:
             self.runtime.cancel(self.session_id, "cancelled")
             self._status("Testing stopped. Your edits are retained.")
@@ -715,9 +732,10 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
     async def confirm_quit(self) -> bool:
         """Answer Ctrl+Q as Escape does (TASK-38747).
 
-        A test, save or pin change (Disable, Exclude, Delete local pin) in
-        flight refuses: Escape stops a test and stays. Unsaved editor text
-        asks before quitting discards it.
+        A test, save, pin change (Disable, Exclude, Delete local pin) or
+        confirmed Promote in flight refuses: Escape stops a test and stays
+        (TASK-38980 runs Promote's write in the manager, so it counts too).
+        Unsaved editor text asks before quitting discards it.
 
         Returns:
             True to let the quit proceed; False to stay.

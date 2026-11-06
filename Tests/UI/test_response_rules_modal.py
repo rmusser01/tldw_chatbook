@@ -264,6 +264,96 @@ async def test_promotion_previews_exact_pin_without_private_examples(native):
         assert rules.store.list_drafts(global_scope) == ()
 
 
+_PROMOTE_OUTCOMES = {
+    "promoted": "Reviewed revision promoted.",
+    "refused": "This change would exceed 16 active rules",
+    "failed": "Couldn't promote: the binding changed or saving failed.",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", sorted(_PROMOTE_OUTCOMES))
+async def test_a_confirmed_promote_keeps_the_manager_busy_and_open_until_it_reports(
+    native, outcome
+):
+    """The promote write runs in the manager, not the dialog (TASK-38980).
+
+    While the write is held the manager shows it, disables its actions and
+    refuses Escape; afterwards it reports the outcome. Plain sleeps while it
+    is held: on dev the write ran inside the dialog's button handler, which
+    Pilot would wait on.
+    """
+    import asyncio
+
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    chat, _workspace, global_scope = rules.scopes(session.id)
+    modal = ResponseRulesModal(chat, rules.store, rules)
+    host = ManagerHost(modal)
+    writing, release = asyncio.Event(), asyncio.Event()
+    original = rules.run_db_call
+
+    async def held(call, *args, **kwargs):
+        if call == rules.store.promote:
+            writing.set()
+            await release.wait()
+            if outcome == "refused":
+                raise ValueError("too_many_effective_rules")
+            if outcome == "failed":
+                raise RuntimeError("storage unavailable")
+        return await original(call, *args, **kwargs)
+
+    def status() -> str:
+        return str(modal.query_one("#rr-status", Static).render())
+
+    async def until(predicate, what: str) -> None:
+        try:
+            async with asyncio.timeout(3):
+                while not predicate():
+                    await asyncio.sleep(0.02)
+        except TimeoutError as exc:
+            raise AssertionError(f"timed out waiting for {what}") from exc
+
+    actions = ("test", "disable", "exclude", "promote", "delete", "save")
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        assert await pilot.click("#rr-promote")
+        for _ in range(5):
+            await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        rules.run_db_call = held
+        try:
+            host.screen.query_one("#confirm-button", Button).press()
+            await asyncio.wait_for(writing.wait(), 5)
+            await until(lambda: host.screen is modal, "the manager to show the write")
+            assert "promoting revision 1" in status().lower(), status()
+            assert all(
+                modal.query_one(f"#rr-{name}", Button).disabled for name in actions
+            )
+            await host._press_keys(["escape"])
+            await until(
+                lambda: "still being promoted" in status(), "Escape to be answered"
+            )
+            assert modal in host.screen_stack
+        finally:
+            release.set()
+            rules.run_db_call = original
+        for _ in range(20):
+            await pilot.pause()
+            if not modal._busy:
+                break
+        assert modal in host.screen_stack, "Escape closed the manager after the write"
+        assert _PROMOTE_OUTCOMES[outcome] in status(), status()
+        assert not modal.query_one("#rr-promote", Button).disabled
+        promoted = rules.store.list_bindings(global_scope)
+        assert (promoted[0].revision == 1) if outcome == "promoted" else not promoted
+
+
 @pytest.mark.asyncio
 async def test_changing_scope_or_row_retains_unsaved_editor_text(native):
     from textual.widgets import Select
