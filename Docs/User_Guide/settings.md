@@ -350,7 +350,9 @@ koboldcpp endpoint only when it ends in `/api/v1/generate`, the address the
 Endpoint field's hint shows (`http://127.0.0.1:5001/api/v1/generate`). A bare
 root or an OpenAI path such as `/v1` is refused before anything is written:
 "KoboldCpp needs its native /api/v1/generate address. For an OpenAI-compatible
-server, choose Custom instead."
+server, choose Custom instead." The Endpoint row's help says the same while the
+field holds such an address, as you type it and before **s**, as first-run
+setup does.
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version

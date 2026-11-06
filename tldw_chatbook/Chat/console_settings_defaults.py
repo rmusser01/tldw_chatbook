@@ -31,7 +31,10 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
-from tldw_chatbook.Provider_Contract.provider_endpoint_contract import valid_dns_label
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    koboldcpp_route_refusal,
+    valid_dns_label,
+)
 
 
 _ENDPOINT_KEYS = (
@@ -1107,6 +1110,8 @@ def _endpoint_patch_is_authorized(
         and provider_identity_key(patch.bound_provider_config_key)
         == canonical_provider
         and parse_console_endpoint_preview(patch.value) is not None
+        # TASK-38964: a koboldcpp endpoint off its native route cannot send.
+        and not koboldcpp_route_refusal(canonical_provider, patch.value)
     )
 
 

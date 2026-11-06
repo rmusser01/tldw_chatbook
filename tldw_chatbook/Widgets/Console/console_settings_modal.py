@@ -111,6 +111,7 @@ from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     canonical_connection_identity,
     connection_probe_availability,
+    koboldcpp_route_refusal,
 )
 from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_BASE_URL_KEYS,
@@ -4140,6 +4141,20 @@ class ConsoleSettingsModal(
                 return
         submission = self._submission_for_action(action)
         if submission is None:
+            return
+        endpoint = submission.draft.endpoint_draft
+        # TASK-38964: the default would save an endpoint koboldcpp's native
+        # send cannot use.
+        if (
+            action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+            and endpoint is not None
+            and (
+                refusal := koboldcpp_route_refusal(
+                    endpoint.bound_provider_config_key, endpoint.value
+                )
+            )
+        ):
+            self._set_validation_error(refusal)
             return
         if action is not ConsoleSettingsAction.APPLY_TO_CHAT:
             self._sync_default_readiness()

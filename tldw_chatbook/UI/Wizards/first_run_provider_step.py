@@ -750,12 +750,13 @@ class ProviderStep(provider_check.ProviderCheckStep):
         if not candidate.strip():
             return ""
         from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+            koboldcpp_route_refusal,
             resolve_provider_endpoint,
         )
 
         resolution = resolve_provider_endpoint(provider_key, candidate)
         if (resolution.errors or resolution.models_url is None
-                or wizard_state.first_run_endpoint_refusal(provider_key, resolution.chat_url)):
+                or koboldcpp_route_refusal(provider_key, resolution.chat_url)):
             return ""
         return candidate
 

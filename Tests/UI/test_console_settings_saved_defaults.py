@@ -22,9 +22,17 @@ from Tests.UI.test_console_settings_core_first import (
     _settings,
 )
 from Tests.UI.test_console_settings_model_change import pick_modal, real_rebase, settle
+from tldw_chatbook.Chat.console_provider_endpoints import SAVE_ENDPOINT_ACTION_LABEL
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
+)
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsAction,
+)
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    KOBOLDCPP_NATIVE_ROUTE_REFUSAL,
 )
 from tldw_chatbook.Widgets.Console.console_settings_field_row import field_control_id
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
@@ -371,3 +379,44 @@ async def test_use_saved_defaults_is_disabled_with_its_reason_while_the_draft_ma
         assert str(button.label) == SAVED_DEFAULTS_MATCH_LABEL
         assert _value(modal, "temperature") == "0.4"
         assert app.focused is modal.query_one("#console-settings-save", Button)
+
+
+@pytest.mark.asyncio
+async def test_saving_a_koboldcpp_root_as_the_default_is_refused_with_its_copy() -> None:
+    """TASK-38964 AC#2/AC#5: Save endpoint & use model wrote a koboldcpp root
+    that its native send cannot use. It is refused with the native-route
+    copy and nothing is submitted; a native route still submits unchanged."""
+    native = "http://127.0.0.1:5001/api/v1/generate"
+    other_native = "http://127.0.0.1:5002/api/v1/generate"
+    app = CoreFirstHarness()
+    app.app_config["api_settings"]["koboldcpp"] = {
+        "api_url": native,
+        "model": "kobold-model",
+    }
+    results: list = []
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(
+            provider="koboldcpp", model="kobold-model", base_url="http://127.0.0.1:5001"
+        ),
+        app_config=app.app_config,
+        providers_models={"koboldcpp": ["kobold-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal, results)
+        save = modal.query_one("#console-settings-save-default", Button)
+        assert str(save.label) == SAVE_ENDPOINT_ACTION_LABEL
+        await pilot.click(save)
+        await settle(pilot, app)
+        assert results == []
+        error = modal.query_one("#console-settings-error", Static)
+        assert str(error.content) == KOBOLDCPP_NATIVE_ROUTE_REFUSAL
+
+        modal.query_one("#console-settings-base-url", Input).value = other_native
+        await settle(pilot, app)
+        await pilot.click(save)
+        await settle(pilot, app)
+        (committed,) = results
+        assert committed.submission.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+        assert committed.submission.draft.endpoint_draft.value == other_native

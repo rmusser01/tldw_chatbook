@@ -1,12 +1,22 @@
 """Pure local-server discovery tests (task-188) using httpx.MockTransport."""
 
 import errno
+import tomllib
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
+import toml
+
+from Tests.Backup_Recovery.config_test_support import select_config_source
 
 import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
+from tldw_chatbook.Chat import console_settings_defaults as defaults_module
+from tldw_chatbook.Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    ConsoleSettingsAction,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,
@@ -44,7 +54,10 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
     supports_openai_compatible_model_discovery,
 )
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    KOBOLDCPP_NATIVE_ROUTE_REFUSAL,
     URL_BASED_PROVIDER_KEYS,
+    koboldcpp_native_endpoint,
+    koboldcpp_route_refusal,
     resolve_provider_endpoint,
 )
 from tldw_chatbook.UI.Console_Modules import model_switcher as model_switcher_module
@@ -1231,3 +1244,140 @@ def test_the_adoption_toast_names_a_saved_single_label_endpoint(
         )
     ]
     assert "api_url" not in writes[0][f"api_settings.{provider}"]
+
+
+#: TASK-38964: koboldcpp endpoints its native send cannot use, and its route.
+_KOBOLD_OFF_ROUTE = (
+    "http://127.0.0.1:5001",
+    "http://127.0.0.1:5001/v1",
+    "http://127.0.0.1:5001/v1/chat/completions",
+)
+_KOBOLD_NATIVE = "http://127.0.0.1:5001/api/v1/generate"
+
+
+@pytest.fixture
+def _reset_console_default_intents(monkeypatch):
+    """Fresh intent bookkeeping, as ``test_console_settings_defaults`` keeps."""
+    for name, value in (
+        ("_LATEST_INTENT_GENERATION", None),
+        ("_LATEST_INTENT_FINGERPRINT", None),
+        ("_LATEST_INTENT_ACTION", None),
+        ("_LATEST_INTENT_LIFECYCLE", None),
+        ("_ACTIVE_INTENT_CALLS", set()),
+        ("_PENDING_RETRY_STATE", None),
+        ("_ACTIVE_RUNTIME_PUBLICATION_CLAIM", None),
+        ("_NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN", 0),
+    ):
+        monkeypatch.setattr(defaults_module, name, value, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "written"),
+    [*((value, False) for value in _KOBOLD_OFF_ROUTE), (_KOBOLD_NATIVE, True)],
+)
+def test_make_default_writes_a_koboldcpp_endpoint_only_on_its_native_route(
+    tmp_path, monkeypatch, _reset_console_default_intents, endpoint, written
+):
+    """TASK-38964 AC#2/AC#5: Chat settings' "Make default for new chats"
+    wrote a koboldcpp root as is, and chat_with_kobold then posted the
+    native payload to it. Only the native route is written."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {
+                    "koboldcpp": {"api_url": "http://localhost:5001/api/v1/generate"}
+                },
+                "chat_defaults": {"provider": "openai", "model": "old-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    select_config_source(monkeypatch, config_path, vars(defaults_module))
+    before = config_path.read_bytes()
+
+    outcome = defaults_module.apply_console_default_intent(
+        defaults_module.ConsoleDefaultMutationIntent(
+            generation=1,
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            provider_config_key="koboldcpp",
+            literal_model_id="kobold-model",
+            field_mask=FULL_MODEL_DEFAULT_FIELDS,
+            values={"temperature": 0.25},
+            endpoint_patch=defaults_module.ConsoleEndpointPatch(
+                endpoint, "koboldcpp", True, True
+            ),
+        )
+    )
+
+    if written:
+        assert outcome.runtime_published is True, outcome
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        assert saved["api_settings"]["koboldcpp"]["api_url"] == endpoint
+        assert saved["chat_defaults"]["provider"] == "koboldcpp"
+    else:
+        assert outcome.file_replaced is False
+        assert outcome.failure_phase is defaults_module.ConsoleDefaultSavePhase.BEFORE_REPLACE
+        assert config_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "configured", [*_KOBOLD_OFF_ROUTE, "http://localhost:5001/kobold"]
+)
+def test_server_adoption_writes_koboldcpp_s_native_route(monkeypatch, configured):
+    """TASK-38964 AC#3: adopting a detected koboldcpp wrote its root (the only
+    shape discovery finds) as ``api_url``. It writes the root's native route,
+    and this chat sends there too."""
+    root = local_discovery_module.normalize_probe_base_url(configured)
+    assert root is not None and not root.endswith("/generate")
+
+    screen, writes = _adopt(monkeypatch, "koboldcpp", configured, root)
+
+    native = f"{root}/api/v1/generate"
+    assert writes[0]["api_settings.koboldcpp"]["api_url"] == native
+    assert [settings.base_url for settings in screen.session_settings] == [native]
+    assert screen.notes == []
+
+
+def test_server_adoption_writes_other_providers_detected_endpoint_unchanged(
+    monkeypatch,
+):
+    """TASK-38964 AC#5: only koboldcpp's write moves to its native route."""
+    screen, writes = _adopt(
+        monkeypatch, "llama_cpp", "http://127.0.0.1:9099", "http://127.0.0.1:9099"
+    )
+
+    assert writes[0]["api_settings.llama_cpp"]["api_url"] == "http://127.0.0.1:9099"
+    assert [settings.base_url for settings in screen.session_settings] == [
+        "http://127.0.0.1:9099"
+    ]
+
+
+def test_koboldcpp_route_rule_lives_in_the_contract_alone():
+    """TASK-38964 AC#1: the wizard's /api/v1/generate check moved to the
+    contract; every write path reads it there."""
+    for endpoint in _KOBOLD_OFF_ROUTE:
+        assert koboldcpp_route_refusal("koboldcpp", endpoint) == (
+            KOBOLDCPP_NATIVE_ROUTE_REFUSAL
+        )
+        # A chat URL the contract resolved decides the same way.
+        chat_url = resolve_provider_endpoint("koboldcpp", endpoint).chat_url
+        assert koboldcpp_route_refusal("koboldcpp", chat_url) == (
+            KOBOLDCPP_NATIVE_ROUTE_REFUSAL
+        )
+        assert koboldcpp_native_endpoint(endpoint) == _KOBOLD_NATIVE
+    assert koboldcpp_route_refusal("koboldcpp", _KOBOLD_NATIVE) == ""
+    assert koboldcpp_native_endpoint(_KOBOLD_NATIVE) == _KOBOLD_NATIVE
+    assert koboldcpp_route_refusal("custom", "http://127.0.0.1:5001") == ""
+    assert koboldcpp_route_refusal("koboldcpp", "") == ""
+    sources = {
+        path: path.read_text(encoding="utf-8")
+        for path in (Path(__file__).parents[2] / "tldw_chatbook").rglob("*.py")
+    }
+    checks = [
+        str(path)
+        for path, text in sources.items()
+        if 'endswith("/api/v1/generate")' in text
+        or "first_run_endpoint_refusal" in text
+    ]
+    assert checks == []

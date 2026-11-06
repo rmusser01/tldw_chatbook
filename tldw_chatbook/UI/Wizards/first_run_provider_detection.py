@@ -23,8 +23,10 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Collapsible, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    koboldcpp_route_refusal,
+)
 from tldw_chatbook.UI.Wizards.first_run_provider_skip import missing_url_reason
-from tldw_chatbook.UI.Wizards.first_run_setup_state import first_run_endpoint_refusal
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep
 from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 
@@ -387,7 +389,7 @@ class ProviderDetectionStep(SetupStep):
         if resolution is None:
             resolution = resolve_provider_endpoint(provider_key, endpoint)
         parts: list[str] = []
-        native_refusal = first_run_endpoint_refusal(provider_key, resolution.chat_url)
+        native_refusal = koboldcpp_route_refusal(provider_key, resolution.chat_url)
         invalid = bool(endpoint.strip()) and (
             resolution.chat_url is None or bool(native_refusal)
         )
@@ -424,7 +426,7 @@ class ProviderDetectionStep(SetupStep):
         key = getattr(self, "selected_provider_key", "")
         resolution = resolve_provider_endpoint(key, endpoint)
         if connection.display and (
-            refusal := first_run_endpoint_refusal(key, resolution.chat_url)
+            refusal := koboldcpp_route_refusal(key, resolution.chat_url)
         ):
             return refusal
         if connection.display and resolution.errors:

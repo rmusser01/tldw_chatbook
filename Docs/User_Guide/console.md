@@ -423,9 +423,10 @@ Switch model on that provider: Find holds the provider's name, the rows are
 the models the server listed (up to 30; type to narrow a longer list), read
 from the address it answered on, and the first one is highlighted. **Enter**
 again applies the highlighted model to this chat, makes the pair the default
-for new chats and saves the server's address; move the highlight first to
-pick another. Nothing is saved until that second Enter, and Esc returns to
-the card. An address still at the shipped default (llama.cpp's
+for new chats and saves the server's address (for KoboldCpp, the native
+`/api/v1/generate` route at that address, which its sends need); move the
+highlight first to pick another. Nothing is saved until that second Enter,
+and Esc returns to the card. An address still at the shipped default (llama.cpp's
 `http://localhost:8080`) is not one you chose, even after you edited the
 provider's other settings, so the detected one replaces it. If you saved a
 different address for that provider, it is kept: the detected server is
@@ -773,6 +774,10 @@ model for future conversations, then uses them in this chat. On **Context
 and memory**, **Apply to this chat** is hidden as well and nothing stands in
 for it, so the line above the footer says where to go: "Save the vLLM
 endpoint in Model and generation to continue."
+For KoboldCpp, **Save endpoint & use model** saves only its native
+`/api/v1/generate` address: a bare root or an OpenAI path such as `/v1` is
+refused with "KoboldCpp needs its native /api/v1/generate address. For an
+OpenAI-compatible server, choose Custom instead." and nothing is written.
 A Docker Compose service name with a port, such as `http://kobold_cpp:5001`,
 is an endpoint like any other: two different ones are different servers, so a
 chat on one that is not saved is blocked until you save it, and the blocked

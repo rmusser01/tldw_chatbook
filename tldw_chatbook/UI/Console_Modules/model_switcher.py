@@ -49,6 +49,10 @@ from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import provider_config_key
 from ...config import DEFAULT_CONFIG_FROM_TOML, save_settings_to_cli_config
 from ...DB.base_db import run_owned_db_call
+from ...Provider_Contract.provider_endpoint_contract import (
+    koboldcpp_native_endpoint,
+    koboldcpp_route_refusal,
+)
 from ...Utils.timestamps import as_utc
 
 if TYPE_CHECKING:
@@ -945,6 +949,11 @@ def adopt_detected_local_server(
             )
         )
     )
+    # TASK-38964: koboldcpp's send posts KoboldAI's native payload to its
+    # endpoint, so a detected root is adopted as its /api/v1/generate route.
+    endpoint = server.base_url
+    if koboldcpp_route_refusal(provider_key, endpoint):
+        endpoint = koboldcpp_native_endpoint(endpoint) or endpoint
     provider_values: dict[str, object] = {"model": settings.model}
     if keep_saved:
         screen.app_instance.notify(
@@ -956,7 +965,7 @@ def adopt_detected_local_server(
             markup=False,
         )
     else:
-        provider_values["api_url"] = server.base_url
+        provider_values["api_url"] = endpoint
     try:
         saved = save_settings_to_cli_config(
             {
@@ -990,14 +999,14 @@ def adopt_detected_local_server(
             store.active_session_id,
             settings=chosen,
             policy=ConsoleEphemeralEndpointPolicy(
-                chosen.provider, chosen.model, server.base_url
+                chosen.provider, chosen.model, endpoint
             ),
         )
         screen._sync_console_chat_core_state()
         screen._sync_console_settings_summary()
     else:
         screen._session._replace_active_console_session_settings(
-            replace(chosen, base_url=server.base_url)
+            replace(chosen, base_url=endpoint)
         )
     # The card unlocks now; the switcher's result runs the full Console sync.
     screen._sync_console_transcript_guidance()
