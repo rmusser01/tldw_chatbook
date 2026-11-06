@@ -771,7 +771,9 @@ _BUDGETS: dict[str, int] = {
     # Console rail filter's count and page match titles, as a literal
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25854,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
+    # 2026-11-06, TASK-38972 (owner size waiver): 25854 -> 25861 (+7) --
+    # close_connection forgets a handle quiescence already retired.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25861,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
