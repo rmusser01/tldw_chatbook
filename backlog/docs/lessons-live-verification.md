@@ -105,6 +105,31 @@ Enter and the POST than dev: the profiles' history, not their code.
 - Run the arms simultaneously to halve a round's time or to give both the same load while it drifts. Do not expect it to narrow the interval.
 - Number ABBA units from each launch's index in its block (launches 1-2, 3-4, ...), not from the first launch that survived banding.
 
+## A full collection that keeps almost nothing brings CPython's next generation-2 passes forward: compare the next send window, not just the new collection (TASK-33620.15.57, 2026-11-06)
+
+**Incident.** TASK-33620.15.57's first fix re-froze the heap at the first-send
+warm-up's end (a full collection, then a freeze) and, like dev, still asked the
+Console for idle maintenance. That maintenance ran 2 s later and re-froze again,
+over a heap with almost nothing unfrozen (a 0.2-0.9 ms collection). Its unit tests
+were green, and the new re-freeze itself cost only 4.9-5.2 ms. But in the first two
+live launches, the first send ran two generation-2 passes on the UI loop between
+Enter and the provider POST (18.7 + 17.9 ms and 38.0 + 63.4 ms; main-thread GC 94
+and 168 ms). Dev, in the same blocks, ran none or one (0 and 15.3 ms; 42 and 63
+ms). CPython starts an automatic full collection only once the objects promoted
+since the last one exceed a quarter of what that one kept (`long_lived_pending >
+long_lived_total / 4`). So a full collection that keeps almost nothing lifts that
+gate until the next one. ADR-198 had said each re-freeze "resets" CPython's habit
+of frequent full collections. That holds only when the re-freeze's collection keeps
+a sizeable heap. The fake collector in the unit tests cannot show any of this. The
+probe's per-pass `gc` records (generation, thread, duration) showed it.
+
+**What to do.** When a change adds, moves or repeats a full collection (a
+re-freeze, a compaction, an explicit `gc.collect()`), compare the main-thread
+generation-2 passes in the next send window between the arms. Do not stop at the
+new collection's own cost. Do not run a full collection just after another one
+"to be safe". The fix dropped the second request unless the first re-freeze could
+not run or a compaction was owed.
+
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
 **Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:
