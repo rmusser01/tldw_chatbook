@@ -20,9 +20,9 @@ wired by the app's own ``_wire_notes_sync_services``:
 - Concurrent writers. An event gate opens once, at the first moment after
   the first note's change is in: the bulk's request for the next note's
   transaction or, failing that, the next note's Sync v2 write. There the gate
-  runs ``add_note`` and ``add_conversation`` on their own threads (so their
-  own connections) and holds the bulk until both return, for at most
-  ``GATE_HOLD`` seconds. Both must succeed within ``WRITER_BOUND`` seconds.
+  runs ``add_note`` and then ``add_conversation`` on a thread of their own
+  (so their own connection) and holds the bulk until both return, for at
+  most ``GATE_HOLD`` seconds. Both must succeed within ``WRITER_BOUND`` seconds.
   This pins that the bulk lets go of the database between notes. It does
   NOT show that a writer arriving at any moment gets in: each note's ~0.12 s
   of Sync v2 profile reads still runs inside that note's write transaction,
@@ -88,7 +88,14 @@ SYNC_NOT_READY = (
 
 
 class _MidRunWriters:
-    """Run two concurrent writers once, mid-run, and hold the bulk meanwhile."""
+    """Run two writers once, mid-run, and hold the bulk meanwhile.
+
+    One thread of their own (so their own connection) runs them one after
+    the other: ``add_note``'s deferred transaction fails at once on ANY held
+    write lock, so two writers started together can refuse each other
+    (measured: "database is locked after 0.04 s" at load ~3, with the bulk
+    holding nothing) -- that is not the bulk's doing.
+    """
 
     def __init__(self, db) -> None:
         self.db = db
@@ -105,15 +112,13 @@ class _MidRunWriters:
             self.opened.set()
         self.at = at
         self.changes_before = changes_so_far
-        threads = [
-            threading.Thread(target=self._write, args=(kind,), daemon=True)
-            for kind in ("add_note", "add_conversation")
-        ]
-        start = time.monotonic()
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(max(0.0, GATE_HOLD - (time.monotonic() - start)))
+        writer = threading.Thread(target=self._write_both, daemon=True)
+        writer.start()
+        writer.join(GATE_HOLD)
+
+    def _write_both(self) -> None:
+        for kind in ("add_note", "add_conversation"):
+            self._write(kind)
 
     def _write(self, kind: str) -> None:
         start = time.monotonic()
