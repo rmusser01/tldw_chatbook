@@ -708,20 +708,20 @@ def _raw_handle_in_a_core_operation(db):
             yield conn
 
 
-@pytest.mark.parametrize("store", ["media", "dreams", "guardian"])
+@pytest.mark.parametrize("store", ["chachanotes", "media", "dreams", "guardian"])
 async def test_app_unmount_store_close_skips_a_store_with_a_core_operation_running(
     store: str, request: pytest.FixtureRequest
 ):
-    """TASK-39047: a worker inside a core operation holds a raw handle between
-    two statements, with no transaction open. The quit close must leave the
-    store to close with the process; closing the handle under it raised
-    ``ProgrammingError: Cannot operate on a closed database``."""
+    """TASK-39047, TASK-39048: a worker inside a core operation holds a raw
+    handle between two statements, with no transaction open. The quit close
+    must leave the store to close with the process; closing the handle under
+    it raised ``ProgrammingError: Cannot operate on a closed database``."""
     import threading
     from unittest.mock import Mock
 
     from tldw_chatbook import app_lifecycle as lifecycle_module
 
-    db = request.getfixturevalue(f"{store}_db")
+    db = request.getfixturevalue("chacha_db" if store == "chachanotes" else f"{store}_db")
     held, release = threading.Event(), threading.Event()
     outcome: list[str] = []
 
@@ -750,7 +750,12 @@ async def test_app_unmount_store_close_skips_a_store_with_a_core_operation_runni
         release.set()
         writer.join(10)
 
-    label = {"media": "Media", "dreams": "Dreams", "guardian": "Guardian"}[store]
+    label = {
+        "chachanotes": "ChaChaNotes",
+        "media": "Media",
+        "dreams": "Dreams",
+        "guardian": "Guardian",
+    }[store]
     assert (outcome, [call.args[0] for call in logger.info.call_args_list]) == (
         ["read twice"],
         [f"{label} still in use at quit; its handles close with the process"],
