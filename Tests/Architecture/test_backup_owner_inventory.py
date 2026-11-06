@@ -25,6 +25,12 @@ PRODUCER_CALLS = frozenset(
         "copytree",
         "atomic_private_write_text",
         "atomic_private_write_bytes",
+        # Utils/atomic_file_ops writers (TASK-39053: callers that moved to them
+        # had silently left the census).
+        "atomic_write_text",
+        "atomic_write_bytes",
+        "atomic_write_json",
+        "atomic_copy",
         "_publish_activation_record",
         "create_private_text",
         "create_private_file",
