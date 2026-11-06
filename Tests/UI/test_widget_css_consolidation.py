@@ -1450,11 +1450,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
             "DEFAULT_CSS",
         ),
         (
-            "Widgets/Persona_Widgets/tag_filter_picker.py",
-            "TagFilterPicker",
-            "DEFAULT_CSS",
-        ),
-        (
             "Widgets/Persona_Widgets/world_book_picker.py",
             "WorldBookPicker",
             "DEFAULT_CSS",

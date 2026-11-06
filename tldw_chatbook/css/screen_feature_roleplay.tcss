@@ -626,3 +626,24 @@ $ds-portrait-review-lines: 13;
 .roleplay-items-chooser-keys {
     color: $ds-text-muted;
 }
+
+/* TASK-33910.40: the tag filter picker's rules, moved out of
+ * TagFilterPicker.DEFAULT_CSS so they ride this lazy sheet. The picker is
+ * pushed only by PersonasScreen, so the sheet is loaded whenever it shows. */
+.roleplay-items-tag-picker {
+    align: center middle;
+}
+
+.roleplay-items-tag-picker-box {
+    width: $ds-percent-50;
+    max-width: $ds-size-60;
+    height: $ds-height-auto;
+    max-height: $ds-percent-80;
+    padding: $ds-space-1 $ds-space-2;
+    border: round $ds-surface-panel;
+}
+
+.roleplay-items-tag-picker-list {
+    height: $ds-height-auto;
+    max-height: $ds-size-16;
+}
