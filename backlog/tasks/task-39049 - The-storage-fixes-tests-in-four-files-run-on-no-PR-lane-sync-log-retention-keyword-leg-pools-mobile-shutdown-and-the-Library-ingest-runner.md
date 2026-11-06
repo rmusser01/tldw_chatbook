@@ -4,7 +4,7 @@ title: "The storage fixes' tests in four files run on no PR lane: sync-log reten
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 20:58
+updated_date: 2026-11-06 23:13
 labels:
 - follow-up
 - ci
@@ -92,9 +92,9 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 
 The added file is about 18 s of the step. Two runs here, and the base run, went past the brief's 12-minute mark only under this load. The base step without the file took longer (12:37) than run 2 with it (12:04).
 
-**Lane times before (AC#5), from CI, read-only.** In the five most recent successful derived-artifacts PR runs, 42178132011, 42148997122, 42141155746, 42136873708 and 42136862171, the dreams-boundary job took 6m30s, 8m54s, 6m41s, 5m54s and 7m34s. This step took 3m57s, 2m14s, 2m32s and 3m06s in the last four of those runs (the first run's step times were not in its job record). After times need a CI run of this branch, so AC#5 stays open. `pr-fast-lane` is not used.
+**Lane times before (AC#5), from CI, read-only (review r11s-rev2's numbers).** On dev 2684e5453f (28 targets), across five runs (42267936447, 42263533424, 42253456601, 42252461355, 42247976071), the step took 409-485 s and the dreams-boundary job 11:02-13:07. `Tests/UI/test_library_modal_dismissal.py` alone took 155-181 s of that. The first version of these notes quoted job 5m54s-8m54s and step 2m14s-3m57s. Those runs predate the Library modal file and are stale. After times need a CI run of this branch, so AC#5 stays open. `pr-fast-lane` is not used.
 
-**AC#2 (met, after review r11s-rev1).** TASK-38992 fixed the stand-in, so `Tests/Web_Server/test_mobile_service.py` is now laned too. It runs just before `Tests/DB/test_sync_log_retention.py`, which, as a bootstrap-profile file, has to stay last; the pins name both. The file is sandboxed and guard-clean: serially under `--storage-lease-guard` at load 74-85 it gave 33 passed, 1 relay timeout and no lease finding. Its relay tests wait 5 s for events, so above load about 50 one or two of them time out, on base too. All three step runs below were green.
+**AC#2 (met, after review r11s-rev1).** TASK-38992 fixed the stand-in, so `Tests/Web_Server/test_mobile_service.py` is now laned too. It runs just before `Tests/DB/test_sync_log_retention.py`; the pins name both. The file is bootstrap-profile (module `pytestmark = pytest.mark.bootstrap_profile`) and guard-clean. It sits after every sandboxed target by TASK-32873's rule: the last three targets, the Library modal inventory, this file and the sync-log file, are all bootstrap-profile. Under the guard, serially at load 74-85 it gave 33 passed, 1 relay timeout and no lease finding. Its relay tests wait 5 s for events, so above load about 50 one or two of them time out, on base too. All three step runs below were green.
 
 | Run | Result | pytest time | Load (1 min) |
 |---|---|---|---|
@@ -107,7 +107,7 @@ Every run is far past the brief's 12-minute mark, because the machine ran at loa
 - the mobile file took 76 s serially at load 17-30 on #3435 (312 s at load 74-85 here);
 - the sync-log file takes about 18 s.
 
-So at moderate load the step should be about 10-11 minutes: close to the 12-minute mark, but under it. CI ran this step in 2m14s-3m57s. The coordinator should decide whether the mobile lane stays; it is one commit, bb138440ad.
+So at moderate load the step should be about 10-11 minutes: close to the 12-minute mark, but under it. Projected for CI (review r11s-rev2): mobile adds about 61-135 s and sync-log about 19-34 s. With the Library route cycle another stream adds (about 50 s), the step comes to about 540-705 s and the job to about 13.2-16.8 min of its 20. Mobile is the file to move or split if margin is needed. Coordinator decision (2026-11-06): mobile stays on the step for now (one commit, bb138440ad).
 
 **AC#3 (NEEDS_CONTEXT).** All 11 nodes of `Tests/RAG_Search/test_keyword_leg_db_resolution.py` fail with `RecoveryRequired: raw_source_selection_changed`, at base and here. This is not a local-only trap, so the CI lane would be red as well:
 - `Tests/conftest.py:181` imports `tldw_chatbook.Chunking` unconditionally at collection, and `Chunk_Lib.py:301` reads config there.

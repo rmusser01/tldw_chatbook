@@ -394,10 +394,13 @@ DREAMS_BOUNDARY_TARGETS = (
     # 6.2-7.1 min of its 20 in three PR runs to 2026-11-05.
     "Tests/UI/test_library_modal_dismissal.py",
     # TASK-39049: the mobile service suite (TASK-38972's mobile shutdown),
-    # green once TASK-38992 fixed its gateway stand-in. Sandboxed and
-    # guard-clean; 76 s serial at load 17-30. Its relay tests wait 5 s for
-    # events and time out above load ~50, on base too. Before the
-    # bootstrap-profile file below, which stays last.
+    # green once TASK-38992 fixed its gateway stand-in. Bootstrap profile
+    # (module pytestmark) and guard-clean; 76 s serial at load 17-30, the
+    # step's largest addition, so move or split it first if margin is needed.
+    # Its relay tests wait 5 s for events and time out above load ~50, on
+    # base too. After every sandboxed target, per TASK-32873's note: the
+    # last three targets (Library modal inventory, this, sync-log) are all
+    # bootstrap-profile.
     "Tests/Web_Server/test_mobile_service.py",
     # TASK-39049: the quit-time store retirement (TASK-38955, TASK-39047,
     # TASK-39048) and the retention pass's worker handles, in no PR lane.

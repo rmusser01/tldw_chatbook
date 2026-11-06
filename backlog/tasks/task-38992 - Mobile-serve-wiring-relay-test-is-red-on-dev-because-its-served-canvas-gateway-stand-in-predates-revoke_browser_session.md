@@ -4,7 +4,7 @@ title: "Mobile serve-wiring relay test is red on dev, because its served-canvas 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 19:16
+updated_date: 2026-11-06 23:13
 labels:
 - follow-up
 - tests
@@ -66,6 +66,8 @@ No PR lane runs `test_mobile_service.py`; it is in neither the census nor any wo
 - a name `CanvasGateway` lacks fails at construction, named.
 
 Under a temporary edit that made `serve.py` call `forget_browser_session` instead, every stand-in failed at construction with `AttributeError: CanvasGateway has no method(s): ['forget_browser_session']`: this test and both kill-switch tests.
+
+**Review r11s-rev2.** The construction check treated a property that `serve.py` reads, such as `started` or `start_count`, as a missing method. It now asks `hasattr(CanvasGateway, name)` for names `serve.py` reads, requires names in `methods` to be functions, and sets `side_effect` on functions only. `test_served_gateway_double_accepts_a_property_serve_reads` was red with the old function-only check: `CanvasGateway has no method(s): ['started']`. The docstring now states one limit: the scan sees only direct `self._served_canvas_gateway.x` reads. A call through an alias to a missing name is caught only at call time, by `spec_set`.
 
 **Runs (AC#1).** `test_serve_wiring_attaches_relay_only_when_broker_exists` alone passed 10 of 10 (load 52-87). It failed at base in the same session.
 

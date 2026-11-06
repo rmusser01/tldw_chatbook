@@ -2474,6 +2474,20 @@ def test_served_gateway_double_supplies_what_serve_calls_or_names_the_gap() -> N
         served_gateway_double(mark_browser_session_gone=lambda _session_id: None)
 
 
+def test_served_gateway_double_accepts_a_property_serve_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38992 review: a property ``serve.py`` reads (``started``) is part
+    of the real gateway, not a missing method."""
+    from Tests import served_canvas_gateway_double as double_module
+
+    monkeypatch.setattr(
+        double_module, "served_gateway_calls", lambda: frozenset({"started", "aclose"})
+    )
+    gateway = served_gateway_double()
+    assert hasattr(gateway, "started")
+
+
 @pytest.mark.loopback_network
 async def test_serve_wiring_attaches_relay_only_when_broker_exists(
     tmp_path: Path,

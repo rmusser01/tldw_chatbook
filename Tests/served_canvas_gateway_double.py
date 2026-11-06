@@ -37,7 +37,13 @@ def served_gateway_double(**methods: Callable[..., object]) -> NonCallableMagicM
 
     Every gateway method exists with its real signature. The ones given in
     ``methods`` run as that method; any other raises when called, naming
-    itself. Each call is recorded for ``assert_called_*``.
+    itself. Each call is recorded for ``assert_called_*``. Properties exist
+    too, as plain mocks.
+
+    The construction check sees only direct ``self._served_canvas_gateway.x``
+    reads in ``serve.py``. A call through an alias (``gateway =
+    self._served_canvas_gateway``) to a name ``CanvasGateway`` lacks is caught
+    only at call time, by ``spec_set``.
 
     Args:
         methods: Gateway method name to the callable it runs (sync, or async
@@ -47,19 +53,23 @@ def served_gateway_double(**methods: Callable[..., object]) -> NonCallableMagicM
         The stand-in.
 
     Raises:
-        AttributeError: ``serve.py`` calls, or ``methods`` names, a method
-            ``CanvasGateway`` lacks; the message names it.
+        AttributeError: ``serve.py`` reads a name ``CanvasGateway`` lacks, or
+            ``methods`` names something that is not one of its methods; the
+            message names it.
     """
-    names = {
+    functions = {
         name
         for name, member in inspect.getmembers(CanvasGateway, inspect.isfunction)
         if not name.startswith("_")
     }
-    unknown = sorted((set(methods) | served_gateway_calls()) - names)
+    unknown = sorted(
+        {name for name in served_gateway_calls() if not hasattr(CanvasGateway, name)}
+        | (set(methods) - functions)
+    )
     if unknown:
         raise AttributeError(f"CanvasGateway has no method(s): {unknown}")
     gateway = create_autospec(CanvasGateway, instance=True, spec_set=True)
-    for name in names:
+    for name in functions:
         getattr(gateway, name).side_effect = methods.get(name) or _unexpected(name)
     return gateway
 
