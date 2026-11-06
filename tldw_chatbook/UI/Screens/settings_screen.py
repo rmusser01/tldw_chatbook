@@ -16129,23 +16129,6 @@ class SettingsScreen(BaseAppScreen):
         return None
 
     @staticmethod
-    def _provider_endpoint_route_refusal(endpoint: str, provider_key: str) -> str:
-        """TASK-36516: chat_with_kobold posts KoboldAI's native payload to the
-        saved URL, and a root saves as an OpenAI chat route; refuse as the
-        first-run wizard does. "" when the endpoint may be saved."""
-        if provider_key != "koboldcpp" or not endpoint:
-            return ""
-        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
-            resolve_provider_endpoint,
-        )
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            first_run_endpoint_refusal,
-        )
-
-        resolution = resolve_provider_endpoint(provider_key, endpoint)
-        return first_run_endpoint_refusal(provider_key, resolution.chat_url)
-
-    @staticmethod
     def _validate_credential_env_var(credential_env_var: object) -> str | None:
         env_var = str(credential_env_var or "").strip()
         if not env_var:
@@ -33380,9 +33363,11 @@ class SettingsScreen(BaseAppScreen):
             delete_keys: dict[str, list[str]] = {}
             if connection_dirty:
                 # Only a save that writes the endpoint refuses (review r8e-rev1).
-                if refusal := self._provider_endpoint_route_refusal(
-                    endpoint, provider_key
-                ):
+                from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+                    koboldcpp_route_refusal,
+                )
+
+                if refusal := koboldcpp_route_refusal(provider_key, endpoint):
                     self._provider_save_result = refusal
                     self._set_static_text(
                         "#settings-provider-save-result", self._provider_save_result

@@ -1612,7 +1612,7 @@
     },
     {
       "call_count": 7,
-      "diagnostic_digest": "ac2565ca8e31fac5d26a",
+      "diagnostic_digest": "2754d0d5b3b90816d952",
       "owner": "TASK-494",
       "path": "tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py",
       "reason": "remaining Chatbook production diagnostic owner"

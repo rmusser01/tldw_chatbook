@@ -48,6 +48,11 @@ async def test_providers_models_state_line_names_its_scope_in_one_row(request) -
         screen._select_category(category.value)
         await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
         banner = screen.query_one("#settings-category-state-banner", Static)
+        # TASK-38963 review r10e-rev1: the banner can exist before its first
+        # layout (1 run in 20 read a content_region of height 0); wait for it.
+        deadline = time.monotonic() + 10
+        while banner.size.width == 0 and time.monotonic() < deadline:
+            await pilot.pause()
         scope = screen._category_state_scope_text(category)
         assert scope == (
             "Applies to new and unused open chats · used chats keep theirs "
@@ -223,6 +228,48 @@ async def test_koboldcpp_saves_only_the_native_route_its_send_posts_to(
     assert url == native
     assert payload["prompt"] == "synthetic native prompt"
     assert "messages" not in payload
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_endpoint_row_refuses_a_koboldcpp_root_as_it_is_typed(
+    request,
+) -> None:
+    """TASK-38964 AC#4: Settings refused a koboldcpp root only when **s** saved
+    it, while the wizard says so as the address is typed. The Endpoint row
+    now says it before any save, and the save still refuses."""
+    host = DestinationHarness(_build_test_app(), "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "koboldcpp"
+        screen.handle_provider_value_changed(Select.Changed(provider, "koboldcpp"))
+        await pilot.pause()
+
+        def row_help() -> str:
+            return _static_text(screen.query_one("#settings-provider-endpoint-help"))
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.focus()
+        await pilot.pause()
+        await pilot.press("end", *["backspace"] * len(endpoint.value))
+        await pilot.press(*"http://127.0.0.1:5001")
+        await pilot.pause()
+        assert endpoint.value == "http://127.0.0.1:5001"
+        assert row_help() == _KOBOLD_REFUSAL
+        assert screen._provider_save_result == ""
+
+        await pilot.press(*"/api/v1/generate")
+        await pilot.pause()
+        assert row_help() == "the server's /api/v1/generate address"
+
+        await pilot.press(*["backspace"] * len("/api/v1/generate"))
+        screen.query_one("#settings-model-value", Input).value = "kobold-model"
+        assert await _save_provider_card(screen, pilot) == _KOBOLD_REFUSAL
+        assert row_help() == _KOBOLD_REFUSAL
 
 
 @pytest.mark.asyncio

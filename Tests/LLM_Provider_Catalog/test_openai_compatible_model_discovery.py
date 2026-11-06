@@ -412,7 +412,9 @@ def test_malformed_endpoint_port_is_not_eligible_and_does_not_crash():
     endpoint = "https://user:secret@example.test:bad/v1/models"
 
     assert supports_openai_compatible_model_discovery("custom", endpoint) is False
-    assert fingerprint_endpoint(endpoint) == "https://example.test/v1/models"
+    # TASK-38963 review r10e-rev3, rewritten on purpose: an endpoint discovery
+    # and the contract both refuse gets the sentinel, never its host or path.
+    assert fingerprint_endpoint(endpoint) == "https://[invalid-endpoint]"
 
 
 @pytest.mark.parametrize(
@@ -568,7 +570,9 @@ def test_kobold_shapes_discoverys_url_checks_refuse_stay_refused(endpoint):
 
 def test_a_kobold_endpoint_the_contract_refuses_gives_the_contracts_reason():
     """TASK-36380 AC#2: Settings names why the contract refuses a koboldcpp
-    endpoint. Other providers keep their own rules, so no reason for them."""
+    endpoint. TASK-38963's review gives every provider the contract's reason
+    (rewritten on purpose: vllm got None, and Settings asked a refused host
+    for an http:// /v1 endpoint it already was)."""
     reason = openai_compatible_model_discovery.contract_refusal_reason
 
     ambiguous = "http://localhost:5001/v1/api/v1/generate"
@@ -577,7 +581,8 @@ def test_a_kobold_endpoint_the_contract_refuses_gives_the_contracts_reason():
         "Endpoint URL must not include a query."
     )
     assert reason("koboldcpp", "http://localhost:5001") is None
-    assert reason("vllm", ambiguous) is None
+    assert reason("vllm", ambiguous) == "Endpoint path has ambiguous API suffixes."
+    assert reason("vllm", "http://localhost:8000/v1") is None
 
 
 def test_kobold_with_explicit_v1_endpoint_is_eligible():
@@ -731,7 +736,9 @@ def test_endpoint_fingerprint_redacts_credentials_for_unsupported_scheme():
         "ftp://user:secret@example.test/v1/models?api_key=secret"
     )
 
-    assert fingerprint == "ftp://example.test/v1/models"
+    # TASK-38963 review r10e-rev3, rewritten on purpose: an endpoint discovery
+    # and the contract both refuse gets the sentinel, never its host or path.
+    assert fingerprint == "ftp://[invalid-endpoint]"
     assert "secret" not in fingerprint
     assert "api_key" not in fingerprint
 
@@ -741,7 +748,9 @@ def test_endpoint_fingerprint_redacts_credentials_for_host_only_malformed_port()
         "user:secret@example.test:bad/v1/models?api_key=secret"
     )
 
-    assert fingerprint == "http://example.test/v1/models"
+    # TASK-38963 review r10e-rev3, rewritten on purpose: an endpoint discovery
+    # and the contract both refuse gets the sentinel, never its host or path.
+    assert fingerprint == "[invalid-endpoint]"
     assert "secret" not in fingerprint
     assert "api_key" not in fingerprint
 

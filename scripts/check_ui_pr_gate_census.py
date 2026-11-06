@@ -824,6 +824,9 @@ MINIMUM_FILES = 1698
 # TASK-38757 rev3 (2026-11-05): append the two navigator-choice nodes at the
 # tail. The floor is the measured entry count.
 MINIMUM_FILES = 1700
+# TASK-38966 (2026-11-06): append the Settings discovery-row capability node
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1701
 
 
 def read_census(path: Path) -> list[str]:

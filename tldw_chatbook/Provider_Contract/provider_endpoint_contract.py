@@ -122,6 +122,7 @@ _MAX_ENDPOINT_LENGTH = 4096
 #: nothing itself; koboldcpp serves its OpenAI-compatible ``/v1/models`` at
 #: the same root (TASK-35010, owner ruling 2026-10-20).
 _KOBOLD_NATIVE_GENERATE = ("api", "v1", "generate")
+_KOBOLD_NATIVE_PATH = "/" + "/".join(_KOBOLD_NATIVE_GENERATE)
 _SUFFIXES: tuple[tuple[tuple[str, ...], EndpointForm], ...] = (
     (("v1", "chat", "completions"), "chat_url"),
     (("v1", "models"), "models_url"),
@@ -269,12 +270,12 @@ def _resolve_provider_endpoint(
         return _invalid_resolution(
             provider_key, "Endpoint URL must not include a fragment."
         )
-    canonical_host = _canonical_host(hostname) if hostname else None
+    canonical_host = canonical_endpoint_host(hostname) if hostname else None
     if not canonical_host or port == 0:
         return _invalid_resolution(
             provider_key, "Endpoint URL must include a valid host and port."
         )
-    if not has_explicit_scheme and not _is_exact_schemeless_host(parsed.netloc):
+    if not has_explicit_scheme and not is_exact_schemeless_host(parsed.netloc):
         return _invalid_resolution(
             provider_key,
             "Remote endpoint URLs must include an HTTP or HTTPS scheme.",
@@ -421,6 +422,64 @@ def _is_kobold_native_generate(provider_key: str, segments: tuple[str, ...]) -> 
     return provider_key == "koboldcpp" and segments[-3:] == _KOBOLD_NATIVE_GENERATE
 
 
+#: TASK-36516's refusal, first the wizard's (TASK-35010).
+KOBOLDCPP_NATIVE_ROUTE_REFUSAL = (
+    "KoboldCpp needs its native /api/v1/generate address. "
+    "For an OpenAI-compatible server, choose Custom instead."
+)
+
+
+def koboldcpp_route_refusal(provider: object, endpoint: object) -> str:
+    """Refuse a koboldcpp endpoint its native send cannot use.
+
+    ``chat_with_kobold`` posts KoboldAI's native payload to the saved
+    endpoint, and the contract reads a root or ``/v1`` as an OpenAI chat
+    route, so only the native ``/api/v1/generate`` route keeps sending. The
+    wizard, Settings, Chat settings' Make default and the model switcher's
+    adoption all write a koboldcpp endpoint through this rule (TASK-38964).
+
+    Args:
+        provider: Provider key.
+        endpoint: The endpoint, or the chat URL the contract resolved it to.
+
+    Returns:
+        ``KOBOLDCPP_NATIVE_ROUTE_REFUSAL`` for a koboldcpp endpoint the
+        contract reads off the native route; "" for one on it, for one the
+        contract refuses outright (its own error says why) and for any other
+        provider.
+    """
+    if normalize_provider_key_for_contract(provider) != "koboldcpp":
+        return ""
+    chat_url = resolve_provider_endpoint("koboldcpp", endpoint).chat_url
+    if chat_url is None or chat_url.endswith(_KOBOLD_NATIVE_PATH):
+        return ""
+    return KOBOLDCPP_NATIVE_ROUTE_REFUSAL
+
+
+def koboldcpp_native_endpoint(endpoint: object) -> str | None:
+    """The native ``/api/v1/generate`` route at a koboldcpp endpoint's root.
+
+    Args:
+        endpoint: A koboldcpp endpoint: a root, ``/v1``, a chat route or the
+            native route itself.
+
+    Returns:
+        The native route, unchanged for an endpoint already on it, or None
+        when the contract refuses the endpoint.
+    """
+    resolution = resolve_provider_endpoint("koboldcpp", endpoint)
+    if resolution.models_url is None:
+        return None
+    if not koboldcpp_route_refusal("koboldcpp", endpoint):
+        return resolution.chat_url
+    root = urlsplit(resolution.models_url.removesuffix("/v1/models"))
+    # TASK-38964 review: a root at KoboldAI's /api base (configured as /api or
+    # /api/v1) takes the route's /v1/generate, not a second /api.
+    path = root.path.removesuffix("/api") + _KOBOLD_NATIVE_PATH
+    native = urlunsplit((root.scheme, root.netloc, path, "", ""))
+    return resolve_provider_endpoint("koboldcpp", native).chat_url
+
+
 def canonical_connection_identity(
     provider: str, value: object
 ) -> tuple[str, str] | None:
@@ -543,7 +602,21 @@ def _percent_octets_contain_unsafe_unicode(octets: bytearray) -> bool:
     return _contains_unsafe_unicode(decoded)
 
 
-def _canonical_host(hostname: str) -> str | None:
+def canonical_endpoint_host(hostname: str) -> str | None:
+    """The contract's host rule: the canonical host, or None when refused.
+
+    TASK-38963: Discover models and Console's endpoint display and compare
+    decide hosts with this rule, so none of them accepts a host the save
+    refuses or refuses one it accepts.
+
+    Args:
+        hostname: A URL's host, without brackets or port.
+
+    Returns:
+        The lower-cased host (an IP in its compressed form), or None for a
+        host that is not ASCII, holds "%", is all digits and dots, is over
+        253 characters, or has a label ``valid_dns_label`` refuses.
+    """
     if not hostname.isascii() or "%" in hostname:
         return None
     try:
@@ -591,7 +664,18 @@ def _normalized_netloc(hostname: str, port: int | None) -> str:
     return f"{host}:{port}" if port is not None else host
 
 
-def _is_exact_schemeless_host(netloc: str) -> bool:
+def is_exact_schemeless_host(netloc: str) -> bool:
+    """Whether an endpoint typed without a scheme may be read as ``http://``.
+
+    Only the loopback spellings may; a remote endpoint needs its scheme.
+    Discover models applies the same rule (TASK-38963).
+
+    Args:
+        netloc: The endpoint's network location, as typed.
+
+    Returns:
+        True for localhost, 127.0.0.1 and [::1], with or without a port.
+    """
     return any(
         netloc == host or netloc.startswith(f"{host}:")
         for host in ("localhost", "127.0.0.1", "[::1]")
@@ -605,7 +689,7 @@ def _drop_default_port(endpoint: str) -> str:
     )
     if not default_port or parsed.hostname is None:
         return endpoint
-    canonical_host = _canonical_host(parsed.hostname)
+    canonical_host = canonical_endpoint_host(parsed.hostname)
     if canonical_host is None:
         return endpoint
     netloc = _normalized_netloc(canonical_host, None)

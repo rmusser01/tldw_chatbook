@@ -1090,7 +1090,8 @@ jobs:
       # (sandboxed, ~30 s serial), for the same reason. TASK-38759 adds the
       # vLLM profile file and, FIRST, the history participant lifetimes file:
       # its pauses drain every live lease in the process, and five Guardian
-      # nodes in this step leave storage leases open.
+      # nodes in this step leave storage leases open. TASK-38966 appends the
+      # QwenCloud provider contract file (pure, ~2 s serial), red on dev in no lane.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1121,6 +1122,7 @@ jobs:
             Tests/Chat/test_console_rail_state_prune.py \
             Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py \
             Tests/LLM_Management/test_vllm_profiles.py \
+            Tests/Chat/test_qwencloud_provider_contract.py \
             --timeout=180 \
             --tb=short
 

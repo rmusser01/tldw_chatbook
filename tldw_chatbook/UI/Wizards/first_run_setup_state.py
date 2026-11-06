@@ -354,17 +354,6 @@ def resolve_first_run_provider_draft(
     )
 
 
-def first_run_endpoint_refusal(provider_key: str, chat_url: str | None) -> str:
-    """Refuse a wizard endpoint incompatible with its native Kobold sender."""
-    if (provider_key == "koboldcpp" and chat_url
-            and not chat_url.endswith("/api/v1/generate")):
-        return (
-            "KoboldCpp needs its native /api/v1/generate address. "
-            "For an OpenAI-compatible server, choose Custom instead."
-        )
-    return ""
-
-
 def _resolve_first_run_provider_endpoints(
     provider: str,
     editable_endpoint: str,
@@ -376,7 +365,10 @@ def _resolve_first_run_provider_endpoints(
         effective_provider_discovery_endpoint,
         first_configured_endpoint,
     )
-    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        koboldcpp_route_refusal,
+        resolve_provider_endpoint,
+    )
 
     endpoint = editable_endpoint.strip()
     owner_key = _first_run_provider_owner_key(provider)
@@ -387,7 +379,7 @@ def _resolve_first_run_provider_endpoints(
         resolution = resolve_provider_endpoint(owner_key, endpoint)
         if resolution.errors or resolution.persisted_endpoint is None:
             raise ValueError("Provider endpoint is invalid.")
-        if refusal := first_run_endpoint_refusal(owner_key, resolution.chat_url):
+        if refusal := koboldcpp_route_refusal(owner_key, resolution.chat_url):
             raise ValueError(refusal)
         endpoint = resolution.persisted_endpoint
     if owner_key in _ENDPOINT_REQUIRED_PROVIDER_KEYS:

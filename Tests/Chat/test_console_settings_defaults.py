@@ -404,8 +404,11 @@ def test_make_default_atomically_patches_profile_globals_and_checked_endpoint(
         return real_write(*args, **kwargs)
 
     monkeypatch.setattr(config_module, "atomic_private_write_text", counted_write)
+    # TASK-38964 review r10e-rev4, rewritten on purpose: the write follows
+    # the endpoint contract, which refuses a query ("?ignored=yes" was
+    # written as is); Tests/Chat/test_local_server_discovery.py pins that.
     endpoint = ConsoleEndpointPatch(
-        value="https://new.example.test:8443/v1?ignored=yes",
+        value="https://new.example.test:8443/v1",
         bound_provider_config_key="openai",
         dirty=True,
         checked=True,

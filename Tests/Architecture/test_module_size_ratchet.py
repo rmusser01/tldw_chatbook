@@ -527,7 +527,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-23, TASK-36381 (owner decision 2026-10-04: "expand the limits,
     # don't modify other code to make it fit"): Tools & MCP gets the
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35669,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
+    # 2026-11-06, TASK-38964: 35,669 -> 35,654; the koboldcpp route refusal
+    # wrapper is gone, the save reads Provider_Contract's rule directly.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35654,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -573,7 +575,9 @@ _BUDGETS: dict[str, int] = {
     # refresh), as first-run setup does.
     # 2026-11-05, TASK-36516 review (owner waiver): koboldcpp's Endpoint
     # guidance names its /api/v1/generate address (+3): 2,398 -> 2,401.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2401,
+    # 2026-11-06, TASK-38964 (owner waiver): the Endpoint row says koboldcpp's
+    # route refusal as it is typed (+4): 2,401 -> 2,405.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2405,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
@@ -643,7 +647,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-36534, 2026-11-03: size waiver (owner rule: a fix over a size ratchet
     # raises the row with a dated comment); 6168 -> 6176, the suspended draft
     # carries the chat's values (unsaved_committed). Exact measurement.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6176,
+    # 2026-11-06, TASK-38964 (owner waiver): 6176 -> 6191, a koboldcpp default
+    # off its native route is refused with its copy before it is submitted.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6191,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7010,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
@@ -706,7 +712,9 @@ _BUDGETS: dict[str, int] = {
     # again' waits for Test to be enabled (G6-BV3-05). In place, in the
     # methods that own them.
     # 2026-10-31 PR3294 review repair: exact 1690 lines under user size waiver.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1690,
+    # 2026-11-06, TASK-38964 (owner waiver): 1690 -> 1691, the route check
+    # imports Provider_Contract's rule.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1691,
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +60 -- the
     # download's cancel switch, its live status line and the cancelled
     # outcome are wired on the step (its @on handlers must stay on the

@@ -323,6 +323,15 @@ was for, such as "OpenAI: Could not save discovered models to the providers list
 Changing provider, endpoint or credentials clears the old results, and a model
 chosen from them no longer joins the list on **s**; a delayed operation cannot
 replace the new form’s results or Model value.
+**Discover models** reads the endpoint's host as **s** does: a host such as
+`-kobold`, `kob*old` or `1.2.3`, or a remote address typed without `http://`
+or `https://`, is refused by both, and a Docker Compose service name such as
+`http://kobold_cpp:5001` is accepted by both. When the address is one **s**
+would refuse, the line beside **Discover models** gives the reason **s** gives,
+such as "Endpoint URL must include a valid host and port." One exception: for
+providers other than KoboldCpp and QwenCloud, an IPv6 address with a zone ID,
+such as `http://[fe80::1%25en0]:5001/v1`, is listed from, though **s** refuses
+it.
 For koboldcpp at its shipped endpoint, KoboldAI's native
 `http://localhost:5001/api/v1/generate`, **Discover models** lists what the
 server serves at `http://localhost:5001/v1/models`, the list Switch model
@@ -345,7 +354,9 @@ koboldcpp endpoint only when it ends in `/api/v1/generate`, the address the
 Endpoint field's hint shows (`http://127.0.0.1:5001/api/v1/generate`). A bare
 root or an OpenAI path such as `/v1` is refused before anything is written:
 "KoboldCpp needs its native /api/v1/generate address. For an OpenAI-compatible
-server, choose Custom instead."
+server, choose Custom instead." The Endpoint row's help says the same while the
+field holds such an address, as you type it and before **s**, as first-run
+setup does.
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version

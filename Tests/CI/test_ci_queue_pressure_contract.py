@@ -366,7 +366,8 @@ DREAMS_BOUNDARY_TARGETS = (
     # PR runs (2026-11-03), this one median 6.2 / max 7.2 of its 20.
     "Tests/Chat/test_local_server_discovery.py",
     # TASK-38717: its two sibling suites from TASK-34100.6, sandboxed too;
-    # ~9 s and ~44 s serial (3 of 3 each, load 43-59 on 18 CPUs).
+    # ~9 s and ~44 s serial (3 of 3 each, load 43-59 on 18 CPUs). TASK-38965:
+    # the TLS file's 30 s handler sleep is gone, 10.2-10.6 s (load 23-25).
     "Tests/Chat/test_local_server_discovery_engines.py",
     "Tests/Chat/test_provider_tls_failures.py",
     # TASK-38747: every modal that guards its own close has a Ctrl+Q decision
@@ -382,6 +383,9 @@ DREAMS_BOUNDARY_TARGETS = (
     "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py",
     # TASK-38759: the vLLM repair-path file, red locally in no PR lane.
     "Tests/LLM_Management/test_vllm_profiles.py",
+    # TASK-38966: the QwenCloud provider contract file, red on dev in no PR
+    # lane. Pure, 7 tests; 2.7 s at -n 4 on dev, 1.8-2.1 s serial (load 36-38).
+    "Tests/Chat/test_qwencloud_provider_contract.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"

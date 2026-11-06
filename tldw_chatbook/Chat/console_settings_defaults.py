@@ -31,7 +31,12 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
-from tldw_chatbook.Provider_Contract.provider_endpoint_contract import valid_dns_label
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    koboldcpp_route_refusal,
+    normalize_provider_key_for_contract,
+    resolve_provider_endpoint,
+    valid_dns_label,
+)
 
 
 _ENDPOINT_KEYS = (
@@ -1107,7 +1112,31 @@ def _endpoint_patch_is_authorized(
         and provider_identity_key(patch.bound_provider_config_key)
         == canonical_provider
         and parse_console_endpoint_preview(patch.value) is not None
+        and not console_default_endpoint_refusal(canonical_provider, patch.value)
     )
+
+
+def console_default_endpoint_refusal(provider: str, endpoint: str) -> str:
+    """Why a Console default may not write ``endpoint`` for ``provider``.
+
+    The endpoint contract decides, as for Settings' **s**: its first error
+    (TASK-38964 review r10e-rev4: the writer took a query, a fragment, an
+    ambiguous path or a pasted key the contract refuses), then koboldcpp's
+    native-route rule (TASK-38964). Chat settings shows the same reason
+    before it submits. A registry entry's endpoint reads as Custom's.
+
+    Args:
+        provider: Provider config key, or a registry entry's id.
+        endpoint: The endpoint the default would write.
+
+    Returns:
+        The refusal copy, or "" when the endpoint may be written.
+    """
+    key = provider if normalize_provider_key_for_contract(provider) else "custom"
+    errors = resolve_provider_endpoint(key, endpoint).errors
+    if errors:
+        return errors[0]
+    return koboldcpp_route_refusal(key, endpoint)
 
 
 def _build_locked_default_mutation(
@@ -1448,6 +1477,17 @@ def parse_console_endpoint_preview(value: str) -> ConsoleEndpointPreview | None:
     else:
         classification = "Remote/unknown"
 
+    # TASK-38964 review r10e-rev3: Console display's rule. A single label
+    # other than localhost needs a port, or a path after a typed scheme, so a
+    # key pasted into the field is never shown as an authority.
+    if (
+        address is None
+        and "." not in normalized_host
+        and normalized_host != "localhost"
+        and port is None
+        and not ("://" in candidate and parsed.path.rstrip("/"))
+    ):
+        return None
     rendered_host = (
         f"[{normalized_host}]" if ":" in normalized_host else normalized_host
     )

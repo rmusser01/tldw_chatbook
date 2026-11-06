@@ -2437,3 +2437,8 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_
 # and the Files grip from the narrow editor (3-7 s each). Appended at the tail.
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[offline-back]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[grip-from-editor]
+# TASK-38966 (2026-11-06): the discovery row reads a just-listed model's
+# capability from its listing (TASK-34402). Red on dev in no lane since the row
+# read its provider widget (TASK-33007.6); a bare screen, ~3 s alone. Appended
+# at the tail.
+Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_reads_a_fresh_models_capability_from_its_listing

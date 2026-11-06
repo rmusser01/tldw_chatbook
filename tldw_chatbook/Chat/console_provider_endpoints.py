@@ -9,8 +9,8 @@ from urllib.parse import urlparse, urlunparse
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
+    canonical_endpoint_host,
     resolve_provider_endpoint,
-    valid_dns_label,
 )
 
 #: Chat settings' footer action that saves an unsaved endpoint.
@@ -343,23 +343,33 @@ def safe_endpoint_display(url: str | None) -> str:
     parsed_endpoint = _parse_http_endpoint(url)
     if parsed_endpoint is None:
         return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
-    resolution = resolve_provider_endpoint("custom", url)
+    resolution = _display_resolution(url)
     if resolution.persisted_endpoint is not None:
         return resolution.normalized_input
     legacy_display = _format_endpoint(parsed_endpoint, drop_default_port=False)
     has_scheme = parsed_endpoint[0]
-    legacy_resolution = resolve_provider_endpoint("custom", legacy_display)
+    legacy_resolution = _display_resolution(legacy_display)
     if legacy_resolution.persisted_endpoint is not None:
         return legacy_resolution.normalized_input if has_scheme else legacy_display
 
     if not has_scheme:
-        explicit_legacy_resolution = resolve_provider_endpoint(
-            "custom",
-            f"http://{legacy_display}",
-        )
+        explicit_legacy_resolution = _display_resolution(f"http://{legacy_display}")
         if explicit_legacy_resolution.persisted_endpoint is not None:
             return legacy_display
     return _INVALID_ENDPOINT_DISPLAY
+
+
+def _display_resolution(value: str):
+    """Read an endpoint for display as the contract does.
+
+    An OpenAI-compatible reading first, then koboldcpp's, so its native
+    /api/v1/generate route displays as itself (TASK-38963: the adoption toast
+    and the unsaved-endpoint copy read "invalid endpoint" for it).
+    """
+    resolution = resolve_provider_endpoint("custom", value)
+    if resolution.persisted_endpoint is None:
+        resolution = resolve_provider_endpoint("koboldcpp", value)
+    return resolution
 
 
 def normalize_generic_endpoint_for_compare(url: str | None) -> str:
@@ -372,12 +382,17 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
         Normalized endpoint identity. Empty input returns an empty string, while
         malformed input returns a non-secret invalid sentinel.
     """
-    parsed_endpoint = _parse_http_endpoint(url)
-    if parsed_endpoint is None:
-        return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
+    if not str(url or "").strip():
+        return ""
+    # TASK-38963 review: the contract's identity comes before the display
+    # rule, so two different endpoints that display alike (``http://kobold``,
+    # ``http://other``) never compare as the one sentinel.
     identity = canonical_connection_identity("custom", url)
     if identity is not None:
         return identity[1]
+    parsed_endpoint = _parse_http_endpoint(url)
+    if parsed_endpoint is None:
+        return _INVALID_ENDPOINT_DISPLAY
     return _format_endpoint(parsed_endpoint, drop_default_port=True)
 
 
@@ -414,32 +429,38 @@ def _parse_http_endpoint(
     if scheme not in {"http", "https"} or not hostname:
         return None
     hostname = hostname.lower()
-    if not _is_allowed_endpoint_host(hostname, has_scheme=has_scheme, port=port):
-        return None
     path = parsed.path.rstrip("/")
+    if not _is_allowed_endpoint_host(
+        hostname, port=port, path=path if has_scheme else ""
+    ):
+        return None
     return (has_scheme, scheme, hostname, port, path)
 
 
-def _is_allowed_endpoint_host(
-    hostname: str, *, has_scheme: bool, port: int | None
-) -> bool:
-    if hostname == "localhost":
-        return True
+def _is_allowed_endpoint_host(hostname: str, *, port: int | None, path: str) -> bool:
+    """The endpoint contract's host rule, plus a port or path for a single label.
+
+    TASK-38963: a host the contract accepts displays as itself. A single
+    label other than localhost also needs a port, or a path after a typed
+    scheme (review r10e-rev2: a key such as ``sk-abc/def`` has a "path"), so
+    a key pasted into the endpoint field is never echoed. An IPv6 zone id,
+    which the contract refuses, still compares as itself.
+
+    Args:
+        hostname: The lower-cased host.
+        port: The typed port, or None.
+        path: The typed path without its trailing "/"; "" when no scheme
+            was typed.
+    """
     try:
         ip_address(hostname)
         return True
     except ValueError:
         pass
-    if _is_dotted_dns_name(hostname):
-        return True
-    return not has_scheme and port is not None
-
-
-def _is_dotted_dns_name(hostname: str) -> bool:
-    hostname = hostname.rstrip(".")
-    if "." not in hostname or len(hostname) > 253 or not hostname.isascii():
-        return False
-    return all(valid_dns_label(label) for label in hostname.split("."))
+    host = canonical_endpoint_host(hostname)
+    return host is not None and (
+        "." in host or host == "localhost" or port is not None or bool(path)
+    )
 
 
 def _format_endpoint(
