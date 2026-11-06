@@ -1574,7 +1574,10 @@ with the mouse, click a row's title to focus that row (this restores nothing),
 then click its **Delete forever**.
 A note kept in sync with a folder is refused with "This note is kept in sync
 with a folder, so it can't be deleted forever here."; this release has no way
-to take one note out of its folder's sync. The confirm opens on **Cancel**,
+to take one note out of its folder's sync. When that cannot be checked — sync
+folders failed to start this session, say — nothing is deleted either, and
+the view says "Couldn't check whether a sync folder holds this note — nothing
+was deleted." The confirm opens on **Cancel**,
 and **Escape** cancels it without changing anything. There is no Undo
 afterwards: the note, its keyword and folder links and its sync history are
 gone, and focus lands on the row now in its place.

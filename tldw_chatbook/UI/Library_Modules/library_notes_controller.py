@@ -611,7 +611,10 @@ from ...Utils.fts5_match_forms import (
     NOTES_FILTER_MIN_PREFIX_CHARS as LIBRARY_NOTE_LINK_PICKER_MIN_QUERY,
 )
 from ...Notes.note_link_policy import link_kind, link_notice_text
-from ...Notes.notes_scope_service import NotePurgeRefusedError
+from ...Notes.notes_scope_service import (
+    PURGE_REFUSED_SYNC_UNKNOWN,
+    NotePurgeRefusedError,
+)
 from ...Notes.note_import_plan_models import (
     note_link_entries,
     stored_note_link,
@@ -8228,6 +8231,13 @@ class LibraryNotesController:
         would restore nothing), and the page re-read (clamped) with focus
         landing on the row that took this one's place. A refusal keeps the
         row and says why.
+
+        PR #3423 review I-1: the runtime is resolved with
+        ``_prepare_runtime``, never the non-constructing ``_runtime`` peek.
+        The peek answers ``None`` -- "no lasting sync in this app" -- while
+        the slot is empty, which it also is after a FAILED build, and the
+        purge then deleted a note a sync folder still held. A build that
+        could not say refuses here, before the purge is asked at all.
         """
         purged = False
         message = ""
@@ -8239,6 +8249,12 @@ class LibraryNotesController:
                 message = "Delete forever is unavailable."
             else:
                 try:
+                    sync_runtime = await notes_sync_attention._prepare_runtime(self)
+                    if sync_runtime is notes_sync_attention._COULD_NOT_SAY:
+                        raise NotePurgeRefusedError(
+                            reason_code="sync_unknown",
+                            user_message=PURGE_REFUSED_SYNC_UNKNOWN,
+                        )
                     purged = bool(
                         await self._run_library_service_call(
                             purge_note,
@@ -8246,7 +8262,7 @@ class LibraryNotesController:
                             note_id=note_id,
                             version=version,
                             user_id=self._library_notes_user_id(),
-                            sync_runtime=notes_sync_attention._runtime(self),
+                            sync_runtime=sync_runtime,
                         )
                     )
                     if not purged:
@@ -8497,6 +8513,9 @@ class LibraryNotesController:
 
         Read with the page, off the event loop, so the confirm can say it
         without a read of its own: ``{}`` (no clause) when it cannot be read.
+        The runtime comes from the purge's own resolver (PR #3423 review
+        I-1), so a runtime not built yet is built for the read; one that
+        could not build adds no kept-file clause -- and its purge refuses.
         """
         service = getattr(self.app_instance, "notes_scope_service", None)
         read = getattr(service, "deleted_notes_purge_scope", None)
@@ -8508,10 +8527,13 @@ class LibraryNotesController:
             if isinstance(item, Mapping) and item.get("id")
         ]
         try:
+            sync_runtime = await notes_sync_attention._prepare_runtime(self)
+            if sync_runtime is notes_sync_attention._COULD_NOT_SAY:
+                sync_runtime = None
             return dict(
                 await read(
                     note_ids,
-                    sync_runtime=notes_sync_attention._runtime(self),
+                    sync_runtime=sync_runtime,
                     sync_state=getattr(self.app_instance, "sync_state_repository", None),
                 )
             )
