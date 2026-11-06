@@ -700,7 +700,14 @@ def test_propagation_follows_imports_not_names():
 # TASK-39147: pin the seven commented native workflow settings.
 # TASK-41145 (owner decision 2026-11-16): MLX-LM ships host and port, not an
 # unused api_url.
-_TEMPLATE_SHA256 = "3d4886ffbc173e93045fc448b48bdfa503eeee51992e3972e01570d5a9b62283"
+# TASK-34100.13 (2026-11-05, rebase onto 29592ecc9b): the [embedding_config.models]
+# table made well-formed (AC#6: quoted bge keys, the two sample rows commented
+# out, 3-small 1536 / 3-large 3072, no api_key placeholder) -- re-pinned on purpose.
+# TASK-34100.13 (2026-11-12, rebase onto dev 4b90eb860b): re-measured over dev's
+# TASK-39147 workflow settings plus the AC#6 table above.
+# TASK-34100.13 (2026-11-19, rebase onto dev a6df4d8d48): re-measured over dev's
+# TASK-41145 MLX-LM host/port plus the AC#6 table above.
+_TEMPLATE_SHA256 = "29f88e287d51d12d2c3ad1d7f3ed64be35cee9f1ecc087185ddac13872e2fc8b"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
