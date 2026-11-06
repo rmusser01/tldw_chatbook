@@ -80,6 +80,10 @@ Below the chips sit three panes:
 Both rails start open. **F6** and **Shift+F6** cycle focus through the
 panes (handle → Library → centre → Inspector → handle).
 
+Below 98 columns the rails narrow and the centre keeps most of the width,
+so all three panes still fit the screen; long names in the list shorten in
+the middle to fit the narrow Library rail.
+
 ## Features & controls
 
 ### The Library rail
