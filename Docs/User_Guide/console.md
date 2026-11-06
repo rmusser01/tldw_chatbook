@@ -432,7 +432,9 @@ different address for that provider, it is kept: the detected server is
 used for the pair you picked here, in this chat only, until this chat's
 model or settings change (another pick in Switch model, or Apply in Chat
 settings, returns it to the saved address) or Chatbook restarts, and a
-notice says so. If the default cannot be saved, a notice says the pick
+notice says so and names the saved address, as in "Keeping the saved
+endpoint http://kobold_cpp:5001/api/v1/generate for KoboldCpp; using the
+detected server for this session only." If the default cannot be saved, a notice says the pick
 applies to this chat only, and the detected server is used the same way.
 Discovery runs when Console first shows the card, and again each time
 Console comes back to the card with nothing found, as after a trip to
@@ -771,6 +773,10 @@ model for future conversations, then uses them in this chat. On **Context
 and memory**, **Apply to this chat** is hidden as well and nothing stands in
 for it, so the line above the footer says where to go: "Save the vLLM
 endpoint in Model and generation to continue."
+A Docker Compose service name with a port, such as `http://kobold_cpp:5001`,
+is an endpoint like any other: two different ones are different servers, so a
+chat on one that is not saved is blocked until you save it, and the blocked
+message names both addresses.
 
 **Use saved defaults** is how a chat that already holds work picks up
 defaults you saved later (a chat nobody has used yet follows them on its

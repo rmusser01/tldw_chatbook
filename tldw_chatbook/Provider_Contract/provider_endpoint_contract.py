@@ -269,12 +269,12 @@ def _resolve_provider_endpoint(
         return _invalid_resolution(
             provider_key, "Endpoint URL must not include a fragment."
         )
-    canonical_host = _canonical_host(hostname) if hostname else None
+    canonical_host = canonical_endpoint_host(hostname) if hostname else None
     if not canonical_host or port == 0:
         return _invalid_resolution(
             provider_key, "Endpoint URL must include a valid host and port."
         )
-    if not has_explicit_scheme and not _is_exact_schemeless_host(parsed.netloc):
+    if not has_explicit_scheme and not is_exact_schemeless_host(parsed.netloc):
         return _invalid_resolution(
             provider_key,
             "Remote endpoint URLs must include an HTTP or HTTPS scheme.",
@@ -543,7 +543,21 @@ def _percent_octets_contain_unsafe_unicode(octets: bytearray) -> bool:
     return _contains_unsafe_unicode(decoded)
 
 
-def _canonical_host(hostname: str) -> str | None:
+def canonical_endpoint_host(hostname: str) -> str | None:
+    """The contract's host rule: the canonical host, or None when refused.
+
+    TASK-38963: Discover models and Console's endpoint display and compare
+    decide hosts with this rule, so none of them accepts a host the save
+    refuses or refuses one it accepts.
+
+    Args:
+        hostname: A URL's host, without brackets or port.
+
+    Returns:
+        The lower-cased host (an IP in its compressed form), or None for a
+        host that is not ASCII, holds "%", is all digits and dots, is over
+        253 characters, or has a label ``valid_dns_label`` refuses.
+    """
     if not hostname.isascii() or "%" in hostname:
         return None
     try:
@@ -591,7 +605,18 @@ def _normalized_netloc(hostname: str, port: int | None) -> str:
     return f"{host}:{port}" if port is not None else host
 
 
-def _is_exact_schemeless_host(netloc: str) -> bool:
+def is_exact_schemeless_host(netloc: str) -> bool:
+    """Whether an endpoint typed without a scheme may be read as ``http://``.
+
+    Only the loopback spellings may; a remote endpoint needs its scheme.
+    Discover models applies the same rule (TASK-38963).
+
+    Args:
+        netloc: The endpoint's network location, as typed.
+
+    Returns:
+        True for localhost, 127.0.0.1 and [::1], with or without a port.
+    """
     return any(
         netloc == host or netloc.startswith(f"{host}:")
         for host in ("localhost", "127.0.0.1", "[::1]")
@@ -605,7 +630,7 @@ def _drop_default_port(endpoint: str) -> str:
     )
     if not default_port or parsed.hostname is None:
         return endpoint
-    canonical_host = _canonical_host(parsed.hostname)
+    canonical_host = canonical_endpoint_host(parsed.hostname)
     if canonical_host is None:
         return endpoint
     netloc = _normalized_netloc(canonical_host, None)

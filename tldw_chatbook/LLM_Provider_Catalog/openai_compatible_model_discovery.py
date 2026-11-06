@@ -26,7 +26,9 @@ from tldw_chatbook.Chat.local_server_discovery import (
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     ProviderEndpointResolution,
+    canonical_endpoint_host,
     connection_probe_availability,
+    is_exact_schemeless_host,
     resolve_provider_endpoint,
 )
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
@@ -225,7 +227,8 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
     raw_endpoint = str(endpoint or "").strip()
     if not raw_endpoint or len(raw_endpoint) > _MAX_ENDPOINT_LENGTH:
         return None
-    candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
+    has_scheme = "://" in raw_endpoint
+    candidate = raw_endpoint if has_scheme else f"http://{raw_endpoint}"
     if "\\" in candidate or any(
         character.isspace() or ord(character) < 32 or ord(character) == 127
         for character in candidate
@@ -245,7 +248,22 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         parsed.port
     except ValueError:
         return None
+    if not has_scheme and not is_exact_schemeless_host(parsed.netloc):
+        return None  # the save refuses a remote endpoint without its scheme
+    if not _host_follows_contract(parsed):
+        return None
     return parsed if _is_structurally_safe_generic_endpoint(parsed) else None
+
+
+def _host_follows_contract(parsed: ParseResult) -> bool:
+    """Whether the endpoint contract's host rule accepts the URL's host.
+
+    TASK-38963: Discover models listed from hosts the save refuses, such as
+    ``-kobold`` or ``1.2.3``. A bracketed IPv6 zone id ("%25") is left to
+    ``_is_safe_generic_authority``, which discovery has always allowed.
+    """
+    host = parsed.hostname or ""
+    return "%" in host or canonical_endpoint_host(host) is not None
 
 
 def _is_structurally_safe_generic_endpoint(parsed: ParseResult) -> bool:
@@ -484,10 +502,10 @@ def supports_openai_compatible_model_discovery(
         return False
     if provider_key == _QWENCLOUD_PROVIDER_KEY:
         try:
-            normalize_qwencloud_base_url(normalized_endpoint)
+            base_url = normalize_qwencloud_base_url(normalized_endpoint)
         except QwenCloudBaseURLValidationError:
             return False
-        return True
+        return _host_follows_contract(urlparse(base_url))
 
     parsed = _parse_endpoint(normalized_endpoint)
     if parsed is None:

@@ -7,8 +7,10 @@ import httpx
 import pytest
 
 import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,
+    UNSAVED_ENDPOINT_COPY,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
@@ -32,6 +34,8 @@ from tldw_chatbook.Chat.console_project_instructions import (
     project_instruction_notice_key,
     sanitized_destination_label,
 )
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     build_provider_setup_mutation,
@@ -43,6 +47,8 @@ from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     resolve_provider_endpoint,
 )
+from tldw_chatbook.UI.Console_Modules import model_switcher as model_switcher_module
+from tldw_chatbook.UI.Console_Modules.model_switcher import adoption_endpoints_differ
 
 # These ARE the tests of the probe implementation, so they opt out of the
 # autouse `_no_local_server_probes` guard (Tests/conftest.py, task-15111).
@@ -898,9 +904,9 @@ _CONTRACT_PROVIDERS = (
 )
 
 
-def _endpoint_for(provider: str, host: str) -> str:
+def _endpoint_for(provider: str, host: str, scheme: str = "http://") -> str:
     path = "/api/v1/generate" if provider == "koboldcpp" else "/v1"
-    return f"http://{host}:5001{path}"
+    return f"{scheme}{host}:5001{path}"
 
 
 def _saved_endpoint(provider: str, endpoint: str) -> str | None:
@@ -943,25 +949,26 @@ def test_an_underscore_host_saves_and_discovers_like_its_hyphen_spelling(provide
     assert supports_openai_compatible_model_discovery(provider, hyphen) is True
 
 
-@pytest.mark.parametrize(
-    "host",
-    [
-        "-kobold",
-        "kobold-",
-        "-kobold_cpp",
-        "kobold_cpp-",
-        "kob..old",
-        "kob_..old",
-        "kob%41ld",
-        "kob_%41ld",
-        "kob*old",
-        "kob_*old",
-        "1.2.3",
-        "a" * 64,
-        "a_" * 32,
-        ".".join(["a" * 60] * 5),
-    ],
+#: TASK-36517 AC#3's hosts: each breaks a host rule other than "_".
+_HOSTS_REFUSED_FOR_ANOTHER_REASON = (
+    "-kobold",
+    "kobold-",
+    "-kobold_cpp",
+    "kobold_cpp-",
+    "kob..old",
+    "kob_..old",
+    "kob%41ld",
+    "kob_%41ld",
+    "kob*old",
+    "kob_*old",
+    "1.2.3",
+    "a" * 64,
+    "a_" * 32,
+    ".".join(["a" * 60] * 5),
 )
+
+
+@pytest.mark.parametrize("host", _HOSTS_REFUSED_FOR_ANOTHER_REASON)
 def test_hosts_refused_for_another_reason_are_still_refused(host):
     """TASK-36517 AC#3: allowing "_" relaxes no other host rule, with or
     without an underscore in the host."""
@@ -1043,3 +1050,184 @@ def test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label(
             "KoboldCpp (invalid endpoint)"
         )
 
+
+
+#: TASK-38963: single-label hosts, the Docker Compose service-name shape.
+_SINGLE_LABEL_HOSTS = ("kobold", "kobold_cpp")
+
+
+@pytest.mark.parametrize("scheme", ["http://", ""], ids=["scheme", "no-scheme"])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "kobold-cpp",
+        "kobold_cpp",
+        *_HOSTS_REFUSED_FOR_ANOTHER_REASON,
+        *_SINGLE_LABEL_HOSTS,
+    ],
+)
+def test_discover_models_accepts_exactly_the_hosts_the_save_accepts(host, scheme):
+    """TASK-38963 AC#1: Discover models parsed the URL itself, so it listed
+    from hosts such as ``-kobold`` or ``1.2.3`` and from a schemeless remote
+    host, all of which the save refuses. Both now decide by the contract."""
+    for provider in _CONTRACT_PROVIDERS:
+        endpoint = _endpoint_for(provider, host, scheme)
+        saves = _saved_endpoint(provider, endpoint) is not None
+        assert supports_openai_compatible_model_discovery(provider, endpoint) is (
+            saves
+        ), (provider, endpoint, saves)
+
+
+def test_a_single_label_host_displays_and_compares_as_itself():
+    """TASK-38963 AC#2: Console's display and compare took a single-label
+    host with a scheme for a pasted token, so ``http://kobold:5001`` read
+    "invalid endpoint" and two different such servers compared equal."""
+    for endpoint in ("http://kobold:5001", "http://kobold_cpp:5001"):
+        assert safe_endpoint_display(endpoint) == endpoint
+    assert generic_endpoint_differs(
+        "http://other:5001", {"api_url": "http://kobold:5001"}
+    ) is True
+    assert generic_endpoint_differs(
+        "http://kobold:5001/", {"api_url": "http://kobold:5001"}
+    ) is False
+    assert adoption_endpoints_differ(
+        "koboldcpp", "http://kobold:5001", "http://other:5001"
+    ) is True
+    assert adoption_endpoints_differ(
+        "koboldcpp", "http://kobold_cpp:5001", "http://kobold_cpp:5001/"
+    ) is False
+    # A single label with no port can still be a pasted key: never echoed.
+    assert safe_endpoint_display("http://unit-test-key") == "invalid endpoint"
+
+
+@pytest.mark.asyncio
+async def test_a_different_single_label_session_endpoint_is_blocked_as_unsaved():
+    """TASK-38963 AC#3: both single-label endpoints compared as the one
+    "invalid endpoint" sentinel, so the unsaved-endpoint guard let a session
+    on another server send as though it were the saved one."""
+    saved = "http://kobold_cpp:5001/api/v1/generate"
+    session = "http://other_kobold:5001/api/v1/generate"
+
+    def no_send(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("a blocked endpoint never sends")
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"koboldcpp": {"api_url": saved, "model": "m"}}
+        },
+        environ={},
+        chat_api_call_fn=no_send,
+    )
+
+    blocked = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="koboldcpp", base_url=session, explicit_model="m", streaming=False
+        )
+    )
+    same = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="koboldcpp", base_url=saved, explicit_model="m", streaming=False
+        )
+    )
+
+    assert blocked.ready is False
+    assert blocked.visible_copy == (
+        f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {session}. "
+        f"Saved endpoint: {saved}."
+    )
+    assert same.ready is True, same.visible_copy
+
+
+class _AdoptionStore:
+    active_session_id = "session-1"
+
+    def __init__(self) -> None:
+        self.ephemeral: list[object] = []
+
+    def adopt_session_ephemeral_endpoint(self, _session_id, *, settings, policy):
+        del settings
+        self.ephemeral.append(policy)
+
+
+class _AdoptionScreen:
+    """The ChatScreen surface ``adopt_detected_local_server`` reads."""
+
+    def __init__(self, app_config: dict) -> None:
+        self.notes: list[str] = []
+        self.session_settings: list[object] = []
+        self.store = _AdoptionStore()
+        self.app_instance = SimpleNamespace(
+            notify=lambda message, **_kwargs: self.notes.append(message)
+        )
+        self._session = SimpleNamespace(
+            _replace_active_console_session_settings=self.session_settings.append
+        )
+        self._app_config = app_config
+
+    @staticmethod
+    def _config_section(config, key):
+        value = config.get(key, {})
+        return value if isinstance(value, dict) else {}
+
+    def _provider_readiness_app_config(self):
+        return self._app_config
+
+    def _ensure_console_chat_store(self):
+        return self.store
+
+    def _sync_console_chat_core_state(self) -> None:
+        pass
+
+    def _sync_console_settings_summary(self) -> None:
+        pass
+
+    def _sync_console_transcript_guidance(self) -> None:
+        pass
+
+
+def _adopt(monkeypatch, provider: str, saved: str, detected: str):
+    """Adopt ``detected`` over a saved endpoint; return the screen and the save."""
+    writes: list[dict] = []
+
+    def fake_save(section_values):
+        writes.append(section_values)
+        return True
+
+    monkeypatch.setattr(model_switcher_module, "save_settings_to_cli_config", fake_save)
+    screen = _AdoptionScreen({"api_settings": {provider: {"api_url": saved}}})
+    model_switcher_module.adopt_detected_local_server(
+        screen,
+        DiscoveredLocalServer(
+            provider_key=provider, base_url=detected, model_ids=("detected-model",)
+        ),
+        ConsoleSessionSettings(provider=provider, model="detected-model"),
+    )
+    return screen, writes
+
+
+@pytest.mark.parametrize(
+    ("provider", "name", "saved", "detected"),
+    [
+        (
+            "koboldcpp",
+            "KoboldCpp",
+            "http://kobold_cpp:5001/api/v1/generate",
+            "http://127.0.0.1:5001",
+        ),
+        ("llama_cpp", "llama.cpp", "http://llama_cpp:8080", "http://127.0.0.1:9099"),
+    ],
+)
+def test_the_adoption_toast_names_a_saved_single_label_endpoint(
+    monkeypatch, provider, name, saved, detected
+):
+    """TASK-38963 AC#3: the toast read "Keeping the saved endpoint invalid
+    endpoint for KoboldCpp"; it names the endpoint it keeps."""
+    screen, writes = _adopt(monkeypatch, provider, saved, detected)
+
+    assert screen.notes == [
+        (
+            f"Keeping the saved endpoint {saved} for {name}; using the detected "
+            "server for this session only."
+        )
+    ]
+    assert "api_url" not in writes[0][f"api_settings.{provider}"]
