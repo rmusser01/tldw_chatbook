@@ -1026,6 +1026,9 @@ async def test_a_control_bar_sync_builds_the_workspace_context_once(monkeypatch)
     the tick's fingerprint-validated build scope, as ``settle_stopped_poll``
     does, so the second leg reuses the first build. Each sync still builds
     afresh: the scope ends with the sync.
+
+    TASK-36571.1: both legs read only the workspace label now, so a sync
+    builds no workspace context at all.
     """
     from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
     from tldw_chatbook.UI.Console_Modules import workspace
@@ -1050,6 +1053,6 @@ async def test_a_control_bar_sync_builds_the_workspace_context_once(monkeypatch)
             for _ in range(2):
                 builds.clear()
                 assert sync() is not False, f"{sync.__name__} deferred"
-                assert len(builds) == 1, (
+                assert len(builds) == 0, (
                     f"{sync.__name__} built the workspace context {len(builds)} times"
                 )

@@ -860,9 +860,9 @@ MINIMUM_FILES = 1748
 MINIMUM_FILES = 1755
 # TASK-36571.1 (2026-11-05): the run-status reuse pin and the unchanged
 # folder-availability re-read pin join them, then the full-sync reuse, the
-# workspace state builder reuse, the view key and the cached label read
-# pins. The floor is the entry count.
-MINIMUM_FILES = 1761
+# workspace state builder reuse, the view key, the cached label read and the
+# stale re-read renewal pins. The floor is the entry count.
+MINIMUM_FILES = 1763
 
 
 def read_census(path: Path) -> list[str]:

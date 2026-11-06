@@ -505,6 +505,16 @@ class _ConsoleRegistryDisplayReads:
         """Whether ``key``'s read returns its cached value for this generation."""
         return self._cacheable() and key in self._cache
 
+    def renew_stale_requests(self) -> None:
+        """Ask again for the re-read a stale read would ask for (TASK-36571.1).
+
+        A reused build makes no reads, so without this a re-read that failed
+        would not be retried until the view's key moved.
+        """
+        stale_reader = self.stale_reader
+        if stale_reader is not None and self._cacheable() and self.stale_calls():
+            stale_reader(self, self._generation)
+
     def _read(self, key: tuple, method_name: str, *args: Any) -> Any:
         cacheable = self._cacheable()
         if cacheable and key in self._cache:
@@ -7613,6 +7623,7 @@ class ConsoleWorkspaceController:
             and all(now is then for now, then in zip(inputs[1:], memo[1][1:]))
         ):
             state = memo[2]
+            view.renew_stale_requests()  # As the builder's own stale reads would.
         else:
             state = build_console_workspace_state(
                 registry_service=view,
