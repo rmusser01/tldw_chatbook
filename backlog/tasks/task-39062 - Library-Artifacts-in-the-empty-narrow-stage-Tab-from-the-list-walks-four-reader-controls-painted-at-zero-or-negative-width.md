@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 12:31
-updated_date: 2026-11-06 16:13
+updated_date: 2026-11-06 22:10
 labels:
 - follow-up
 - library
@@ -72,5 +72,12 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
   - The test read two things that can land late under load: the page, which the helper waits for only 3 s, and the list's focus, which lands a refresh after `focus_items` while the test gave it one pause.
   - Both reads are now bounded condition waits (15 s), not timers.
   - The hardened test is still red on the base shell, with the same stops, and passes 20 of 20 at `-n 4` (73.5 s, load 23-27).
+- **Review r11l-rev1, item 1: the `sync()` re-apply gets its own test.** With the re-apply removed in memory, every earlier Artifacts focus and canvas test still passed, because each narrow test calls `focus_items()`, which resizes.
+  - The new `test_narrow_tab_reaches_the_reader_once_the_first_artifact_lands[60x24, 50x25]` mounts three reports. On entry, `attach()` resizes while nothing is selected, so the reader hides.
+  - The test waits for the first artifact's detail, which lands through `select()` -> `sync()` with no resize. It then focuses the list with `set_focus`, without `focus_items()`, and Tabs.
+  - It asserts that a reader control takes focus and that the reader is revealed around it (cells > 0).
+  - **Red** with the re-apply removed by an in-memory mutation (a scratch `sitecustomize` outside the tree): the walk never enters the reader (`['library-artifacts-items-grip', 'library-artifacts-library-grip', 'library-artifacts-search', 'library-artifacts-all', 'library-artifacts-kept', 'library-artifacts-sort', ...]`) at both sizes.
+  - **Green** without the mutation: 2 passed in 51.3 s at load 58-62.
+  - Both nodes are appended at the census tail (floor 1755).
 - **User Guide.** `Docs/User_Guide/artifacts.md` ("Browse and read") says that Tab and F6 bring the reader forward on a narrow terminal, and that with nothing selected Tab skips the reader.
 - Files: `tldw_chatbook/Widgets/Library/library_artifacts_reader_shell.py`, `Tests/UI/test_library_artifacts_focus.py`, `Tests/UI/test_library_artifacts_canvas.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/artifacts.md`.

@@ -258,3 +258,41 @@ async def test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control(
         assert focused is rows, stops
         unseen = [(widget_id, cells) for widget_id, cells in stops if cells <= 0]
         assert unseen == [], (size, stops)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 24), (50, 25)])
+@private_profile_test
+async def test_narrow_tab_reaches_the_reader_once_the_first_artifact_lands(
+    tmp_path, request, size
+):
+    """TASK-39062 review: entering Artifacts on a narrow stage resizes while no
+    artifact is selected yet, so the zero-width reader hides. The page then
+    lands and selects its first artifact without a resize. The shell's
+    ``sync()`` re-applies the layout, so Tab from the list still reaches a
+    reader control and reveals the reader. Nothing here calls
+    ``focus_items()`` or resizes, so that re-apply is the only thing that can
+    show the reader again."""
+    async with artifact_library(tmp_path, size=size) as (screen, pilot):
+        controller = screen._artifacts_controller
+        await _until(pilot, lambda: controller.detail is not None, "the detail")
+        assert controller.selected is not None
+        assert controller.layout.reader_width == 0, controller.layout
+        shell = screen.query_one("#library-artifacts-reader-shell")
+        rows = screen.query_one("#library-artifacts-list")
+        screen.set_focus(rows)
+        await _until(pilot, lambda: screen.focused is rows, "focus on the list")
+        stops = []
+        for _ in range(40):  # at most one whole lap of the focus chain
+            await pilot.press("tab")
+            focused = screen.focused
+            assert focused is not None
+            stops.append(focused.id)
+            if shell.work in focused.ancestors_with_self or focused is rows:
+                break
+        assert shell.work in focused.ancestors_with_self, (size, stops)
+        await _until(
+            pilot,
+            lambda: controller.reader_open and _visible_cells(screen, focused) > 0,
+            "the reader to be revealed around the focused control",
+        )

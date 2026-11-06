@@ -2536,3 +2536,8 @@ Tests/UI/test_library_file_notes_workspace.py::test_folder_files_click_between_c
 # (60x24 and 50x25; about 11 s each). Appended at the tail.
 Tests/UI/test_library_artifacts_focus.py::test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control[size0]
 Tests/UI/test_library_artifacts_focus.py::test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control[size1]
+# TASK-39062 review (2026-11-06): entering a narrow Artifacts stage before the
+# first artifact lands, Tab from the list still reaches and reveals the
+# reader (the shell's sync() re-apply; 60x24 and 50x25). Appended at the tail.
+Tests/UI/test_library_artifacts_focus.py::test_narrow_tab_reaches_the_reader_once_the_first_artifact_lands[size0]
+Tests/UI/test_library_artifacts_focus.py::test_narrow_tab_reaches_the_reader_once_the_first_artifact_lands[size1]
