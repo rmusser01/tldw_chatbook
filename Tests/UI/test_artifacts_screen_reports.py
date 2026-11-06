@@ -593,6 +593,92 @@ async def test_play_button_missing_file_warns_through_the_validator(monkeypatch)
     assert "no longer exists" in warning
 
 
+# TASK-39040: on dev the Play handler trusted the row the Reports refresh
+# cached, checked only by `validate_path_simple`. The Library and Watchlists
+# players confine the same kind of row to `briefing_audio_dir()` at the press;
+# this PR makes the Artifacts handler do the same, so a row or file that
+# changed after the listing cannot hand an outside file to the player.
+
+_OUTSIDE_REFUSAL = (
+    "This report's audio is not in the app's audio folder, so it was not played."
+)
+
+
+async def _press_play_and_read_refusal(app, screen, pilot, briefing_id, played):
+    screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
+    await _wait_until(
+        pilot, lambda: bool(played) or app.notify.call_count == 1, what="the press"
+    )
+    assert played == [], "an outside path must never reach the player"
+    call = app.notify.call_args
+    return str(call.args[0]), call.kwargs
+
+
+@pytest.mark.asyncio
+async def test_play_button_refuses_a_row_outside_the_audio_dir(tmp_path, monkeypatch):
+    """A cached row whose path now points outside `briefing_audio_dir()` is
+    refused with a literal toast that never carries the path."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, _audio_path = _seed_audio_report(app, file_exists=True)
+    outside = tmp_path / "outside&calc.wav"
+    outside.write_bytes(b"RIFF....WAVEfmt ")
+    played: list[Path] = []
+    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        row = next(r for r in screen._daily_reports if r["id"] == briefing_id)
+        row["audio_file_path"] = str(outside)
+        message, kwargs = await _press_play_and_read_refusal(
+            app, screen, pilot, briefing_id, played
+        )
+
+    assert message == _OUTSIDE_REFUSAL
+    assert kwargs.get("markup") is False
+    assert outside.name not in message and str(tmp_path) not in message
+
+
+@pytest.mark.asyncio
+async def test_play_button_refuses_a_symlink_that_escapes_the_audio_dir(
+    tmp_path, monkeypatch
+):
+    """The in-dir file is swapped for a symlink to an outside file after the
+    listing: the press resolves the link and refuses it."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, audio_path = _seed_audio_report(app, file_exists=False)
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"RIFF....WAVEfmt ")
+    played: list[Path] = []
+    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        # The session shares one user data dir, so an earlier test may have
+        # left a regular file at this name; replace it, and leave none behind.
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        audio_path.unlink(missing_ok=True)
+        audio_path.symlink_to(outside)
+        try:
+            message, kwargs = await _press_play_and_read_refusal(
+                app, screen, pilot, briefing_id, played
+            )
+        finally:
+            audio_path.unlink(missing_ok=True)
+
+    assert message == _OUTSIDE_REFUSAL
+    assert kwargs.get("markup") is False
+
+
 @pytest.mark.asyncio
 async def test_kept_badge_is_exact_per_row_not_page_bound(tmp_path):
     """Qodo #14: kept-ness is resolved per displayed row id, so a keep that

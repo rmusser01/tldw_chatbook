@@ -176,6 +176,12 @@ each fully-silent reply says so.
 - **Control turns on but nothing happens / replies are silent** — check the
   toast: either a player is missing (install `mpv` or set Output format to
   WAV) or the TTS provider failed (Settings ▸ Speech & TTS).
+- **On Windows, a reply opens in another app and ⏹ does not stop it** —
+  without the legacy Windows Media Player (`wmplayer.exe`), each clip is
+  handed to your default audio app, and a toast says so: "Playing in your
+  default audio app. Pause or stop it there." The app cannot pause or stop
+  that player; use its own controls, or add Windows Media Player Legacy from
+  Windows' optional features so the app can stop playback itself.
 - **"No audio was captured from the microphone."** — check the OS
   microphone permission for your terminal.
 - **"Dictation failed: The '…' speech model could not be downloaded or

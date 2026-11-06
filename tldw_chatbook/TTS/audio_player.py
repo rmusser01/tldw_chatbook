@@ -9,6 +9,7 @@ import platform
 import shutil
 import threading
 import time
+from contextvars import copy_context
 from pathlib import Path
 from typing import Optional
 from enum import Enum
@@ -148,6 +149,7 @@ class AudioPlayerInfo:
     total_pause_duration: float = 0.0  # Total time spent paused
     duration: Optional[float] = None  # Total duration of the file
     position: float = 0.0  # Current playback position in seconds
+    handed_off: bool = False  # TASK-39040: os.startfile has it; no process
 
 
 def _kill_player_process_group(process: "subprocess.Popen | None") -> None:
@@ -218,12 +220,11 @@ class SimpleAudioPlayer:
             if self._player_name is None:
                 logger.warning("No suitable audio player found on Linux")
         elif self._system == "Windows":
-            # Windows Media Player supports pause through COM automation
-            self._player_cmd = [
-                "windows"
-            ]  # Placeholder, actual command built in play()
+            # play() builds the argv or hands off. pause() has no Windows
+            # branch and returns False; True keeps it off stop-and-restart.
+            self._player_cmd = ["windows"]
             self._player_name = "windows"
-            self._supports_pause = True  # We'll use COM automation for pause
+            self._supports_pause = True
         else:
             self._player_cmd = None
             self._player_name = None
@@ -355,18 +356,18 @@ class SimpleAudioPlayer:
 
         try:
             if self._system == "Windows":
-                # Use Windows built-in wmplayer or start command instead of PowerShell
-                # This avoids command injection risks
-                wmplayer_path = Path(
-                    "C:/Program Files/Windows Media Player/wmplayer.exe"
-                )
-                if wmplayer_path.exists():
-                    # Use Windows Media Player directly
-                    cmd = [str(wmplayer_path), "/play", "/close", str(file_path)]
-                else:
-                    # Use start command to open with default application
-                    # The empty string after 'start' is for the window title
-                    cmd = ["cmd", "/c", "start", "", "/wait", str(file_path)]
+                # TASK-39040: no shell parses the path (dev ran `cmd /c start`).
+                from .windows_audio_launch import hand_off, wmplayer_argv
+
+                cmd = wmplayer_argv(file_path)
+                if cmd is None:
+                    if not hand_off(file_path):
+                        return False
+                    with self._lock:
+                        self._current = AudioPlayerInfo(
+                            file_path, PlaybackState.PLAYING, handed_off=True
+                        )
+                    return True
             else:
                 # Unix-like systems
                 cmd = self._player_cmd + [str(file_path)]
@@ -612,17 +613,12 @@ class SimpleAudioPlayer:
                     except Exception:
                         pass
 
-                # Always reset all state when cleaning up
-                self._current.process = None
-                self._current.state = PlaybackState.IDLE
-                self._current.file_path = None  # Clear the file path too
-                self._current.start_time = None
-                self._current.pause_time = None
-                self._current.total_pause_duration = 0.0
-                self._current.position = 0.0
-                self._current.duration = None
+                # Always reset all state when cleaning up. A handed-off clip
+                # plays on in the default app, so it is released, not stopped.
+                handed_off = self._current.handed_off
+                self._current = AudioPlayerInfo()
                 logger.info("Playback stopped/cleaned up - all state reset")
-                return True
+                return not handed_off
             else:
                 logger.debug(
                     f"Cannot stop - process exists: {self._current.process is not None}, state: {self._current.state}"
@@ -771,8 +767,8 @@ class AsyncAudioPlayer:
     async def play(self, file_path: Path) -> bool:
         """Play audio file asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self._get_executor(), self._player.play, file_path
+        return await loop.run_in_executor(  # caller's context: TASK-39040's toast
+            self._get_executor(), copy_context().run, self._player.play, file_path
         )
 
     async def pause(self) -> bool:

@@ -31,6 +31,7 @@ from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
     WATCHLISTS_NAV_CONTEXT_SECTION,
 )
+from ...Subscriptions.briefing_audio import audio_file_path_is_safe
 from ...Subscriptions.briefing_export import (
     BriefingExportError,
     briefing_markdown_document,
@@ -2027,6 +2028,17 @@ class ArtifactsScreen(BaseAppScreen):
             (r for r in self._daily_reports if r.get("id") == briefing_id), None
         )
         if report is None or not report.get("has_audio"):
+            return
+        # TASK-39040: on dev this press trusted the row the refresh cached. Like
+        # the Library and Watchlists players, confine it to `briefing_audio_dir()`
+        # now, resolving links, with the helper that row's listing used.
+        if not audio_file_path_is_safe(str(report["audio_file_path"])):
+            self.app_instance.notify(
+                "This report's audio is not in the app's audio folder, "
+                "so it was not played.",
+                severity="warning",
+                markup=False,
+            )
             return
         # Qodo #1: the centralized path validator is the authority here, not
         # a boolean `.exists()` plus a rebuilt Path -- its normalized result

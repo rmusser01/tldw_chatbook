@@ -2829,6 +2829,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 3,
+      "diagnostic_digest": "40e373b94759b18056b5",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/TTS/windows_audio_launch.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "1ace6c7573a9c080a918",
       "owner": "TASK-492",
@@ -9791,7 +9798,8 @@
           "call_digest": "59fdaa66a33f3cff",
           "method": "debug",
           "path_expressions": [
-            "self._current.process"
+            "self._current.process",
+            "self._current.state"
           ],
           "scope": "SimpleAudioPlayer.play",
           "status": "legacy_unreviewed"
@@ -9818,7 +9826,8 @@
           "call_digest": "acc0baee7e5a0b60",
           "method": "debug",
           "path_expressions": [
-            "self._current.process"
+            "self._current.process",
+            "self._current.state"
           ],
           "scope": "SimpleAudioPlayer.play",
           "status": "legacy_unreviewed"
