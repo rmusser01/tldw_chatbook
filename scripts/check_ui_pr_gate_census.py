@@ -844,6 +844,9 @@ MINIMUM_FILES = 1724
 # stage-pick, empty-stage, Artifacts-stage and Retry-conflict nodes at the
 # tail. The floor is the measured entry count.
 MINIMUM_FILES = 1738
+# TASK-38981 re-review (2026-11-06): append the Media adjacent-key and Notes
+# wide-step nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1741
 
 
 def read_census(path: Path) -> list[str]:

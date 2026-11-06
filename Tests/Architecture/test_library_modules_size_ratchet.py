@@ -467,7 +467,9 @@ _BUDGETS: dict[str, int] = {
     # derives from the same target id as the Delete press. Exact measurement.
     # 2026-11-06, TASK-38981 review (owner size waiver): 5246 -> 5255 (+9): an
     # item opened from the list holding the narrow stage takes it back.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5255,
+    # 2026-11-06, TASK-38981 re-review (same waiver): 5255 -> 5260 (+5): every
+    # immediate select (``]``/``[`` and the review-set walk too) hands it back.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5260,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

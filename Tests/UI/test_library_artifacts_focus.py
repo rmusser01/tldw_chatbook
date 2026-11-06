@@ -181,3 +181,26 @@ async def test_items_opened_beside_an_open_artifact_take_the_stage(
         assert screen.focused is body
         assert body.region.width >= 30
         assert body.region.right <= screen.size.width
+
+        # TASK-38981 re-review: with the list holding the stage again, Tab from
+        # the list must never rest on a reader control the user cannot see.
+        screen.set_focus(grip)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert controller.layout.reader_width == 0, controller.layout
+        rows = screen.query_one("#library-artifacts-list")
+        screen.set_focus(rows)
+        await pilot.pause()
+        for _ in range(8):
+            await pilot.press("tab")
+            await pilot.pause()
+            await pilot.pause()
+            focused = screen.focused
+            assert focused is not None
+            clip = screen.find_widget(focused).clip
+            region = focused.region
+            cells = min(region.right, clip.right, screen.size.width) - max(
+                region.x, clip.x, 0
+            )
+            assert cells > 0, (size, focused.id, cells, controller.layout)

@@ -88,11 +88,12 @@ rewriting your settings. Explicitly reopening a pane takes effect immediately.
   82 columns), the Items grip opens the list across the whole width
   instead of leaving the item a few columns beside it. The item stays open
   behind the list, and the same grip closes the list again and returns to the
-  item with focus inside it. Opening another item from that list (Enter or a
-  click) shows it across the whole width; moving through the list with the
-  arrow keys keeps the list. Conversations, Collections, Prompts and Skills
-  do the same. In Artifacts the list takes the stage too, and **F6** returns
-  to the open artifact. Below 64 columns with nothing open, each of these
+  item with focus inside it. Opening another item from that list (Enter, a
+  click, or **]** / **[** for the next or previous item) shows it across the
+  whole width; moving through the list with the arrow keys keeps the list.
+  Conversations, Collections, Prompts and Skills do the same. In Artifacts
+  the list takes the stage too, and **F6**, or **Tab** onto the artifact's
+  controls, returns to the open artifact. Below 64 columns with nothing open, each of these
   lists keeps the stage, as Media's does.
 
 *Verified against fix/media-crit6-layout — 2026-09-07 (task-31979: the

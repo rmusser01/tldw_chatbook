@@ -2258,3 +2258,132 @@ async def test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop(
     finally:
         if prompt_db is not None:
             prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["right_square_bracket", "left_square_bracket"])
+async def test_media_adjacent_item_keys_open_the_next_item_on_the_stage(
+    key: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 re-review: ``]`` / ``[`` open the next or previous browse
+    item in the Reader, so from the list holding the stage they hand the
+    stage back to the newly opened item instead of loading it behind it."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT["media"][1]
+
+    def layout():
+        return screen._media_state.reader_layout
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, "media")
+            await pilot.resize_terminal(60, 30)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.size.width == 60
+                and screen.query_one(selector).region.width
+                == layout().items_width + layout().reader_width + 10,
+                message="the 60-column layout did not settle",
+            )
+            await pilot.pause()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await _wait_for_condition(
+                    pilot,
+                    lambda: not layout().items_open,
+                    message="the open item did not take the stage",
+                )
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open item",
+            )
+            before = screen._media_state.reader_session.selected_id
+            await pilot.press(key)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._media_state.reader_session.selected_id != before
+                    and screen.query_one(selector).work.display
+                    and _work_cells(screen.query_one(selector).work)
+                    >= _WORK_FLOORS["media"]
+                ),
+                message=(
+                    f"{key}: {screen._media_state.reader_session.selected_id!r} "
+                    f"(was {before!r}), layout {layout()}"
+                ),
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_notes_reader_focus_survives_a_wide_step_after_the_list_stage(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 re-review: after the list held the stage at 60 columns, a
+    resize to 160 showed the work pane again and the shell moved focus into
+    it, past Notes' own focus restore. Back at 60 the user's reader focus was
+    lost to the Items grip (base kept it on the note body)."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT["notes"][1]
+
+    def layout():
+        return screen._notes_state.reader_layout
+
+    async def settle() -> None:
+        for _ in range(12):
+            await pilot.pause(0.03)
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, "notes")
+            await pilot.resize_terminal(60, 30)
+            await settle()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await settle()
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open note",
+            )
+            await pilot.resize_terminal(160, 30)
+            await settle()
+            for _ in range(40):  # the user Tabs into the reader
+                focused = screen.focused
+                if (
+                    focused is not None
+                    and shell.work in focused.ancestors
+                    and _work_cells(focused) > 0
+                ):
+                    break
+                await pilot.press("tab")
+                await pilot.pause()
+            reading = screen.focused
+            assert reading is not None and shell.work in reading.ancestors
+            await pilot.resize_terminal(60, 30)
+            await settle()
+            focused = screen.focused
+            assert (
+                focused is not None
+                and shell.work in focused.ancestors
+                and _work_cells(focused) > 0
+            ), (reading.id, focused, layout())
+    finally:
+        prompt_db.close()

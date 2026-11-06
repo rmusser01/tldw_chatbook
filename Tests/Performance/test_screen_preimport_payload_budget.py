@@ -138,14 +138,15 @@ MAX_PASS_ADDED_MODULES = 558
 #: 426,512 -> 426,539 (2026-11-05, TASK-36516; owner size waiver 2026-10-31):
 #: +27 in `settings_screen` (the koboldcpp native-route save refusal), modules
 #: unchanged, pinned at the measurement.
-#: 426,539 -> 426,604 (2026-11-06, TASK-38981 with TASK-38957 and their
-#: review fixes; owner size waiver): +65 in `library`, all in modules the
-#: route already pre-imports: `Widgets.adaptive_pane_shell` +43 (the work-pane
-#: hide, its focus return and the Artifacts opt-out), `screen_constants` +17
-#: (the profile flags), `library_screen` +3 (the Folder files focus intent) and
-#: `library_media_reader_state` +2. `Utils.adaptive_reader_state` is not in
-#: the route. Modules unchanged, pinned at the measurement.
-MAX_PASS_ADDED_LOC = 426_604
+#: 426,539 -> 426,607 (2026-11-06, TASK-38981 with TASK-38957 and their
+#: review fixes; owner size waiver): +68 in `library`, all in modules the
+#: route already pre-imports: `Widgets.adaptive_pane_shell` +46 (the work-pane
+#: hide, its focus return when the list closes, and the Artifacts opt-out),
+#: `screen_constants` +17 (the profile flags), `library_screen` +3 (the Folder
+#: files focus intent) and `library_media_reader_state` +2.
+#: `Utils.adaptive_reader_state` is not in the route. Modules unchanged,
+#: pinned at the measurement.
+MAX_PASS_ADDED_LOC = 426_607
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules

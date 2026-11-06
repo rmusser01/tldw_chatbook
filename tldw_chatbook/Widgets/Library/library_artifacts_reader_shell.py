@@ -76,14 +76,18 @@ class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
 
     @on(DescendantFocus)
     def reveal_focused_reader(self, event: DescendantFocus) -> None:
-        if (
-            event.widget.id == "library-artifacts-body"
-            and self.app.focused is event.widget
-            and (
+        widget = event.widget
+        if self.app.focused is not widget:
+            return
+        if widget.id == "library-artifacts-body":
+            if (
                 not self.controller.reader_open
                 or self.controller.layout.priority_pane is not None
-            )
-        ):
+            ):
+                self.controller.focus_reader(request_focus=False)
+        elif self.work in widget.ancestors and self.controller.layout.reader_width == 0:
+            # TASK-38981 re-review: Tab also reaches the zero-width reader's own
+            # controls (Back, Preview, Details); landing on one reveals it too.
             self.controller.focus_reader(request_focus=False)
 
     def on_mount(self) -> None:

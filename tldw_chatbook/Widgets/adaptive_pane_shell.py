@@ -555,10 +555,13 @@ class AdaptivePaneShell(Horizontal):
                 self.work.display = True
                 remembered = self._last_focused_work
                 chain = self._pane_focus_chain(self.work)
-                if focused is None or focused in (
-                    self.items_grip,
-                    self.library_grip,
-                ) or evacuation_target is not None:
+                # Only when the list closed: a resize that shows both panes
+                # leaves focus to the destination's own restore.
+                if not layout.items_open and (
+                    focused is None
+                    or focused in (self.items_grip, self.library_grip)
+                    or evacuation_target is not None
+                ):
                     work_return_target = (
                         remembered if remembered in chain else next(iter(chain), None)
                     )

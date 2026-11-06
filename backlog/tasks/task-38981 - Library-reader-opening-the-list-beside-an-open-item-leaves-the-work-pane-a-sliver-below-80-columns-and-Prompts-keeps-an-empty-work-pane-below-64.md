@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 09:00
+updated_date: 2026-11-06 10:14
 labels:
 - follow-up
 - library
@@ -124,5 +124,22 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
 - **Changed-files run** (the reviewer's 7 files plus the Artifacts, Conversations, Collections, Media and reader-shell suites; 25 files, `-n 4`, load 8-15): mine 324 failed, 1168 passed; `fu-base-r10` 334 failed, 1092 passed. Nothing fails only on mine. Ten fail only on base: the round's fixed reds (the modal inventory and the trust dialog) and one route-cycle flake.
 - **New nodes** at the census tail: the six picks, the four empty-stage cases, the three Artifacts sizes and TASK-38983's Retry conflict test. Floor 1737.
 - Files: `tldw_chatbook/Widgets/adaptive_pane_shell.py`, `tldw_chatbook/Utils/adaptive_reader_state.py`, `tldw_chatbook/UI/Library_Modules/library_media_controller.py`, `tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py`, `tldw_chatbook/UI/Library_Modules/library_collections_controller.py`, `tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py`, `tldw_chatbook/Widgets/Library/library_artifacts_reader_shell.py`, `Tests/UI/test_library_adaptive_reader_closeout.py`, `Tests/UI/test_library_artifacts_focus.py`, `Tests/Library/test_library_adaptive_reader_state.py`, `Tests/Library/test_library_media_reader_state.py`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/Performance/test_screen_preimport_payload_budget.py`, `Tests/Performance/boot_budget_snapshots/preimport_payload.json`, the census files, and four `Docs/User_Guide/library/` pages.
-- **Follow-up.** After a pick from the stage list, Media leaves focus on its Items grip and Prompts on its Library grip, both visible. Focus could go into the opened item instead.
+
+### Re-review fixes (r10l-rev2)
+
+- **Important (AC#2): Artifacts' displayed zero-width reader left invisible Tab stops.** With an artifact open and its list holding the stage, Tab from the list visited `library-artifacts-back` (-1 cells), `-preview` (-11) and `-details` (-21). `LibraryArtifactsReaderShell.reveal_focused_reader` now reveals the reader (`focus_reader(request_focus=False)`) when focus lands on any of its controls while it is zero-width, not only on the body. A body focus keeps its old rule.
+  - `test_items_opened_beside_an_open_artifact_take_the_stage[size0|size1|size2]` gains a Tab walk from the list: after every Tab, the focused control must have visible cells.
+  - Red on HEAD 29382484e3: `((80, 25), 'library-artifacts-back', -1, …reader_width=0…)` at 80 and 50. Green after.
+  - Artifacts suites: 49 of 49 (the reviewer's 46, plus these 3).
+- **Minor (ruling): Media `]` / `[` count as opening.** The hand-back moved into `_select_library_media_reader_row`, for every immediate select: Enter, a click, `]`/`[`, a review-set walk, and the item opened after a delete. A focus move's preview select is not immediate and keeps the list.
+  - `test_media_adjacent_item_keys_open_the_next_item_on_the_stage[right_square_bracket|left_square_bracket]`.
+  - Red with HEAD's Media controller (`'local:media:2' (was 'local:media:3')`, the layout still `items_width=50, reader_width=0, priority_pane='items'`). Green after.
+- **Minor: Notes focus after a wide step: fixed.** The shell returned focus into the work pane whenever the pane showed again, including on a resize that shows both panes (60 → 160). That moved focus past Notes' own restore, and back at 60 the user's reader focus went to `library-browse-items-grip`. The return now happens only when the list closes, which covers AC#3, the grip close, and a pick; a resize leaves focus to the destination.
+  - `test_notes_reader_focus_survives_a_wide_step_after_the_list_stage`: stage at 60, resize to 160, Tab into the note body, resize to 60; focus must stay in the work pane and be visible.
+  - Red before this change (focus on `library-browse-items-grip`). Green after.
+- **Covering.** The 38981 Library-screen tests and the shell's tests: 52 passed (`-n 4`, load 17-23).
+- **New nodes** at the census tail (the two keys and the wide step). Floor 1740.
+- **Follow-ups.**
+  - After a pick from the stage list, Media leaves focus on its Items grip and Prompts on its Library grip, both visible.
+  - Pre-existing on base: Artifacts' empty narrow stage (nothing selected) still has invisible reader Tab stops, because there is no artifact to reveal; Back, Preview and Details sit at negative cells there.
 

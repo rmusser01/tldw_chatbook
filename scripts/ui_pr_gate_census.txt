@@ -2503,3 +2503,9 @@ Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artif
 Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size1]
 Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size2]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_retry_after_the_file_changed_on_disk_ends_in_conflict
+# TASK-38981 re-review (2026-11-06): Media's ] and [ open the adjacent item
+# on the stage, and Notes keeps the user's reader focus across a wide step
+# after the list held the stage (11-25 s each). Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_media_adjacent_item_keys_open_the_next_item_on_the_stage[right_square_bracket]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_media_adjacent_item_keys_open_the_next_item_on_the_stage[left_square_bracket]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_reader_focus_survives_a_wide_step_after_the_list_stage

@@ -2267,6 +2267,8 @@ class LibraryMediaController:
         # holds a document (or its loading banner) and must reclaim the width
         # the list-view widening handed to the Items list. The in-place viewer
         # patch above does not re-run the resolver.
+        if immediate:
+            self._hand_the_list_stage_to_the_reader()
         self._restore_library_media_reader_width_on_open()
         if immediate:
             self._dispatch_library_media_detail_request(
@@ -3137,14 +3139,6 @@ class LibraryMediaController:
         if self._library_media_editor_dirty():
             self._notify_media_editor_dirty_veto()
             return
-        layout = self._media_state.reader_layout
-        if list_holds_the_stage(layout):
-            # TASK-38981 review: an item opened from the list holding the
-            # stage takes the stage back instead of loading behind it. A
-            # focus move's preview select keeps the list (browsing it).
-            self._media_state.reader_layout = dataclasses.replace(
-                layout, priority_pane=None
-            )
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         self._library_media_viewer_return = None
@@ -3614,6 +3608,17 @@ class LibraryMediaController:
     def action_library_media_prev_item(self) -> None:
         """Open the previous browse item in the Reader (task-28005)."""
         self._select_library_media_adjacent_item(-1)
+
+    def _hand_the_list_stage_to_the_reader(self) -> None:
+        """TASK-38981 review: an item OPENED from the list holding the stage
+        (an immediate select: Enter, a click, ``]``/``[``, a review-set walk)
+        takes the stage back instead of loading behind it. A focus move's
+        preview select is not immediate and keeps the list (browsing)."""
+        layout = self._media_state.reader_layout
+        if list_holds_the_stage(layout):
+            self._media_state.reader_layout = dataclasses.replace(
+                layout, priority_pane=None
+            )
 
     def _select_library_media_adjacent_item(self, direction: int) -> None:
         if not self._library_media_item_traversal_active():
