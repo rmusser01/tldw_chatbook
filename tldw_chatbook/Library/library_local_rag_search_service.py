@@ -266,6 +266,8 @@ class LibraryLocalRagSearchService:
         #: TASK-33620.15.41: the active-profile route read (see
         #: `_shared_route_read`), with the generation it was started under.
         self._route_read: tuple[int, asyncio.Future[tuple[str, str]]] | None = None
+        #: The generation whose failed route read was last warned about.
+        self._route_read_warned: int | None = None
 
     async def prewarm(self) -> bool:
         """Build the shared RAG runtime now, ahead of a time-boxed search.
@@ -315,6 +317,12 @@ class LibraryLocalRagSearchService:
         try:
             return await asyncio.shield(self._shared_route_read())
         except Exception as exc:  # noqa: BLE001 -- fall back to the runtime
+            # Retried on every search, but warned once per generation: a
+            # profile that stays unreadable would otherwise log per search.
+            generation = shared_rag_service_generation()
+            if getattr(self, "_route_read_warned", None) == generation:
+                return None
+            self._route_read_warned = generation
             logger.warning(
                 "Library RAG: active profile route unreadable; resolving the "
                 "runtime instead | exception_type={}",
