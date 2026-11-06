@@ -45,6 +45,37 @@ def test_contain_mapping_refuses_padding_and_accounts_for_cell_aspect():
     assert wide.source_point(0, 4) is None
 
 
+async def close_bounded(app, controller, *tasks):
+    """Close the controller in a cleanup without letting an open editor hold it.
+
+    A retired editor left on top keeps the regions worker parked in
+    ``push_screen_wait``, and ``close()`` waits for that worker, so an
+    unbounded cleanup kept a failing case alive past ``--timeout``
+    (TASK-38979). Dismiss a leftover editor, then give up after 10 s.
+    """
+    import asyncio
+
+    if isinstance(app.screen, region_ui().PortraitRegionEditor):
+        app.screen.dismiss(False)
+    waiting = {asyncio.ensure_future(controller.close()), *tasks}
+    _, stuck = await asyncio.wait(waiting, timeout=10)
+    for task in stuck:
+        task.cancel()
+    await asyncio.gather(*waiting, return_exceptions=True)
+    assert not stuck, "cleanup still waiting after 10 s: " + str(
+        sorted(task.get_coro().__qualname__ for task in stuck)
+    )
+
+
+async def settled(task, seconds=10):
+    """Await a task for at most ``seconds``, naming it when it is still waiting."""
+    import asyncio
+
+    done, _ = await asyncio.wait({task}, timeout=seconds)
+    assert done, f"{task.get_coro().__qualname__} still waiting after {seconds} s"
+    return task.result()
+
+
 async def prepare(fixture):
     app, screen, db, cid, editor = saved_source(fixture)
     base, recipe, _components = scene()
@@ -683,7 +714,7 @@ async def test_dialog_validation_is_coalesced_owned_and_drained(
         check = controller._review_check_task
         if change == "replacement":
             controller.discard()
-            await action
+            await settled(action)
             assert await controller.handle(CharacterPerformanceRequested("prepare"))
             replacement = controller.draft
             release.set()
@@ -694,18 +725,78 @@ async def test_dialog_validation_is_coalesced_owned_and_drained(
             await Pilot(app).pause(0.05)
             assert not closing.done()
             release.set()
-            await closing
+            await settled(closing)
             assert check.done() and controller.draft is None
         else:
             modal = app.screen
             release.set()
             await check
-            await action
+            await settled(action)
             assert modal._retired and controller.draft is draft
     finally:
         release.set()
-        await controller.close()
-        await action
+        await close_bounded(app, controller, action)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retire_by", ["discard", "close", "backend", "unmount"])
+async def test_retiring_the_editor_before_it_mounts_still_closes_it(
+    personas_editor_with_saved_character, monkeypatch, retire_by
+):
+    """A retire between push and mount closes the editor, so close() returns (TASK-38979)."""
+    import asyncio
+
+    app, screen, _, _, _, controller, _ = await prepare(
+        personas_editor_with_saved_character
+    )
+    editor_class = region_ui().PortraitRegionEditor
+    mounting, release = asyncio.Event(), asyncio.Event()
+    mount = editor_class.on_mount
+
+    async def held_mount(editor):
+        mounting.set()
+        await release.wait()
+        mount(editor)
+
+    # Textual dispatches on_mount from the class __dict__, so this holds the
+    # real editor between push and mount, with is_mounted still False.
+    monkeypatch.setattr(editor_class, "on_mount", held_mount)
+    action = asyncio.create_task(
+        screen.run_worker(
+            controller.handle(CharacterPerformanceRequested("regions"))
+        ).wait()
+    )
+    waiting = {action}
+    try:
+        await asyncio.wait_for(mounting.wait(), 5)
+        modal = app.screen
+        assert isinstance(modal, editor_class) and not modal.is_mounted
+        if retire_by == "discard":
+            controller.discard()
+        else:
+            waiting.add(
+                asyncio.create_task(
+                    controller.close()
+                    if retire_by == "close"
+                    else screen.handle_runtime_backend_changed("local")
+                    if retire_by == "backend"
+                    else screen.on_unmount()
+                )
+            )
+        release.set()
+        # Plain asyncio waits: Pilot would wait on the editor's pump too.
+        _, stuck = await asyncio.wait(waiting, timeout=5)
+        assert not stuck, (
+            f"retired before mount, the editor stayed open (stack "
+            f"{[type(s).__name__ for s in app.screen_stack]}, retired="
+            f"{modal._retired}); still waiting on "
+            f"{sorted(task.get_coro().__qualname__ for task in stuck)}"
+        )
+        assert action.result() is False
+        assert modal not in app.screen_stack and controller.draft is None
+    finally:
+        release.set()
+        await close_bounded(app, controller, *waiting)
 
 
 @pytest.mark.asyncio
@@ -739,8 +830,7 @@ async def test_queued_dialog_validation_cannot_overwrite_discard_status(
         await check
         assert status.renderable == before
     finally:
-        await controller.close()
-        await action
+        await close_bounded(app, controller, action)
 
 
 @pytest.mark.asyncio
@@ -790,5 +880,4 @@ async def test_save_completion_drops_removed_validation_control(
         release.set()
         if saving is not None:
             await asyncio.gather(saving, return_exceptions=True)
-        await controller.close()
-        await action
+        await close_bounded(app, controller, action)
