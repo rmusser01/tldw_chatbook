@@ -51,19 +51,43 @@ def _commit_window(store):
 
 
 class _Syncs:
-    """Whole syncs that got past their entry in the test's own task."""
+    """Whole syncs in the test's own task that the durable-commit hold let in.
+
+    Counted at the hold's own decision (``begin_console_sync`` returning not
+    held; a held poll tick never gets that far), on purpose (TASK-38960). A
+    sync the hold admitted counts even when it then stops short of the tick
+    projection: its presentation preparation refuses, or a pending whole-sync
+    replay returns it at once. Under load both happen, and counting only
+    syncs that reached ``project_console_tick`` read them as held.
+    """
 
     def __init__(self, monkeypatch, console) -> None:
         self.owner = asyncio.current_task()
         self.count = 0
-        real = config_sync.project_console_tick
+        real = config_sync.begin_console_sync
 
-        def counting(screen, *args, **kwargs):
+        def counting(screen):
+            held = real(screen)
             if screen is console and asyncio.current_task() is self.owner:
-                self.count += 1
-            return real(screen, *args, **kwargs)
+                self.count += not held
+            return held
 
-        monkeypatch.setattr(config_sync, "project_console_tick", counting)
+        monkeypatch.setattr(config_sync, "begin_console_sync", counting)
+
+
+async def _quiet(console) -> None:
+    """No sync running and no whole-sync replay pending (TASK-38960).
+
+    A replay runs in its own task. Opening the commit window while one is
+    pending would let it, not the poll's tick, take the commit's first sync.
+    """
+    await until(
+        lambda: (
+            not console._console_sync_in_progress
+            and not getattr(console, "_console_control_bar_replay_whole_sync", False)
+        ),
+        timeout=30,
+    )
 
 
 @pytest.mark.asyncio
@@ -93,6 +117,7 @@ async def test_a_durable_commit_runs_its_first_sync_then_holds_until_the_next_ti
             try:
                 await tick()
                 assert syncs.count == 1, "the poll's tick ran no sync"
+                await _quiet(console)
                 with _commit_window(console._console_chat_store):
                     # The commit's first sync runs (the base painted it too).
                     await tick()
@@ -150,6 +175,7 @@ async def test_without_a_run_poll_a_durable_commit_holds_no_sync(monkeypatch):
             syncs = _Syncs(monkeypatch, console)
             try:
                 console._stop_console_transcript_sync_timer()
+                await _quiet(console)
                 with _commit_window(console._console_chat_store):
                     for expected in (1, 2):
                         await until(

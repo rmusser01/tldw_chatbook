@@ -24,6 +24,23 @@ Bypassing the claim's own check therefore turned nothing red. Second, a sequenti
 
 **What to do.** Before you build a control for "never a second provider call" in the send harness, send two turns in one chat with nothing removed. If the second turn does not stream, the count is not evidence against a sequential duplicate. Assert the observable a duplicate would leave instead (a second echo row, a refusal notice), or give the harness a local conversation service first. When the product stacks independent guards, say which guard the count actually rests on.
 
+## A hand-called Console poll after slow setup paints nothing: its checked readiness display has expired (TASK-38958, 2026-11-06)
+
+**Incident.** `test_the_inspector_setup_row_and_send_hint_read_the_readiness_word` read `Ready · not tested` in 4 of 10 whole-file runs at load 34-64. The filing listed four early returns in `_poll_console_credential_readiness` as suspects. A probe that recorded each case's path at load 40-51 found that none of them had fired. In the 2 failing cases of 20, the poll ran its sync and committed its pre-gate. But `_sync_console_control_bar()` returned False: the checked readiness display was 1.071 s old against its 1.0 s life, so `_checked_display_status` refused it, and the bar asked for its 0.2 s coalesced replay. The test's single `pilot.pause()` then read the header before that replay. In the 18 passing cases the display was 0.17-0.58 s old, and the header had changed before the poll returned. The pre-gate commits even when the bar defers, so calling the poll a second time would not have retried.
+
+The first fix warmed the display after the evidence settle, just before the poll, and review found a hole in it. The warm-up awaits. With a 1 s wait put in the warm-up's place, a full sync that was not the poll (`_sync_native_console_chat_ui` -> `project_console_tick`) painted the settled word within that second in 3 of 6 probed cases. The real warm-up showed no such paint in 15 controlled cases, but its awaits can run up to about 2 s, so the test could pass with the poll removed.
+
+**What to do.**
+- In a mounted test, call `await ConsoleReadinessConfigProjection.for_screen(console).warm()` until it returns True. Do this before you change the state that the hand-called poll (or any sync that renders through the checked display) should paint, not only before the call.
+- The display's key excludes connection evidence, so a settle afterwards leaves the display valid.
+- Then make the change, call the poll, and read the painted state with no await in between. Any await, a `pilot.pause()` or the warm-up itself, lets another sync or a queued repaint paint the state for the call you meant to test.
+
+## Counting syncs at the projection reads a refused or replayed sync as held (TASK-38960, 2026-11-06)
+
+**Incident.** The durable-commit hold tests counted calls to `project_console_tick`. Run serially at load 44-90, one run in 10 failed with "the commit held a second time" (`3 == 4`). A probe that logged every `begin_console_sync` verdict showed that the hold had admitted that sync. The tick before it had run `sync_console_core_state` while config was cold, and that set `_console_control_bar_replay_whole_sync`. The next explicit sync returned at that flag, before the projection, so the test read it as held. A refused `prepare_console_presentation_sync` takes the same path. Forcing one refusal inside the commit window reproduced both filed failures exactly (`1 == 2`, and `0 == 1` in the no-poll test).
+
+**What to do.** Count at the decision the test pins: here, the hold's own verdict (`begin_console_sync` not held, in the test's task). Before opening the window, wait until no whole-sync replay is pending. A replay runs in another task and can take the commit's first sync.
+
 ## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
 
 **Incident.** Two Prompts DB privacy pins forbid `str(second_id)` in a log that must contain `count=2`, and the filed task called them self-contradictory: `second_id` was 2. The tests meant to seed ids 71,234,567 and 81,234,567 by INSERTing a `sqlite_sequence` row. The v5->v6 mix-in migration (7970fbcada) rebuilds `Prompts` and keeps its sequence, so a fresh database already has a `('Prompts', 0)` row; SQLite reads the first row and ignored the test's second, and the ids fell back to 1 and 2. Dropping the id check, the obvious "fix", would have weakened a privacy pin. The negative controls then found a second hole: stored keywords are lower-cased, so `"PRIVATE KEYWORD"` never matched a leaked keyword (2 passed with the keyword logged).

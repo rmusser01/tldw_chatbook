@@ -1,8 +1,11 @@
 ---
 id: TASK-35574
 title: test_a_probe_settling_mid_poll_still_reaches_the_console passes every run on dev
-status: To Do
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-10-19 05:30
+updated_date: 2026-11-06 06:56
 dependencies: []
 labels:
 - follow-up
@@ -21,8 +24,8 @@ Found in Phase 9's post-rebase interaction check (2026-10-19). `Tests/UI/test_co
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The cause is found and recorded in this task: a product defect (a settled probe that never reaches the Console's readiness) or a test-timing defect
-- [ ] #2 The test passes 10 of 10 serial runs under the conditions that reproduce the failure (a stated machine load, or a deterministic reproduction of the mid-poll settle), and still fails when the mid-poll settle is not propagated
+- [x] #1 The cause is found and recorded in this task: a product defect (a settled probe that never reaches the Console's readiness) or a test-timing defect
+- [x] #2 The test passes 10 of 10 serial runs under the conditions that reproduce the failure (a stated machine load, or a deterministic reproduction of the mid-poll settle), and still fails when the mid-poll settle is not propagated
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -33,4 +36,21 @@ Cause found 2026-10-20 (AC#1), while fixing the same failure in TASK-33005.7's c
 Measured fix, not applied here (the test is dev's and runs in no lane): wait, after `_wait_for_selector`, until `console._console_attach_reconciled and not console._console_attach_reconcile_running` (the file's `_wait` with `tries=500`, which Phase 9 added for TASK-33005.7). With it the test passed 10 of 10 serial runs.
 
 AC#2's control does not hold yet, and the review of b94aece7d6 measured why. With the evidence version dropped from both the pre-gate and the snapshot (scratch copy, the wait added, every poll return logged, 4 runs), the first poll took the full sync and committed its pre-gate, the second returned at the pre-gate, and the header still read 'Ready · not tested' right after the second poll in all 4 runs. 3 of the 4 still passed, because something repainted the header during `pilot.pause()`. Those 4 runs logged no stack; a stack logged at the header writer in the poll-no-op Inspector runs below (same harness and attach path) shows `_sync_native_console_chat_ui` (Textual callback -> `_sync_console_rail_and_controls` -> the header's `sync_state`), most likely the `call_after_refresh(self._sync_native_console_chat_ui)` that `_start_console_view_after_reconciliation` queues (it is also scheduled through `call_later` and callback lambdas, which give the same frame). With the poll made a no-op, the Inspector test still passed 7 of 10 cases; the 3 passes whose header writes were logged were all that repaint. So a control that bites must exclude that repaint, for example (both untested) by reading `#workbench-header-status` right after the second poll and before any pause, or by draining the queued sync before the settle, and it must land the settle during the build as before TASK-34956.
+**Closed 2026-11-06 by TASK-38958 (branch fu/r10-ctests, base e8eeae7db9).**
+
+**AC#1: a test-timing defect, not a product one.** The attach-gate return recorded above was already handled by the attach-reconcile wait. The remaining failure has a different cause, found with a probe on the sibling Inspector test, which uses the same harness and the same single hand-called poll. At load 40-51, the 2 failing cases out of 20 had these readings:
+- The poll ran `sync()` and committed its pre-gate.
+- The checked readiness display was 1.071 s old against its 1.0 s life, so `_checked_display_status` refused it.
+- `_sync_console_control_bar()` returned False and handed the header to its 0.2 s coalesced replay.
+- The test's single `pilot.pause()` came before that replay, so the header still read 'Ready · not tested'.
+
+A settled probe does reach the Console: the deferred replay paints it 0.2 s later.
+
+**Fix (test only).** `_fresh_readiness_display` warms the display (`ConsoleReadinessConfigProjection.warm()`) before the evidence settle. After review, the warm-up was moved there from right before the second poll: a sync during its awaits could paint the settled word. The settle, the second poll and the header read now run with no await between them, and the test reads `#workbench-header-status` straight after that poll, before any pause. With the read placed before any pause, a queued repaint (the attach's) cannot stand in for the poll. This also gives the control that the notes above found missing.
+
+**AC#2.**
+- 10 of 10 serial runs passed at load 21-43, and the test passed in all 23 whole-file `-n 4` runs of TASK-38958; 20 of those started at load 41.5-70.
+- With the poll returning before its `sync()` block (a temporary source edit), it failed 3 of 3 whole-file runs on its assertion.
+- With the mid-poll settle not propagated (the evidence version dropped from both the pre-gate and the snapshot, the control recorded above), it failed 3 of 3: `'Ready · not tested' == 'Not ready · refused :9099'`.
+- After the review fix, both controls were re-run and the test failed 3 of 3 under each.
 <!-- SECTION:NOTES:END -->

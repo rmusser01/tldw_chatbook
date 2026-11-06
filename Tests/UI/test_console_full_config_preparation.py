@@ -41,6 +41,7 @@ def _full_screen(screen, monkeypatch):
     screen._console_attach_reconciled = False
     screen._console_attach_reconcile_running = False
     screen._console_control_bar_replay_whole_sync = False
+    screen._console_terminal_return_reading = None  # The class default.
     screen._message = SimpleNamespace(reconcile_console_speech_context=no_op)
     screen._image = SimpleNamespace(
         _h3_image_edit_registry=lambda: SimpleNamespace(drop_session=no_op),
@@ -75,10 +76,14 @@ def _full_screen(screen, monkeypatch):
         "_sync_console_rail_visibility_if_changed",
         "_dispatch_console_rail_preference_prune",
         "_start_console_attach_reconciliation",
+        "_sync_console_temporary_chip",  # TASK-37840; TASK-38973 drift
     ):
         setattr(screen, name, no_op)
     screen._sync_console_native_session_tabs = async_no_op
     screen._sync_native_console_transcript = async_no_op
+    # Since ab43a0303b a started app's FULL also syncs archive recovery.
+    archive = SimpleNamespace(sync=async_no_op)
+    screen._archive_recovery_view = lambda: archive
     screen._sync_console_control_bar_under_config = lambda _rail: effects.append("rail")
     screen._request_console_control_bar_sync = lambda **_: effects.append("retry")
     screen.call_after_refresh = lambda _: effects.append("attach")

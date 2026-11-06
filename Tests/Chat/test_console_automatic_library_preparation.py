@@ -646,7 +646,19 @@ async def _paused_queued_send(*, persistence=None, gateway=None):
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
     )
-    await gateway.started.wait()
+    # TASK-38947: a turn refused before the provider (a persistence that
+    # cannot save its mix-in attempt) never sets ``started``; fail at once
+    # with its result instead of waiting out the 300 s pytest timeout.
+    started = asyncio.ensure_future(gateway.started.wait())
+    await asyncio.wait(
+        (started, chain), timeout=30, return_when=asyncio.FIRST_COMPLETED
+    )
+    if not gateway.started.is_set():
+        started.cancel()
+        if not chain.done():
+            chain.cancel()
+            pytest.fail("the owner turn never reached the provider within 30 s")
+        pytest.fail(f"the owner turn ended before the provider: {chain.result()!r}")
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     first = await controller.queue_prompt(
         session.id, text="frozen queued", expected_revision=snapshot.revision

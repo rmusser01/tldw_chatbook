@@ -199,6 +199,27 @@ async def _wait(pilot, predicate, tries: int = 100) -> None:
     pytest.fail("never happened")
 
 
+async def _fresh_readiness_display(console, pilot) -> None:
+    """Warm the checked readiness display the poll paints through (TASK-38958).
+
+    The display lasts a second. Under load a test's setup outlived it, so the
+    poll's control bar refused the expired display and left the header to its
+    0.2 s replay, after the test's one pause. With a fresh display the poll
+    paints the header itself, before it returns. Call it before changing the
+    state the poll should paint: its awaits let other syncs run.
+    """
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+    )
+
+    projection = ConsoleReadinessConfigProjection.for_screen(console)
+    for _ in range(100):
+        if await projection.warm():
+            return
+        await pilot.pause(0.02)
+    pytest.fail("the Console's readiness display never warmed")
+
+
 def _evidence(app, port: int):
     owner = shared_connection_evidence(lambda: app)
     provider = "llama_cpp" if port == LLAMA else "ollama"
@@ -1043,16 +1064,21 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
         # of as a side effect of the build hook -- the pre-gate would skip
         # the build entirely, and the simulated settle would never fire.
         store = ProviderTestEvidenceStore(lambda: harness)
+        # Warm before the settle, so no await sits between the settle and the
+        # poll: a sync during the warm-up could paint the settled word itself
+        # (TASK-38958 review). The display's key excludes evidence.
+        await _fresh_readiness_display(console, pilot)
         store.settle(
             store.begin(identity),
             ProviderProbeResult("unreachable", (), "connection_refused"),
         )
         console._poll_console_credential_readiness()  # The next tick.
+        # Read before any pause, so a queued repaint cannot stand in for the
+        # poll (TASK-38958).
+        status = _rail_text(console, "#workbench-header-status")
         await pilot.pause()
 
-        assert _rail_text(console, "#workbench-header-status") == (
-            "Not ready · refused :9099"
-        )
+        assert status == "Not ready · refused :9099"
 
 
 @pytest.mark.asyncio
@@ -1108,17 +1134,23 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
             settings, app_config=console._provider_readiness_app_config()
         )
         store = ProviderTestEvidenceStore(lambda: harness)
+        # Warm before the settle, so no await sits between the settle and the
+        # poll: a sync during the warm-up could paint the settled word itself
+        # (TASK-38958 review). The display's key excludes evidence.
+        await _fresh_readiness_display(console, pilot)
         store.settle(
             store.begin(identity), ProviderProbeResult("unreachable", (), category)
         )
         console._poll_console_credential_readiness()
+        # Read before any pause, so a queued repaint (the attach's) cannot
+        # stand in for the poll (TASK-38958).
+        status = _rail_text(console, "#workbench-header-status")
         await pilot.pause()
 
         _settings, readiness = console._active_console_settings_readiness()
         inspector = console._build_console_inspector_state(None)
         rows = {row.label: row.value for row in inspector.rows}
         composer = console._console_composer_or_none()
-        status = _rail_text(console, "#workbench-header-status")
 
     assert readiness_words(readiness) == word == status
     assert rows["Setup"] == word
