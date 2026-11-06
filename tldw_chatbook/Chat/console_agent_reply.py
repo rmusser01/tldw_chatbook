@@ -669,7 +669,7 @@ async def _run_agent_reply(
         # TASK-33620.15.53: an ordinary turn loads no review module, makes no hop.
         if review_turn_possible(
             getattr(trusted_profile_user_message, "content", None),
-            review_owner=self._code_review,
+            review_owner=getattr(self, "_code_review", None),
             wake_authorization=wake_authorization,
         ):
             from .console_review_delivery import compose_turn_review_provider
