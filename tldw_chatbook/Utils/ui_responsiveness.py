@@ -603,9 +603,11 @@ class IdleHeapRefreezer:
     the last compaction, plus what boot points froze since) and by at least
     ``min_growth``, the next idle moment of ``compaction_quiet_seconds``
     compacts instead: unfreeze, collect the whole heap, freeze the survivors.
-    No re-freeze runs while a compaction is due, so the permanent generation
-    never outgrows that baseline by more than the budget plus one re-freeze,
-    and the next compaction reclaims whatever in it has become garbage.
+    No idle re-freeze runs while a compaction is due, so the permanent
+    generation never outgrows that baseline by more than the budget plus one
+    re-freeze (two, once per process, when the first-send warm-up's end
+    re-freezes with a compaction owed: :meth:`refreeze_now`), and the next
+    compaction reclaims whatever in it has become garbage.
 
     The budget alone let switched-away transcripts pile up: live, across 24
     chat switches, one compaction met 212-373K dead objects and held the UI
@@ -691,6 +693,9 @@ class IdleHeapRefreezer:
         self._stale = False
         #: Whether frozen objects became garbage since the last compaction.
         self._stranded = False
+        #: What :meth:`refreeze_now` froze before the first look: that look
+        #: books it as growth, not baseline.
+        self._unlooked_growth = 0
         #: Held by a boot point's freeze and by every walk and maintenance:
         #: the pre-imports freeze from their own threads (TASK-33620.15.12),
         #: and one landing between a compaction's unfreeze and its
@@ -737,6 +742,10 @@ class IdleHeapRefreezer:
         next maintenance compacts, whatever asked for it.
         """
         self._stranded = True
+
+    def owes_stranded_compaction(self) -> bool:
+        """Whether :meth:`note_stranded` owes a compaction (a flag; never walks)."""
+        return self._stranded
 
     def freeze_at_boot_point(self, freeze: Callable[[], object]) -> int | None:
         """Run a boot point's freeze; what it adds never counts as growth.
@@ -814,10 +823,83 @@ class IdleHeapRefreezer:
         self.actions.append((action, reason))
         return action
 
+    def refreeze_now(
+        self,
+        reason: str,
+        owner: Any = None,
+        busy: Callable[[Any], bool] | None = None,
+    ) -> str:
+        """Re-freeze at once: the first-send warm-up's last step (TASK-33620.15.57).
+
+        The warm-up's completion used to ask for idle maintenance only, which
+        runs after 2 s without input, so a first send typed sooner ran with the
+        warm-up's modules unfrozen. Live on origin/dev 29592ecc9b
+        (TASK-33620.15.51), 4 of 36 such requests met a due compaction, waited
+        for 5 s of quiet, and were dropped by the first send, which then paid
+        those modules in its generation-2 passes. The warm-up waits out input
+        before its completion, as before each import, so the completion
+        re-freezes there and then, on the UI loop.
+
+        It is a runtime re-freeze, not a boot point (TASK-33620.15.50): a full
+        collection first, and what it freezes counts as growth, since the
+        warm-up's imports may have overlapped foreground work. Unlike
+        :meth:`maintain` it runs even while a compaction is due, which stays
+        owed, and it never walks the permanent generation (15-34 ms of held
+        GIL live, TASK-33620.15.18). Before the first look it counts the
+        unfrozen generations instead, garbage the collection then reclaims
+        included, so it can only overstate the growth that look books;
+        after it, it marks the measured size stale for the next budget check.
+        A pending request is satisfied by it and dropped: its timer would
+        re-freeze a heap with almost nothing unfrozen (see
+        ``finish_console_heap_warm_up``).
+
+        Args:
+            reason: Why, for the actions log and the DEBUG line.
+            owner: Passed to ``busy``.
+            busy: ``busy(owner)`` is True while no re-freeze may run; then
+                nothing runs, and the caller's idle request is the fallback.
+
+        Returns:
+            ``"refreeze"``; ``"busy"`` when another thread's collection kept
+            the full collection from running (nothing frozen); ``"held"``
+            when ``busy(owner)`` said not now; ``"off"`` when re-freezes are
+            disabled.
+        """
+        if not self._enabled():
+            return "off"
+        try:
+            if busy is not None and busy(owner):
+                return "held"
+        except Exception as error:
+            # The type only: a traceback could carry screen state into the log.
+            logging.getLogger(__name__).warning(
+                "Heap re-freeze skipped (%s; exception_type=%s)",
+                reason,
+                type(error).__name__,
+            )
+            return "held"
+        with self._lock:
+            try:
+                if self._baseline is None:
+                    moved = self._unfrozen_count()
+                    self._refreeze(reason)
+                    self._unlooked_growth += moved
+                else:
+                    self._refreeze(reason)
+                    self._stale = True
+                self._request = None
+                action = "refreeze"
+            except CollectorBusy:
+                action = "busy"
+        self.actions.append((action, reason))
+        return action
+
     def _look(self) -> None:
         with self._lock:
             if self._baseline is None:
-                self._baseline = self._frozen = self._freeze_count()
+                self._frozen = self._freeze_count()
+                self._baseline = self._frozen - self._unlooked_growth
+                self._unlooked_growth = 0
 
     def _arm(self, owner: Any, delay: float) -> None:
         self._generation += 1

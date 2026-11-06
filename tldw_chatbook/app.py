@@ -5325,7 +5325,7 @@ class TldwCli(
         preimport_first_send_modules(self, self._finish_first_send_warmup)
 
     def _finish_first_send_warmup(self) -> None:
-        """Request runtime maintenance for the current UI-loop attachment."""
+        """Re-freeze at once, or request maintenance, for the current attachment."""
         from .app_idle_warmup import request_idle_heap_refreeze
 
         request_idle_heap_refreeze(self)
