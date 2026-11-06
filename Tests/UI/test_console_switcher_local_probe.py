@@ -205,7 +205,8 @@ async def _fresh_readiness_display(console, pilot) -> None:
     The display lasts a second. Under load a test's setup outlived it, so the
     poll's control bar refused the expired display and left the header to its
     0.2 s replay, after the test's one pause. With a fresh display the poll
-    paints the header itself, before it returns.
+    paints the header itself, before it returns. Call it before changing the
+    state the poll should paint: its awaits let other syncs run.
     """
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
         ConsoleReadinessConfigProjection,
@@ -1063,11 +1064,14 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
         # of as a side effect of the build hook -- the pre-gate would skip
         # the build entirely, and the simulated settle would never fire.
         store = ProviderTestEvidenceStore(lambda: harness)
+        # Warm before the settle, so no await sits between the settle and the
+        # poll: a sync during the warm-up could paint the settled word itself
+        # (TASK-38958 review). The display's key excludes evidence.
+        await _fresh_readiness_display(console, pilot)
         store.settle(
             store.begin(identity),
             ProviderProbeResult("unreachable", (), "connection_refused"),
         )
-        await _fresh_readiness_display(console, pilot)
         console._poll_console_credential_readiness()  # The next tick.
         # Read before any pause, so a queued repaint cannot stand in for the
         # poll (TASK-38958).
@@ -1130,10 +1134,13 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
             settings, app_config=console._provider_readiness_app_config()
         )
         store = ProviderTestEvidenceStore(lambda: harness)
+        # Warm before the settle, so no await sits between the settle and the
+        # poll: a sync during the warm-up could paint the settled word itself
+        # (TASK-38958 review). The display's key excludes evidence.
+        await _fresh_readiness_display(console, pilot)
         store.settle(
             store.begin(identity), ProviderProbeResult("unreachable", (), category)
         )
-        await _fresh_readiness_display(console, pilot)
         console._poll_console_credential_readiness()
         # Read before any pause, so a queued repaint (the attach's) cannot
         # stand in for the poll (TASK-38958).

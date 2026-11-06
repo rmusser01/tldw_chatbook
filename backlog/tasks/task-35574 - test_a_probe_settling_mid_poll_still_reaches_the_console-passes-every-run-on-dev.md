@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-19 05:30
-updated_date: 2026-11-06 05:29
+updated_date: 2026-11-06 06:56
 dependencies: []
 labels:
 - follow-up
@@ -46,10 +46,11 @@ AC#2's control does not hold yet, and the review of b94aece7d6 measured why. Wit
 
 A settled probe does reach the Console: the deferred replay paints it 0.2 s later.
 
-**Fix (test only).** `_fresh_readiness_display` warms the display (`ConsoleReadinessConfigProjection.warm()`) right before the second poll, and the test reads `#workbench-header-status` straight after that poll, before any pause. With the read placed before any pause, a queued repaint (the attach's) cannot stand in for the poll. This also gives the control that the notes above found missing.
+**Fix (test only).** `_fresh_readiness_display` warms the display (`ConsoleReadinessConfigProjection.warm()`) before the evidence settle. After review, the warm-up was moved there from right before the second poll: a sync during its awaits could paint the settled word. The settle, the second poll and the header read now run with no await between them, and the test reads `#workbench-header-status` straight after that poll, before any pause. With the read placed before any pause, a queued repaint (the attach's) cannot stand in for the poll. This also gives the control that the notes above found missing.
 
 **AC#2.**
 - 10 of 10 serial runs passed at load 21-43, and the test passed in all 23 whole-file `-n 4` runs of TASK-38958; 20 of those started at load 41.5-70.
 - With the poll returning before its `sync()` block (a temporary source edit), it failed 3 of 3 whole-file runs on its assertion.
 - With the mid-poll settle not propagated (the evidence version dropped from both the pre-gate and the snapshot, the control recorded above), it failed 3 of 3: `'Ready · not tested' == 'Not ready · refused :9099'`.
+- After the review fix, both controls were re-run and the test failed 3 of 3 under each.
 <!-- SECTION:NOTES:END -->

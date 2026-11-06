@@ -28,7 +28,12 @@ Bypassing the claim's own check therefore turned nothing red. Second, a sequenti
 
 **Incident.** `test_the_inspector_setup_row_and_send_hint_read_the_readiness_word` read `Ready · not tested` in 4 of 10 whole-file runs at load 34-64. The filing listed four early returns in `_poll_console_credential_readiness` as suspects. A probe that recorded each case's path at load 40-51 found that none of them had fired. In the 2 failing cases of 20, the poll ran its sync and committed its pre-gate. But `_sync_console_control_bar()` returned False: the checked readiness display was 1.071 s old against its 1.0 s life, so `_checked_display_status` refused it, and the bar asked for its 0.2 s coalesced replay. The test's single `pilot.pause()` then read the header before that replay. In the 18 passing cases the display was 0.17-0.58 s old, and the header had changed before the poll returned. The pre-gate commits even when the bar defers, so calling the poll a second time would not have retried.
 
-**What to do.** In a mounted test, call `await ConsoleReadinessConfigProjection.for_screen(console).warm()` until it returns True before you hand-call the poll, or any sync that renders through the checked display. Then read the painted state straight after the call, before any pause. A pause lets a queued repaint, such as the attach reconcile's, paint the state for the call you meant to test.
+The first fix warmed the display after the evidence settle, just before the poll, and review found a hole in it. The warm-up awaits. In 3 of 6 probed cases, a full sync that was not the poll (`_sync_native_console_chat_ui` -> `project_console_tick`) painted the settled word during that await, about 1 s after the settle, so the test could pass with the poll removed.
+
+**What to do.**
+- In a mounted test, call `await ConsoleReadinessConfigProjection.for_screen(console).warm()` until it returns True. Do this before you change the state that the hand-called poll (or any sync that renders through the checked display) should paint, not only before the call.
+- The display's key excludes connection evidence, so a settle afterwards leaves the display valid.
+- Then make the change, call the poll, and read the painted state with no await in between. Any await, a `pilot.pause()` or the warm-up itself, lets another sync or a queued repaint paint the state for the call you meant to test.
 
 ## Counting syncs at the projection reads a refused or replayed sync as held (TASK-38960, 2026-11-06)
 

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-06 04:58
+updated_date: 2026-11-06 06:56
 labels:
 - follow-up
 - tests
@@ -67,7 +67,7 @@ Checked at base e8eeae7db9 (2026-11-06): the four files at `-n 4` gave 26 failed
 - sync maintenance: `_sync_console_temporary_chip`, an attach visit (a real `ConsoleAttachVisit`), `_console_session_tabs_sync_calls=0` (the drain reads it), and a recorder for `_request_console_control_bar_sync`.
 - Home: `is_mounted=False` on the three Home doubles (the hidden-Home guard from 8e8af97b91).
 
-**Two maintenance expectations follow product changes made on purpose.** `_sync_native_console_chat_ui` has returned a bool since 3e618d7119, so a pass that meets the maintenance pause returns False, not None. Since TASK-38696, such a pass hands its whole sync to the replay timer, and resume cuts that timer short (`_request_console_control_bar_sync()`) instead of starting a worker. The `error` case still resumes through one worker. Both expectations are exact, and neither is looser than the old one.
+**Two maintenance expectations follow product changes made on purpose.** `_sync_native_console_chat_ui` has returned a bool since 3e618d7119, so a pass that meets the maintenance pause returns False, not None. Since 63cbf3177a (2026-10-19), such a pass hands its whole sync to the replay timer, so resume starts no worker. TASK-38696 (1f7e722564) only added resume's immediate `_request_console_control_bar_sync()`, which cuts that timer short. (Corrected 2026-11-06 after review; the first version of this note credited TASK-38696 with the hand-off.) The `error` case still resumes through one worker. Both expectations are exact, and neither is looser than the old one.
 
 **AC#1.** Three whole-file runs of the four files at `-n 4`: 64 passed each, in 79-89 s, at load 38-43. There were no `TimeoutExpired`, and the slowest node took 10.2 s against the 45 s budget.
 

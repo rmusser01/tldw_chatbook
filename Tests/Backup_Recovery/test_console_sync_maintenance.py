@@ -95,8 +95,9 @@ async def main():
         if scenario == 'error':
             assert len(scheduled) == 1 and not replays
         else:
-            # A pass that meets the maintenance pause hands its whole sync to
-            # the replay timer, and resume cuts that timer short (TASK-38696).
+            # Since 63cbf3177a a pass that meets the maintenance pause hands
+            # its whole sync to the replay timer, so resume starts no worker;
+            # since TASK-38696 (1f7e722564) resume also cuts that timer short.
             assert not scheduled and screen._console_control_bar_replay_whole_sync
             assert len(replays) == 2 and replays[-1] == {}
         assert not screen._console_sync_maintenance_paused

@@ -5,7 +5,7 @@ title: >-
   raw_source_selection_changed when run on their own
 status: To Do
 assignee: []
-updated_date: '2026-11-06 05:27'
+updated_date: '2026-11-06 06:56'
 created_date: '2026-10-30 05:56'
 labels:
   - tests
@@ -25,6 +25,8 @@ For test_trace_export_ui.py the traceback is: Tests/UI/conftest.py _disable_mode
 **Added 2026-11-02 (dev 88af9f9379).** `Tests/Wizards/test_first_run_setup_integration.py` has the same error and belongs on this list. Run on its own through the scratch-profile wrapper, with `-n 4` or serially, 17 of its tests error at setup with `RecoveryRequired: raw_source_selection_changed`. Each one errors in the file's `temp_config` fixture (:25), which redirects `TLDW_CONFIG_PATH` and then calls `load_cli_config_and_ensure_existence(force_reload=True)`. That is a different path from test_trace_export_ui.py's import-time `load_settings()`. b68d242b4d gave `TestWizardAtomicProviderHandoff` its own fixture, which brought the count down from 31 on 2026-10-31. The file's 6 assertion failures are a separate product regression, TASK-38642.
 
 **Added 2026-11-05 (dev 29592ecc9b, recorded by TASK-38756).** `Tests/Prompt_Management/test_prompt_improvement_service.py` belongs on this list. Run on its own through the scratch-profile wrapper with `-n 4`, 49 tests fail and 3 error, every one with `RecoveryRequired: raw_source_selection_changed` (`raw_participants.py:307`); its own assertions all pass. Two paths, both read from the file's own tracebacks: the 3 setup errors come from its `scratch_cli_config` fixture (:55-67), which redirects `TLDW_CONFIG_PATH` and calls `config.load_settings(force_reload=True)` (the wizard file's shape); the 49 failures come from a config read inside the code under test, `prompt_improvement_prompts.py:86` -> `Internal_Prompts/resolver.py:147` -> `config.get_cli_setting` -> `load_cli_config_and_ensure_existence`. With a temporary module-level `bootstrap_profile` marker the 49 pass and the 3 fixture errors remain.
+
+**Added 2026-11-06 (dev e8eeae7db9, recorded by TASK-38947).** `Tests/Chat/test_console_chat_controller.py` belongs on this list, through a third path: the code under test, as in the prompt-improvement case. A plain test's send reaches hook admission, where `hook_admission_reason` (`tldw_chatbook/Chat/console_automatic_submission.py`) calls `read_hooks_config_snapshot()`. In the per-test sandbox that raises `RecoveryRequired('raw_source_selection_changed')`; printing the swallowed exception showed it. The broad `except` turns it into the refusal "Hooks unavailable; review or disable hooks before sending." The red nodes are `test_blocked_send_persists_no_durable_record` and `test_accepted_send_persists_the_deferred_user_echo`, which TASK-38947 had filed as fake drift, and the `TestUserPromptSubmitHooks` class (5 tests: `test_block_rejects_send_without_assistant_row`, `test_stdout_injected_as_hook_origin_system_row`, `test_exit_two_shorthand_blocks_send`, `test_wake_notice_fires_nothing`, `test_hook_crash_send_proceeds`). The two TASK-485 nodes pass under a temporary `@private_profile_test` marker, even with the old fake. Under a temporary class-level `bootstrap_profile` marker, 4 of the 5 class tests pass. `test_wake_notice_fires_nothing` then fails on a separate error, `PermissionError: agent-wake sends require coordinator-issued wake authority`. Whole-file runs of this file at `-n 4` had about 200 more failures. I did not read each traceback; the ones I sampled have the same signature.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -33,14 +35,3 @@ For test_trace_export_ui.py the traceback is: Tests/UI/conftest.py _disable_mode
 - [ ] #2 The fix does not bind config to the developer's real profile (the conftest's documented trap)
 - [ ] #3 The cause of each listed file is confirmed from its own traceback, not assumed from test_trace_export_ui.py
 <!-- AC:END -->
-
-## Implementation Notes
-
-<!-- SECTION:NOTES:BEGIN -->
-**Added 2026-11-06 (dev e8eeae7db9, recorded by TASK-38947).** `Tests/Chat/test_console_chat_controller.py` also belongs on this list, through a third path: the code under test, as in the prompt-improvement case.
-- **Mechanism.** A plain test's send reaches hook admission. `hook_admission_reason` (`tldw_chatbook/Chat/console_automatic_submission.py`) calls `read_hooks_config_snapshot()`, which raises `RecoveryRequired('raw_source_selection_changed')` in the per-test sandbox. Printing the swallowed exception showed it. The broad `except` turns it into the refusal "Hooks unavailable; review or disable hooks before sending."
-- **Red nodes.**
-  - `test_blocked_send_persists_no_durable_record` and `test_accepted_send_persists_the_deferred_user_echo`. TASK-38947 had filed these two as fake drift. Both pass under a temporary `@private_profile_test` marker, even with the old fake.
-  - The `TestUserPromptSubmitHooks` class, 5 tests: `test_block_rejects_send_without_assistant_row`, `test_stdout_injected_as_hook_origin_system_row`, `test_exit_two_shorthand_blocks_send`, `test_wake_notice_fires_nothing`, `test_hook_crash_send_proceeds`. Under a temporary class-level `bootstrap_profile` marker, 4 pass. `test_wake_notice_fires_nothing` then fails on a separate error, `PermissionError: agent-wake sends require coordinator-issued wake authority`.
-- **Scale.** Whole-file runs of this file at `-n 4` had about 200 more failures. I did not read each traceback; the ones I sampled have the same signature.
-<!-- SECTION:NOTES:END -->

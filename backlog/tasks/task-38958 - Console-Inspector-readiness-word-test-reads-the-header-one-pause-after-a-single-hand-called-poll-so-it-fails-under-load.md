@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-06 05:14
+updated_date: 2026-11-06 06:56
 labels:
 - follow-up
 - tests
@@ -69,9 +69,9 @@ In each failure:
 
 In the 18 passing cases the display was 0.17-0.58 s old, the bar returned True, and the header changed before the poll returned. The pre-gate commits even when the bar defers, so calling the poll a second time would not have retried. The slow part was the test's own setup under load (mount, attach wait, readiness and evidence reads), which outlived the display.
 
-**Fix (test only).** A new helper, `_fresh_readiness_display`, awaits `ConsoleReadinessConfigProjection.for_screen(console).warm()` until it returns True, right before the poll. With a fresh display, the poll paints the header itself before it returns. The test now reads `#workbench-header-status` straight after the poll, before any pause, so a queued repaint (the attach's `_sync_native_console_chat_ui`) cannot stand in for it. The other Inspector reads still follow the pause, as before.
+**Fix (test only).** A new helper, `_fresh_readiness_display`, awaits `ConsoleReadinessConfigProjection.for_screen(console).warm()` until it returns True, before the evidence settle (moved there after review; see below). With a fresh display, the poll paints the header itself before it returns. The test now reads `#workbench-header-status` straight after the poll, before any pause, so a queued repaint (the attach's `_sync_native_console_chat_ui`) cannot stand in for it. The other Inspector reads still follow the pause, as before.
 
-**TASK-35574: the same fix covers it.** `test_a_probe_settling_mid_poll_still_reaches_the_console` uses the same harness and the same single hand-called poll. I applied the same two changes to it: warm before the second poll, and read the header before the pause.
+**TASK-35574: the same fix covers it.** `test_a_probe_settling_mid_poll_still_reaches_the_console` uses the same harness and the same single hand-called poll. I applied the same two changes to it: warm before the settle that precedes the second poll, and read the header before the pause.
 - Under TASK-35574's own control (the evidence version dropped from both the pre-gate and the snapshot, a temporary source edit), it failed 3 of 3, `'Ready · not tested' == 'Not ready · refused :9099'`.
 - It passed 10 of 10 serial runs at load 21-43, and every one of the whole-file runs below.
 
@@ -82,4 +82,9 @@ TASK-35574's own file is left for the coordinator.
 **AC#1.** I ran 20 whole-file `-n 4` runs, then 3 more for the runs that started below load 40 (33.6, 39.1, 34.3). All 23 passed, 36 passed each, in 38-141 s. Twenty of the 23 started at a 1-min load of 41.5-70.0.
 
 Files: `Tests/UI/test_console_switcher_local_probe.py`. Lesson added to `backlog/docs/lessons-testing-evidence.md`.
+
+**Review fix (2026-11-06, review r10c-rev1).** The first version warmed the display after `store.settle(...)`, just before the poll. The warm-up awaits (the off-thread read, or up to 100 × `pilot.pause(0.02)`). The reviewer's probe saw a non-poll full sync (`_sync_native_console_chat_ui` -> `project_console_tick` -> `_sync_console_workbench_state`) paint the settled word during it, before any poll, in 3 of 6 cases. So the test could pass with its poll removed. The warm-up now runs before the settle in both tests. The display's key (`ConsoleReadinessConfigProjection._key`) excludes connection evidence, so the settle leaves the display valid, and the settle, the poll and the header read run with no await between them.
+- Re-run of the poll-removed control (the poll returns before its `sync()` block, a temporary source edit): both Inspector cases and the mid-poll test failed on their assertions in 3 of 3 whole-file runs.
+- TASK-35574's version-dropped control: the mid-poll test failed 3 of 3.
+- Green: 21 whole-file `-n 4` runs at load 19-62. 20 passed all 36 tests. The first run had 1 failed, 35 passed, and I had not kept its log, so the failing node is unknown. The 20 runs after it, all with logs kept, had no failure.
 <!-- SECTION:NOTES:END -->
