@@ -81,24 +81,66 @@ def _attach_real_dbs(app, tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
-async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
-    """The ordering the whole staged-wake design leans on: the first tab
-    sync view-clears the ACTIVE conversation's mark, so a claim running
-    after it reads nothing. Recorded on a REAL mount of the real screen
-    class."""
+async def test_no_tab_sync_before_the_mount_claim_consumes_the_active_chats_wake_mark(
+    tmp_path,
+):
+    """The hazard the staged-wake design leans on: a tab sync view-clears the
+    ACTIVE conversation's mark, so a claim reading after it finds nothing.
+
+    Since 3e618d7119 the readiness projection publishes a whole sync from a
+    worker that can run before ``ChatScreen.on_mount``, so tab syncs now run
+    before the claim in about half the mounts, and a strict claim-first
+    order is no longer what holds. What must hold is the outcome: a relaunch
+    with a staged wake on the active chat keeps its mark through every sync
+    before the claim, and the claim seeds the wake (TASK-39044). Recorded on
+    a REAL mount of the real screen class.
+    """
+    from pathlib import Path
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
     app = _build_test_app()
-    _attach_real_dbs(app, tmp_path)
-    order: list[str] = []
+    marks = _attach_real_dbs(app, tmp_path)
+    store = ensure_console_runtime(app).ensure_chat_store()
+    session = store.ensure_session()
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="Research", persist=True
+    )
+    cid = session.persisted_conversation_id
+    assert cid
+    runs = AgentRunsDB(Path(app.chachanotes_db.db_path).parent / "agent_runs.db")
+    try:
+        parent = runs.create_run(conversation_id=cid, agent_kind="primary")
+        runs.set_status(parent, "done", "turn final")
+        child = runs.create_run(
+            conversation_id=cid,
+            agent_kind="subagent",
+            task="long job",
+            parent_run_id=parent,
+        )
+        marks.set_mark(cid, ConversationLocalMarksService.FLEET_UNSEEN)
+        runs.set_status(child, "done", "staged answer")
+    finally:
+        runs.close()
+
+    def marked() -> bool:
+        return marks.has_mark(cid, ConversationLocalMarksService.FLEET_UNSEEN)
+
+    order: list[tuple[str, bool]] = []
     real_claim = ConsoleFleetLifecycleController._claim_console_fleet_wake_marks
     real_sync = ChatScreen._sync_console_native_session_tabs
 
     def recording_claim(self):
-        order.append("claim")
+        order.append(("claim", marked()))
         return real_claim(self)
 
     async def recording_sync(self):
-        order.append("sync")
-        return await real_sync(self)
+        order.append(("sync", marked()))
+        result = await real_sync(self)
+        order.append(("synced", marked()))
+        return result
 
     ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = recording_claim
     ChatScreen._sync_console_native_session_tabs = recording_sync
@@ -106,20 +148,27 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
         host = ConsoleHarness(app)
         async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
             console = host.screen_stack[-1]
+            from Tests.UI.test_console_fleet_wake_ui_freshness import _settle
             from Tests.UI.test_destination_shells import _wait_for_selector
 
             await _wait_for_selector(console, pilot, "#console-session-surface")
-            await pilot.pause()
+            wake = console._ensure_console_chat_controller().fleet_wake
+            assert await _settle(
+                pilot,
+                lambda: wake.has_pending(cid) or bool(wake.delivering_conversation_ids()),
+            ), f"the staged wake on the active chat was never seeded: {order}"
     finally:
         ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = real_claim
         ChatScreen._sync_console_native_session_tabs = real_sync
-    assert "claim" in order, "the mount never ran the wake mark claim"
-    assert "sync" in order, (
-        "harness never reached a tab sync; the ordering was not exercised"
+    names = [name for name, _ in order]
+    assert "claim" in names, "the mount never ran the wake mark claim"
+    assert "sync" in names, (
+        "harness never reached a tab sync; the hazard was not exercised"
     )
-    assert order.index("claim") < order.index("sync"), (
-        "the wake mark claim must run BEFORE the first tab sync's "
-        f"view-clear can consume the active conversation's mark: {order}"
+    before_claim = order[: names.index("claim") + 1]
+    assert all(seen for _, seen in before_claim), (
+        "a tab sync consumed the active conversation's wake mark before the "
+        f"mount claim read it: {order}"
     )
 
 

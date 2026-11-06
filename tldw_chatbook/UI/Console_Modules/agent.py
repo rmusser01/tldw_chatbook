@@ -2692,7 +2692,16 @@ class ConsoleAgentController:
             current = state is not None and state["key"] == key
             return (current and state["value"]) or AgentLiveSnapshot()
         if state is None or state["key"] != key:
-            state = {"key": key, "value": None, "pending": False}
+            # TASK-39044: a re-read for the same owner and chat (a config
+            # write or a child's status change re-keys it) keeps showing the
+            # last rows until it lands. Blank rows reset the fleet flags, so
+            # a collapsed Agents section reopened and the rail scrolled.
+            stale = None
+            if state is not None and (
+                state["key"][:3] == key[:3] and state["key"][4:9] == key[4:9]
+            ):
+                stale = state["value"] or state.get("stale")
+            state = {"key": key, "value": None, "pending": False, "stale": stale}
             self._console_historical_read = state
         if state["value"] is None and not state["pending"]:
             state["pending"] = True
@@ -2703,7 +2712,7 @@ class ConsoleAgentController:
                 exclusive=False,
                 group="console-agent-history",
             )
-        return state["value"] or AgentLiveSnapshot()
+        return state["value"] or state.get("stale") or AgentLiveSnapshot()
 
 
     async def _load_historical_presentation(
@@ -2780,7 +2789,7 @@ class ConsoleAgentController:
             state["pending"] = False
         from ...Chat.console_agent_bridge import AgentLiveSnapshot
 
-        if value == AgentLiveSnapshot():
+        if value == AgentLiveSnapshot() and not state.get("stale"):
             return
         repaint = getattr(self._screen, "_request_console_agent_fleet_sync", None)
         if callable(repaint):

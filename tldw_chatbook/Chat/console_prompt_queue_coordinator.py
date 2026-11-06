@@ -1222,6 +1222,7 @@ class ConsolePromptQueueCoordinator:
             ConsoleRunStatus.CHECKING_CITATIONS,
             ConsoleRunStatus.RETRYING,
         }
+        held_before_received = occupies_slot
         received = (
             self._received_turn_for_session(session_id)
             if self._received_turn_for_session is not None
@@ -1244,8 +1245,17 @@ class ConsolePromptQueueCoordinator:
             needs_approval=self._needs_approval(session_id),
             queued_count=queued_count,
             queue_paused=queue_paused,
+            # TASK-39044: a chainless automatic turn (an agent wake) keeps its
+            # own received claim until its custody releases, after it has
+            # settled, so at its terminal status that claim is the finished
+            # turn's and must not withhold its marker, toast and receipt.
             terminal_notification_eligible=(
-                status in self._TERMINAL and not occupies_slot and not accepted_live
+                status in self._TERMINAL
+                and not accepted_live
+                and not (
+                    held_before_received
+                    or (received is not None and not received.origin.automatic)
+                )
             ),
         )
 

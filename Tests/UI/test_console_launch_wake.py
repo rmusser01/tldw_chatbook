@@ -625,11 +625,13 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch(tmp_pa
     therefore OWED by the ledger's own definition -- and it carries no
     mark, because nothing ever settled it through the fan-out.
 
-    Seeding from the ledger alone would manufacture a wake here. The claim
-    is marks-indexed, so nothing fires. The assertion that stops this
-    passing for the wrong reason: `undelivered_wake_runs` genuinely DOES
-    report the orphan, so the silence is the mark gate's doing, not an
-    empty ledger.
+    Since 827b622638 launch discovery reads the ledger, not the marks ("a
+    missing badge never hides a pending result"), so the orphan is found and
+    the Console runtime is built for it. Its result has no work chain, so it
+    is paused for manual review (`legacy_lineage`) and nothing fires. The
+    assertion that stops this passing for the wrong reason:
+    `undelivered_wake_runs` genuinely DOES report the orphan, so the silence
+    is the review pause's doing, not an empty ledger (TASK-39044).
     """
     app0 = _build_test_app("library")
     _attach_real_dbs(app0, tmp_path)
@@ -671,8 +673,9 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch(tmp_pa
             f"launch -- a phantom wake: {gateway.payloads!r}"
         )
         _assert_console_never_mounted(app)
-        assert app.console_runtime.chat_controller is None, (
-            "an unmarked owed row still built the whole Console runtime at launch"
+        wake = app.console_runtime.chat_controller.fleet_wake
+        assert wake.pause_reason("conv-crashed") == "legacy_lineage", (
+            "a chainless crash-killed result must wait for manual review"
         )
 
 

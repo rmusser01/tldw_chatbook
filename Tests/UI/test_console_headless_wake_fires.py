@@ -29,8 +29,8 @@ Rig notes:
   (`on_fleet_drained`), exactly as `ConsoleAgentBridge` delivers it;
 * Console is left through the REAL navigation API (`NavigateToScreen` +
   the real "Leave Console?" dialog), so `ChatScreen.on_unmount` runs and
-  `leave_console_runtime` genuinely ends the visit -- nothing is
-  monkeypatched and no gate is suppressed;
+  `leave_console_runtime` detaches the view (since b7dd8e53f2 it no longer
+  ends the visit) -- nothing is monkeypatched and no gate is suppressed;
 * every durable surface is a real on-disk DB (ChaChaNotes, `agent_runs`,
   the conversation marks store).
 """
@@ -202,10 +202,12 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
         assert controller is app.console_runtime.chat_controller, (
             "harness precondition: the runtime must OUTLIVE the screen"
         )
-        assert controller._shutdown_requested.is_set(), (
-            "harness precondition: leaving Console must have ended the visit -- "
-            "that set Event is exactly the state the old gate refused, so a "
-            "test that never reached it would prove nothing"
+        # Since b7dd8e53f2 leaving Console only detaches its view; the visit
+        # flag the old gate refused on is no longer set by a navigation, so
+        # the gate cannot be what stops this wake (TASK-39044).
+        assert not controller._shutdown_requested.is_set(), (
+            "harness precondition: a navigation detaches the view without "
+            "ending the visit"
         )
         assert controller._disposed is False, (
             "harness precondition: a navigation is not an app exit"
@@ -323,10 +325,15 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
             "user has no way to learn the supervisor turn ever ran"
         )
 
-        # (6) returning to Console shows the delivered turn.
-        chat2 = await _navigate(app, pilot, "chat", expect="ChatScreen")
-        assert isinstance(chat2, ChatScreen), type(chat2).__name__
-        assert chat2 is not chat, "screens are never cached"
+        # (6) a Console mounted again shows the delivered turn. Mounted fresh,
+        # as _seed_console mounts it: the chat route's own reusable screen
+        # (fed0b7257a) is a second, superseded view in this harness, never
+        # the one the seeded turn ran in (TASK-39044).
+        from Tests.UI.test_destination_shells import _wait_for_selector
+
+        chat2 = ChatScreen(app)
+        await app.push_screen(chat2)
+        await _wait_for_selector(chat2, pilot, "#console-native-composer")
         await pilot.pause()
         assert await _settle(
             lambda: WAKE_REPLY in _rendered_text(chat2), seconds=10.0

@@ -839,13 +839,18 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
 
         # Admission freezes one run budget for every caller. A wake carries
         # the same per-run ceiling while ADR-134 adds its automatic-chain cap.
+        # d24c4c04b2 added a native parent's wall deadline and the settled-
+        # budget callback; a wake passes the same deadline as a manual send.
         parameters = set(inspect.signature(ConsoleAgentBridge.run_reply).parameters)
         assert {
             name
             for name in parameters
             if "budget" in name or "wall" in name or "max_tokens" in name
-        } == {"run_budget"}
+        } == {"run_budget", "parent_budget_deadline", "on_primary_budget_settled"}
         assert wake_call["run_budget"] == manual_call["run_budget"]
+        assert (
+            wake_call["parent_budget_deadline"] == manual_call["parent_budget_deadline"]
+        )
         assert set(wake_call) == set(manual_call), (
             "the wake dispatch passes a different set of arguments than a "
             f"manual send: {sorted(set(wake_call) ^ set(manual_call))}"

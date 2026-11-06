@@ -123,9 +123,14 @@ class _SectionHarness(ConsolidatedCSSApp):
 class _ScrolledSectionHarness(ConsolidatedCSSApp):
     """Hosts a section inside a height-constrained `VerticalScroll`, the
     same shape as the real Console rail body (`#console-left-rail-body`) --
-    needed to create a genuine below-the-fold row for the hit-test guard."""
+    needed to create a genuine below-the-fold row for the hit-test guard.
+
+    The app bundle is loaded because the rows' heights are utility classes
+    there since ae9093a714; without it every row is one line and nothing
+    sits below the fold (TASK-39044)."""
 
     CSS = "#scroll { height: 8; }"
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, section: ConsoleInspectorSection) -> None:
         super().__init__()

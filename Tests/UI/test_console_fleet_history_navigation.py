@@ -49,6 +49,15 @@ async def test_preview_bounds_mounts_and_hidden_changes_do_not_recompose():
         assert len(section.query(ConsoleInspectorSectionRow)) == 4
 
 
+async def _until_fleet_auto_opened(pilot, console) -> None:
+    """Wait (bounded) for the fleet section's one-shot auto-open."""
+    for _ in range(100):
+        if console._console_fleet_section_auto_opened:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("the populated fleet section never auto-opened")
+
+
 async def _loaded(pilot, modal):
     for _ in range(80):
         if not modal.query_one(DataTable).disabled:
@@ -85,9 +94,21 @@ async def test_view_all_pages_to_old_child_and_drills_into_it(tmp_path, size):
             section = console.query_one(
                 "#console-agent-section-subagents", ConsoleInspectorSection
             )
-            # Dev auto-opens populated fleets; close it before testing expansion.
+            # Dev auto-opens populated fleets; close it before testing
+            # expansion. Since 3e618d7119 the rows land asynchronously, so the
+            # one-shot auto-open (and its reveal scroll) comes after setup:
+            # wait for it first, or it reopens the section or scrolls the
+            # toggle off screen after this close (TASK-39044).
+            await _until_fleet_auto_opened(pilot, console)
             section.set_open(False)
-            await pilot.pause()
+            # Closing recomposes the section; its toggle is back once that lands.
+            for _ in range(100):
+                if console.query("#console-inspector-section-agent-fleet-toggle"):
+                    break
+                await pilot.pause(0.05)
+            await _scroll_into_view(
+                pilot, console, "#console-inspector-section-agent-fleet-toggle"
+            )
             # Expansion is a real click. Its own handler scrolls the new preview.
             assert await pilot.click("#console-inspector-section-agent-fleet-toggle")
             await pilot.pause()
@@ -285,6 +306,80 @@ async def test_history_selection_rechecks_conversation_and_agent_kind(
             console._character._current_console_rail_conversation_id = lambda: "conv-B"
             callbacks[0](child)
             assert console._console_agent_drilldown_run_id is None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_a_config_write_keeps_a_collapsed_fleet_collapsed_with_its_rows(tmp_path):
+    """A config write re-keys the historical read; the rows stay (TASK-39044).
+
+    The read's key holds the config identity. Before, a re-key served empty
+    rows until the new read landed, which reset the fleet's auto-open and
+    dismissed flags: the section the user collapsed opened again and the
+    rail scrolled to it. Here the config write is a Settings save of the
+    display cap the historical rows are cut to.
+    """
+    from tldw_chatbook import config
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="history")
+    try:
+        parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
+        for index in range(6):
+            child = db.create_run(
+                conversation_id="conv-A",
+                agent_kind="subagent",
+                parent_run_id=parent,
+                task=f"Child {index}",
+            )
+            db.set_status(child, "done", result="ok", budget_tokens=index)
+        db.set_status(parent, "done")
+        bridge = _bridge(db)
+        app = _build_test_app()
+        _configure_native_ready_console(app)
+        ensure_console_runtime(app).set_agent_bridge(bridge)
+        host = _StyledConsoleHarness(app)
+        async with host.run_test(size=(180, 48)) as pilot:
+            console = await _setup_console(pilot, host, bridge)
+            section = console.query_one(
+                "#console-agent-section-subagents", ConsoleInspectorSection
+            )
+            await _until_fleet_auto_opened(pilot, console)
+            await _scroll_into_view(
+                pilot, console, "#console-inspector-section-agent-fleet-toggle"
+            )
+            assert await pilot.click("#console-inspector-section-agent-fleet-toggle")
+            await pilot.pause()
+            assert not section.open and section.rows
+            before = config.current_config_identity()
+            # A Settings save of the cap the historical rows are cut to.
+            assert config.save_setting_to_cli_config(
+                "console",
+                "tool_result_display_chars",
+                config.DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS + 1,
+            )
+            assert config.current_config_identity() != before, (
+                "precondition: the save must be a real config write"
+            )
+            console._sync_console_agent_section()
+            await pilot.pause()
+            assert section.rows, "the re-keyed read blanked the fleet rows"
+            for _ in range(100):
+                state = console._agent._console_historical_read
+                if (
+                    state is not None
+                    and state["value"] is not None
+                    and state["key"][3] == config.current_config_identity()
+                ):
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("the re-keyed historical read never landed")
+            await pilot.pause(0.2)
+            assert not section.open, (
+                "a config write re-opened the fleet section the user collapsed"
+            )
+            assert section.rows
     finally:
         db.close()
 
