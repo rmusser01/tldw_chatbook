@@ -705,6 +705,128 @@ def test_a_stranded_note_outlives_a_request_dropped_while_busy() -> None:
     assert ops.calls == ["compact:compact:run_settled"]
 
 
+def test_a_refreeze_now_runs_while_a_compaction_waits_and_leaves_it_owed() -> None:
+    """The warm-up's end freezes its modules at once; an owed compaction stays owed.
+
+    TASK-33620.15.57: the first-send warm-up's completion asked for idle
+    maintenance, whose timer found a compaction due, waited for 5 s of
+    quiet, and was dropped by the first send, which then ran with the
+    warm-up's modules unfrozen. ``refreeze_now`` is the warm-up's own last
+    step: it re-freezes whether or not a compaction is due, and the
+    compaction it did not run is still owed to the next idle maintenance.
+
+    Negative control: ``maintain`` at the same moment compacts instead.
+    """
+    clock, ops = Clock(), Ops(frozen=1_000_000, added=30_000)
+    refreezer = make(clock, ops, min_growth=10_000_000)
+    assert refreezer.maintain("conversation_painted") == "refreeze"  # first look
+    refreezer.note_stranded()
+    assert refreezer.compaction_due()
+
+    assert refreezer.refreeze_now("first_send_preimport") == "refreeze"
+    assert ops.calls[-1] == "refreeze:first_send_preimport"
+    assert refreezer.actions[-1] == ("refreeze", "first_send_preimport")
+    assert refreezer.compaction_due(), (
+        "the re-freeze paid off a compaction it never ran"
+    )
+    assert refreezer.maintain("run_settled") == "compact"  # negative control
+    assert not refreezer.compaction_due()
+
+
+def test_a_refreeze_now_never_walks_and_books_what_it_froze_as_growth() -> None:
+    """No walk at the warm-up's end; what it freezes counts as growth (TASK-33620.15.57).
+
+    A walk of the frozen set held the GIL 15-34 ms live (TASK-33620.15.18),
+    and the warm-up's end can come while the user types. Before the
+    refreezer's first look the re-freeze counts the unfrozen generations it
+    is about to freeze, and that look books them as growth, not baseline:
+    they can hold foreground objects that overlapped the warm-up
+    (TASK-33620.15.50). After the first look it only marks the measured size
+    stale, so the next budget check walks once, at idle.
+
+    Negative control: the same objects frozen by a boot point before the
+    first look join the baseline and make nothing due.
+    """
+    ops = Ops(frozen=100_000, added=60_000)
+    refreezer = make(Clock(), ops, min_growth=50_000, unfrozen_count=lambda: 60_000)
+    assert refreezer.refreeze_now("first_send_preimport") == "refreeze"
+    assert ops.walks == 0, "the re-freeze walked the frozen set before the first look"
+    assert refreezer.maintain("run_settled") == "compact", (
+        "the warm-up's re-freeze joined the baseline instead of counting as growth"
+    )
+
+    ops.added = 10_000
+    walks = ops.walks
+    assert refreezer.refreeze_now("first_send_preimport") == "refreeze"
+    assert ops.walks == walks, (
+        "the re-freeze walked the frozen set after the first look"
+    )
+    assert not refreezer.compaction_due()
+    assert ops.walks == walks + 1, "the next budget check reused a stale size"
+
+    control = Ops(frozen=100_000, added=0)
+    booted = make(Clock(), control, min_growth=50_000)
+    booted.freeze_at_boot_point(lambda: setattr(control, "frozen", 160_000))
+    assert booted.maintain("run_settled") == "refreeze"  # negative control
+
+
+def test_a_refreeze_now_satisfies_a_pending_request() -> None:
+    """A request pending from before the warm-up's end does not re-freeze again.
+
+    TASK-33620.15.57: a second re-freeze shortly after the warm-up's finds
+    almost nothing unfrozen, and a full collection that small makes the
+    next automatic generation-2 passes come sooner (CPython runs one once a
+    quarter of what the last full collection kept is pending). In this
+    fix's first live launches the first send then ran two of them on the
+    UI loop where origin/dev ran one.
+
+    Negative control: a request made after it runs as usual.
+    """
+    clock, ops, owner = Clock(), Ops(), Owner()
+    refreezer = make(clock, ops, unfrozen_count=lambda: 0)
+    refreezer.request("conversation_painted", owner, owner_busy)
+    assert refreezer.refreeze_now("first_send_preimport") == "refreeze"
+    clock.now += 10
+    owner.fire_last()
+    assert ops.calls == ["refreeze:first_send_preimport"], (
+        "the pending request re-froze right after the warm-up's re-freeze"
+    )
+
+    refreezer.request("run_settled", owner, owner_busy)  # negative control
+    clock.now += 10
+    owner.fire_last()
+    assert ops.calls[-1] == "refreeze:run_settled"
+
+
+def test_a_refreeze_now_freezes_nothing_while_another_collection_runs() -> None:
+    """A busy collector leaves the warm-up's end with nothing booked (TASK-33620.15.57)."""
+    refreezer = IdleHeapRefreezer(
+        enabled=lambda: True, unfrozen_count=lambda: 0, freeze_count=lambda: 0
+    )
+    epoch = ui_responsiveness.heap_freeze_epoch()
+    try:
+        outcome = during_another_collection(
+            lambda: refreezer.refreeze_now("first_send_preimport")
+        )
+    finally:
+        gc.unfreeze()
+    assert outcome == ["busy"], outcome
+    assert ui_responsiveness.heap_freeze_epoch() == epoch, "it froze the heap anyway"
+    assert refreezer.actions[-1] == ("busy", "first_send_preimport")
+
+
+def test_a_refreeze_now_is_off_under_pytest_unless_overridden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same switch as every other idle re-freeze (TASK-33620.15.57)."""
+    ops = Ops()
+    refreezer = IdleHeapRefreezer(
+        enabled=lambda: False, refreeze=ops.refreeze, freeze_count=ops.freeze_count
+    )
+    assert refreezer.refreeze_now("first_send_preimport") == "off"
+    assert ops.calls == []
+
+
 def test_every_freeze_advances_the_freeze_epoch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
