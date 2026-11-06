@@ -91,10 +91,21 @@ def census(source: str) -> Counter:
                     if node.module == "os" and alias.name in {"replace", "unlink"}
                     else alias.name
                 )
-        if isinstance(node, ast.Assign) and (candidate := native_candidate(node.value)):
+        if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name):
-                    imported_candidates.setdefault(target.id, set()).add(candidate)
+                # `fn, flags = libc.renameatx_np, 4` pairs element-wise.
+                pairs = (
+                    zip(target.elts, node.value.elts)
+                    if isinstance(target, ast.Tuple)
+                    and isinstance(node.value, ast.Tuple)
+                    and len(target.elts) == len(node.value.elts)
+                    else ((target, node.value),)
+                )
+                for name, value in pairs:
+                    if isinstance(name, ast.Name) and (
+                        candidate := native_candidate(value)
+                    ):
+                        imported_candidates.setdefault(name.id, set()).add(candidate)
 
     class Visitor(ast.NodeVisitor):
         def __init__(self):
@@ -283,6 +294,20 @@ def register():
 """
     assert census(source)[("publish", "renameatx_np")] == 1
     assert census(source)[("register", "os.replace")] == 1
+
+
+def test_census_tracks_native_callable_bound_by_tuple_assignment():
+    # TASK-39053: Backup_Recovery/native_platform.rename_noreplace binds the
+    # native no-replace publication as `fn, flags = libc.renameatx_np, 0x4`.
+    source = """
+import ctypes
+
+def publish():
+    libc = ctypes.CDLL(None)
+    fn, flags = libc.renameatx_np, 0x4
+    fn(source_fd, source_name, target_fd, target_name, flags)
+"""
+    assert census(source)[("publish", "renameatx_np")] == 1
 
 
 def test_census_native_replace_is_distinct_from_string_replace():
