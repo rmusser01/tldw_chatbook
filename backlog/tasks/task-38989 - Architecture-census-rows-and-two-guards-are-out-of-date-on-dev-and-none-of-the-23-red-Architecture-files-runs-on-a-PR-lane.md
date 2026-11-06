@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 11:02
+updated_date: 2026-11-06 11:16
 labels:
 - follow-up
 - tests
@@ -125,6 +125,12 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b on 2026-
     None of them reaches loguru `extra`. The coordinator expected about 11 rows; the real package has 33, so all 33 are reviewed.
 
     Red with a planted cross-file `**meta(user)` dict (the `"exception_type"` key in the new module) and with a planted `logger.configure(extra={"exception_type": user})`. The 7-site census stayed green in both cases, which is the gap this closes.
+  - **Cross-file spreads (review r10a-rev6).** A reviewed dict spread from another file, e.g. `logger.bind(**_stt_failure_metadata(e))`, adds no token, and the 7-site census read only files spelling `exception_type`. The census now reads every file that can hold a `bind`/`contextualize` call. It skips calls with positional arguments, because loguru takes keywords only, so `inspect.Signature.bind(*args, **kwargs)` drops out. Every `**` spread must be a pinned, reviewed row in `REVIEWED_BIND_SPREADS`:
+    - `LibraryScreen._run_library_notes_tree_slice_request`, `bind(**metadata)`, where the class is under `exception_class`;
+    - `PromptImprovementService._log_telemetry`, `bind(**event)`, telemetry counters;
+    - `PersonasPreviewController._resolve_selection_with_fallback` and `._run_reply`, 4 calls of `bind(**self._reply_log_context(...))`. These hold operation, provider, model, selection, generation, attempt and streaming fields, with no `exception_type`. The coordinator's grep missed them because the calls span several lines.
+
+    Red with a planted `logger.bind(**_stt_failure_metadata(e))` in a scratch package file that never spells `exception_type`, while the token tripwire stayed green. The plant was removed. The census now takes about 6 s serially.
   - **Regression check.** Buddy, forwarder and sanitizer tests: 20 failed and 394 passed, the same 20 as at HEAD 47dc0fcb94 (RecoveryRequired / environment). The only new node is the forwarder test.
   - **Diagnostic inventory.** It flagged the forwarder's two `std_logger.log` calls, which now pass `text`. Reviewed with `--statements`, then regenerated.
 - **Legacy downloader.** `Backup_Recovery/config_adapter.py`, `detached_layout.py` and `inventory.py` name `model_download_dir` only to classify it as an inert external location. None of them reads or writes the directory.

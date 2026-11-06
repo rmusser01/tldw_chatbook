@@ -209,6 +209,36 @@ EXCEPTION_TYPE_BIND_SITES = frozenset(
         ),
     }
 )
+#: TASK-38989 review r10a-rev6: ``**`` spreads into ``bind``/``contextualize``
+#: whose dicts were reviewed and carry no ``exception_type`` (an already
+#: reviewed dict spread from another file adds no new token, so the tripwire
+#: below cannot see it; the census reads every file for these).
+REVIEWED_BIND_SPREADS = frozenset(
+    {
+        # bind(**metadata): Notes tree slice failure fields; the class is
+        # under "exception_class".
+        (
+            "tldw_chatbook/UI/Screens/library_screen.py",
+            "LibraryScreen._run_library_notes_tree_slice_request",
+        ),
+        # bind(**event): prompt-improvement telemetry counters.
+        (
+            "tldw_chatbook/Prompt_Management/prompt_improvement_service.py",
+            "PromptImprovementService._log_telemetry",
+        ),
+        # bind(**self._reply_log_context(...)): operation, provider, model,
+        # selection, generation, attempt and streaming fields only.
+        (
+            "tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py",
+            "PersonasPreviewController._resolve_selection_with_fallback",
+        ),
+        (
+            "tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py",
+            "PersonasPreviewController._run_reply",
+        ),
+    }
+)
+_SPREAD_PROBLEM = "**spread can carry exception_type"
 _PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 
 
@@ -239,7 +269,7 @@ def _is_class_name_value(node: ast.AST) -> bool:
 def _bind_problems(keyword: ast.keyword, stack: list[ast.AST]) -> list[str]:
     """Why one ``exception_type`` keyword might bind something other than a class."""
     if keyword.arg is None:
-        return ["**spread can carry exception_type"]
+        return [_SPREAD_PROBLEM]
     if _is_type_name(keyword.value):
         return []
     if not isinstance(keyword.value, ast.Name):
@@ -279,6 +309,9 @@ def _visit_bind_sites(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr in {"bind", "contextualize"}
+        # Loguru's bind/contextualize take keywords only; a positional
+        # argument means another API (inspect.Signature.bind(*args, ...)).
+        and not node.args
     ):
         for keyword in node.keywords:
             if keyword.arg in ("exception_type", None):
@@ -297,7 +330,10 @@ def _exception_type_bind_sites(package: Path) -> dict[tuple[str, str], list[str]
     sites: dict[tuple[str, str], list[str]] = {}
     for path in sorted(package.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        if "exception_type" in source:
+        # Every file that can hold a bind/contextualize call, not only those
+        # spelling exception_type: a ** spread of a dict built elsewhere
+        # carries no token here (review r10a-rev6).
+        if "bind" in source or "contextualize" in source:
             relative = path.relative_to(package.parent).as_posix()
             _visit_bind_sites(ast.parse(source), [], relative, sites)
     return sites
@@ -307,8 +343,13 @@ def test_exception_type_is_bound_only_at_reviewed_class_name_sites():
     """The forwarder renders ``exception_type`` on every logger's line, so the
     sites that bind it are pinned, and each must bind only a class name."""
     sites = _exception_type_bind_sites(_PACKAGE)
-    assert set(sites) == EXCEPTION_TYPE_BIND_SITES
-    assert {site: problems for site, problems in sites.items() if problems} == {}
+    assert set(sites) == EXCEPTION_TYPE_BIND_SITES | REVIEWED_BIND_SPREADS
+    assert {
+        site: problems
+        for site, problems in sites.items()
+        if problems
+        and not (site in REVIEWED_BIND_SPREADS and set(problems) == {_SPREAD_PROBLEM})
+    } == {}
 
 
 def test_bounded_exception_type_returns_only_a_class_name():
