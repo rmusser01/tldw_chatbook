@@ -1758,7 +1758,9 @@ So a link swapped into a participant, selector or source chain is seen exactly
 as before (`operation_path_outside_scope`, `execution_selection_changed`).
 `Tests/Backup_Recovery/test_admission_path_resolution.py` pins the value against
 `Path.resolve()` over a catalog of path shapes, with the walk on and off, and
-pins those refusals; mutation checks show each guard is load-bearing. No stamp,
+pins those refusals. It also pins the never-open-the-leaf rule directly: while
+this process holds `BEGIN EXCLUSIVE` on a database, no resolution of it lets
+another process write. Mutation checks show each guard is load-bearing. No stamp,
 evidence rule, refusal reason or lock order changes, nothing is cached, and the
 resolution still runs on whatever thread enters the transaction. Moving it to a
 worker was rejected: a hop costs more than the walk it would hide
