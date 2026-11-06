@@ -1,5 +1,5 @@
 ---
-id: TASK-38950
+id: TASK-39070
 title: >-
   Console: a run tick still rebuilds the Conversations browser on about every
   other tick, because its carry key leaves inputs out
@@ -29,3 +29,7 @@ Reusing an unchanged build for longer is exact only if every input the build rea
 - [ ] #3 What the rails show is never staler than one poll interval behind dev for every inventoried input, with a deterministic test per input class
 - [ ] #4 A send reaches the provider no later than on dev (Enter to the provider request, live, paired and interleaved, at least 30 sends per arm including first sends)
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed as TASK-38950 on this task's branch (perf/task-36571.1-browser-state-rebuild, created 2026-11-05 16:20 UTC). While that branch was unmerged, the round-8 follow-up "Every return to the Console restyles the whole screen, and a vertical breakpoint flip restyles it again" landed on dev first as TASK-38950 (8f32a29bab, 2026-11-05 18:06 -0800), and the rebase onto dev e8eeae7db9 failed preflight's duplicate-id check. Per the TASK-19601 owner rule (the older arrival keeps the id), the task already on dev keeps TASK-38950 and this one, not yet on dev, renumbers. TASK-39070 was unused on every ref, in every local worktree and on origin/dev (the highest id seen was 39040). The owner's 2026-11-05 decision on TASK-36571.1 ("TASK-38950 (the carry-key cache) does the rest") refers to this task.
