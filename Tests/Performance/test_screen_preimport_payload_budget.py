@@ -138,7 +138,12 @@ MAX_PASS_ADDED_MODULES = 558
 #: 426,512 -> 426,539 (2026-11-05, TASK-36516; owner size waiver 2026-10-31):
 #: +27 in `settings_screen` (the koboldcpp native-route save refusal), modules
 #: unchanged, pinned at the measurement.
-MAX_PASS_ADDED_LOC = 426_539
+#: 426,539 -> 426,597 (2026-11-06, TASK-38981 with TASK-38957; owner size
+#: waiver): +58 in `library` (the shared resolver's list-stage flag and the
+#: shell's work-pane hide in `adaptive_reader_state` / `adaptive_pane_shell`,
+#: the profiles in `screen_constants`, and the Folder files focus intent in
+#: `library_screen`), modules unchanged, pinned at the measurement.
+MAX_PASS_ADDED_LOC = 426_597
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
