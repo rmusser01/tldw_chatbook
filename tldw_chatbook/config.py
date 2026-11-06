@@ -3785,15 +3785,15 @@ API_MODELS_BY_PROVIDER = {
         "gpt-5.6-sol",
         "gpt-5.6-luna",
         "gpt-4.1-2025-04-14",
-        "o4-mini-2025-04-16",
+        "gpt-5.4-mini-2026-03-17",  # IV-1: o4-mini-2025-04-16 404s since 2026-11
         "o3-2025-04-16",
-        "o3-mini-2025-01-31",
-        "o1-2024-12-17",
+        "gpt-5-mini-2025-08-07",  # IV-1: replaces o3-mini-2025-01-31
+        "gpt-5.5-2026-04-23",  # IV-1: replaces o1-2024-12-17
         "chat-latest",  # AC#17: chatgpt-4o-latest was retired 2026-02-17
         "gpt-4o-2024-11-20",
         "gpt-4o-2024-08-06",
         "gpt-4.1-mini-2025-04-14",
-        "gpt-4.1-nano-2025-04-14",
+        "gpt-5.4-nano-2026-03-17",  # IV-1: replaces gpt-4.1-nano-2025-04-14
         "gpt-4o-mini-2024-07-18",
     ],
     "Anthropic": [

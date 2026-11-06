@@ -596,7 +596,7 @@ Custom_6 = "http://localhost:5678/v1"
 [providers]
 # This section primarily lists providers and their *available* models for the UI dropdown.
 # Actual default model/settings used for calls are defined in [api_settings.*] or [chat_defaults]/[character_defaults].
-OpenAI = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-4.1-2025-04-14", "o4-mini-2025-04-16", "o3-2025-04-16", "o3-mini-2025-01-31", "o1-2024-12-17", "chat-latest", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06", "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano-2025-04-14", "gpt-4o-mini-2024-07-18", ]
+OpenAI = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-4.1-2025-04-14", "gpt-5.4-mini-2026-03-17", "o3-2025-04-16", "gpt-5-mini-2025-08-07", "gpt-5.5-2026-04-23", "chat-latest", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06", "gpt-4.1-mini-2025-04-14", "gpt-5.4-nano-2026-03-17", "gpt-4o-mini-2024-07-18", ]
 Anthropic = ["claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-5", "claude-opus-4-5"]
 Cohere = ["command-a-03-2025", "command-r7b-12-2024", "command-r-plus-04-2024", "command-r-plus", "command-r-08-2024", "command-r-03-2024", "command", "command-nightly", "command-light", "command-light-nightly"]
 DeepSeek = ["deepseek-v4-flash", "deepseek-v4-pro"]
