@@ -76,6 +76,25 @@ To turn more on:
 - **One turn** — a message that names a skill (`$skill`) gets the full agent
   surface for that turn.
 
+**Upgrading a profile from before the light tool surface.** The first time
+this version opens a profile that has no `full_agent_tools_enabled` setting,
+it checks once, in the background, whether the profile already uses agent
+features:
+
+- a sub-agent definition (**Settings ▸ Agents**);
+- a workspace folder or SSH remote binding (**Settings ▸ Workspaces**);
+- an earlier Console reply that called a tool outside the light set (a
+  workspace, web or Watchlists tool, a sub-agent, and so on).
+
+If it finds any of them, it turns **Full agent tools** on for you — it writes
+`full_agent_tools_enabled = true` under `[tools]` in config.toml and changes
+nothing else — so plain chat keeps the tools it had. A profile with none of
+them, and every new profile, stays on the light set, and its config.toml is
+left as it was. The check runs at most once per profile and never changes a
+value you set yourself, so switching Full agent tools off afterwards keeps
+it off. If it cannot read the profile's data, it changes nothing and tries
+again at the next launch.
+
 Each send reads these switches fresh, so a change applies on the next send.
 The exception is a conversation whose sub-agents are still running, or have
 sent reports nobody has read yet: it keeps the full agent surface until that
