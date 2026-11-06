@@ -144,6 +144,42 @@ async def test_reduce_motion_applies_live_and_is_written_only_when_ticked() -> N
     )
 
 
+@pytest.mark.asyncio
+async def test_back_to_welcome_shows_the_reduce_motion_saved_later_in_the_run() -> None:
+    """Review G13-R1-03 (TASK-34100.13): Welcome took its Reduce motion state
+    once, at mount. After Appearance saved it (and mirrored it into
+    app_config), Back to Welcome showed the old value against the old
+    baseline: the shown state disagreed with the saved one, and Next wrote
+    nothing. Showing Welcome re-reads it."""
+    wizard, app_instance = _wizard({"appearance": {"reduce_motion": False}})
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        step = app.screen.query_one(WelcomeStep)
+        container = app.screen.query_one(SetupWizardContainer)
+        container.commit_config = AsyncMock(return_value=True)
+        step.wizard = container
+        box = app.screen.query_one("#setup-welcome-reduce-motion", Checkbox)
+        container.show_step(1)
+        await pilot.pause()
+        # Appearance's Next saved reduce_motion = true and mirrored it.
+        app_instance.app_config["appearance"]["reduce_motion"] = True
+        container.show_step(0)
+        await pilot.pause()
+        shown = box.value
+        ok, _ = await step.commit()
+        untouched_writes = container.commit_config.await_count
+        box.value = False
+        await pilot.pause()
+        await step.commit()
+    assert shown is True
+    assert ok
+    assert untouched_writes == 0
+    container.commit_config.assert_awaited_once_with(
+        {"appearance": {"reduce_motion": False}}
+    )
+
+
 def test_the_welcome_rows_keep_their_handlers_on_a_message_pump() -> None:
     """The Restore handler moved with its button (TASK-34100.1's frozen-list rule)."""
     from tldw_chatbook.UI.Wizards.first_run_welcome_step import WelcomeFooter
