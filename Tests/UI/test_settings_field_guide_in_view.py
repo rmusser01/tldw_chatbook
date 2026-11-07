@@ -33,6 +33,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     CONSOLE_DEFAULT_FIELD_NAMES,
     PROVIDER_MODEL_PROFILE_FIELD_KEYS,
 )
+from tldw_chatbook.UI.Settings_Modules.category_panels import PROVIDERS_MODELS_PANEL
 
 SIZES = ((211, 44), (235, 52))
 CONSOLE_FALLBACKS = CONSOLE_DEFAULT_FIELD_NAMES
@@ -396,8 +397,6 @@ async def test_the_inspector_starts_at_a_heading_and_says_when_more_is_above(req
     as "Focused setting: None" without "Focused field guide", and only "▼
     more" was ever said. After a revert or a resize the view starts at its
     top or at a heading, and the fold row says when there is more above."""
-    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
-
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=SIZES[0]) as pilot:
@@ -415,7 +414,7 @@ async def test_the_inspector_starts_at_a_heading_and_says_when_more_is_above(req
         screen.set_focus(None)
         body.scroll_to(y=body.max_scroll_y // 2 + 1, animate=False)
         await _settle(pilot, 4)
-        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+        PROVIDERS_MODELS_PANEL.discard(screen)  # r's discard, after its confirm
         await _settle(pilot, 6)
         assert _view_starts_at_a_heading(screen), ("revert", body.scroll_y)
 
