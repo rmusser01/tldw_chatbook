@@ -3355,14 +3355,18 @@ class ConsoleRuntime:
         """Capture one admitted evidence launch without consulting a view."""
         from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
             capture_console_staged_evidence_for_chat,
+            note_unrecorded_citation_evidence,
         )
 
-        return await capture_console_staged_evidence_for_chat(
+        result = await capture_console_staged_evidence_for_chat(
             self._app,
             launch,
             user_message=draft,
-            session_id=getattr(turn_context, "session_id", None),
+        )  # TASK-33620.8.3: an unrecorded reply may ask about records once.
+        await note_unrecorded_citation_evidence(
+            self._app, result, getattr(turn_context, "session_id", None)
         )
+        return result
 
     async def _capture_console_prepared_rag(
         self, bundle: Any, *, user_message: str, session: Any = None
@@ -3374,11 +3378,16 @@ class ConsoleRuntime:
         """
         from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
             capture_console_prepared_evidence_for_chat,
+            note_unrecorded_citation_evidence,
         )
 
-        return await capture_console_prepared_evidence_for_chat(
+        result = await capture_console_prepared_evidence_for_chat(
             self._app, bundle, user_message=user_message, session=session
         )
+        await note_unrecorded_citation_evidence(
+            self._app, result, getattr(session, "id", None)
+        )
+        return result
 
     async def wait_for_turn(self, turn_id: str) -> Any:
         """Await one specific live custody task (narrow integration-test seam)."""

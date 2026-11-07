@@ -33,12 +33,13 @@ import sys
 import threading
 import weakref
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #: The answer file, beside the effective config.toml.
 ANSWER_FILENAME = "citation_records_choice.json"
@@ -171,7 +172,7 @@ def save_answer(answer: CitationRecordsAnswer) -> None:
         {
             "schema_version": _SCHEMA_VERSION,
             "answer": CitationRecordsAnswer(answer).value,
-            "answered_at": datetime.now(UTC).isoformat(),
+            "answered_at": utc_now_iso(),
         },
         indent=2,
     )
