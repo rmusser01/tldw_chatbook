@@ -5,9 +5,11 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 06:41'
-updated_date: '2026-11-07 03:04'
+updated_date: '2026-11-07 06:37'
 labels: []
 dependencies: []
+references:
+  - backlog/decisions/355-lightweight-rag-state-path-resolution.md
 documentation:
   - >-
     Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
@@ -29,6 +31,7 @@ Identify which stages cause pauses before permission cards and after answers so 
 - [ ] #2 Timing records contain no request or conversation content and reject unsupported cross-clock or headless-as-native claims.
 - [ ] #3 Warm timing distributions report at least 40 samples with median, nearest-rank p95 and maximum; first-use cases are separate.
 - [ ] #4 Private-profile startup and recovery guards remain intact; a refused launch is reported as unqualified rather than a passing baseline.
+- [x] #5 Protected RAG state-directory resolution avoids optional RAG/ML runtime imports while preserving all current path-selection, dynamic configuration and permission-protection semantics.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -77,6 +80,8 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 
 2026-11-06 owner explicitly authorized Playwright/CDP and QA-only native capture. Guarded capability probes established actual browser Screenshot source/sequence to presented PipelineReporter/FramePresented identity, plus bounded native owned-ROI BitBlt/GetDIBits capture with stale/partial/hidden rejection and calibrated QPC brackets. These synthetic probes remain product_samples=0. Product qualification will use actual private TldwCli and the existing console_provider_gateway_factory to script planning input, actual submit_draft/ConsoleRuntime/AgentService/tool-discovery/review/controller paths and named private Workspace binding; real harmless fs_read/private dry-run writes, raw denial before execution. No fake readiness, resolver injection, backend/Running facts or external model/network. This complete-workload seam is required because a request-only controller fixture lacks real retained tool-activity feedback. Observers must not access the new lazy feedback store or Details/draft helpers before first use. Keep first-use and >=40warm per shape/transport separate, exact-dev5ca baseline in isolated read-only worktree, production source closures and conservative clock/capture bounds. Existing ADR235; QA-only input/observation seams change no authority or lifetime. No product samples until final source freeze and local tests stop.
+
+Measured preparation fix2026-11-07, before implementation: original guarded f3cff direct-container lookup with config+sensitive_paths already resident took1.5782705s CPU1.546875s and added570 dependency names, returning4 private paths with no network/profile violations. It does not explain the fullApp60s binding wait. Implement ADR355: share canonical lightweight RAG state-directory resolution, preserve existing public getter APIs, exact env/current/legacy precedence, coercion/blank/expanduser/relative-path/error behavior and dynamic user-data/config reads. Keep sensitive-path memoization/failure behavior and every authority/storage/recovery guard unchanged. First add fresh-process optional-import blocker and path-parity/currentness regressions, observe RED on original code, then minimally extract/delegate. Run targeted sensitive-path/file-tool/RAG-config compatibility checks, canonical worker rebuild/identity/stdlib closure, diagnostic/CI and boot checks affected by the new import edge. Record fresh original-helper before/after diagnostic and re-run real current-source native/browser qualification; no p95 or60s-cause claim from the isolated probe. ADR required: yes. ADR path: backlog/decisions/355-lightweight-rag-state-path-resolution.md. Reason: shared security-relevant path accessor and dependency-loading boundary, preserving existing data authority.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -101,4 +106,6 @@ Originally TASK-34411 in the reviewed approval checkout. Renumbered to TASK-3456
 2026-11-06 resync: recorder16 and refused-startup1 contracts pass. No qualified native/browser presented-frame timing samples or40-warm distributions exist. Guarded alternative capability probes prepared but unexecuted pending user method approval; user expressly requires timing before auto-merge. Actual Windows execution is separately proven and is not a timing substitute. Existing ADR235/236 applies; no new authority. Evidence Docs/superpowers/qa/2026-11-06-console-approval-resync/README.md. Status remains In Progress.
 
 The owner approved alternative capture methods. Synthetic capabilities are demonstrated: native owned-ROI capture takes about 7-11 ms with stale/partial/hidden controls; installed Edge 156 provides readable trace images uniquely joined to actual presentation events and calibrated clock intervals. These remain zero product timing samples. The request-only fixture was insufficient for retained feedback, and a gateway-wrapper proposal skipped original trace admission; both were rejected before product launch. The replacement uses the untouched stock gateway with an owned loopback scripted HTTP endpoint, real submit/AgentService/tool activity, real private binding consent and no external model. Main and isolated worker protection/source closures are required. Final code is locally frozen for exact-revision product qualification, first-use and 40 warm samples per shape/transport remain open.
+
+ADR355 path-loading follow-up (2026-11-07): extracted one lightweight RAG state-path owner and delegated the two legacy getters plus the protected-path import edge, preserving live getter seams, path precedence and protection semantics. Scope: four production files and two focused test files. Meaningful original-helper optional-runtime-blocker RED and raw-error canary RED became 16 critical passes; affected compatibility produced 72 passes. Eight existing failures reproduce on exact dev8b (seven raw-selection fixture failures and one Windows HOME expectation); one further test stops at WinError1314 symlink privilege, with two optional skips. Only AC5 is supported here. AC1-4, task status, after-probe and actual native/browser timing qualification remain open; no full-app 60-second-cause or latency improvement claim. CI and canonical artifacts are handled separately. Decision: backlog/decisions/355-lightweight-rag-state-path-resolution.md. Evidence and limitations: Docs/superpowers/qa/2026-11-06-console-approval-resync/rag-state-paths-followup.md.
 <!-- SECTION:NOTES:END -->

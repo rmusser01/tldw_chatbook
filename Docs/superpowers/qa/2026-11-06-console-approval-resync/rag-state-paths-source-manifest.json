@@ -1,0 +1,29 @@
+{
+  "implementation_base": "c09ad7338577c05b2a1732d975fcb9bdc4c2c69f",
+  "baseline": "8b762b52fa9c38be8c978f2b2175d9f070bc829a",
+  "adr": "backlog/decisions/355-lightweight-rag-state-path-resolution.md",
+  "source_sha256": {
+    "tldw_chatbook/RAG_Search/state_paths.py": "0e51b9634f76a9434c64b78729056c7b60845c2a67fb31d3731684ada7d6e78c",
+    "tldw_chatbook/RAG_Search/config_profiles.py": "3422e57ea5a80cd1e5dce20874c71e5e03e266c189c9990eb53b48d640d84849",
+    "tldw_chatbook/RAG_Search/simplified/config.py": "367432f3cb6642742ba88860ed9e74a9bf077e36b872db9a35626b8984005094",
+    "tldw_chatbook/Utils/sensitive_paths.py": "2fedbfdb83a754e11d9b179ed37de7edbba7e1a40808fafae02968f8d51f17f4",
+    "Tests/RAG/test_state_paths.py": "7cae9dca008e19c9fbf273a079c14a429eabff9089cca4c9fe91ce73eed1aac0",
+    "Tests/RAG/test_config_profiles.py": "ed17d4b2b62241636473c4608515f8d13df5c3705a16fa9c99f3ed4b94e912eb",
+    ".github/workflows/derived-artifacts.yml": "9c610ffd99b687d7c52693b7e805521d7a9fc2456f8c2b6c52cd22a14042855a",
+    "Tests/CI/test_ci_queue_pressure_contract.py": "21ce1f8315a0b21741c4a515c8a3917f4a75929cbe07622a28c08c54b559366a",
+    "Tests/CI/test_console_approval_critical_gate.py": "c2d7d3cab6a4f8ef2fb2668d3bd4e0fe9104ebc9b11ee612dc9e144f62e0d7c5",
+    "tldw_chatbook/Tools/remote_worker_bundle.py": "3b7a78651c915a1ef0463ac6d10d1d19459c5d99faf94e77a71ecca95374b8e3",
+    "Docs/security/production-diagnostic-inventory.json": "d24c87610df6238d71374364f80a7d99096f7b76af81be44a732c938a2387c8a",
+    "Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py": "cc2f444d8990207a727460416a17fa7426812e9ccd98dadbb6fbda1df3f89489"
+  },
+  "private_receipt_sha256": {
+    "rag-state-paths-20261107T061500Z-2d6f/final-report.json": "c7e8bcf3de7453b5e00fec2ae3b1b1e0dd0bf69ded6bd6874d9f86187def9940",
+    "rag-state-ci-20261107T061300Z-d4e/summary.json": "d780bfe3875e8e57c5dd38d88165dbdb9a35faecc7b9fb174edb1ec8f5fe676b",
+    "bundle-rag355-20261107T062303Z-8685a6bf/verified-bundle-summary.json": "2e9fece51d08161f1a93a1535e396a9e13471cf34d310a53c09d04ee1837617a",
+    "provider-rag355-finalchecks-20261107T062739Z-bf0bbc30/verified-four-node-summary.json": "9fdedc30ef4d3b544a28b862f7bc46b80f3287f82f37a55f9eb5567429ca5f68",
+    "diagnostic-rag355-20261107T063300Z-e82/summary.json": "ed828338c6bec4240dc5b74c91cd9e446e0aafab7752a5a72cb2bdc7fe948940",
+    "static-rag355-final-20261107T065000Z-82c/summary.json": "89c5ae93b0dd989e3f84bd60b3ce1b3f653308b8ca3fd1ba7723968d659e575c",
+    "static-rag355-final-20261107T065000Z-82c/launcher-finite-targets.json": "357c6d6b24e6b692dc7f70f081095eb4b37fc9527fd4681fe5e718387a381920"
+  },
+  "qualified_product_samples": 0
+}

@@ -21,6 +21,7 @@ from loguru import logger
 from .simplified.config import RAGConfig
 from .reranker import RerankingConfig
 from .parallel_processor import ProcessingConfig
+from .state_paths import _resolve_rag_profiles_dir
 from ..Backup_Recovery.storage_admission import acquire_storage
 from ..Utils.atomic_file_ops import atomic_write_text
 from ..Backup_Recovery.bootstrap import RecoveryRequired
@@ -43,11 +44,6 @@ def _slugify(name: str) -> str:
     return slug or "profile"
 
 
-#: Name of this app's RAG-profile store directory, directly under
-#: ``get_user_data_dir()``.
-_RAG_PROFILES_DIRNAME = "rag_profiles"
-
-
 def default_rag_profiles_dir() -> Path:
     """Return this app's default RAG-profile store directory.
 
@@ -61,7 +57,7 @@ def default_rag_profiles_dir() -> Path:
     Returns:
         ``get_user_data_dir() / "rag_profiles"``.
     """
-    return get_user_data_dir() / _RAG_PROFILES_DIRNAME
+    return _resolve_rag_profiles_dir(get_user_data_dir)
 
 
 # Filenames under profiles_dir that are never treated as user-profile files.
