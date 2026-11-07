@@ -886,6 +886,10 @@ _BUDGETS: dict[str, int] = {
     # own +232; same owner decision: expand limits, don't contort code).
     # 2026-11-06, rebased onto dev 2684e5453f: 25870 -> 26102 (polish-1b's
     # own +232; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, PR #3423 Qodo fixes (same owner decision): 26102 -> 26150
+    # (measured): +12 the purge's and note-id lookups' error records name
+    # the note or count the ids (Qodo 1), +36 a purge cancels the note's
+    # pending Sync v2 link intents (Qodo 2).
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
