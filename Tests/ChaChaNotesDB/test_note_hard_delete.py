@@ -464,3 +464,80 @@ def test_note_ids_present_names_live_and_soft_deleted_rows_but_not_a_purged_one(
     assert db.note_ids_present(asked) == {seed.keeper, trash}
     assert db.live_note_ids(asked) == {seed.keeper}
     assert db.note_ids_present([]) == set()
+
+
+# -- PR #3423 Qodo 1: a failed purge or lookup says which, never what --------
+
+
+def _error_lines(records: list[dict], fragment: str) -> list[str]:
+    return [str(record["message"]) for record in records if fragment in record["message"]]
+
+
+def test_a_failed_purge_logs_the_note_id_and_none_of_its_text(tmp_path) -> None:
+    """The purge's error record names the note by id, and holds no title,
+    body or keyword word of it.
+
+    A real failure inside the purge's one transaction: a trigger that aborts
+    the tombstone's delete. Base (``bd01c0e46b``): no record at all for a
+    raw ``sqlite3`` error, and only the error type for a
+    ``CharactersRAGDBError``.
+    """
+    from loguru import logger
+
+    seed = _Purgeable(tmp_path)
+    records: list[dict] = []
+    sink = logger.add(lambda message: records.append(message.record), level="ERROR")
+    connection = seed.db.get_connection()
+    connection.execute(
+        "CREATE TEMP TRIGGER purge_aborts BEFORE DELETE ON main.notes "
+        "BEGIN SELECT RAISE(ABORT, 'injected purge failure'); END"
+    )
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="injected purge failure"):
+            seed.db.hard_delete_note(seed.note_id, expected_version=seed.version)
+    finally:
+        connection.execute("DROP TRIGGER IF EXISTS temp.purge_aborts")
+        logger.remove(sink)
+
+    lines = _error_lines(records, "deleting a note forever")
+    assert len(lines) == 1, records
+    assert f"note_id={seed.note_id}" in lines[0], lines
+    assert "IntegrityError" in lines[0], lines
+    for word in ("Purge", _TITLE_TOKEN, _CONTENT_TOKEN, _KEYWORD_TOKEN, "alpha"):
+        assert word not in lines[0], lines
+
+
+def test_a_failed_note_id_lookup_logs_how_many_ids_it_checked_not_which(
+    tmp_path,
+) -> None:
+    """``live_note_ids`` and ``note_ids_present`` log a count, never the ids.
+
+    A real failure: a temporary table named ``notes`` shadows the store's own
+    on this connection, so each lookup's query fails ("no such column").
+    """
+    from loguru import logger
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+
+    seed = _Purgeable(tmp_path, backlinked=False)
+    asked = [seed.note_id, seed.keeper]
+    records: list[dict] = []
+    sink = logger.add(lambda message: records.append(message.record), level="ERROR")
+    connection = seed.db.get_connection()
+    connection.execute("CREATE TEMP TABLE notes(shadow TEXT)")
+    try:
+        for lookup in (seed.db.live_note_ids, seed.db.note_ids_present):
+            with pytest.raises(CharactersRAGDBError):
+                lookup(asked)
+    finally:
+        connection.execute("DROP TABLE IF EXISTS temp.notes")
+        logger.remove(sink)
+
+    lines = [
+        *_error_lines(records, "checking live note ids"),
+        *_error_lines(records, "checking note ids"),
+    ]
+    assert len(lines) == 2, records
+    for line in lines:
+        assert "checked=2" in line, lines
+        assert seed.note_id not in line and seed.keeper not in line, lines
