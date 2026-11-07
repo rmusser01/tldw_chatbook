@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerConnectorsClient(Protocol):
+    """Client methods ServerConnectorsService calls (TASK-36953.1)."""
+
+    async def authorize_connector_provider(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def browse_connector_sources(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def complete_connector_oauth_callback(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def create_connector_source(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_connector_account(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_connector_job_status(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_connector_source_sync_status(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def import_connector_source(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_connector_accounts(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_connector_providers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_connector_sources(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def trigger_connector_source_sync(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_connector_source(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerConnectorsService:
@@ -16,7 +35,7 @@ class ServerConnectorsService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerConnectorsClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -51,7 +70,7 @@ class ServerConnectorsService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerConnectorsClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

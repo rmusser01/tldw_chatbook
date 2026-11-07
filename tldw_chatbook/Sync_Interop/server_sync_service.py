@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from functools import partial, wraps
 from pathlib import Path
 from threading import get_ident
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Protocol
 
 from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
     ProducerLifetime,
@@ -40,8 +40,9 @@ def _bootstrap_attention_safe_blockers(blockers: tuple[str, ...]) -> bool:
         for blocker in blockers
     )
 
+
 if TYPE_CHECKING:
-    from ..tldw_api import ClientChangesPayload, SyncV2Envelope, TLDWAPIClient
+    from ..tldw_api import ClientChangesPayload, SyncV2Envelope
 
 
 _SYNC_EXECUTION = ContextVar("sync_execution", default=None)
@@ -107,6 +108,35 @@ def _sync_call(method=None, *, delegate=False, local=False):
     return call
 
 
+class ServerSyncClient(Protocol):
+    """Client methods ServerSyncService calls (TASK-36953.1)."""
+
+    async def bootstrap_sync_v2_personal_context(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def bootstrap_sync_v2_profile(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def complete_sync_v2_personal_context_link(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def enroll_sync_v2_dataset(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_sync_changes(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_sync_v2_capabilities(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_sync_v2_profile(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_sync_v2_restore_manifest(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_sync_v2_conflicts(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_sync_v2_key_recovery_bundles(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def pull_sync_v2_envelopes(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def push_sync_v2_envelopes(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def register_sync_v2_device(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def resolve_sync_v2_conflict(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def send_sync_changes(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def store_sync_v2_key_recovery_bundle(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+
+
 class ServerSyncService:
     """Policy-gated access to the server sync transport endpoints."""
 
@@ -124,7 +154,7 @@ class ServerSyncService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerSyncClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -177,7 +207,7 @@ class ServerSyncService:
             state_repository=state_repository,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerSyncClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

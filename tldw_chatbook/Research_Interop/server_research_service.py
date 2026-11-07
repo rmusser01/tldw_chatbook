@@ -2,14 +2,29 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
+from typing import Any, AsyncGenerator, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
 from .research_normalizers import ResearchRecord, ResearchRecordList
+
+
+class ServerResearchClient(Protocol):
+    """Client methods ServerResearchService calls (TASK-36953.1)."""
+
+    async def cancel_research_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_research_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_research_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_research_artifact(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_research_bundle(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_research_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_research_runs(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def patch_and_approve_research_checkpoint(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def pause_research_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def resume_research_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    def stream_research_run_events(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerResearchService:
@@ -19,7 +34,7 @@ class ServerResearchService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerResearchClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -54,7 +69,7 @@ class ServerResearchService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerResearchClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:
