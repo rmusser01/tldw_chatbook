@@ -175,7 +175,9 @@ _BUDGETS: dict[str, int] = {
     # retires the ChaChaNotes and media handles; the retention pass retires its.
     # Review fix, same waiver: 2189 -> 2200 (+11) -- the quit close never
     # raises a barrier, skips a busy store, bounds its checkpoint wait.
-    "tldw_chatbook/app_lifecycle.py": 2200,
+    # 2026-11-06, TASK-39047 (owner size waiver): 2200 -> 2203 (+3) -- the
+    # quit's idle close covers media, Dreams and Guardian too.
+    "tldw_chatbook/app_lifecycle.py": 2203,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -835,7 +837,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9436,
+    # 2026-11-06, TASK-39047 (owner size waiver): 9436 -> 9453 (+17) -- every
+    # thread's handle joins the file's registry, closed idle at quit.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9453,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and

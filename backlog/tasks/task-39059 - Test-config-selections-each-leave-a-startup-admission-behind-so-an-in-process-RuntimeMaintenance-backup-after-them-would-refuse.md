@@ -1,8 +1,10 @@
 ---
 id: TASK-39059
 title: "Test config selections each leave a startup admission behind, so an in-process RuntimeMaintenance backup after them would refuse with runtime_startup_scope_unqualified"
-status: To Do
+status: Done
+assignee: ['@claude']
 created_date: 2026-11-06 10:32
+updated_date: 2026-11-06 18:27
 labels:
 - follow-up
 - tests
@@ -56,8 +58,44 @@ Found in round 10 of the 2026-10-23 burn-down, by the storage review of TASK-389
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A config selection made through `select_config_source` or `install_config_source` releases, at teardown, the startup admission it added, and leaves in place any admission it did not add (the process's own, or a wider fixture's); a test is red before the change (after a selection in a fresh-HOME test, `_startups` has grown by one at teardown)
-- [ ] #2 After `Tests/Chat/test_local_server_discovery.py` and `Tests/Wizards/test_first_run_protect_state.py` run in one process (`-p no:xdist`), exactly one startup admission remains (110 and 15 before)
-- [ ] #3 The test files that pop their own startup today still pass, and the helper's own tests (`Tests/Backup_Recovery/test_config_test_support.py`) cover the release
-- [ ] #4 `--storage-lease-guard` reports a startup admission that a test adds and leaves behind as its own finding, shown by a negative control (a selection without the release); or the notes record why that check is not added
+- [x] #1 A config selection made through `select_config_source` or `install_config_source` releases, at teardown, the startup admission it added, and leaves in place any admission it did not add (the process's own, or a wider fixture's); a test is red before the change (after a selection in a fresh-HOME test, `_startups` has grown by one at teardown)
+- [x] #2 After `Tests/Chat/test_local_server_discovery.py` and `Tests/Wizards/test_first_run_protect_state.py` run in one process (`-p no:xdist`), exactly one startup admission remains (110 and 15 before)
+- [x] #3 The test files that pop their own startup today still pass, and the helper's own tests (`Tests/Backup_Recovery/test_config_test_support.py`) cover the release
+- [x] #4 `--storage-lease-guard` reports a startup admission that a test adds and leaves behind as its own finding, shown by a negative control (a selection without the release); or the notes record why that check is not added
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Red tests in `Tests/Backup_Recovery/test_config_test_support.py`: a selection in a fresh-HOME test releases the one startup admission it added when its monkeypatch is undone; a nested selection and a bootstrap-profile selection add none and release none.
+2. `install_config_source` records each startup admission its config import added and registers its release on the caller's monkeypatch, so it runs with the selection's own undo (before the lease guard's teardown check). The release closes the lease only while it is still the one in `_startups` under that key, so a test that popped its own (`bound_config`) is left alone.
+3. `--storage-lease-guard` reports a startup admission a test adds and leaves behind as its own finding; negative control: the same selection without the release.
+4. Count `_startups` after the discovery and first-run protect-state files in one process (`-p no:xdist`), and run the files that pop their own startup.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Selection release (AC#1).** `install_config_source` (`Tests/Backup_Recovery/config_test_support.py`), which `select_config_source` calls, snapshots `storage_admission._startups` around the config import. It enters each lease the import added in `_AddedStartups` through the caller's `monkeypatch.setitem`. Undoing a new key calls `del`, and the dict's `__delitem__` then pops and closes that lease, but only while `_startups` still holds it under its key. An admission the selection did not add is never touched: the process's own, a wider fixture's, or one that a fixture like `bound_config` already popped. The release runs with the selection's own undo, even when the import raised. That undo is what releases a selection inside a `MonkeyPatch.context()` in the test body. For a selection on the test's `monkeypatch` fixture, the sandbox release below runs first: a probe logged that the selection's undo found its admission already gone for `test_selected_config_uses_real_custody_and_refuses_later_retarget`, and still held for the in-body context of the new release test.
+
+**Second source of leftover admissions (found while checking AC#2).** After the selection release, `test_first_run_protect_state.py` alone still left 3 admissions, not 1. A probe that wrapped `storage_admission._admit_startup` showed where the other two came from. Two production modules call `admit_startup()` at import, `tldw_chatbook/TTS/__init__.py` and `tldw_chatbook/MCP/server.py`. So the first fresh-HOME test to import each of them admits that test's own profile, which nothing uses again. Those two tests were `test_card_path_names_the_settings_encryption_card` and `test_summary_key_encryption_row_names_the_card[encrypted]`. `isolate_test_environment` (`Tests/conftest.py`) now releases, at teardown, every startup admission whose root is under the test's own fresh profile dir, `tmp_path/test_data` (`_release_profile_startups`). Bootstrap-profile tests are skipped. This release comes before the test's `monkeypatch` undo, so it covers the fresh-profile case first, a selection there included.
+
+**Counts in one process (AC#2).** `-p no:xdist`, through run.sh, with a probe plugin counting `_startups` at session end:
+
+| Files | Base `2684e5453f` | This branch |
+|---|---|---|
+| `Tests/Chat/test_local_server_discovery.py` (282 passed) | 110 | 1 |
+| `Tests/Wizards/test_first_run_protect_state.py` (73 passed) | 15 | 1 |
+| both (355 passed) | 124 | 1 |
+
+**Guard (AC#4).** `_StorageLeaseGuard` keeps leaving startup admissions out of its live-lease count, as the drain does. It now also reports a startup admission that the test added and still holds, as its own finding: "left N new startup admission(s) held, admission root(s): [...]". Both releases run before the guard's check, so in practice the finding catches an admission outside the test's own `tmp_path/test_data`, for example a patched bootstrap root (`local_root`'s `tmp_path/bootstrap`) that the test leaves held. Its findings are now computed by `_StorageLeaseGuard._findings`.
+- **Pinned automatically:** `Tests/CI/test_ci_queue_pressure_contract.py::test_storage_lease_guard_reports_a_startup_admission_left_held`. It enters a stand-in admission under a root outside any profile, reads the guard's findings, and checks they are empty once it is popped. That file is in a PR lane. Red with the startup finding removed: `([], []) == (["left 1 new startup admission(s) held, ..."], [])`. A pytester run would have needed a copy of `Tests/conftest.py`'s sandbox in a temp tree, so the test calls the guard's own method instead.
+- **File-level negative control, re-recorded (review r11s-rev1).** I ran `-p no:xdist Tests/Backup_Recovery/test_config_test_support.py --storage-lease-guard`. With only the selection release removed, the guard stays silent, because the sandbox release still covers the fresh profile. Only the in-test assertion of `test_selection_releases_only_the_startup_admission_it_added` fails. With both releases removed, the guard reported "left 1 new startup admission(s) held" for `test_selected_config_uses_real_custody_and_refuses_later_retarget` and for that release test. The first version of these notes recorded the control from before the sandbox release existed, and that control no longer reproduced.
+- The Dreams boundary step (`--storage-lease-guard`) passed with the new finding: 906 passed, see TASK-39049.
+
+**Tests (AC#3)** in `Tests/Backup_Recovery/test_config_test_support.py`.
+- `test_selection_releases_only_the_startup_admission_it_added` runs in a fresh HOME. It makes an outer selection and a nested selection on the same root. It asserts that exactly one admission was added, that the inner undo kept the outer's, and that all are released at the end. Red before the change: `_startups` ended with one more key, the test HOME's `recovery-bootstrap` root.
+- `test_selection_in_the_bootstrap_profile_keeps_the_process_admission` is bootstrap-profile: the selection adds nothing and the process's admission stays. It is green before the change. It was red under a temporary edit that released every admission present, not only the added ones: `{} != {(pid, '.../recovery-bootstrap'): <StorageLease>}`.
+
+**Files that pop their own startup, and every helper user.** I ran 99 files that use `_startups`, `select_config_source` or `install_config_source`, plus the two AC#2 files, at `-n 4` (load 37-58). This branch: 119 failed, 17 errors, 3489 passed. Base: 121 failed, 17 errors, 3474 passed. Three nodes failed only here. Rerun on both trees, two of them (`test_actual_app_refuses_new_content_during_pause`, `test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary`) behaved the same on both. The third, `test_raw_source_coordinator_io.py::test_remaining_source_entry_proofs_do_not_hold_coordinator`, failed 4 of 4 here at first, then 0 of 6, while base failed 4 of 6 ("the actual selected-source reader was never reached"). It is timing-sensitive on both trees. Of the 32 files that pop or read a startup by key, 22 pass whole here. These include `test_guarded_raw_evidence_reuse.py` (`bound_config`), `test_default_profile_selection.py`, `test_mcp_source_lifetimes.py`, `test_activation_model_artifacts.py`, and `test_activation_skills.py`, which fails one node at base. Nine fail the same number of nodes on both trees: `test_participant_lifetimes.py` 8, `test_raw_related_source_preparation.py` 7, `test_visual_identity_lifetimes.py` 5, `test_persona_visual_lifetimes.py` 5, `test_mcp_recovery_review.py` 4, `test_config_participant_lifetimes.py` 3, `test_rag_profile_admission.py` 3, `test_projection_generation.py` 2 and `test_projection_enhanced_recovery.py` 1. `test_activation_mcp.py` fails 1 node here and 2 at base.
+
+**Files.** `Tests/Backup_Recovery/config_test_support.py`, `Tests/Backup_Recovery/test_config_test_support.py`, `Tests/conftest.py`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+<!-- SECTION:NOTES:END -->

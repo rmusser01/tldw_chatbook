@@ -25,8 +25,9 @@ from loguru import logger
 
 from tldw_chatbook.Backup_Recovery.participants import core_access
 
+from ..Utils.private_paths import lexical_path
 from ..Utils.timestamps import utc_now_iso
-from .base_db import BaseDB
+from .base_db import BaseDB, sqlite_connection_quiescence_registry
 from .store_kernel import SQLiteStoreKernel
 
 #: Action ladder rungs, lowest to highest (spec §Rules engine: thresholds
@@ -205,6 +206,10 @@ class GuardianDB(SQLiteStoreKernel, BaseDB):
                 "across its per-thread connections"
             )
         self._init_store_kernel()
+        # Every thread's handle, for the quit's idle close (TASK-39047).
+        self._connection_quiescence = sqlite_connection_quiescence_registry(
+            str(lexical_path(database_path))
+        )
         try:
             super().__init__(database_path, client_id if client_id is not None else "default")
         except BaseException:
@@ -216,8 +221,13 @@ class GuardianDB(SQLiteStoreKernel, BaseDB):
     # ------------------------------------------------------------------
 
     def _open_connection(self) -> sqlite3.Connection:
-        """Open through BaseDB's db.base path (ADR-353 provenance section)."""
-        return BaseDB._get_connection(self)
+        """Open through BaseDB's db.base path (ADR-353 provenance section).
+
+        ``check_same_thread=False`` as in DreamsDB: each thread still uses
+        only the connection it holds; the quit's idle close is the one call
+        that crosses threads (TASK-39047).
+        """
+        return BaseDB._get_connection(self, check_same_thread=False)
 
     def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
         """Guardian per-connection policy (kernel wraps registration/gating).

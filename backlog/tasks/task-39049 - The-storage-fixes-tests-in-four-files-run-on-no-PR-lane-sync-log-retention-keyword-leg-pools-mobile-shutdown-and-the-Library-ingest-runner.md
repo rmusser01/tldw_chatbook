@@ -1,8 +1,10 @@
 ---
 id: TASK-39049
 title: "The storage fixes' tests in four files run on no PR lane: sync-log retention, keyword-leg pools, mobile shutdown and the Library ingest runner"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-06 10:09
+updated_date: 2026-11-06 23:13
 labels:
 - follow-up
 - ci
@@ -60,9 +62,65 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `Tests/DB/test_sync_log_retention.py` runs whole on a PR lane, appended at the end of the dreams-boundary step (never ahead of the storage-pausing tests pinned first); the lane pins in `Tests/CI` (`DREAMS_BOUNDARY_TARGETS`, the step argv pin in `test_response_rules_critical_gate.py`) are updated, and three timings of the step's exact command are recorded
-- [ ] #2 `Tests/Web_Server/test_mobile_service.py` runs on a PR lane once TASK-38992 makes it green, with three timings of that lane's command recorded
+- [x] #1 `Tests/DB/test_sync_log_retention.py` runs whole on a PR lane, appended at the end of the dreams-boundary step (never ahead of the storage-pausing tests pinned first); the lane pins in `Tests/CI` (`DREAMS_BOUNDARY_TARGETS`, the step argv pin in `test_response_rules_critical_gate.py`) are updated, and three timings of the step's exact command are recorded
+- [x] #2 `Tests/Web_Server/test_mobile_service.py` runs on a PR lane once TASK-38992 makes it green, with three timings of that lane's command recorded
 - [ ] #3 `Tests/RAG_Search/test_keyword_leg_db_resolution.py` runs on a PR lane; its evidence is a green CI run of that lane (locally every node hits TASK-38111), linked in the notes
 - [ ] #4 `Tests/Library/test_library_ingest_runner.py` either leaves no live lease (0 lease-guard errors under `--storage-lease-guard`, with the before count of 130 recorded) and joins the guarded step, or the owner places it on a lane without the guard; the decision is recorded
 - [ ] #5 Recent job times of every lane touched are quoted before and after; the fast PR contract is not used
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Read the recent job and step times of the dreams-boundary lane (read-only `gh`).
+2. Append `Tests/DB/test_sync_log_retention.py` to "Run Dreams and Guardian boundary contracts", after the last target and before `--storage-lease-guard`. Update `DREAMS_BOUNDARY_TARGETS` and the step argv pin in `Tests/CI/test_response_rules_critical_gate.py`.
+3. Run the step's exact command 3 times (`jobstep.sh`) and record the times, with the base step for comparison.
+4. Check the other three files against their criteria: mobile waits for TASK-38992; the keyword-leg and ingest-runner files must pass in the step, under the guard.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**AC#1 (met).** `Tests/DB/test_sync_log_retention.py` is now the last target of "Run Dreams and Guardian boundary contracts" (`.github/workflows/derived-artifacts.yml`), after `Tests/UI/test_library_modal_dismissal.py` and before `--storage-lease-guard`. The storage-pausing test stays first. The file runs on the bootstrap profile (`Tests/DB` is in `keep_bootstrap_profile`). TASK-32873's note in `derived-artifacts.yml` keeps bootstrap-profile suites out of sandboxed invocations, because their enrollment can break the sandboxed suites that follow them. So the file has to stay after every sandboxed target in this step; today nothing follows it. A later append after it would need its own check. `DREAMS_BOUNDARY_TARGETS` (`Tests/CI/test_ci_queue_pressure_contract.py`) and the step argv pin (`Tests/CI/test_response_rules_critical_gate.py`) gained the same entry. The file had 36 tests when timed below (TASK-38955, TASK-39047, TASK-39048) and passed serially under the guard in 18.6 s. A 37th, the kernel no-op from review r11s-rev1, came later. Under load 45-58 the same file took 44-138 s, on base too: one ChaChaNotes or media fixture setup took about 50 s, and one setup hit `private_sqlite_helper_timeout`.
+
+**Step timings (AC#1, AC#5 local).** Each run is the step's exact command, `jobstep.sh fu-r11-storage "Run Dreams and Guardian boundary contracts"` (serial, `--storage-lease-guard --timeout=180`), and every run was green. Other agents kept the 18-CPU machine at load 38-56.
+
+| Run | Tree | Result | pytest time | Load (1 min) |
+|---|---|---|---|---|
+| 1 | this branch | 906 passed | 512.2 s | 43-56 |
+| 2 | this branch, while the base run below ran | 906 passed | 724.6 s | 44-53 |
+| 3 | this branch | 906 passed | 547.4 s | 38-50 |
+| base | `fu-base-r11` (dev 2684e5453f), at the same time as run 2 | 870 passed | 757.6 s | 44-53 |
+
+The added file is about 18 s of the step. Two runs here, and the base run, went past the brief's 12-minute mark only under this load. The base step without the file took longer (12:37) than run 2 with it (12:04).
+
+**Lane times before (AC#5), from CI, read-only (review r11s-rev2's numbers).** On dev 2684e5453f (28 targets), across five runs (42267936447, 42263533424, 42253456601, 42252461355, 42247976071), the step took 409-485 s and the dreams-boundary job 11:02-13:07. `Tests/UI/test_library_modal_dismissal.py` alone took 155-181 s of that. The first version of these notes quoted job 5m54s-8m54s and step 2m14s-3m57s. Those runs predate the Library modal file and are stale. After times need a CI run of this branch, so AC#5 stays open. `pr-fast-lane` is not used.
+
+**AC#2 (met, after review r11s-rev1).** TASK-38992 fixed the stand-in, so `Tests/Web_Server/test_mobile_service.py` is now laned too. It runs just before `Tests/DB/test_sync_log_retention.py`; the pins name both. The file is bootstrap-profile (module `pytestmark = pytest.mark.bootstrap_profile`) and guard-clean. It sits after every sandboxed target by TASK-32873's rule: the last three targets, the Library modal inventory, this file and the sync-log file, are all bootstrap-profile. Under the guard, serially at load 74-85 it gave 33 passed, 1 relay timeout and no lease finding. Its relay tests wait 5 s for events, so above load about 50 one or two of them time out, on base too. All three step runs below were green.
+
+| Run | Result | pytest time | Load (1 min) |
+|---|---|---|---|
+| 1 | 941 passed, no guard finding | 1691.6 s | 67-108 |
+| 2 | 941 passed, no guard finding | 1399.8 s | 46-66 |
+| 3 | 941 passed, no guard finding | 1483.7 s | 59-82 |
+
+Every run is far past the brief's 12-minute mark, because the machine ran at load 46-108 on 18 CPUs; runs 2 and 3 came right after a reboot. These runs cannot tell what the additions cost. The earlier numbers can:
+- the step without these files took 512-547 s at load 38-56;
+- the mobile file took 76 s serially at load 17-30 on #3435 (312 s at load 74-85 here);
+- the sync-log file takes about 18 s.
+
+So at moderate load the step should be about 10-11 minutes: close to the 12-minute mark, but under it. Projected for CI (review r11s-rev2): mobile adds about 61-135 s and sync-log about 19-34 s. With the Library route cycle another stream adds (about 50 s), the step comes to about 540-705 s and the job to about 13.2-16.8 min of its 20. Mobile is the file to move or split if margin is needed. Coordinator decision (2026-11-06): mobile stays on the step for now (one commit, bb138440ad).
+
+**AC#3 (NEEDS_CONTEXT).** All 11 nodes of `Tests/RAG_Search/test_keyword_leg_db_resolution.py` fail with `RecoveryRequired: raw_source_selection_changed`, at base and here. This is not a local-only trap, so the CI lane would be red as well:
+- `Tests/conftest.py:181` imports `tldw_chatbook.Chunking` unconditionally at collection, and `Chunk_Lib.py:301` reads config there.
+- So the config source is registered with the bootstrap profile's path in every process, CI included. A probe of `raw_participants._register_raw_participant` showed that first registration.
+- Each node's `RAGConfig()` then reads config under its own per-test path, and `_register_raw_participant` refuses.
+- Making the file pass means a bootstrap-profile enrollment or a config selection in its harness, which is TASK-38111's fix. BRIEF-RULES forbids other tasks from making it. So the file is not laned, and there is no green CI run to link.
+
+**AC#4 (NEEDS_CONTEXT).** The lease count is unchanged here: serially under `--storage-lease-guard`, the file gave 86 failed, 70 passed, 1 skipped and 130 lease-guard errors. 128 of the errors are `library_ingest.db` on MainThread: `_make_db` builds MediaDatabases that the tests never close. The other four are one each of `workspace.sqlite` on asyncio_0 and on asyncio_1, `retry-workspaces-server.sqlite` and `retry-workspaces-local.sqlite`. 45 of the 126 leaking nodes pass. The leases look fixable: a file-local fixture could close every store the tests open (MediaDatabase now has `close_idle_connections`, TASK-39047). The file still could not join the guarded step:
+- 85 of its 86 failures are the same TASK-38111 refusal (`_resolve_ingest_backend` -> `get_cli_setting`), and CI fails them the same way, as for AC#3.
+- That includes two of the three nodes `task-603-platform-evidence.yml` runs, and that workflow's recent runs were all skipped.
+- The 86th failure is `test_real_app_wires_research_association_and_restores_before_startup_resume` (`assert ['research_so...tion_startup'] == ['research_so...ging_startup']`), the "staging unavailable" path in TASK-38954's notes.
+
+I did not fix the leases: that alone does not let the file join, and the leases of the 85 refused nodes cannot be checked until they run. There is no owner decision for a lane without the guard. One of these is needed: TASK-38111 lands first; this task is allowed to enroll the file (bootstrap profile, or a config selection in `_IngestRunnerHarness`); or the owner places the file on a lane without the guard.
+
+**Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`. `Tests/CI` at `-n 4`: 1216 passed, 1 skipped (after the review round).
+<!-- SECTION:NOTES:END -->

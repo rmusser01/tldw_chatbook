@@ -393,6 +393,23 @@ DREAMS_BOUNDARY_TARGETS = (
     # keeps an entry near 30 s. This job ran
     # 6.2-7.1 min of its 20 in three PR runs to 2026-11-05.
     "Tests/UI/test_library_modal_dismissal.py",
+    # TASK-39049: the mobile service suite (TASK-38972's mobile shutdown),
+    # green once TASK-38992 fixed its gateway stand-in. Bootstrap profile
+    # (module pytestmark) and guard-clean; 76 s serial at load 17-30, the
+    # step's largest addition, so move or split it first if margin is needed.
+    # Its relay tests wait 5 s for events and time out above load ~50, on
+    # base too. After every sandboxed target, per TASK-32873's note: the
+    # last three targets (Library modal inventory, this, sync-log) are all
+    # bootstrap-profile.
+    "Tests/Web_Server/test_mobile_service.py",
+    # TASK-39049: the quit-time store retirement (TASK-38955, TASK-39047,
+    # TASK-39048) and the retention pass's worker handles, in no PR lane.
+    # Bootstrap profile (Tests/DB, keep_bootstrap_profile), guard-clean,
+    # ~10-20 s serial. Last, after every sandboxed target: TASK-32873's note
+    # (derived-artifacts.yml) keeps bootstrap-profile suites out of sandboxed
+    # invocations, because their enrollment can break the sandboxed suites
+    # that follow; here none follows. It pauses no storage, so need not lead.
+    "Tests/DB/test_sync_log_retention.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
@@ -1925,6 +1942,38 @@ def _assert_dreams_required_steps(workflow: dict) -> None:
         for target in targets:
             assert (PROJECT_ROOT / target.split("::", 1)[0]).is_file()
     assert not set(DREAMS_BOUNDARY_TARGETS) & set(DREAMS_ADMISSION_TARGETS)
+
+
+def test_storage_lease_guard_reports_a_startup_admission_left_held() -> None:
+    """TASK-39059: the dreams step's ``--storage-lease-guard`` reports a
+    startup admission a test added and still holds, as its own finding, and
+    nothing once it is released. A held one makes a later in-process backup
+    refuse to retire its startup (``runtime_startup_scope_unqualified``)."""
+    import os
+    import sys
+
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    guard = sys.modules["Tests.conftest"]._StorageLeaseGuard
+    before, startups = guard._live(), guard._startups()
+    key = (os.getpid(), "/no-such-profile/recovery-bootstrap")
+    with storage._lock:
+        storage._startups[key] = object()  # never closed: popped below
+    try:
+        held = guard._findings(before, startups)
+    finally:
+        with storage._lock:
+            storage._startups.pop(key)
+
+    assert (held, guard._findings(before, startups)) == (
+        [
+            (
+                "left 1 new startup admission(s) held, admission root(s): "
+                "['/no-such-profile/recovery-bootstrap']"
+            )
+        ],
+        [],
+    )
 
 
 def test_dreams_critical_boundaries_are_executable_required_lane_members() -> None:

@@ -14,8 +14,9 @@ from tldw_chatbook.Backup_Recovery.participants import (
     core_closing,
 )
 
+from ..Utils.private_paths import lexical_path
 from ..Utils.timestamps import utc_now_iso
-from .base_db import BaseDB
+from .base_db import BaseDB, sqlite_connection_quiescence_registry
 from .store_kernel import SQLiteStoreKernel
 
 #: Upper bound for any list read the UI pages through.
@@ -256,6 +257,10 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
         self._init_store_kernel()
+        # Every thread's handle, for the quit's idle close (TASK-39047).
+        self._connection_quiescence = sqlite_connection_quiescence_registry(
+            str(lexical_path(database_path))
+        )
         # Every held connection this object opened and has not closed,
         # whatever thread holds it -- what ``close_all`` closes. Strong
         # references on purpose: a connection has to be closed explicitly
@@ -405,6 +410,7 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
         with self._opened_lock:
             if conn in self._opened:
                 self._opened.remove(conn)
+        self._unregister_connection(conn)
         return True
 
     def close_all(self) -> None:

@@ -65,6 +65,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
     core_transaction,
     register_core_connection,
 )
+from .base_db import registry_acquisition, sqlite_connection_quiescence_registry
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.fts5_match_forms import (
@@ -1108,6 +1109,10 @@ class MediaDatabase:
 
         # Initialize thread-local storage for connections
         self._local = threading.local()
+        # Every thread's handle, for the quit's idle close (TASK-39047).
+        self._connection_quiescence = sqlite_connection_quiescence_registry(
+            None if self.is_memory_db else self.db_path_str
+        )
 
         # Flag to track successful initialization before logging completion
         initialization_successful = False
@@ -1166,6 +1171,7 @@ class MediaDatabase:
 
     # --- Connection Management ---
     @core_getter
+    @registry_acquisition
     def _get_thread_connection(self) -> sqlite3.Connection:
         """Retrieve or create the current thread's SQLite connection.
 
@@ -1214,6 +1220,7 @@ class MediaDatabase:
                         sqlite3.Connection.in_transaction.__get__(conn)
                     except sqlite3.ProgrammingError:
                         conn.close()  # Native already closed; failures retain refs.
+                        self._connection_quiescence.unregister(conn)
                     else:
                         raise
                     is_closed = True
@@ -1255,6 +1262,7 @@ class MediaDatabase:
                     raise
                 self._local.conn = conn
                 unpublished = None
+                self._connection_quiescence.register(conn)
                 logging.debug("Media database connection opened.")
             except (sqlite3.Error, PrivatePathError) as error:
                 logging.error(
@@ -1304,11 +1312,20 @@ class MediaDatabase:
                     conn = self._local.conn
                     conn.close()
                     self._local.conn = None
+                    self._connection_quiescence.unregister(conn)
                     logging.debug(
                         f"Closed connection for thread {threading.current_thread().name}."
                     )
                 except sqlite3.Error as e:
                     logging.warning(f"Error closing connection: {e}")
+
+    def close_idle_connections(self) -> bool:
+        """Close every same-file handle unless one is in use; sets no barrier.
+
+        Returns:
+            Whether the handles were closed; see ``close_if_idle``.
+        """
+        return self._connection_quiescence.close_if_idle(self)
 
     # --- Query Execution (Unchanged, catches IntegrityError from validation triggers) ---
 

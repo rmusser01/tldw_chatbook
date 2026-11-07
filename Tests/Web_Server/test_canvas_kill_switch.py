@@ -8,6 +8,7 @@ from types import MethodType
 
 import pytest
 
+from Tests.served_canvas_gateway_double import served_gateway_double
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Web_Server import serve
 from tldw_chatbook.Canvas import config_policy as canvas_config_policy_module
@@ -53,13 +54,11 @@ async def test_live_disable_revokes_canvas_but_retains_active_terminal_bindings(
         async def aclose(self) -> None:
             order.append("broker")
 
-    class Gateway:
-        async def aclose(self) -> None:
-            order.append("gateway")
-
     owner = SimpleNamespace(
         _canvas_control_broker=Broker(),
-        _served_canvas_gateway=Gateway(),
+        _served_canvas_gateway=served_gateway_double(
+            aclose=lambda: order.append("gateway")
+        ),
         _served_canvas_launches={"browser": object()},
         _served_browser_children={"browser": "child"},
         _canvas_disabled_latched=False,
@@ -85,13 +84,11 @@ async def test_policy_watcher_revokes_sibling_controls_but_retains_terminal_bind
         async def aclose(self) -> None:
             order.append("all-child-controls")
 
-    class Gateway:
-        async def aclose(self) -> None:
-            order.append("all-browser-previews")
-
     owner = SimpleNamespace(
         _canvas_control_broker=Broker(),
-        _served_canvas_gateway=Gateway(),
+        _served_canvas_gateway=served_gateway_double(
+            aclose=lambda: order.append("all-browser-previews")
+        ),
         _served_canvas_launches={"browser-a": object(), "browser-b": object()},
         _served_browser_children={"browser-a": "child-a", "browser-b": "child-b"},
         _canvas_disabled_latched=False,

@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import tomllib
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -67,6 +68,28 @@ def media_db(tmp_path: Path) -> MediaDatabase:
         yield database
     finally:
         database.close_connection()
+
+
+@pytest.fixture()
+def dreams_db(tmp_path: Path):
+    from tldw_chatbook.DB.Dreams_DB import DreamsDB
+
+    database = DreamsDB(tmp_path / "dreams.sqlite", "retention_client")
+    try:
+        yield database
+    finally:
+        database.close_all()
+
+
+@pytest.fixture()
+def guardian_db(tmp_path: Path):
+    from tldw_chatbook.DB.Guardian_DB import GuardianDB
+
+    database = GuardianDB(tmp_path / "guardian.sqlite", "retention_client")
+    try:
+        yield database
+    finally:
+        database.close()
 
 
 def _media_log_event(db: MediaDatabase, entity_uuid: str, version: int = 1) -> None:
@@ -336,6 +359,46 @@ def test_app_pass_retires_the_handles_it_opens_on_its_worker_thread(
     assert (connections_before, connections_after, len(new_leases)) == (1, 1, 0)
 
 
+def _unmount_owner(
+    monkeypatch: pytest.MonkeyPatch, *, on_workers_settled=lambda: None, **stores
+):
+    """A ``LifecycleMixin`` stub around real stores, for a real ``on_unmount``."""
+    from unittest.mock import AsyncMock, Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+
+    owner = object.__new__(type("_Owner", (lifecycle_module.LifecycleMixin,), {}))
+    owner.__dict__.update(
+        **stores,
+        loguru_logger=Mock(),
+        ui_responsiveness_monitor=None,
+        _rich_log_handler=None,
+        db_status_manager=SimpleNamespace(stop_periodic_updates=Mock()),
+        _shutdown_actor_pack_recovery=AsyncMock(return_value=None),
+        _shutdown_workflow_session=AsyncMock(),
+        _settle_speech_initialization=AsyncMock(return_value=None),
+        _stop_served_canvas_control=AsyncMock(),
+        _shutdown_app_owned_lifecycles=AsyncMock(),
+        _cancel_and_settle_workers=AsyncMock(
+            side_effect=lambda *_: on_workers_settled()
+        ),
+        _close_owned_tts_resources=AsyncMock(),
+        _stop_ui_responsiveness_monitor=Mock(),
+        _shutdown_ingest_parse_pool=Mock(),
+        _stop_footer_status_timers=Mock(),
+    )
+    monkeypatch.setattr(lifecycle_module, "arm_exit_watchdog", Mock())
+    monkeypatch.setattr(lifecycle_module, "persist_event", Mock())
+    monkeypatch.setattr(lifecycle_module, "unregister_running_app", Mock())
+    monkeypatch.setattr(lifecycle_module.logging, "shutdown", Mock())
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle."
+        "stop_all_server_processes",
+        lambda app: [],
+    )
+    return owner
+
+
 async def test_app_unmount_retires_both_stores_on_every_thread(
     chacha_db: CharactersRAGDB,
     media_db: MediaDatabase,
@@ -344,9 +407,7 @@ async def test_app_unmount_retires_both_stores_on_every_thread(
     """TASK-38955: quit closed neither store, so their handles and storage
     leases outlived the app, on the UI thread and on worker threads."""
     from concurrent.futures import ThreadPoolExecutor
-    from unittest.mock import AsyncMock, Mock
 
-    from tldw_chatbook import app_lifecycle as lifecycle_module
     from tldw_chatbook.Backup_Recovery import storage_admission
     from tldw_chatbook.Utils.private_paths import lexical_path
 
@@ -369,37 +430,13 @@ async def test_app_unmount_retires_both_stores_on_every_thread(
 
     # ChaChaNotes handles still registered when the workers settled.
     open_when_workers_settled: list[int] = []
-    owner = object.__new__(type("_Owner", (lifecycle_module.LifecycleMixin,), {}))
-    owner.__dict__.update(
+    owner = _unmount_owner(
+        monkeypatch,
+        on_workers_settled=lambda: open_when_workers_settled.append(
+            chacha_db.registered_connection_count()
+        ),
         chachanotes_db=chacha_db,
         media_db=media_db,
-        loguru_logger=Mock(),
-        ui_responsiveness_monitor=None,
-        _rich_log_handler=None,
-        db_status_manager=SimpleNamespace(stop_periodic_updates=Mock()),
-        _shutdown_actor_pack_recovery=AsyncMock(return_value=None),
-        _shutdown_workflow_session=AsyncMock(),
-        _settle_speech_initialization=AsyncMock(return_value=None),
-        _stop_served_canvas_control=AsyncMock(),
-        _shutdown_app_owned_lifecycles=AsyncMock(),
-        _cancel_and_settle_workers=AsyncMock(
-            side_effect=lambda *_: open_when_workers_settled.append(
-                chacha_db.registered_connection_count()
-            )
-        ),
-        _close_owned_tts_resources=AsyncMock(),
-        _stop_ui_responsiveness_monitor=Mock(),
-        _shutdown_ingest_parse_pool=Mock(),
-        _stop_footer_status_timers=Mock(),
-    )
-    monkeypatch.setattr(lifecycle_module, "arm_exit_watchdog", Mock())
-    monkeypatch.setattr(lifecycle_module, "persist_event", Mock())
-    monkeypatch.setattr(lifecycle_module, "unregister_running_app", Mock())
-    monkeypatch.setattr(lifecycle_module.logging, "shutdown", Mock())
-    monkeypatch.setattr(
-        "tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle."
-        "stop_all_server_processes",
-        lambda app: [],
     )
     try:
         await owner.on_unmount()
@@ -410,6 +447,58 @@ async def test_app_unmount_retires_both_stores_on_every_thread(
     # (registered ChaChaNotes handles, live leases on either store); the
     # stores close after the workers settle, not before.
     assert (left, open_when_workers_settled) == ((0, 0), [2])
+
+
+def _lease_threads(db) -> list[str]:
+    """Threads holding a live storage lease on ``db``'s file."""
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Utils.private_paths import lexical_path
+
+    path = lexical_path(db.db_path)
+    with storage_admission._lock:
+        return sorted(
+            lease.resource_thread.name
+            for lease in storage_admission._live_leases
+            if lease.resource_path == path
+        )
+
+
+@pytest.mark.parametrize("store", ["media", "dreams", "guardian"])
+def test_app_unmount_retires_a_worker_thread_handle_of_each_store(
+    store: str, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-39047: a handle media, Dreams or Guardian opened on a pool thread
+    (the scope picker's tag lister, an ``asyncio.to_thread`` read) outlived
+    the quit with its storage lease, and kept a backup pause from draining."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Chat.scope_picker_listers import build_keyword_tag_lister
+
+    db = request.getfixturevalue(f"{store}_db")
+    opens_on_a_pool_thread = {
+        "media": lambda: build_keyword_tag_lister(SimpleNamespace(media_db=db))(""),
+        "dreams": lambda: asyncio.to_thread(db.list_profile),
+        "guardian": lambda: asyncio.to_thread(db.get_meta, "quit"),
+    }[store]
+    kept = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kept")
+
+    async def quit_after_a_worker_read() -> tuple[list[str], list[str]]:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(kept)
+        await opens_on_a_pool_thread()
+        opened = _lease_threads(db)
+        # The worker stays alive across the quit; the quit hops elsewhere.
+        loop.set_default_executor(ThreadPoolExecutor(1, thread_name_prefix="quit"))
+        await _unmount_owner(monkeypatch, **{f"{store}_db": db}).on_unmount()
+        return opened, _lease_threads(db)
+
+    try:
+        opened, left = asyncio.run(quit_after_a_worker_read())
+    finally:
+        kept.shutdown(wait=True)
+
+    assert "kept_0" in opened
+    assert left == []
 
 
 def _loop_gaps() -> tuple[list[float], asyncio.Task]:
@@ -475,6 +564,214 @@ async def test_app_unmount_store_close_never_aborts_a_straggler_write(
         "SELECT COUNT(*) FROM quit_probe"
     ).fetchone()[0]
     assert (errors, rows) == ([], 2 * committed[0])
+
+
+_STRAGGLER_WRITES = {
+    "media": ("quit_probe", "INSERT INTO quit_probe (n) VALUES (?)"),
+    "dreams": (
+        "dream_seen_items",
+        (
+            "INSERT INTO dream_seen_items (url, title_digest, first_seen, last_seen)"
+            " VALUES (?, 'digest', 'now', 'now')"
+        ),
+    ),
+    "guardian": (
+        "guardian_meta",
+        "INSERT INTO guardian_meta (key, value) VALUES (?, 'v')",
+    ),
+}
+
+
+def _rows(db, table: str) -> int:
+    with db.transaction() as conn:
+        return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+
+@pytest.mark.parametrize("store", ["media", "dreams", "guardian"])
+async def test_app_unmount_store_close_never_aborts_a_straggler_write_in_each_store(
+    store: str, request: pytest.FixtureRequest
+):
+    """TASK-39047: the quit's idle close of media, Dreams and Guardian, as for
+    ChaChaNotes above. A worker writing across the close keeps its open
+    transaction and commits it, and the close returns at once."""
+    import threading
+    import time
+    from unittest.mock import Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+
+    db = request.getfixturevalue(f"{store}_db")
+    table, insert = _STRAGGLER_WRITES[store]
+    if store == "media":  # Dreams and Guardian refuse a table their schema lacks
+        with db.transaction() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS quit_probe (n INTEGER NOT NULL)")
+    rows_before = _rows(db, table)
+    entered, release = threading.Event(), threading.Event()
+    outcome: list[str] = []
+
+    def straggler() -> None:
+        try:
+            with db.transaction() as conn:
+                conn.execute(insert, ("a",))
+                entered.set()
+                release.wait(20)
+                conn.execute(insert, ("b",))
+            outcome.append("committed")
+        except Exception as exc:  # noqa: BLE001 - the assertion reports it
+            outcome.append(f"{type(exc).__name__}: {exc}")
+            entered.set()
+        finally:
+            db.close()
+
+    writer = threading.Thread(target=straggler)
+    writer.start()
+    assert entered.wait(5)
+    owner = SimpleNamespace(**{f"{store}_db": db}, loguru_logger=Mock())
+    started = time.monotonic()
+    try:
+        await lifecycle_module.LifecycleMixin._close_main_databases(owner)
+        took = time.monotonic() - started
+    finally:
+        release.set()
+        writer.join(10)
+
+    assert (outcome, _rows(db, table) - rows_before, took < 1.0) == (
+        ["committed"],
+        2,
+        True,
+    ), took
+
+
+@pytest.mark.parametrize("store", ["media", "dreams", "guardian"])
+def test_idle_close_refuses_while_a_getter_is_opening_a_handle(
+    store: str, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-39047: a getter holds a registry acquisition while it opens or
+    reuses a handle, so the idle close cannot close one it is returning. The
+    getter is called raw here, outside any core operation."""
+    import threading
+
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_module
+
+    db = request.getfixturevalue(f"{store}_db")
+    opening, release = threading.Event(), threading.Event()
+    if store == "media":
+        real, owner, name, get = (
+            media_module.connect_private_sqlite,
+            media_module,
+            "connect_private_sqlite",
+            db.get_connection,
+        )
+    else:
+        real, owner, name, get = (
+            db._open_connection,
+            db,
+            "_open_connection",
+            db._held_connection,
+        )
+
+    def slow_open(*args, **kwargs):
+        opening.set()
+        release.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, slow_open)
+
+    def open_on_a_worker() -> None:
+        try:
+            get()
+        finally:
+            db.close()
+
+    worker = threading.Thread(target=open_on_a_worker)
+    worker.start()
+    try:
+        assert opening.wait(5)
+        while_opening = db.close_idle_connections()
+    finally:
+        release.set()
+        worker.join(10)
+
+    assert (while_opening, db.close_idle_connections()) == (False, True)
+
+
+def test_kernel_idle_close_is_a_no_op_for_a_store_without_a_registry(tmp_path):
+    """TASK-39047 review: only Dreams and Guardian keep a registry; the idle
+    close of any other kernel store raised AttributeError."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    try:
+        assert db.close_idle_connections() is True
+    finally:
+        db.close()
+
+
+@contextmanager
+def _raw_handle_in_a_core_operation(db):
+    """A raw handle held inside a counted core operation, outside a transaction."""
+    from tldw_chatbook.Backup_Recovery.participants import core_operation
+
+    if isinstance(db, (CharactersRAGDB, MediaDatabase)):
+        with core_operation(db):
+            yield db.get_connection()
+    else:
+        with db.connection() as conn:  # the kernel's own counted scope
+            yield conn
+
+
+@pytest.mark.parametrize("store", ["chachanotes", "media", "dreams", "guardian"])
+async def test_app_unmount_store_close_skips_a_store_with_a_core_operation_running(
+    store: str, request: pytest.FixtureRequest
+):
+    """TASK-39047, TASK-39048: a worker inside a core operation holds a raw
+    handle between two statements, with no transaction open. The quit close
+    must leave the store to close with the process; closing the handle under
+    it raised ``ProgrammingError: Cannot operate on a closed database``."""
+    import threading
+    from unittest.mock import Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+
+    db = request.getfixturevalue("chacha_db" if store == "chachanotes" else f"{store}_db")
+    held, release = threading.Event(), threading.Event()
+    outcome: list[str] = []
+
+    def straggler() -> None:
+        try:
+            with _raw_handle_in_a_core_operation(db) as conn:
+                conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchall()
+                held.set()
+                release.wait(20)
+                conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchall()
+            outcome.append("read twice")
+        except Exception as exc:  # noqa: BLE001 - the assertion reports it
+            outcome.append(f"{type(exc).__name__}: {exc}")
+            held.set()
+        finally:
+            db.close()
+
+    writer = threading.Thread(target=straggler)
+    writer.start()
+    assert held.wait(5)
+    logger = Mock()
+    owner = SimpleNamespace(**{f"{store}_db": db}, loguru_logger=logger)
+    try:
+        await lifecycle_module.LifecycleMixin._close_main_databases(owner)
+    finally:
+        release.set()
+        writer.join(10)
+
+    label = {
+        "chachanotes": "ChaChaNotes",
+        "media": "Media",
+        "dreams": "Dreams",
+        "guardian": "Guardian",
+    }[store]
+    assert (outcome, [call.args[0] for call in logger.info.call_args_list]) == (
+        ["read twice"],
+        [f"{label} still in use at quit; its handles close with the process"],
+    )
 
 
 async def test_app_unmount_store_close_skips_a_busy_store_without_blocking(

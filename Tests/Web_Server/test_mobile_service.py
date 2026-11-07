@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from Tests.console_provider_doubles import AgentModeGateway
+from Tests.served_canvas_gateway_double import served_gateway_double
 
 from tldw_chatbook.Canvas.control_protocol import (
     CONTROL_PROTOCOL_VERSION,
@@ -2443,8 +2444,8 @@ class _RelayWiringHost:
         self._canvas_control_broker = None
         self._served_browser_children: dict[str, str] = {}
         self._served_canvas_launches: dict[str, Any] = {}
-        self._served_canvas_gateway = types.SimpleNamespace(
-            mark_browser_session_unavailable=lambda _session_id: None
+        self._served_canvas_gateway = served_gateway_double(
+            revoke_browser_session=lambda _session_id: None
         )
         _get_mobile_service = serve_module.ChatbookWebServerMixin._get_mobile_service
         _attach_mobile_relay = (
@@ -2456,6 +2457,35 @@ class _RelayWiringHost:
         self._attach_mobile_relay = _attach_mobile_relay.__get__(self)
         self.bind_served_browser = _bind.__get__(self)
         self.unbind_served_browser = _unbind.__get__(self)
+
+
+def test_served_gateway_double_supplies_what_serve_calls_or_names_the_gap() -> None:
+    """TASK-38992: the served-canvas gateway stand-in has every method
+    ``serve.py`` calls on that gateway, and a name ``CanvasGateway`` lacks
+    fails at construction, named."""
+    from Tests.served_canvas_gateway_double import served_gateway_calls
+
+    gateway = served_gateway_double()
+    assert {"revoke_browser_session", "aclose"} <= served_gateway_calls()
+    assert all(callable(getattr(gateway, name)) for name in served_gateway_calls())
+    with pytest.raises(AssertionError, match="gateway call: revoke_browser_session"):
+        gateway.revoke_browser_session("browser-1")
+    with pytest.raises(AttributeError, match="mark_browser_session_gone"):
+        served_gateway_double(mark_browser_session_gone=lambda _session_id: None)
+
+
+def test_served_gateway_double_accepts_a_property_serve_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38992 review: a property ``serve.py`` reads (``started``) is part
+    of the real gateway, not a missing method."""
+    from Tests import served_canvas_gateway_double as double_module
+
+    monkeypatch.setattr(
+        double_module, "served_gateway_calls", lambda: frozenset({"started", "aclose"})
+    )
+    gateway = served_gateway_double()
+    assert hasattr(gateway, "started")
 
 
 @pytest.mark.loopback_network
@@ -2489,7 +2519,11 @@ async def test_serve_wiring_attaches_relay_only_when_broker_exists(
         source = service._relay_child_ids
         assert source is not None
         assert list(source()) == ["child-a"]  # live registry read
+        revoke = host._served_canvas_gateway.revoke_browser_session
+        revoke.assert_not_called()
         host.unbind_served_browser("browser-1", "child-a")
+        # TASK-38992: unbinding revokes that browser session's served Canvas.
+        revoke.assert_called_once_with("browser-1")
         assert list(source()) == []
         host.bind_served_browser("browser-2", "child-b")
         assert list(source()) == ["child-b"]

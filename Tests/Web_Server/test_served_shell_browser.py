@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.served_canvas_gateway_double import served_gateway_double
 from tldw_chatbook.Web_Server import serve
 
 
@@ -152,14 +153,7 @@ def _make_scripted_server(statics_path: str, port: int) -> _ScriptedShellServer:
     server._served_browser_children = {}
     server._served_canvas_launches = {}
 
-    class _GatewayStub:
-        async def aclose(self) -> None:
-            return None
-
-        def mark_browser_session_unavailable(self, browser_session_id) -> None:
-            return None
-
-    server._served_canvas_gateway = _GatewayStub()
+    server._served_canvas_gateway = served_gateway_double(aclose=lambda: None)
     server.ws_opens = 0
     server.resizes = []
     server.session_requests = []
