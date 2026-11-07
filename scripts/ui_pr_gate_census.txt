@@ -2522,3 +2522,10 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[prompts-landed]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-loading]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-landed]
+# TASK-33628.16 (2026-11-06, owner decision 2026-10-29): /help, /doctor and
+# error notices are not loss in close and quit. A lone /help row quits and a
+# lone error notice closes its tab without a question; beside a Temporary
+# chat's messages they are left out of the count (~10 s each). Appended at the tail.
+Tests/UI/test_console_command_rows_not_loss.py::test_ctrl_q_does_not_ask_when_a_command_row_is_all_that_is_unsaved[help]
+Tests/UI/test_console_command_rows_not_loss.py::test_tab_close_does_not_ask_when_a_command_row_is_all_that_is_unsaved[error_notice]
+Tests/UI/test_console_command_rows_not_loss.py::test_command_rows_beside_temporary_messages_are_left_out_of_the_count
