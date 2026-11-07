@@ -94,6 +94,7 @@ _OWNER_LABELS = {
     "mcp.targets": "MCP server settings",
     "notifications.client": "Notifications",
     "ui.state": "Interface preferences",
+    "citations.records_choice": "Citation records setting",
     "db.evals": "Evaluation results",
     "db.workspaces": "Workspaces",
     "db.subscriptions": "Subscriptions",

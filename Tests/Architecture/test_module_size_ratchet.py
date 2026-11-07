@@ -1115,7 +1115,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
     "tldw_chatbook/DB/Prompts_DB.py": 4676,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
-    "tldw_chatbook/Chat/citation_trace_repository.py": 4717,
+    # 2026-11-06, TASK-33620.8.3 (owner rule "expand limits, don't contort
+    # code"): 4717 -> 4724 (+7), set_canonical_writes_enabled applies the
+    # one-time citation-records answer to the live policy.
+    "tldw_chatbook/Chat/citation_trace_repository.py": 4724,
     # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
     # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
     # one-hop link-back on the Notes canvas). Owner rule "expand limits,

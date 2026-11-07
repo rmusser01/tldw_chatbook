@@ -1159,6 +1159,7 @@ async def capture_console_staged_evidence(
     *,
     user_message: str,
     active_session: Callable[[], RequestScopeSession | None],
+    question_session_id: str | None = None,
 ) -> LocalRagContextResult:
     """Capture Console-staged local evidence at the provider prompt boundary.
 
@@ -1178,6 +1179,9 @@ async def capture_console_staged_evidence(
             has no retrieval query.
         active_session: Returns the active Console session's scope identity;
             called only once the bundle holds canonical local evidence.
+        question_session_id: The turn's own Console session, which a
+            citation-records question waits on (TASK-33620.8.3); the active
+            one when omitted.
 
     Returns:
         Exact provider context, an optional request-local citation builder,
@@ -1209,6 +1213,7 @@ async def capture_console_staged_evidence(
         stage="console_rag",
         request_session=None,
         active_session=active_session,
+        question_session_id=question_session_id,
     )
 
 
@@ -1274,6 +1279,7 @@ async def _capture_console_evidence_bundle(
     stage: str,
     request_session: RequestScopeSession | None,
     active_session: Callable[[], RequestScopeSession | None],
+    question_session_id: str | None = None,
 ) -> LocalRagContextResult:
     """Authorize, format and (when records are available) capture one bundle."""
 
@@ -1316,6 +1322,19 @@ async def _capture_console_evidence_bundle(
             "Console RAG evidence sent without citation labels; "
             "reason=citation_records_unavailable"
         )
+        if unrecorded and getattr(
+            citation_trace_repository, "fingerprint_key_state", None
+        ) == (
+            "writes_disabled"
+        ):  # TASK-33620.8.3: an upgraded install is asked once after this reply
+            from ..Chat.citation_records_choice import (
+                note_unrecorded_library_evidence,
+            )
+
+            await note_unrecorded_library_evidence(
+                citation_trace_repository,
+                question_session_id or getattr(request_session, "id", None),
+            )
         return LocalRagContextResult(unrecorded or None, None)
 
     try:

@@ -22,6 +22,7 @@ ROUTES = {
     "pet",
     "runtime_state",
     "runtime_read",
+    "citation_records_choice",
 }
 
 
@@ -48,6 +49,18 @@ def binding(source):
         return (
             "notes.templates",
             lexical_path(_get_effective_config_path().parent / "note_templates.json"),
+            True,
+        )
+    module = sys.modules.get("tldw_chatbook.Chat.citation_records_choice")
+    if module is not None and source is module:
+        from ..config import _get_effective_config_path
+
+        # TASK-33620.8.3: the one-time citation-records answer, beside config.
+        return (
+            "citations.records_choice",
+            lexical_path(
+                _get_effective_config_path().parent / "citation_records_choice.json"
+            ),
             True,
         )
     cls = _class("Widgets.settings_theme_editor", "SettingsThemeEditor")
@@ -118,6 +131,7 @@ def selection(source, route, target):
         "pet": "tamagotchi.config",
         "runtime_state": "runtime.source_state",
         "runtime_read": "runtime.source_state",
+        "citation_records_choice": "citations.records_choice",
     }
     if expected.get(route) != owner:
         raise bootstrap.RecoveryRequired("raw_source_not_supported")
