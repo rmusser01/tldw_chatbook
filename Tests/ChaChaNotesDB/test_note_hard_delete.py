@@ -59,11 +59,17 @@ _GUARD_RECEIPT = "receipt-guard-1"
 #: (8639dcae88) kept them, "A pending link intent must still reach the
 #: server, in order", and that let a link to a purged note be published. A
 #: purge now cancels the unacknowledged ones and scrubs the acknowledged ones
-#: (``CharactersRAGDB._NOTE_PURGE_ORGANIZATION_SQL``).
+#: (``CharactersRAGDB._NOTE_PURGE_ORGANIZATION_SQL``). PR #3423 re-review 3
+#: (I-1) put back exactly one kind of intent: a pending link TOMBSTONE after
+#: an acknowledged link -- the user's unlink of a link the server holds,
+#: which still has to reach it. Like a head, it holds only the link's
+#: identity: the fixture's ``org-intent-2``, a keyword link's ``subject_id``.
 _ID_ONLY_TOMBSTONES = {
     "notes_organization_heads.payload_json": 2,
     "notes_organization_heads.payload_json$.note_id": 1,
     "notes_organization_heads.payload_json$.subject_id": 1,
+    "notes_organization_sync_intents.payload_json": 1,
+    "notes_organization_sync_intents.payload_json$.subject_id": 1,
 }
 #: The column-level part of it, for the token scan (``value_traces`` sees
 #: columns, not JSON paths).
@@ -166,6 +172,10 @@ class _Purgeable:
             # naming the note. A keyword link acknowledged once, its pending
             # successor, a pending folder link, and both links' acknowledged
             # heads. By the v58 contract these hold logical ids only.
+            # Re-review 3 (I-1): the keyword link's pending successor is an
+            # unlink after an acknowledged link -- the purge keeps it; the
+            # folder link's pending unlink follows an unacknowledged link --
+            # the purge cancels it with that link.
             link = json.dumps(
                 {
                     "subject_type": "note",
@@ -185,6 +195,8 @@ class _Purgeable:
                 + ("tombstone", link, 2, None),
                 ("org-intent-3", 3, None, "notes.folder_link", "link-2")
                 + ("upsert", folder_link, 1, None),
+                ("org-intent-4", 4, "org-intent-3", "notes.folder_link", "link-2")
+                + ("tombstone", folder_link, 2, None),
             )
             for intent in intents:
                 connection.execute(
