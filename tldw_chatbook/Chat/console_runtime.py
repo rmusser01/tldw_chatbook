@@ -3323,7 +3323,6 @@ class ConsoleRuntime:
         self, draft: str, turn_context: Any, launch: Any
     ) -> Any:
         """Capture one admitted evidence launch without consulting a view."""
-        del turn_context
         from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
             capture_console_staged_evidence_for_chat,
         )
@@ -3332,6 +3331,7 @@ class ConsoleRuntime:
             self._app,
             launch,
             user_message=draft,
+            session_id=getattr(turn_context, "session_id", None),
         )
 
     async def _capture_console_prepared_rag(
