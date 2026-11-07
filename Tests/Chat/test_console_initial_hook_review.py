@@ -721,3 +721,20 @@ def test_console_runtime_reads_no_private_screen_attribute():
 
     offenders = _private_screen_reads(Path(module.__file__).read_text())
     assert not offenders, f"private screen attribute read at lines {offenders}"
+
+
+def test_every_view_seam_console_runtime_looks_up_exists_on_chat_screen() -> None:
+    """The runtime reaches the screen through `getattr(self.view, "<name>", None)`
+    and does nothing when the name is missing, so a rename on ChatScreen would
+    silently stop that work (the transcript re-render, for one). Pin every such
+    name to a callable on ChatScreen."""
+    import re
+    from pathlib import Path
+
+    import tldw_chatbook.Chat.console_runtime as module
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    names = set(re.findall(r'getattr\(\s*self\.view,\s*"([A-Za-z_]\w*)"', Path(module.__file__).read_text()))
+    assert "request_transcript_sync" in names
+    missing = sorted(name for name in names if not callable(getattr(ChatScreen, name, None)))
+    assert not missing, f"ConsoleRuntime looks these up on the view, but ChatScreen lacks them: {missing}"
