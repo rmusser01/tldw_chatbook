@@ -1000,6 +1000,8 @@ MINIMUM_FILES = 2029
 MINIMUM_FILES = 2034
 
 
+MINIMUM_FILES = 2032
+MINIMUM_FILES = 2037
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

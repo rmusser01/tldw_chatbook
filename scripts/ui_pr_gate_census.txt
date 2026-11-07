@@ -2933,3 +2933,10 @@ Tests/UI/test_console_recovered_image_shutdown.py
 Tests/UI/test_console_configuration_worker_feedback.py::test_actual_send_composes_new_input_while_configuration_reader_is_held
 # TASK-34601.1: background and repeated skill reads cannot claim a spoken Send fixture.
 Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignores_background_and_repeated_fetches
+# TASK-33628.16 (2026-11-06, owner decision 2026-10-29): /help, /doctor and
+# error notices are not loss in close and quit. A lone /help row quits and a
+# lone error notice closes its tab without a question; beside a Temporary
+# chat's messages they are left out of the count (~10 s each). Appended at the tail.
+Tests/UI/test_console_command_rows_not_loss.py::test_ctrl_q_does_not_ask_when_a_command_row_is_all_that_is_unsaved[help]
+Tests/UI/test_console_command_rows_not_loss.py::test_tab_close_does_not_ask_when_a_command_row_is_all_that_is_unsaved[error_notice]
+Tests/UI/test_console_command_rows_not_loss.py::test_command_rows_beside_temporary_messages_are_left_out_of_the_count
