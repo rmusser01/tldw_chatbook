@@ -2662,7 +2662,8 @@ Tests/UI/test_console_send_admission_off_pump.py::test_an_enter_deferred_behind_
 Tests/UI/test_console_inspector_section.py
 # TASK-38948 (2026-11-07): the 100 ms Send-feedback budgets (Sending frame,
 # input mutation, input frame), one entry per route (6-9 s each serial at
-# load about 130). A miss fails only below the CPU count's load average.
+# load about 130). Loop CPU is held at any load; wall time only while the
+# load average is under the CPU count.
 # Appended at the tail.
 Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]
 Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]
