@@ -864,6 +864,11 @@ ADMISSION_2_TARGETS = (
     "Tests/Chat/test_console_refused_stream_retry.py",
     "Tests/Chat/test_self_hosted_retry_accounting.py",
     "Tests/UI/test_console_refused_stream_retry_screen.py",
+    # TASK-37762: a named custom endpoint's traced request records the saved
+    # user revision, and its refused or empty stream's retry is traced with
+    # capture on -- the real trace boundary factory against a loopback
+    # server (bootstrap_profile, six cases, ~13 s).
+    "Tests/Chat/test_custom_endpoint_trace_surface.py",
     # TASK-37600: character launch selection and modal resume (bootstrap_profile).
     "Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls",
     "Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume",
