@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-06 17:01
+updated_date: 2026-11-07 00:06
 labels:
 - follow-up
 - settings
@@ -67,3 +67,8 @@ The race is real in principle, though it was never seen in a natural run, so the
 - Covering run (run.sh, `-n 4`, load 28-56, 37 files naming the model field, the picker or the handoff channels): 1262 passed, 106 failed. At `fu-base-r11`, 100 of the 106 fail (mostly `RecoveryRequired: raw_source_selection_changed` in plain UI tests). The other 6 passed serially both here and at base.
 
 Files: `tldw_chatbook/UI/Screens/settings_screen.py`, `Tests/UI/test_settings_custom_id_fast_typing.py`, `Tests/Architecture/test_module_size_ratchet.py`.
+
+Review r11g-rev1 I1: the endpoint field had the same race. A held endpoint mount echo (`http://127.0.0.1:9099`) delivered after the handoff overwrote the draft's endpoint while the field showed the handoff's.
+- `handle_provider_endpoint_changed` now returns on `event.value != event.input.value`, after the suppress-queue branch.
+- The provider Select has a late mount echo too: its held `Select.Changed` carried `llama_cpp` (the saved provider) while the Select already showed `vllm`. Handled, it re-applied llama.cpp and the draft emptied. `handle_provider_value_changed` returns on `event.value != event.select.value` as well.
+- The held-echo test now holds all three echoes and checks the endpoint field. Red with the review head's sources: `assert None is not None` (the draft was gone). With the endpoint guard but no Select guard it was still `draft is None`, from the Select echo. Without the Select hold, the model and endpoint guards passed. With both guards the whole file passes (2 passed).

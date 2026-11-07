@@ -334,3 +334,28 @@ async def test_full_screen_settings_keeps_all_three_panes(size, request):
         )
         assert widths == _FULL_SCREEN_PANE_WIDTHS[size], widths
         assert not screen.query_one("#settings-single-pane-back", Button).display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_slash_in_one_pane_mode_opens_the_rail_with_its_filter(request):
+    """TASK-38953 review r11g-rev1 I2: "/" focused the hidden category
+    filter, so typing filtered a rail nobody could see."""
+    app = _build_test_app()
+    host = _BundledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=(60, 24)) as pilot:
+        await _settle_settings(pilot)
+        screen = pilot.app.screen
+        rail = screen.query_one("#settings-category-pane")
+        search = screen.query_one("#settings-category-search")
+        screen.set_focus(None)
+        await pilot.pause()
+        assert not rail.display  # the open category is the pane shown
+        await pilot.press("slash")
+        await pilot.pause()
+        await pilot.pause()
+        assert rail.display
+        assert not screen.query_one("#settings-detail-pane").display
+        assert pilot.app.focused is search
+        assert search.region.width > 0

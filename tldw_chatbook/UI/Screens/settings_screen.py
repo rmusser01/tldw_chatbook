@@ -24064,6 +24064,8 @@ class SettingsScreen(BaseAppScreen):
         return isinstance(self._focused_widget(), (Input, TextArea))
 
     def _focus_category_search(self) -> None:
+        if self._single_pane_now():
+            self._sync_single_pane(list_open=True)  # TASK-38953: show the rail
         try:
             search = self.query_one("#settings-category-search", Input)
         except QueryError:
@@ -30504,8 +30506,8 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_provider_selection:
-            return
+        if self._syncing_provider_selection or event.value != event.select.value:
+            return  # TASK-38975 review: a stale (mount) echo is no choice
         selected_value = self._select_value_text(event.value)
         provider = (
             self._provider_widget_value()
@@ -30674,6 +30676,8 @@ class SettingsScreen(BaseAppScreen):
             queue.pop(0)
             self._update_provider_dynamic_widgets()
             return
+        if event.value != event.input.value:
+            return  # TASK-38975 review: a stale echo, as for the model field
         # task-15673: a freshly MOUNTED Input posts Changed for its compose-time
         # value, so a deep link's recompose delivers the linked provider's
         # endpoint as if typed, and that dirt made the deferred nav-model apply

@@ -69,11 +69,14 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
     request, monkeypatch
 ):
     """TASK-38975: the vLLM default handoff stages provider, model and endpoint
-    and writes the model field quietly. If the field's mount echo (an
-    ``Input.Changed`` carrying the saved model) were handled after it, the
-    change handler took it for an edit and staged the saved model again: the
-    draft would save vLLM with the old model while the field showed the new
-    one. The echo is held here and delivered after the handoff."""
+    and writes the model and endpoint fields quietly. If a field's mount echo
+    (a ``Changed`` carrying the saved value) were handled after it, the change
+    handler took it for an edit and staged the saved value again: the draft
+    would save vLLM with the old model or endpoint while the fields showed the
+    new ones. The model, endpoint and provider echoes are held here and
+    delivered after the handoff (review r11g-rev1 I1 added the endpoint)."""
+    from textual.widgets import Select
+
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _console_app,
         _install_ready_vllm_target,
@@ -83,20 +86,26 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    held: list[Input.Changed] = []
-    real_post = Input.post_message
+    held: dict[str, object] = {}
+    held_ids = {
+        "settings-model-value": Input.Changed,
+        "settings-provider-endpoint-value": Input.Changed,
+        "settings-provider-value": Select.Changed,
+    }
+    real_posts = {Input: Input.post_message, Select: Select.post_message}
 
-    def hold_the_mount_echo(self, message):
-        if (
-            not held
-            and self.id == "settings-model-value"
-            and isinstance(message, Input.Changed)
-        ):
-            held.append(message)
-            return True
-        return real_post(self, message)
+    def holding(widget_type):
+        def post(self, message):
+            kind = held_ids.get(self.id)
+            if kind is not None and self.id not in held and isinstance(message, kind):
+                held[self.id] = message
+                return True
+            return real_posts[widget_type](self, message)
 
-    monkeypatch.setattr(Input, "post_message", hold_the_mount_echo)
+        return post
+
+    monkeypatch.setattr(Input, "post_message", holding(Input))
+    monkeypatch.setattr(Select, "post_message", holding(Select))
     app = _console_app()
     _, target = _install_ready_vllm_target(app)
     app.pending_handoffs.stage(
@@ -110,10 +119,17 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
         await _settle(host, pilot)
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
         picker, field, _results, adapter = _widgets(screen)
-        assert [echo.value for echo in held] == ["model-a"]  # the saved model
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        assert held["settings-model-value"].value == "model-a"  # the saved model
+        assert held["settings-provider-endpoint-value"].value == (
+            "http://127.0.0.1:9099"  # the saved endpoint
+        )
         assert adapter.value == "chatbook-vllm"
+        assert endpoint.value == target.api_url
 
-        real_post(adapter, held[0])
+        for widget_id, message in held.items():
+            widget = screen.query_one(f"#{widget_id}")
+            real_posts[Select if isinstance(widget, Select) else Input](widget, message)
         await _settle(host, pilot)
         await pilot.pause()
 
@@ -125,6 +141,7 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
             draft.values["endpoint"],
         ) == ("vllm", "chatbook-vllm", target.api_url)
         assert adapter.value == "chatbook-vllm"
+        assert endpoint.value == target.api_url
 
         # A later edit still stages: a Custom ID typed in the field.
         field.focus()
