@@ -239,6 +239,19 @@ def swap_app_aliases(app, **aliases) -> None:
     app._publish_application_services()
 
 
+def republish_services(app) -> None:
+    """Rebuild ``app.services`` from the app's aliases before a Console mounts.
+
+    TASK-36947.4: the Console controller reads ``app.services``. Tests patch
+    service aliases on a built app before mounting; republishing makes the
+    bundle name them, as composition would have. A double without the method
+    is left alone.
+    """
+    publish = getattr(app, "_publish_application_services", None)
+    if callable(publish):
+        publish()
+
+
 async def drain_created_runtimes() -> None:
     """Retire factory-app Console workers before their owned DBs and locks."""
     from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
