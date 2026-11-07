@@ -6,10 +6,17 @@ keeps NO table list of its own. Every place it looks is discovered from
 the database under test, so a table added later that holds a note id is
 checked the day it lands, and a purge that forgets it fails here.
 
-Three discoveries, one count:
+Four discoveries, one count:
 
 - **Note-id columns.** A column named ``note_id`` or ``*_note_id``, or the
   child column of any foreign key to ``notes`` -- plus ``notes.id`` itself.
+- **Note-id JSON paths** (PR #3423 Qodo 2). The note-id key a schema INDEX
+  reads out of a JSON column: a ``json_extract`` path whose last key is named
+  like a note-id column, and every other ``THEN`` branch of the same
+  ``CASE`` key, which the index treats as the same note id (v59 keys a
+  folder link's ``$.note_id`` and a note-subject keyword link's
+  ``$.subject_id`` together). The Sync v2 organization tables hold the note
+  id only there, under no note-id column.
 - **Every text column of every ordinary table**, swept for the id as a
   substring: catches the id inside a payload or a composite key that no
   column name announces (``sync_log``'s ``note_keywords`` rows carry it as
@@ -33,6 +40,10 @@ import sqlite3
 from collections.abc import Iterable
 
 _NOTE_ID_COLUMN = re.compile(r"(?:^|_)note_id$")
+_JSON_PATH = r"json_extract\(\s*(\w+)\s*,\s*'(\$\.[\w.]+)'\s*\)"
+_JSON_EXTRACT = re.compile(_JSON_PATH, re.IGNORECASE)
+_THEN_JSON_EXTRACT = re.compile(r"\bTHEN\s+" + _JSON_PATH, re.IGNORECASE)
+_CASE = re.compile(r"\bCASE\b(.*?)\bEND\b", re.IGNORECASE | re.DOTALL)
 _NOTES_CONTENT = re.compile(r"content\s*=\s*['\"]?notes['\"]?", re.IGNORECASE)
 
 
@@ -70,6 +81,30 @@ def note_id_columns(connection: sqlite3.Connection) -> tuple[tuple[str, str], ..
         ):
             if str(foreign_key[2]) == "notes":
                 found.add((table, str(foreign_key[3])))
+    return tuple(sorted(found))
+
+
+def _is_note_id_key(path: str) -> bool:
+    return bool(_NOTE_ID_COLUMN.search(path.rsplit(".", 1)[-1]))
+
+
+def note_id_json_paths(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[str, str, str], ...]:
+    """Every ``(table, column, json path)`` a schema index reads a note id from."""
+    found: set[tuple[str, str, str]] = set()
+    for table, sql in connection.execute(
+        "SELECT tbl_name, sql FROM sqlite_master WHERE type = 'index' "
+        "AND sql IS NOT NULL"
+    ).fetchall():
+        sql = str(sql)
+        for column, path in _JSON_EXTRACT.findall(sql):
+            if _is_note_id_key(path):
+                found.add((str(table), column, path))
+        for case in _CASE.findall(sql):
+            branches = _THEN_JSON_EXTRACT.findall(case)
+            if any(_is_note_id_key(path) for _column, path in branches):
+                found.update((str(table), column, path) for column, path in branches)
     return tuple(sorted(found))
 
 
@@ -185,6 +220,15 @@ def note_traces(
         ).fetchone()[0]
         if count:
             traces[f"{table}.{column}"] = int(count)
+    for table, column, path in note_id_json_paths(connection):
+        count = connection.execute(
+            f"SELECT COUNT(*) FROM {_quoted(table)} WHERE CASE WHEN "
+            f"json_valid({_quoted(column)}) THEN "
+            f"json_extract({_quoted(column)}, ?) END = ?",
+            (path, note_id),
+        ).fetchone()[0]
+        if count:
+            traces[f"{table}.{column}{path}"] = int(count)
     for table in _swept_tables(connection):
         for column in connection.execute(f"PRAGMA table_info({_quoted(table)})"):
             name = str(column[1])

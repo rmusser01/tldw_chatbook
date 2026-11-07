@@ -1277,6 +1277,12 @@ class SyncStateRepository(BaseDB):
         server-side delete still propagates. Source projection receipts go
         with their rows (``ON DELETE CASCADE``).
 
+        PR #3423 Qodo 2: the same for the note's organization LINKS -- a
+        ``notes.folder_link`` or note-subject ``notes.keyword_link`` upsert
+        the organization drain already copied here is deleted, so no link to
+        a note the server will not get is pushed; a link tombstone stays,
+        as the note's own delete does.
+
         Args:
             note_id: The note just deleted for good.
 
@@ -1284,12 +1290,23 @@ class SyncStateRepository(BaseDB):
             The number of outbox rows deleted.
         """
         with self.transaction() as conn:
-            return conn.execute(
+            notes = conn.execute(
                 "DELETE FROM sync_v2_local_outbox WHERE domain IN ('notes', 'notes.note') "
                 "AND json_extract(envelope, '$.object_id') = ? "
                 "AND json_extract(envelope, '$.operation') NOT IN ('delete', 'tombstone')",
                 (str(note_id),),
             ).rowcount
+            links = conn.execute(
+                "DELETE FROM sync_v2_local_outbox "
+                "WHERE domain IN ('notes.folder_link', 'notes.keyword_link') "
+                "AND json_extract(envelope, '$.operation') = 'upsert' "
+                "AND (CASE WHEN domain = 'notes.folder_link' "
+                "THEN json_extract(envelope, '$.payload.note_id') "
+                "WHEN json_extract(envelope, '$.payload.subject_type') = 'note' "
+                "THEN json_extract(envelope, '$.payload.subject_id') END) = ?",
+                (str(note_id),),
+            ).rowcount
+            return notes + links
 
     def sync_v2_note_ids_on_server(self, note_ids: list[str]) -> set[str]:
         """Which of ``note_ids`` a sync server has accepted a copy of.

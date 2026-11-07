@@ -20566,6 +20566,38 @@ DELETE FROM keywords
         "WHERE note_id = ?"
     )
 
+    #: PR #3423 Qodo 2: the note a Sync v2 organization link intent is about
+    #: -- a ``notes.folder_link``'s ``note_id``, a note-subject
+    #: ``notes.keyword_link``'s ``subject_id``. The key of v59's
+    #: ``idx_notes_organization_intents_note_subject_latest``.
+    _NOTE_ORGANIZATION_SUBJECT_SQL = (
+        "CASE WHEN domain = 'notes.folder_link' "
+        "THEN json_extract(payload_json, '$.note_id') "
+        "WHEN domain = 'notes.keyword_link' "
+        "AND json_extract(payload_json, '$.subject_type') = 'note' "
+        "THEN json_extract(payload_json, '$.subject_id') END"
+    )
+
+    #: PR #3423 Qodo 2: a purge cancels the note's unacknowledged organization
+    #: link intents, as it cancels its publication intents, so the drain
+    #: (``drain_pending_intents``: ``acknowledged_at IS NULL``) never sends a
+    #: link to a note the server will not get. The table has no cancelled
+    #: state, so cancelling is deleting the never-acknowledged rows -- the
+    #: Agent_Lessons seed retirement's precedent
+    #: (``NotesOrganizationRepository``). Every row of one link object names
+    #: the same note, and a successor is only sent once its predecessor is
+    #: acknowledged (``_bind_predecessor_base_if_ready``), so no surviving
+    #: row's ``predecessor_intent_id`` names a deleted one. Acknowledged rows
+    #: stay as lineage under the publication tombstone's payload rule,
+    #: ``'{}'``. ``notes.keyword`` resource intents are never touched: the
+    #: keyword outlives the note. Parameters: (note_id,).
+    _NOTE_PURGE_ORGANIZATION_SQL: tuple[str, ...] = (
+        "DELETE FROM notes_organization_sync_intents WHERE acknowledged_at IS NULL "
+        f"AND ({_NOTE_ORGANIZATION_SUBJECT_SQL}) = ?",
+        "UPDATE notes_organization_sync_intents SET payload_json = '{}' "
+        f"WHERE acknowledged_at IS NOT NULL AND ({_NOTE_ORGANIZATION_SUBJECT_SQL}) = ?",
+    )
+
     def hard_delete_note(
         self, note_id: str, *, expected_version: Optional[int] = None
     ) -> bool:
@@ -20577,7 +20609,9 @@ DELETE FROM keywords
         organization receipts and owner proof, its ``note_keywords`` sync-log
         rows; its publication intents become id-only tombstones that keep
         their receipt ids non-replayable
-        (``_NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL``); then the tombstone
+        (``_NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL``); its unacknowledged Sync
+        v2 organization link intents are cancelled and its acknowledged ones
+        scrubbed (``_NOTE_PURGE_ORGANIZATION_SQL``); then the tombstone
         itself -- whose
         ``AFTER DELETE`` triggers drop its ``notes`` sync-log rows
         (``sync_log_prune_notes_hard``, v46) and its FTS entry (``notes_ad``).
@@ -20639,6 +20673,8 @@ DELETE FROM keywords
                     self._NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL,
                     (self._get_current_utc_timestamp_iso(), note_id),
                 )
+                for statement in self._NOTE_PURGE_ORGANIZATION_SQL:
+                    conn.execute(statement, (note_id,))
                 conn.execute(
                     "DELETE FROM note_links WHERE source_note_id = ? "
                     "OR target_note_id = ?",
