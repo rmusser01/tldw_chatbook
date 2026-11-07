@@ -762,7 +762,12 @@ def test_live_request_rejects_control_characters_in_models(tmp_path, field, valu
 def test_output_path_uses_shared_safeguards_before_provider_calls(tmp_path):
     evaluator = _load_evaluator()
     gateway = RecordingGateway()
-    output = tmp_path / "report;unexpected.json"
+    # TASK-38227: dev pinned this with "report;unexpected.json"; ";" is a
+    # legal file-name character this PR admits, so the kept double-parent
+    # refusal carries the safeguard-ordering pin now. The spelling resolves
+    # INSIDE tmp_path (a/b do not exist), so a validator that let it through
+    # could not write outside the test's directory.
+    output = tmp_path / "a" / "b" / ".." / ".." / "report-unexpected.json"
 
     with pytest.raises(ValueError, match="dangerous pattern"):
         asyncio.run(
