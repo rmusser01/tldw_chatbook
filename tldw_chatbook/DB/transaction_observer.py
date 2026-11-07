@@ -1,4 +1,5 @@
-"""Process-local completion callbacks for managed SQLite transactions."""
+"""Process-local completion callbacks for managed SQLite transactions, and the
+semantic-revision coordination port CharactersRAGDB calls inside them."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ from dataclasses import dataclass, field
 import logging
 import sqlite3
 from threading import RLock
+from typing import Any
 
 
 TransactionCompletion = Callable[[bool | None], None]
@@ -96,3 +98,37 @@ def active_managed_transaction_count() -> int:
 
     with _LOCK:
         return len(_ACTIVE)
+
+
+# --- Semantic-revision coordination port (TASK-36949.3) ---------------------
+# CharactersRAGDB must run semantic-revision coordination inside the write
+# transaction, but the coordinator lives in the Console domain layer, which
+# imports the DB. The DB holds only this process-wide slot; each composition
+# root installs the real factory once
+# (``Chat.console_semantic_revision.install_semantic_coordination``). Fail
+# closed: a coordinated write with nothing installed raises instead of silently
+# skipping coordination. Stdlib only: this module sits in the DB import closure.
+
+_factory: Callable[[Any], Any] | None = None
+
+
+class SemanticCoordinationNotInstalledError(RuntimeError):
+    """A coordinated message write ran before any composition root installed the port."""
+
+
+def install_semantic_coordinator_factory(factory: Callable[[Any], Any]) -> None:
+    """Install ``factory(db) -> coordinator`` for this process. Idempotent."""
+    global _factory
+    _factory = factory
+
+
+def semantic_coordinator_for(db: Any) -> Any:
+    """Return the coordinator for ``db`` or raise if nothing was installed."""
+    factory = _factory  # read once: a concurrent clear must not become a TypeError
+    if factory is None:
+        raise SemanticCoordinationNotInstalledError(
+            "Semantic-revision coordination is not installed. Call "
+            "tldw_chatbook.Chat.console_semantic_revision.install_semantic_coordination() "
+            "once at process startup (the composition root) before writing messages."
+        )
+    return factory(db)

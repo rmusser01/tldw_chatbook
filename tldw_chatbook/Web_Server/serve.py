@@ -2560,6 +2560,10 @@ def run_web_server(
         logger.error("Install with: pip install tldw_chatbook[web]")
         sys.exit(1)
 
+    from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+
+    install_semantic_coordination()  # DB-layer port; composition root
+
     # Load settings from config with defaults
     web_config = get_cli_setting("web_server", default={})
 

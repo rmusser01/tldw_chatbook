@@ -70,6 +70,7 @@ _SEED = (
 from Tests.Backup_Recovery.thread_diagnostics import observe_recovery_failures
 stop_failures=observe_recovery_failures(fixture/(name+'-recovery-failures.log'))
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination;install_semantic_coordination()
 from tldw_chatbook.Chatbooks.database_paths import get_private_chatbooks_dir
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJob,IngestJobState

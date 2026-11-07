@@ -106,8 +106,11 @@ def main(argv=None) -> int:
         get_media_db_path,
         load_console_library_migration_seed,
     )
+    from ..Chat.console_semantic_revision import install_semantic_coordination
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
     from ..DB.Client_Media_DB_v2 import MediaDatabase
+
+    install_semantic_coordination()  # DB-layer port; composition root
 
     media_db = None
     chachanotes_db = None
