@@ -1,10 +1,10 @@
 ---
 id: TASK-38979
 title: "Retiring the portrait region editor before it mounts leaves it open, and the Personas performance controller's close never returns"
-status: Done
+status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: '2026-11-07 00:54'
+updated_date: '2026-11-07 02:04'
 labels:
 - follow-up
 - bug
@@ -52,7 +52,7 @@ The TASK-38747 branch adds only `PortraitRegionEditor.confirm_quit`; `retire`, `
 - [x] #2 The [close] case passes 20 of 20 serial runs and the file passes 3 of 3 runs at -n 4, with the load recorded (dev: [close] hung in 4 of 19 serial runs)
 - [x] #3 When a case in this file fails, the run still ends: no case holds pytest past --timeout in teardown
 - [x] #4 A Personas runtime-backend switch and a screen unmount made while a region editor is opening both complete
-- [x] #5 Once green, the file joins the UI census with its measured serial time, and its shard stays at least 5 minutes under its cap
+- [ ] #5 Once green, the file joins the UI census with its measured serial time, and its shard stays at least 5 minutes under its cap
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -75,6 +75,41 @@ The TASK-38747 branch adds only `PortraitRegionEditor.confirm_quit`; `retire`, `
 
 **Sibling site (review r11m-rev1).** `PortraitCompositionReview.retire()` had the same `is_mounted` gate, and its `close()` hung the same way. It gets the same fix (`self.call_later(self.retire)` before mount). New test `test_retiring_the_pair_review_before_it_mounts_still_closes_it[discard|close]` was red 2/2 before the fix ("retired before mount, the pair review stayed open (stack ['Screen', 'PersonasScreen', 'PortraitCompositionReview'])") and is green after. `close_bounded` now dismisses a leftover review too.
 
+**Placement (review r11m-rev2).** The tail block (the Promote node, the 17 quit-modal entries and the 30 region-editor entries) is ordered by `$FU/census_reorder.py`. Hot shards are the ones whose slowest UI Fast Lane job over the last 12 PR runs is not at least 5 min under the 20-min cap: 3 (16.9), 5 (16.7), 8 (15.3), 13 (16.1), 15 (15.0) and 19 (15.0), from `$FU/ui_shard_ci_minutes.json`. The lightest entries take the hot slots, hottest shard first, and the heaviest entries go to the coolest shards. Dealing is the checker's own (`entries[index::32]`), as `$FU/census_shards.py` reproduces. **Shortfall:** the block has 7 hot slots but only 3 entries under 5 s (at load ~70), so 4 hot slots still hold heavier entries. These are shard 8, the Promote node (13.0 s at load ~31); shard 13, `test_retiring_the_editor_before_it_mounts_still_closes_it[unmount]` (8.4 s); shard 15, `test_ctrl_q_waits_for_a_goal_that_is_starting` (13.5 s); and shard 19, `test_save_completion_drops_removed_validation_control` (14.5 s). Raised for the owner. **AC#5 is left open, and the task is In Progress, until the owner rules on the shortfall.** The hot shards were already over the line before these entries, and some entries cannot avoid them. **The final placement is set by the coordinator after the round-11 restack** (re-run `census_reorder.py` on the restacked tail); the shards below are this base's.
+
+| Entry | Shard on this base (slowest recent CI min) | Serial s (load ~70) |
+|---|---|---|
+| `test_dialog_validation_is_coalesced_owned_and_drained[replacement]` | 22 (13.1) | 24.2 |
+| `test_unchanged_save_keeps_revision_candidate_and_sample` | 23 (14.2) | 17.5 |
+| `test_pointer_padding_resize_and_narrow_keyboard_geometry` | 25 (12.6) | 25.0 |
+| `test_held_save_rejects_retired_authority_and_stale_revision[settings]` | 26 (14.5) | 14.9 |
+| `test_changed_save_resets_only_draft_and_stops_exact_sample` | 27 (13.8) | 20.6 |
+| `test_retired_modal_drops_held_preview[True]` | 31 (14.0) | 18.3 |
+| `test_keyboard_confirmation_save_cancel_and_reopen` | 32 (11.8) | 28.3 |
+| `test_retired_modal_drops_held_preview[False]` | 1 (14.5) | 15.9 |
+| `test_retiring_the_editor_before_it_mounts_still_closes_it[backend]` | 2 (14.3) | 17.0 |
+| `test_contain_mapping_refuses_padding_and_accounts_for_cell_aspect` | 3 (16.9) | 1.2 |
+| `test_mask_preview_uses_original_crop_and_compositor_mask` | 5 (16.7) | 1.9 |
+| `test_open_dialog_retires_after_another_editor_changes_saved_artwork[review-regions-True]` | 6 (12.7) | 24.3 |
+| `test_dialog_validation_is_coalesced_owned_and_drained[read_error]` | 7 (14.1) | 17.6 |
+| `test_held_save_rejects_retired_authority_and_stale_revision[profile]` | 9 (13.9) | 19.2 |
+| `test_retiring_the_editor_before_it_mounts_still_closes_it[close]` | 12 (14.4) | 16.8 |
+| `test_retiring_the_editor_before_it_mounts_still_closes_it[unmount]` | 13 (16.1) | 8.4 |
+| `test_held_save_rejects_retired_authority_and_stale_revision[source]` | 16 (14.9) | 14.6 |
+| `test_open_dialog_retires_after_another_editor_changes_saved_artwork[review-regions-False]` | 18 (14.0) | 18.4 |
+| `test_save_completion_drops_removed_validation_control` | 19 (15.0) | 14.5 |
+| `test_unknown_saved_algorithm_allows_confirmed_reselection` | 20 (14.3) | 17.1 |
+| `test_open_dialog_retires_after_another_editor_changes_saved_artwork[regions-source-False]` | 27 (13.8) | 20.1 |
+| `test_open_dialog_retires_after_another_editor_changes_saved_artwork[review-source-False]` | 28 (14.5) | 15.3 |
+| `test_open_dialog_retires_after_another_editor_changes_saved_artwork[regions-regions-False]` | 29 (13.8) | 19.8 |
+| `test_stale_region_save_cannot_write_replacement_editor` | 30 (13.6) | 20.7 |
+| `test_dialog_validation_is_coalesced_owned_and_drained[close]` | 31 (14.0) | 18.1 |
+| `test_retiring_the_pair_review_before_it_mounts_still_closes_it` | 32 (11.8) | 25.8 |
+| `test_held_save_rejects_retired_authority_and_stale_revision[cancel]` | 1 (14.5) | 14.9 |
+| `test_queued_dialog_validation_cannot_overwrite_discard_status` | 2 (14.3) | 16.9 |
+| `test_preview_budget_refusal_retains_foreign_reservation` | 3 (16.9) | 1.7 |
+| `test_retiring_the_editor_before_it_mounts_still_closes_it[discard]` | 4 (14.1) | 17.8 |
+
 **Verification after review r11m-rev1** (2026-11-07 UTC; the machine was shared, and the load is given for each run).
 - **Head.** 19 modal and fleet files under the scratch boot plugin, `-n 4`, load 20 to 80: 272 passed, 2 failed. The two failures are the inspector-section summary tests, which also fail on base.
 - **Base.** The same files: 234 passed and 17 failed, and then the run hung with idle workers. The watchdog killed it after 30 minutes, with about 20 tests unfinished. An earlier base attempt hung for more than 2 hours. Base still has the hangs these tasks fix.
@@ -87,5 +122,17 @@ The TASK-38747 branch adds only `PortraitRegionEditor.confirm_quit`; `retire`, `
   - Round 2, load 53 to 77: 2 failed, 1 failed, 0 failed.
   - Each test-wait failure was fixed (bounded waits, a held-save precondition) or traced to the product re-sync above.
   - Round 3, on the final head, load 42 to 61: 1 failed, 0 failed, 0 failed. The one failure is the freshness node's known "Mix-in attempt could not be saved" race, an automatic turn's mix-in anchor, which is reported as a follow-up.
+
+**Verification after review r11m-rev2** (2026-11-07 UTC, load about 25-50).
+- **Head.** 19 modal and fleet files under the scratch boot plugin, `-n 4`: 272 passed, 2 failed. The two failures are the inspector-section summary tests, which also fail on base.
+- **Receipt and read-state coverage.** `test_console_chat_controller.py`, `test_console_activity_receipts.py`, `test_console_receipt_bootstrap.py`, `test_buddy_hidden_results.py`, `test_console_refresh_read_batching.py` and `test_console_historical_read_cancellation_lifetime.py`: 36 failed and 376 passed on both head and base, with identical failure sets.
+- `Tests/CI -n 4`: 1215 passed, 1 skipped.
+- Preflight passes.
+- Architecture and size ratchets: 216 passed.
+- Boot budget: 32 passed.
+- **Stress.** The new and changed nodes are 22 selectors, 45 tests, run at `-n 6`:
+  - First round: 1 failed, 0 failed, 1 failed. Both failures were the view-all test at 120x35, now fixed: it waits for the toggle, tail and steps to be painted.
+  - Final round: 45 passed in each of the 3 runs.
+- **Tooling, all in `$FU`.** `collect_ui_shard_minutes.py` writes `ui_shard_ci_minutes.json`. `census_shards.py` shows the shard dealt to each census entry and flags heavy entries on hot shards. `census_reorder.py` permutes one block. The weights are in `modals_census_weights.json`.
 
 **Files.** `tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py`, `tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py`, `Tests/UI/test_portrait_region_editor.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-textual.md`.

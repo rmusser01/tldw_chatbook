@@ -4,7 +4,7 @@ title: "Sixteen fleet-wake, goal-dispatch and fleet-history test nodes are red o
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: '2026-11-07 00:54'
+updated_date: '2026-11-07 02:04'
 labels:
 - follow-up
 - tests
@@ -115,7 +115,12 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - **Headless wake fires.** The test is seeded through the chat route, so returning through `_navigate("chat")` brings back the screen the turn ran in (`chat2 is chat`, fed0b7257a). Check (3) now waits, bounded, for the ledger stamp, which is the delivery's last durable step. Through the route, it was read before it landed.
 - **Wiring.** The test now runs one real tab sync before the mount's claim on every mount, through a claim deferred behind it. A regression no longer depends on a readiness worker winning the race. Negative control, with both gates removed (an unconditional view-clear): red 5/5.
 - **Load waits.** The expansion test now waits up to 10 s for the compositor to paint the tail at its own region, instead of one fixed 0.2 s pause, before asserting as before. It failed once in a file run at load 80-160. The safety test's two setup settles allow 15 s. The fleet auto-open wait allows 20 s.
-- **Defect B toast count.** The freshness node also asserts exactly one background toast (`_notify_console_run_outcome`, counted on the class before mount, so the screen's hook rebinding cannot route around it). It does not assert an ordinary receipt. A wake has no ordinary outcome id: `_notify_submission_accepted` sets `_ordinary_outcome_ids` only from a preparation id, and a wake's acceptance has no preparation. A probe at the terminal transition showed `ordinary=None`. So no ordinary receipt is published for a wake, on dev or here. Whether a wake should publish one is reported as an open question; it is not pinned either way.
+- **Defect B toast count.** The freshness node also asserts exactly one background toast (`_notify_console_run_outcome`, counted on the class before mount, so the screen's hook rebinding cannot route around it). Its receipt assert is covered under review r11m-rev2 below; the claim made here that a wake had no ordinary id held only in a chat with no earlier prepared turn.
+
+**Review r11m-rev2 fixes.**
+- **Defect B, wrong receipt id.** Once eligible, a wake's terminal transition published an ordinary receipt under `_ordinary_outcome_ids[session]`. That map is written only from a preparation id and never cleared, so in a chat with an earlier manual turn the wake published `turn:<old preparation>` with the old reply's id. That either added a receipt pointing at the old reply, or superseded the old turn's unacknowledged failure receipt with "done". The fix: at acceptance, an automatic-origin turn with no preparation drops the chat's stale ordinary outcome and assistant ids (`_notify_submission_accepted`), so it publishes no ordinary receipt. That is the pre-change behaviour, kept until the owner rules on whether a wake should publish one. The freshness node now runs one prepared manual turn in the target chat first and asserts the wake publishes no ordinary receipt. It was red 2/2 on `b3f9a0c61b` (`turn:<prep>` published) and green 3/3 after. `console_chat_controller.py` grew by 7 lines past its size row, which is raised to 29180 under the owner's size waiver.
+- **Re-sync pinned.** The `[superseded]` case no longer calls `_sync_console_agent_section()` after the held read. It waits up to 10 s for the re-keyed read to land, which only the coalesced sync the superseded read requests can start. With that request disabled temporarily, it was red 3/3 ("the re-keyed historical read never landed").
+- **Housekeeping.** `release_historical_presentation()` clears `_console_historical_read` and `_console_historical_kept` together. It runs at every reset without a re-key (no bridge, no chat, a non-native bridge, a cancelled read) and in `ChatScreen.on_unmount`. The superseded-branch comment now names live and child status moves as well as config writes.
 
 **Not laned.** No PR lane runs these files, and the criteria ask for none. They need TASK-38111 first.
 
@@ -132,4 +137,16 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
   - Each test-wait failure was fixed (bounded waits, a held-save precondition) or traced to the product re-sync above.
   - Round 3, on the final head, load 42 to 61: 1 failed, 0 failed, 0 failed. The one failure is the freshness node's known "Mix-in attempt could not be saved" race, an automatic turn's mix-in anchor, which is reported as a follow-up.
 
-**Files.** `tldw_chatbook/UI/Console_Modules/agent.py`, `tldw_chatbook/Chat/console_prompt_queue_coordinator.py`; tests in `Tests/Chat/` (`test_console_fleet_wake_staleness.py`, `test_console_goal_dispatch.py`, `test_console_headless_wake_invariants.py`, `test_fleet_wake_retry.py`, `test_console_fleet_wake_safety.py`) and `Tests/UI/` (`test_console_fleet_history_navigation.py`, `test_console_inspector_section.py`, `test_console_fleet_wake_wiring.py`, `test_console_headless_wake_fires.py`, `test_console_launch_wake.py`, `test_console_automatic_work_pause.py`).
+**Verification after review r11m-rev2** (2026-11-07 UTC, load about 25-50).
+- **Head.** 19 modal and fleet files under the scratch boot plugin, `-n 4`: 272 passed, 2 failed. The two failures are the inspector-section summary tests, which also fail on base.
+- **Receipt and read-state coverage.** `test_console_chat_controller.py`, `test_console_activity_receipts.py`, `test_console_receipt_bootstrap.py`, `test_buddy_hidden_results.py`, `test_console_refresh_read_batching.py` and `test_console_historical_read_cancellation_lifetime.py`: 36 failed and 376 passed on both head and base, with identical failure sets.
+- `Tests/CI -n 4`: 1215 passed, 1 skipped.
+- Preflight passes.
+- Architecture and size ratchets: 216 passed.
+- Boot budget: 32 passed.
+- **Stress.** The new and changed nodes are 22 selectors, 45 tests, run at `-n 6`:
+  - First round: 1 failed, 0 failed, 1 failed. Both failures were the view-all test at 120x35, now fixed: it waits for the toggle, tail and steps to be painted.
+  - Final round: 45 passed in each of the 3 runs.
+- **Tooling, all in `$FU`.** `collect_ui_shard_minutes.py` writes `ui_shard_ci_minutes.json`. `census_shards.py` shows the shard dealt to each census entry and flags heavy entries on hot shards. `census_reorder.py` permutes one block. The weights are in `modals_census_weights.json`.
+
+**Files.** `tldw_chatbook/UI/Console_Modules/agent.py`, `tldw_chatbook/Chat/console_prompt_queue_coordinator.py`, `tldw_chatbook/Chat/console_chat_controller.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/Architecture/test_module_size_ratchet.py`; tests in `Tests/Chat/` (`test_console_fleet_wake_staleness.py`, `test_console_goal_dispatch.py`, `test_console_headless_wake_invariants.py`, `test_fleet_wake_retry.py`, `test_console_fleet_wake_safety.py`) and `Tests/UI/` (`test_console_fleet_history_navigation.py`, `test_console_inspector_section.py`, `test_console_fleet_wake_wiring.py`, `test_console_headless_wake_fires.py`, `test_console_launch_wake.py`, `test_console_automatic_work_pause.py`).

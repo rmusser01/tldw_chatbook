@@ -4,7 +4,7 @@ title: "Response-rules Promote runs inside its confirmation dialog with the mana
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: '2026-11-07 00:54'
+updated_date: '2026-11-07 02:04'
 labels:
 - follow-up
 - bug
@@ -90,5 +90,17 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b on 2026-
   - Round 2, load 53 to 77: 2 failed, 1 failed, 0 failed.
   - Each test-wait failure was fixed (bounded waits, a held-save precondition) or traced to the product re-sync above.
   - Round 3, on the final head, load 42 to 61: 1 failed, 0 failed, 0 failed. The one failure is the freshness node's known "Mix-in attempt could not be saved" race, an automatic turn's mix-in anchor, which is reported as a follow-up.
+
+**Verification after review r11m-rev2** (2026-11-07 UTC, load about 25-50).
+- **Head.** 19 modal and fleet files under the scratch boot plugin, `-n 4`: 272 passed, 2 failed. The two failures are the inspector-section summary tests, which also fail on base.
+- **Receipt and read-state coverage.** `test_console_chat_controller.py`, `test_console_activity_receipts.py`, `test_console_receipt_bootstrap.py`, `test_buddy_hidden_results.py`, `test_console_refresh_read_batching.py` and `test_console_historical_read_cancellation_lifetime.py`: 36 failed and 376 passed on both head and base, with identical failure sets.
+- `Tests/CI -n 4`: 1215 passed, 1 skipped.
+- Preflight passes.
+- Architecture and size ratchets: 216 passed.
+- Boot budget: 32 passed.
+- **Stress.** The new and changed nodes are 22 selectors, 45 tests, run at `-n 6`:
+  - First round: 1 failed, 0 failed, 1 failed. Both failures were the view-all test at 120x35, now fixed: it waits for the toggle, tail and steps to be painted.
+  - Final round: 45 passed in each of the 3 runs.
+- **Tooling, all in `$FU`.** `collect_ui_shard_minutes.py` writes `ui_shard_ci_minutes.json`. `census_shards.py` shows the shard dealt to each census entry and flags heavy entries on hot shards. `census_reorder.py` permutes one block. The weights are in `modals_census_weights.json`.
 
 **Files.** `tldw_chatbook/Widgets/Console/response_rules_modal.py`, `Tests/UI/test_response_rules_modal.py`, `Tests/UI/test_app_quit_in_flight_modals.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/index.md`, `backlog/docs/console-response-rules.md`.
