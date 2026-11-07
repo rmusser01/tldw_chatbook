@@ -5,14 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from textual.message import Message
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 
-from tldw_chatbook.Chat.console_approval_feedback import (
-    ApprovalFeedback,
-    format_approval_feedback,
-)
+ApprovalFeedbackChanged = ChatApprovalCard.ApprovalFeedbackChanged
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_approval_feedback import ApprovalFeedback
     from tldw_chatbook.Agents.approval_observation import (
         ApprovalObservation,
         ApprovalObservationContext,
@@ -20,13 +18,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
     from tldw_chatbook.Chat.approval_presentation import ApprovalBatchView
     from tldw_chatbook.Chat.console_approval_feedback import ApprovalFeedbackStore
-
-
-class ApprovalFeedbackChanged(Message):
-    def __init__(self, session_id: str, run_id: str) -> None:
-        super().__init__()
-        self.session_id = session_id
-        self.run_id = run_id
 
 
 class ApprovalFeedbackController:
@@ -46,6 +37,10 @@ class ApprovalFeedbackController:
         self._refresh_status = refresh_status
 
     def refresh(self, session_id: str, run_id: str) -> None:
+        from tldw_chatbook.Chat.console_approval_feedback import (
+            format_approval_feedback,
+        )
+
         if self._active_session() != session_id:
             return
         identity = self._card_identity()
@@ -136,8 +131,8 @@ def receive_round_observations(
     """Observe receipt only after the host has released its existing Event."""
     from tldw_chatbook.Agents.approval_observation import ApprovalObservation
 
-    feedback = read_feedback()
     try:
+        feedback = read_feedback()
         if feedback is not None:
             feedback.select_decisions(round_id, decisions or {})
             for context in round_state.get("observation_contexts", {}).values():

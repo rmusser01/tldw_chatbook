@@ -2630,3 +2630,6 @@ Tests/UI/test_approval_review_repairs.py
 # PR3036 complete Details: literal controls in paged keys/values and actual mounted view.
 Tests/UI/test_approval_details.py::test_paged_details_escape_unicode_controls_in_keys_and_values
 Tests/UI/test_approval_details.py::test_mounted_details_keep_unicode_separators_literal_across_pages
+
+# TASK-34569: actual compatibility MessagePump dispatch after first-use boot deferral.
+Tests/UI/test_approval_feedback.py::test_feedback_message_compatibility_alias_reaches_current_screen_handler

@@ -46,18 +46,16 @@ from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 from textual.widgets._select import SelectOverlay
 
 if TYPE_CHECKING:
+    from tldw_chatbook.UI.Console_Modules.approval_controls import ApprovalDraft
+    from tldw_chatbook.UI.Console_Modules.approval_details import (
+        ApprovalDetailsController, ApprovalDetailsPage, DetailsIdentity,
+    )
     from tldw_chatbook.Chat.approval_presentation import (
         ApprovalBatchView,
         ApprovalRowView,
     )
 
 from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
-from tldw_chatbook.UI.Console_Modules.approval_controls import ApprovalDraft
-from tldw_chatbook.UI.Console_Modules.approval_details import (
-    ApprovalDetailsController,
-    ApprovalDetailsPage,
-    DetailsIdentity,
-)
 from tldw_chatbook.Utils.input_validation import (
     MAX_APPROVAL_DENIAL_REASON_CHARS,
     escape_markup as escape,
@@ -529,6 +527,14 @@ class ChatApprovalCard(Container):
         except NoMatches:
             self.focus()
 
+    class ApprovalFeedbackChanged(Message):
+        """Notify the owning view of content-free approval facts."""
+
+        def __init__(self, session_id: str, run_id: str) -> None:
+            super().__init__()
+            self.session_id = session_id
+            self.run_id = run_id
+
     class ApprovalDecided(Message):
         """Posted when the user submits per-row decisions for a pending batch.
 
@@ -567,21 +573,7 @@ class ChatApprovalCard(Container):
         self._details_area: TextArea | None = None
         self._rows_area: Vertical | None = None
         self._details_opener: ApprovalActionButton | None = None
-        self._details = ApprovalDetailsController(
-            current_identity=lambda: self._current_details_identity(),
-            spawn_worker=lambda work: self.run_worker(
-                work,
-                thread=True,
-                exclusive=True,
-                group="approval-details",
-                exit_on_error=False,
-            ),
-            post_page=lambda identity, page: self.app.call_from_thread(
-                self._details.deliver_page, identity, page
-            ),
-            paint_page=lambda page: self._paint_details_page(page),
-            paint_loading=lambda: self._paint_details_loading(),
-        )
+        self._details: ApprovalDetailsController | None = None
         self._information_ready = False
         self._view_retired = False
         self._presentation_state: dict[str, Any] | None = None
@@ -774,6 +766,24 @@ class ChatApprovalCard(Container):
     ) -> None:
         if self._batch_view is None or self._batch_round_id is None:
             return
+        if self._details is None:
+            from tldw_chatbook.UI.Console_Modules.approval_details import ApprovalDetailsController
+
+            self._details = ApprovalDetailsController(
+                current_identity=lambda: self._current_details_identity(),
+                spawn_worker=lambda work: self.run_worker(
+                    work,
+                    thread=True,
+                    exclusive=True,
+                    group="approval-details",
+                    exit_on_error=False,
+                ),
+                post_page=lambda identity, page: self.app.call_from_thread(
+                    self._details.deliver_page, identity, page
+                ),
+                paint_page=lambda page: self._paint_details_page(page),
+                paint_loading=lambda: self._paint_details_loading(),
+            )
         row = self._details_buttons[opener]
         self._details_opener = opener
         self._details_area = self.query_one("#approval-details-page", TextArea)
@@ -811,6 +821,7 @@ class ChatApprovalCard(Container):
             button.details_identity = self._details_identity
             button.details_page_index = page.index
         area = self.query_one("#approval-details-page", TextArea)
+        loaded_without_width = area.size.width == 0
         area.load_text(page.text)
         if self._restore_details_scroll is not None:
             x, y = self._restore_details_scroll
@@ -834,6 +845,10 @@ class ChatApprovalCard(Container):
                     and state is self._presentation_state
                     and (state is None or not state.get("retired"))
                 ):
+                    if loaded_without_width and area.size.width > 0:
+                        # A fast page may beat Resize; rewrap this bounded capture
+                        # at its real width before restoring the saved offset.
+                        area.load_text(page.text)
                     area.scroll_to(x, y, animate=False, immediate=True)
 
             area.call_after_refresh(restore)
@@ -848,7 +863,8 @@ class ChatApprovalCard(Container):
         self.query_one("#approval-details-next", Button).disabled = not page.has_more
 
     def _close_details(self, *, restore_focus: bool = False) -> None:
-        self._details.close()
+        if self._details is not None:
+            self._details.close()
         self._details_identity = None
         self._restore_details_scroll = None
         for button in self.query("#approval-details-navigation Button"):
@@ -998,7 +1014,8 @@ class ChatApprovalCard(Container):
         self._save_presentation()
         self._view_retired = True
         self._information_ready = False
-        self._details.close()
+        if self._details is not None:
+            self._details.close()
         self._details_identity = None
         self._details_opener = None
         self._details_buttons.clear()
@@ -1187,7 +1204,11 @@ class ChatApprovalCard(Container):
         self._close_details()
         self._details_buttons = {}
         self._batch_view = view if normalized_phase != "finishing" else None
-        self._draft = ApprovalDraft(view) if self._batch_view is not None else None
+        self._draft = None
+        if self._batch_view is not None:
+            from tldw_chatbook.UI.Console_Modules.approval_controls import ApprovalDraft
+
+            self._draft = ApprovalDraft(view)
         self._presentation_revision = presentation_revision
         self._raw_reviewed = set()
         self._options_open = False

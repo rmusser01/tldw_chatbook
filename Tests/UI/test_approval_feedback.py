@@ -231,3 +231,46 @@ def test_actual_group_projection_keeps_terminal_and_pending_members_distinct():
         for text in (collapsed, expanded):
             assert ("Starting" in text) == (presentation.call_id == "pending")
         assert presentation.approval_feedback == fact
+
+
+@pytest.mark.asyncio
+async def test_feedback_message_compatibility_alias_reaches_current_screen_handler():
+    from types import SimpleNamespace
+
+    from textual.app import App
+
+    from tldw_chatbook.UI.Console_Modules.approval_feedback import (
+        ApprovalFeedbackChanged,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+    assert ApprovalFeedbackChanged is ChatApprovalCard.ApprovalFeedbackChanged
+    seen = []
+
+    class FeedbackHarness(App):
+        handle_console_approval_decided = ChatScreen.handle_console_approval_decided
+
+        def __init__(self):
+            super().__init__()
+            self._approval_feedback = SimpleNamespace(
+                refresh=lambda session, run: seen.append((session, run))
+            )
+
+    app = FeedbackHarness()
+    async with app.run_test() as pilot:
+        app.post_message(ApprovalFeedbackChanged("owning-chat", "owning-run"))
+        await pilot.pause()
+        assert seen == [("owning-chat", "owning-run")]
+
+    # A wrapper without the actual @on metadata must not receive this event.
+    class UnwiredHarness(App):
+        def handle_console_approval_decided(self, event):
+            ChatScreen.handle_console_approval_decided(self, event)
+
+    unwired = UnwiredHarness()
+    unwired._approval_feedback = app._approval_feedback
+    async with unwired.run_test() as pilot:
+        unwired.post_message(ApprovalFeedbackChanged("wrong-chat", "wrong-run"))
+        await pilot.pause()
+        assert seen == [("owning-chat", "owning-run")]

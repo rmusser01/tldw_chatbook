@@ -68,9 +68,25 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_hook_review_host import InitialHookReviewMixin
 
-from tldw_chatbook.Chat.approval_presentation import (
-    _build_approval_payload as _build_approval_payload,  # noqa: PLC0414 - public compatibility export
-)
+def _build_approval_payload(
+    round_id: str,
+    session_id: str,
+    run_id: str,
+    pending: list[MCPPendingCall],
+    timeout_seconds: float,
+    deadline: float | None,
+    *,
+    read_global_ToolExecutionPolicy: Callable[[], Any],
+    revision: int = 1,
+) -> dict[str, Any]:
+    """Keep the compatibility entry point while deferring approval-only capture."""
+    from tldw_chatbook.Chat.approval_presentation import _build_approval_payload as build
+
+    return build(
+        round_id, session_id, run_id, pending, timeout_seconds, deadline,
+        read_global_ToolExecutionPolicy=read_global_ToolExecutionPolicy,
+        revision=revision,
+    )
 
 #: Kind -> the controller attribute holding that kind's UI setter. The
 #: setters are attach-time assignments and may be absent entirely

@@ -731,3 +731,24 @@ def test_grouped_later_applied_fact_corrects_failure_without_regressing_success(
     assert fact.grant_state == "applied" and fact.applied_scope == "approve_session"
     assert "Until Chatbook exits" in format_approval_feedback(fact)
     assert "not remembered" not in format_approval_feedback(fact)
+
+
+def test_feedback_first_access_is_single_and_binds_only_existing_bridge():
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    from Tests.UI.test_console_mcp_approval import _build_controller
+
+    controller, _chat = _build_controller()
+    bridge = SimpleNamespace(approval_feedback_store=None)
+    controller._agent_bridge = bridge
+    assert controller._approval_feedback is None
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        stores = list(workers.map(lambda _: controller.approval_feedback, range(12)))
+    assert all(store is stores[0] for store in stores)
+    assert bridge.approval_feedback_store is stores[0]
+    controller.update_agent_runtime(enabled=False, bridge=None)
+    assert controller.approval_feedback is stores[0]
+    replacement = SimpleNamespace(approval_feedback_store=None)
+    controller.update_agent_runtime(enabled=True, bridge=replacement)
+    assert replacement.approval_feedback_store is stores[0]
