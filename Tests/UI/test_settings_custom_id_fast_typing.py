@@ -65,8 +65,9 @@ async def test_two_queued_keys_keep_the_field_in_custom_id_mode(request):
 
 @pytest.mark.asyncio
 @private_profile_test
+@pytest.mark.parametrize("provider", ("vllm", "llama_cpp"))
 async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stages(
-    request, monkeypatch
+    request, monkeypatch, provider
 ):
     """TASK-38975: the vLLM default handoff stages provider, model and endpoint
     and writes the model and endpoint fields quietly. If a field's mount echo
@@ -74,7 +75,8 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
     handler took it for an edit and staged the saved value again: the draft
     would save vLLM with the old model or endpoint while the fields showed the
     new ones. The model, endpoint and provider echoes are held here and
-    delivered after the handoff (review r11g-rev1 I1 added the endpoint)."""
+    delivered after the handoff (review r11g-rev1 I1 added the endpoint).
+    TASK-39133 runs the same echoes against the llama.cpp handoff."""
     from textual.widgets import Select
 
     from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -83,6 +85,8 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
         _SettingsFlowHarness,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_llamacpp_consumers import _ready_target
+    from tldw_chatbook.UI.Navigation.llamacpp_handoff import LlamaCppDefaultIntent
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
@@ -107,17 +111,22 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
     monkeypatch.setattr(Input, "post_message", holding(Input))
     monkeypatch.setattr(Select, "post_message", holding(Select))
     app = _console_app()
-    _, target = _install_ready_vllm_target(app)
-    app.pending_handoffs.stage(
-        HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent.from_target(target)
-    )
+    if provider == "vllm":
+        _, target = _install_ready_vllm_target(app)
+        channel = HandoffChannel.VLLM_DEFAULT
+        intent = VllmDefaultIntent.from_target(target)
+    else:
+        _, target = _ready_target(app)
+        channel = HandoffChannel.LLAMACPP_DEFAULT
+        intent = LlamaCppDefaultIntent.from_target(target)
+    app.pending_handoffs.stage(channel, intent)
     host = _SettingsFlowHarness(app)
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#settings-provider-save-result")
         await _settle(host, pilot)
-        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
+        assert not app.pending_handoffs.has_pending(channel)
         picker, field, _results, adapter = _widgets(screen)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         assert held["settings-model-value"].value == "model-a"  # the saved model
@@ -125,8 +134,8 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
             "http://127.0.0.1:9099"  # the saved endpoint
         )
         assert held["settings-provider-value"].value == "llama_cpp"  # saved provider
-        assert adapter.value == "chatbook-vllm"
-        assert endpoint.value == target.api_url
+        assert adapter.value == intent.model_id
+        assert endpoint.value == intent.api_url
 
         for widget_id, message in held.items():
             widget = screen.query_one(f"#{widget_id}")
@@ -140,9 +149,9 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
             draft.values["provider"],
             draft.values["model"],
             draft.values["endpoint"],
-        ) == ("vllm", "chatbook-vllm", target.api_url)
-        assert adapter.value == "chatbook-vllm"
-        assert endpoint.value == target.api_url
+        ) == (provider, intent.model_id, intent.api_url)
+        assert adapter.value == intent.model_id
+        assert endpoint.value == intent.api_url
 
         # A later edit still stages: a Custom ID typed in the field.
         field.focus()

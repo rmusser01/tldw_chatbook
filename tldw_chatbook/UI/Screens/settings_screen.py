@@ -5068,6 +5068,7 @@ class SettingsScreen(BaseAppScreen):
         self.call_after_refresh(self._update_inspector_overflow_hint)
         self.call_after_refresh(self._refresh_provider_picker)
         self.call_after_refresh(self._consume_pending_vllm_default_intent)
+        self.call_after_refresh(self._consume_pending_llamacpp_default_intent)
         self.call_after_refresh(self._consume_audio_cpp_model_library_result)
         if self.active_category == SettingsCategoryId.TOOL_PROFILES.value:
             self.call_after_refresh(self._request_tool_profiles_listing)
@@ -14412,11 +14413,13 @@ class SettingsScreen(BaseAppScreen):
         button.display = recovery is not None
         if recovery is None:
             return
+        llama = recovery.channel is HandoffChannel.LLAMACPP_DEFAULT
+        label = "llama.cpp" if llama else "vLLM"
         status.update(
-            "Verified vLLM handoff cleanup needs attention. Retry cleanup to "
+            f"Verified {label} handoff cleanup needs attention. Retry cleanup to "
             "unlock provider actions."
             if recovery.automatic_retry_exhausted
-            else "Verified vLLM handoff cleanup is retrying; provider actions "
+            else f"Verified {label} handoff cleanup is retrying; provider actions "
             "remain locked."
         )
         button.disabled = False
@@ -14542,9 +14545,11 @@ class SettingsScreen(BaseAppScreen):
         if type(store) is not PendingHandoffStore:
             return False
         store = cast(PendingHandoffStore, store)
-        if store.release_recovery(HandoffChannel.VLLM_DEFAULT) is not None:
+        # TASK-39133: either default channel's retained release blocks both.
+        recovery = self._vllm_default_recovery()
+        if recovery is not None:
             recovery_result = store.retry_release_recovery(
-                HandoffChannel.VLLM_DEFAULT,
+                recovery.channel,
                 automatic=True,
             )
             self._sync_vllm_default_recovery_widgets()
@@ -14552,16 +14557,16 @@ class SettingsScreen(BaseAppScreen):
                 if recovery_result == "pending":
                     self._schedule_vllm_default_cleanup_retry()
                 return False
-        claim = store.claim(HandoffChannel.VLLM_DEFAULT)
+        claim = store.claim(channel)
         if claim is None:
             return False
         try:
             intent = claim.value
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
-            if type(intent) is not VllmDefaultIntent:
-                raise TypeError("vLLM Settings handoff was not exact")
-            if not owner_has_current_intent(owner, intent):
-                raise ValueError("vLLM Settings handoff is stale")
+            owner = getattr(self.app_instance, owner_attribute, None)
+            if type(intent) is not intent_type:
+                raise TypeError("verified provider Settings handoff was not exact")
+            if not current_intent(owner, intent):
+                raise ValueError("verified provider Settings handoff is stale")
             if (
                 not self.is_mounted
                 or self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS
@@ -14583,17 +14588,18 @@ class SettingsScreen(BaseAppScreen):
             endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
             with endpoint_input.prevent(Input.Changed):
                 endpoint_input.value = intent.api_url
-            endpoint_input.placeholder = self._provider_endpoint_placeholder("vllm")
-            self._sync_provider_credential_widget("vllm")
-            self._sync_provider_model_profile_widgets("vllm", intent.model_id)
-            provider_settings = self._provider_config("vllm")
+            endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
+            self._sync_provider_credential_widget(provider)
+            self._sync_provider_model_profile_widgets(provider, intent.model_id)
+            provider_settings = self._provider_config(provider)
             if generic_endpoint_differs(intent.api_url, provider_settings):
                 self._provider_save_result = unsaved_endpoint_copy(
                     intent.api_url, provider_settings
                 )
             else:
                 self._provider_save_result = (
-                    "Verified vLLM target staged. Review it, then choose Save "
+                    f"Verified {'llama.cpp' if provider == 'llama_cpp' else 'vLLM'}"
+                    " target staged. Review it, then choose Save "
                     "to make it the default for new chats."
                 )
             self._set_static_text(
@@ -14608,7 +14614,7 @@ class SettingsScreen(BaseAppScreen):
                 intent,
             )
             if scheduled is False:
-                raise RuntimeError("vLLM Settings acknowledgment was not scheduled")
+                raise RuntimeError("provider Settings acknowledgment was not scheduled")
             return True
         except BaseException as error:
             self._rollback_vllm_default_intent(claim=claim)
@@ -14786,9 +14792,11 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return
-        result = store.retry_release_recovery(
-            HandoffChannel.VLLM_DEFAULT,
-            automatic=True,
+        recovery = self._vllm_default_recovery()
+        result = (
+            "missing"
+            if recovery is None
+            else store.retry_release_recovery(recovery.channel, automatic=True)
         )
         self._sync_vllm_default_recovery_widgets()
         if result == "pending":
@@ -14804,9 +14812,11 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return False
-        result = store.retry_release_recovery(
-            HandoffChannel.VLLM_DEFAULT,
-            automatic=False,
+        recovery = self._vllm_default_recovery()
+        result = (
+            "missing"
+            if recovery is None
+            else store.retry_release_recovery(recovery.channel, automatic=False)
         )
         self._sync_vllm_default_recovery_widgets()
         if result != "released":
@@ -23583,7 +23593,7 @@ class SettingsScreen(BaseAppScreen):
                 recovery_status.display = recovery is not None
                 yield recovery_status
                 recovery_button = Button(
-                    "Retry vLLM handoff cleanup",
+                    "Retry provider handoff cleanup",
                     id="settings-vllm-handoff-recovery",
                     variant="warning",
                     tooltip=(
