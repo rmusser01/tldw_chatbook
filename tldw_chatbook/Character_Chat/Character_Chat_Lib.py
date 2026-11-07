@@ -4717,7 +4717,8 @@ def load_character_card_from_file(
         # validate_path_simple (not validate_path) is the right tool here:
         # character cards are user-picked files that may legitimately live
         # anywhere on disk (e.g. another drive), so no base-directory
-        # restriction applies - but traversal/shell-metacharacter checks do.
+        # restriction applies - but traversal checks do (shell metacharacters
+        # are legal file-name characters and pass since TASK-38227).
         try:
             path_obj = Path(validate_path_simple(file_path, require_exists=True))
         except ValueError as e:

@@ -375,6 +375,33 @@ def test_tts_resolver_keeps_its_existing_resolved_alias_contract(tmp_path, monke
     )
 
 
+def test_tts_resolver_and_config_agree_on_a_legal_name_with_shell_characters(
+    tmp_path, monkeypatch
+):
+    """``Q3 P&L; tts.db`` is accepted by both resolvers (TASK-38227).
+
+    Dev refused it in both: ``config.get_tts_profiles_db_path`` through
+    ``validate_path_simple``'s strict default, and ``profile_paths`` through
+    its hand-copied mirror of that list. This PR flips the default and trims
+    the mirror the same way, so the two keep agreeing on a path that only
+    ever reaches SQLite.
+    """
+    from tldw_chatbook import config
+
+    db = real_db(tmp_path / "Q3 P&L; tts.db")
+    selected = {"database": {"tts_profiles_db_path": str(db)}}
+    monkeypatch.setattr(
+        config,
+        "get_cli_setting",
+        lambda section, key, default=None: selected.get(section, {}).get(key, default),
+    )
+    assert (
+        config.get_tts_profiles_db_path()
+        == profile_paths.database_path(selected, "tts_profiles_db_path")
+        == db
+    )
+
+
 def test_scheduled_tilde_override_retains_existing_validation_rejection():
     with pytest.raises(ValueError, match="invalid_config_path"):
         profile_paths.database_path(

@@ -771,7 +771,10 @@ def test_facade_preserves_backend_exception_identity(
 @pytest.mark.parametrize(
     ("audio_path", "cause_text"),
     [
-        pytest.param("missing;unsafe.wav", "dangerous pattern", id="unsafe"),
+        # TASK-38227: dev pinned this with "missing;unsafe.wav"; ";" is a legal
+        # file-name character this PR admits, so the kept double-parent
+        # refusal carries the pin now.
+        pytest.param("a/b/../../missing-unsafe.wav", "dangerous pattern", id="unsafe"),
         pytest.param("non_existent_file.wav", "Path does not exist", id="missing"),
     ],
 )

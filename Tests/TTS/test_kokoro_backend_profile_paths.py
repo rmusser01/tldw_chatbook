@@ -93,8 +93,13 @@ def test_explicit_backend_blend_directory_is_preserved(tmp_path: Path) -> None:
 def test_configured_blend_directory_rejects_dangerous_path_syntax(
     tmp_path: Path,
 ) -> None:
-    """Configured blend paths pass through the shared boundary validator."""
-    unsafe = tmp_path / "unsafe|blends"
+    """Configured blend paths pass through the shared boundary validator.
+
+    TASK-38227: dev pinned this with ``unsafe|blends``; ``|`` is a legal
+    file-name character this PR admits, so the kept double-parent refusal
+    carries the pin now.
+    """
+    unsafe = tmp_path / "a" / "b" / ".." / ".." / "unsafe-blends"
 
     with pytest.raises(ValueError, match="dangerous pattern"):
         KokoroTTSBackend(config={"KOKORO_VOICE_BLENDS_DIR": unsafe})
