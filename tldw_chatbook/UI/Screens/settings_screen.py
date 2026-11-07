@@ -293,7 +293,10 @@ from ...Utils.timestamps import parse_utc, utc_now, utc_now_iso
 from ..Navigation.base_app_screen import BaseAppScreen
 from ...Widgets.rag_profile_name_modal import RagProfileNameModal  # noqa: F401
 from ...LLM_Provider_Catalog.provider_model_resolution import resolve_effective_provider_model
-from ..Settings_Modules.category_panels import CATEGORY_PANELS, NETWORK_PANEL
+from ..Settings_Modules.category_panels import (
+    CATEGORY_PANELS,
+    NO_CHANGES_TO_REVERT_COPY,
+)
 from ..Settings_Modules.settings_config_adapter import (
     SettingsConfigAdapter,
     failure_status_text,
@@ -3708,11 +3711,12 @@ class SettingsScreen(BaseAppScreen):
         Guidance-only bindings remain active. Action bodies and category-owned
         panels retain validation, busy-state and confirmation checks.
         """
+        registered = CATEGORY_PANELS.get(category)
+        if registered is not None and action in ("save", "revert"):
+            model = registered.commit_model  # ADR-303 says what s and r do
+            return model.saves if action == "save" else model.reverts
         if action == "save":
-            return (
-                category in GUIDED_SETTINGS_MUTATION_CATEGORIES
-                or category in CATEGORY_PANELS
-            )
+            return category in GUIDED_SETTINGS_MUTATION_CATEGORIES
         if action == "revert":
             return (
                 category in GUIDED_SETTINGS_MUTATION_CATEGORIES
@@ -3908,11 +3912,9 @@ class SettingsScreen(BaseAppScreen):
         self._tool_profile_completion_revision = 0
         self._tools_hub_initial_view_state: dict[str, object] | None = None
 
-        # Network category pending edits. Deliberately NOT a SettingsDraft in
-        # _settings_drafts: the category bypasses the draft-staging machinery
-        # (GUIDED_SETTINGS_MUTATION_CATEGORIES); its registered panel
-        # (Settings_Modules/category_panels.py) owns the save.
-        self._network_pending: dict[str, object] = {}
+        # Registered panels' staged edits (Settings_Modules/category_panels.py),
+        # keyed by category and shaped by the panel; save_state keeps them.
+        self._category_panel_states: dict[SettingsCategoryId, dict[str, object]] = {}
         self._snapshot_preferences_loaded = None
         self._snapshot_preferences_raw = None
         self._snapshot_preferences_saving = False
@@ -4412,6 +4414,7 @@ class SettingsScreen(BaseAppScreen):
             panel.capture()
         state["hooks_snapshot"] = self._hooks_snapshot
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
+        state["category_panel_states"] = copy.deepcopy(self._category_panel_states)
         if self._advanced_config_settings is not None:
             try:
                 self._advanced_config_settings.edit(
@@ -4497,6 +4500,13 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_drafts = copy.deepcopy(valid_drafts)
             except Exception:
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
+        panel_states = state.get("category_panel_states")
+        if isinstance(panel_states, Mapping):
+            self._category_panel_states = {
+                category: copy.deepcopy(dict(values))
+                for category, values in panel_states.items()
+                if category in CATEGORY_PANELS and isinstance(values, Mapping)
+            }
 
         hooks_snapshot = state.get("hooks_snapshot")
         if hooks_snapshot is not None:
@@ -8663,6 +8673,14 @@ class SettingsScreen(BaseAppScreen):
             f"{self._collapse_large_pastes_label()} | Threshold: {self._paste_collapse_threshold_label()}"
         )
 
+    def _settings_config_adapter(self) -> SettingsConfigAdapter:
+        """The adapter a registered panel saves through.
+
+        Resolved in this module at call time, so a patched
+        ``settings_screen.SettingsConfigAdapter`` reaches panel saves too.
+        """
+        return SettingsConfigAdapter()
+
     def _app_config_mapping(self) -> Mapping[str, object]:
         app_config = getattr(self.app_instance, "app_config", {})
         return app_config if isinstance(app_config, Mapping) else {}
@@ -9441,6 +9459,8 @@ class SettingsScreen(BaseAppScreen):
                 return
 
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            return registered.has_unsaved_changes(self)
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             state = (
                 self._advanced_config_settings.state
@@ -10062,9 +10082,8 @@ class SettingsScreen(BaseAppScreen):
                 return
 
     def _guided_action_message(self, category: SettingsCategoryId) -> str:
-        panel = CATEGORY_PANELS.get(category)
-        if panel is not None:
-            return panel.scope_text(self)
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            return registered.scope_text(self).guided
         if category is SettingsCategoryId.APPEARANCE:
             if self._category_has_unsaved_changes(category):
                 validation = self._appearance_validation_result()
@@ -10821,7 +10840,7 @@ class SettingsScreen(BaseAppScreen):
                     f"State: {unsaved} | Leaving Speech & TTS resolves this "
                     "draft: save or discard first."
                 )
-            if category in GUIDED_SETTINGS_MUTATION_CATEGORIES and (
+            if self._category_action_supported(category, "revert") and (
                 category is not SettingsCategoryId.PROVIDERS_MODELS
             ):
                 unsaved += " · revert with r"
@@ -10847,9 +10866,8 @@ class SettingsScreen(BaseAppScreen):
             A short badge such as "Draft — save with s" that leads the
             State banner in the same position on every category.
         """
-        panel = CATEGORY_PANELS.get(category)
-        if panel is not None:
-            return panel.commit_model.badge
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            return registered.commit_model.badge
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             return "Draft — save with s"
         if category in LISTED_SAVE_MODELS:  # the category list's own words
@@ -10878,6 +10896,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
         """The category-scope half of the State banner (after the badge)."""
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            return registered.scope_text(self).banner
         if category is SettingsCategoryId.HOOKS:
             return "Saved enabled changes require review before the next Send."
         if category is SettingsCategoryId.WEB_SEARCH:
@@ -10890,8 +10910,6 @@ class SettingsScreen(BaseAppScreen):
                 "Applies to new and unused open chats · used chats keep theirs "
                 "(Console: Alt+M)"
             )
-        if category is SettingsCategoryId.SPEECH_TTS:
-            return "Application-wide defaults; Studio preferences remain separate."
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             return "Changes affect global Console fallbacks after save."
         if category is SettingsCategoryId.LIBRARY_RAG:
@@ -22794,11 +22812,60 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return None
 
+    def _render_speech_tts_detail(self) -> ComposeResult:
+        """Speech & TTS's detail pane, rendered for its registered adapter."""
+        (
+            audio_cpp_observation,
+            provider_configuration_revisions,
+            provider_runtime_revisions,
+            provider_applied_configuration_revisions,
+        ) = self._speech_tts_cached_runtime_state()
+        try:
+            app_config = get_runtime_config_snapshot().values
+            speech_tts_config = (
+                app_config if isinstance(app_config, Mapping) else {}
+            )
+            speech_tts_state = load_global_speech_tts_state(speech_tts_config)
+        except (OSError, TypeError, ValueError):
+            speech_tts_config = {}
+            speech_tts_state = load_global_speech_tts_state({})
+        if not self._speech_tts_profile_choices_requested:
+            self._speech_tts_profile_choices_requested = True
+            self._load_speech_tts_default_profile_choices()
+        yield SpeechTTSSettingsPanel(
+            state=self._speech_tts_draft_state or speech_tts_state,
+            original_state=self._speech_tts_original_state,
+            configure_provider=self._speech_tts_configure_provider,
+            draft_snapshot=self._speech_tts_draft_snapshot,
+            profiles=self._speech_tts_profile_choices,
+            profiles_unavailable=self._speech_tts_profile_choices_unavailable,
+            config_snapshot=speech_tts_config,
+            audio_cpp_observation=audio_cpp_observation,
+            audio_cpp_configuration_revision=provider_runtime_revisions.get(
+                "audio_cpp"
+            ),
+            provider_configuration_revisions=provider_configuration_revisions,
+            provider_runtime_revisions=provider_runtime_revisions,
+            provider_applied_configuration_revisions=(
+                provider_applied_configuration_revisions
+            ),
+            runtime_status_store=speech_tts_runtime_status_store(self.app_instance),
+            provider_test_evidence=process_provider_test_evidence_store(
+                self.app_instance
+            ),
+            audio_cpp_result_cleanup_pending=(
+                self.audio_cpp_result_cleanup_pending
+            ),
+            audio_cpp_result_cleanup_mounted=(
+                self._mark_audio_cpp_result_panel_mounted
+            ),
+            id="settings-speech-tts-panel",
+        )
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
-        panel = CATEGORY_PANELS.get(category)
-        if panel is not None:
-            yield from panel.render(self)
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            yield from registered.render(self)
         elif category is SettingsCategoryId.HOOKS:
             yield Button(
                 "Response rules · this profile",
@@ -22835,54 +22902,6 @@ class SettingsScreen(BaseAppScreen):
             )
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             yield from self._render_provider_detail()
-        elif category is SettingsCategoryId.SPEECH_TTS:
-            (
-                audio_cpp_observation,
-                provider_configuration_revisions,
-                provider_runtime_revisions,
-                provider_applied_configuration_revisions,
-            ) = self._speech_tts_cached_runtime_state()
-            try:
-                app_config = get_runtime_config_snapshot().values
-                speech_tts_config = (
-                    app_config if isinstance(app_config, Mapping) else {}
-                )
-                speech_tts_state = load_global_speech_tts_state(speech_tts_config)
-            except (OSError, TypeError, ValueError):
-                speech_tts_config = {}
-                speech_tts_state = load_global_speech_tts_state({})
-            if not self._speech_tts_profile_choices_requested:
-                self._speech_tts_profile_choices_requested = True
-                self._load_speech_tts_default_profile_choices()
-            yield SpeechTTSSettingsPanel(
-                state=self._speech_tts_draft_state or speech_tts_state,
-                original_state=self._speech_tts_original_state,
-                configure_provider=self._speech_tts_configure_provider,
-                draft_snapshot=self._speech_tts_draft_snapshot,
-                profiles=self._speech_tts_profile_choices,
-                profiles_unavailable=self._speech_tts_profile_choices_unavailable,
-                config_snapshot=speech_tts_config,
-                audio_cpp_observation=audio_cpp_observation,
-                audio_cpp_configuration_revision=provider_runtime_revisions.get(
-                    "audio_cpp"
-                ),
-                provider_configuration_revisions=provider_configuration_revisions,
-                provider_runtime_revisions=provider_runtime_revisions,
-                provider_applied_configuration_revisions=(
-                    provider_applied_configuration_revisions
-                ),
-                runtime_status_store=speech_tts_runtime_status_store(self.app_instance),
-                provider_test_evidence=process_provider_test_evidence_store(
-                    self.app_instance
-                ),
-                audio_cpp_result_cleanup_pending=(
-                    self.audio_cpp_result_cleanup_pending
-                ),
-                audio_cpp_result_cleanup_mounted=(
-                    self._mark_audio_cpp_result_panel_mounted
-                ),
-                id="settings-speech-tts-panel",
-            )
         elif category is SettingsCategoryId.TOOL_PROFILES:
             yield ToolProfilesPanel(
                 self._tool_profiles_listing,
@@ -26786,25 +26805,6 @@ class SettingsScreen(BaseAppScreen):
             self._stage_appearance_value(key, getattr(defaults, key))
         self._sync_appearance_widgets()
         self._mark_appearance_settings_staged()
-
-    @on(Select.Changed, "#settings-network-ssl-mode")
-    def handle_network_ssl_mode_changed(self, event: Select.Changed) -> None:
-        event.stop()
-        self._network_pending["mode"] = str(event.value or "verify")
-        self._update_network_warning()
-
-    @on(Input.Changed, "#settings-network-ca-path")
-    def handle_network_ca_path_changed(self, event: Input.Changed) -> None:
-        self._network_pending["ca_bundle_path"] = event.value
-
-    def _update_network_warning(self) -> None:
-        try:
-            widget = self.query_one("#settings-network-warning", Static)
-        except Exception:
-            return
-        widget.update(
-            NETWORK_PANEL.warning_text(NETWORK_PANEL.effective_mode(self))
-        )
 
     @on(Button.Pressed, "#settings-preview-appearance")
     def handle_preview_appearance(self, event: Button.Pressed) -> None:
@@ -33108,9 +33108,13 @@ class SettingsScreen(BaseAppScreen):
             return
         # A registered panel owns its save (it may bypass the SettingsDraft
         # machinery, as Network does), so it sits ABOVE the guard below.
-        panel = CATEGORY_PANELS.get(category)
-        if panel is not None:
-            panel.request_save(self)
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            if registered.commit_model.saves:
+                registered.request_save(self)
+            else:
+                self.app.notify(
+                    self._guided_action_message(category), severity="information"
+                )
             return
         if category is SettingsCategoryId.WEB_SEARCH:
             self.app.run_worker(
@@ -33126,20 +33130,6 @@ class SettingsScreen(BaseAppScreen):
             return
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             self._save_raw_cli_draft()
-            return
-        if category is SettingsCategoryId.SPEECH_TTS:
-            try:
-                panel = self.query_one(
-                    "#settings-speech-tts-panel",
-                    SpeechTTSSettingsPanel,
-                )
-            except QueryError:
-                self.app.notify(
-                    "Speech & TTS Settings are not available.",
-                    severity="warning",
-                )
-                return
-            panel.request_save()
             return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             if self._snapshot_preferences_saving:
@@ -34096,25 +34086,12 @@ class SettingsScreen(BaseAppScreen):
                 _settings_category_symbol("AdvancedConfigPanel")
             ).request_replacement("revert")
             return
-        if category is SettingsCategoryId.SPEECH_TTS:
-            try:
-                panel = self.query_one(
-                    "#settings-speech-tts-panel",
-                    SpeechTTSSettingsPanel,
-                )
-            except QueryError:
-                self.app.notify(
-                    "Speech & TTS Settings are not available.",
-                    severity="warning",
-                )
-                return
-            if not panel.has_unsaved_changes():
-                self.app.notify(
-                    "No Settings changes to revert.",
-                    severity="information",
-                )
-                return
-            self.run_worker(panel.revert_to_saved(), exclusive=False)
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            # The panel owns its revert, and any confirmation it needs.
+            if registered.commit_model.reverts:
+                registered.revert(self)
+            else:
+                self.app.notify(NO_CHANGES_TO_REVERT_COPY, severity="information")
             return
         if category is SettingsCategoryId.IMAGE_GENERATION:
             # Unlike THEME/SPLASH_SCREEN/INTERNAL_PROMPTS below (which have
@@ -34163,11 +34140,23 @@ class SettingsScreen(BaseAppScreen):
             not self._category_action_supported(category, "revert")
             or not self._category_has_unsaved_changes(category)
         ):
-            self.app.notify("No Settings changes to revert.", severity="information")
+            self.app.notify(NO_CHANGES_TO_REVERT_COPY, severity="information")
             return
-        # ADR-299 rule 3 (task-1340): revert discards every staged edit in
-        # the category, so a destructive single-letter key needs a
-        # confirmation guard before anything is thrown away.
+        self._confirm_category_revert(category, lambda: self._revert_category(category))
+
+    def _confirm_category_revert(
+        self, category: SettingsCategoryId, discard: Callable[[], None]
+    ) -> None:
+        """Ask before ``r`` discards the category's unsaved edits.
+
+        ADR-299 rule 3 (task-1340): revert discards every staged edit in the
+        category, so a destructive single-letter key needs a confirmation
+        guard before anything is thrown away.
+
+        Args:
+            category: The category whose edits would go.
+            discard: Discards them once confirmed.
+        """
         summary = self._category_summary_by_id(category)
 
         async def _confirmed_revert() -> None:
@@ -34175,7 +34164,7 @@ class SettingsScreen(BaseAppScreen):
             # revert already cleared the draft must not re-revert (which
             # would double the "changes reverted" toast).
             if self._category_has_unsaved_changes(category):
-                self._revert_category(category)
+                discard()
 
         self.app.push_screen(
             ConfirmationDialog(
