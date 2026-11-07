@@ -292,7 +292,9 @@ async def test_automatic_library_reply_asks_and_escape_leaves_it_unanswered(
                 )
                 await _send(host, pilot, console, QUESTION, record_property)
                 await until(lambda: _question_ready(host), timeout=20)
-                await host.screen.request_safe_cancel(source="escape")
+                await pilot.pause()
+                # The real key, through the dialog's own binding.
+                press(host, "escape")
                 await until(lambda: not _question_open(host), timeout=10)
                 await pilot.pause(0.3)
         assert library.calls == 1

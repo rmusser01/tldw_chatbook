@@ -336,9 +336,20 @@ async def note_unrecorded_library_evidence(
     """
     if session_id is None or repository is None:
         return
-    if getattr(repository, "fingerprint_key_state", None) != "writes_disabled":
-        return
-    question = question_for(repository)
+    try:  # Runs inside the send pipeline: an optional note never fails a send.
+        if getattr(repository, "fingerprint_key_state", None) != "writes_disabled":
+            return
+        await _note_for_question(question_for(repository), repository, session_id)
+    except Exception as exc:  # noqa: BLE001 - never ask on an unknown state
+        logger.warning(
+            "Citation records question not offered; exception_type={}",
+            type(exc).__name__,
+        )
+
+
+async def _note_for_question(
+    question: CitationRecordsQuestion, repository: Any, session_id: str
+) -> None:
     known = question._known()
     if known is False:
         return
@@ -353,12 +364,9 @@ async def note_unrecorded_library_evidence(
                 _records_of_its_own,
                 repository.db,
             )
-        except Exception as exc:  # noqa: BLE001 - never ask on an unknown state
-            logger.warning(
-                "Citation records question not offered; exception_type={}",
-                type(exc).__name__,
-            )
-            eligible = False
+        except Exception:
+            question._decide(False, session_id)  # an unknown state never asks
+            raise
         if eligible:
             logger.info("Citation records question waits for this reply")
         question._decide(eligible, session_id)

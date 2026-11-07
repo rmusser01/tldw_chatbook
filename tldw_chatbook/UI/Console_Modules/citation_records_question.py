@@ -43,25 +43,34 @@ _WHERE = (
     "Your answer is saved for this profile; config.toml is not changed. You "
     f"can change it later from the command palette: {PALETTE_LABEL}"
 )
+# The question can wait past a failed or cancelled turn for the session's
+# next settled reply, so this copy names no particular reply.
 AFTER_REPLY_MESSAGE = (
     f"{_ABOUT} This profile still has the older setting that keeps these "
-    "records off, so the sources of the reply you just got were not saved."
-    f"\n\n{_WHERE}"
+    "records off, so the sources of replies that used your Library were not "
+    f"saved.\n\n{_WHERE}"
 )
+# Records also need a secure system keyring, which this state cannot see.
 KEPT_NOTICE = (
-    "Citation records are on. Replies that cite your Library now show Cited sources."
+    "Citation records are on: new replies that use your Library keep a record "
+    "of their sources (this needs a secure system keyring)."
 )
 NOT_KEPT_NOTICE = (
     "Citation records stay off. To change this later, use "
     f"{PALETTE_LABEL} in the command palette."
 )
+# Never "ask again": a reply recorded under the unsaved Keep gives the profile
+# records of its own, and such a profile is never asked.
 SAVE_FAILED_NOTICE = (
-    "Your answer couldn't be saved, so Chatbook will ask again after a restart."
+    "Your answer couldn't be saved, so it lasts only until Chatbook closes. "
+    f"After a restart, choose {PALETTE_LABEL} in the command palette to answer "
+    "again."
 )
+# A saved Keep outranks a false set later, so false alone may not be enough.
 CONFIG_ON_NOTICE = (
     "Citation records are on: config.toml turns them on ([rag_citations] "
-    "canonical_writes_enabled). To turn them off, set it to false and restart "
-    "Chatbook."
+    "canonical_writes_enabled). To turn them off, set it to false, restart "
+    f"Chatbook, then choose {DONT_KEEP_LABEL} from {PALETTE_LABEL}"
 )
 CONFIG_OFF_NOTICE = (
     "Citation records are off because of config.toml ([rag_citations] "
