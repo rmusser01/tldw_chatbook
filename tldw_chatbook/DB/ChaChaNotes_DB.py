@@ -20737,7 +20737,7 @@ DELETE FROM keywords
             # A raw ``sqlite3.Error`` (a constraint, a disk error) is logged
             # too -- it reached the caller unlogged -- and re-raised as is.
             logger.error(
-                "Database error deleting a note forever: note_id={} error_type={}",
+                "Database error deleting a note forever: note_id={} exception_type={}",
                 note_id,
                 type(e).__name__,
             )

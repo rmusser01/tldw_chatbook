@@ -1129,7 +1129,7 @@
     },
     {
       "call_count": 371,
-      "diagnostic_digest": "19f0f6ba40332c306b67",
+      "diagnostic_digest": "eac8855cb5182f1b5ff9",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
