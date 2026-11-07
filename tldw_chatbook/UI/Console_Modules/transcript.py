@@ -468,6 +468,16 @@ def request_console_heap_refreeze(screen: Any, reason: str) -> None:
     heap_refreezer().request(reason, screen, _console_heap_busy)
 
 
+def request_transcript_sync(screen: Any) -> None:
+    """Public seam: ConsoleRuntime asks the view to re-arm its sync poll.
+
+    Bound on ``ChatScreen`` as a class attribute, so the screen's method
+    budget does not grow. The private timer is looked up at call time, so a
+    test that patches it on the instance still takes effect.
+    """
+    screen._start_console_transcript_sync_timer()
+
+
 def note_console_conversation_painted(screen: Any) -> None:
     """Request a re-freeze when the transcript shows a different conversation.
 
