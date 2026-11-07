@@ -995,6 +995,9 @@ MINIMUM_FILES = 2029
 # TASK-33621.59 (2026-11-06): append the four Stop-during-a-failed-commit
 # nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2033
+# TASK-33621.59 review (2026-11-06): append the two Stop-during-a-card-retry
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2035
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.

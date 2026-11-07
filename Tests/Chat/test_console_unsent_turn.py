@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_unsent_turn import (
     card_holds_refusal,
     clear_answered_draft,
     release_unsent_turn_preparation,
+    stop_cancelled_send,
 )
 
 SESSION = "session-1"
@@ -225,3 +226,40 @@ def test_a_card_sent_turn_clears_only_its_own_answered_prompt(
     expected = bool(after) and shown == stored
     assert cleared is expected
     assert store.session_draft(SESSION) == ("" if expected else stored)
+
+
+def _stopped(**overrides):
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+
+    fields = {
+        "accepted": False,
+        "should_clear_draft": False,
+        "visible_copy": "Send stopped; nothing was sent.",
+        "session_id": SESSION,
+        "terminal_status": ConsoleRunStatus.STOPPED,
+        "preparation_id": PREPARATION,
+        "cancelled_draft_revision": 4,
+    }
+    fields.update(overrides)
+    return ConsoleSubmitResult(**fields)
+
+
+def test_a_card_action_stopped_over_its_failed_save_settles_as_cancel():
+    """TASK-33621.59 review: only Stop's own cancel of this send counts."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+
+    assert stop_cancelled_send(_stopped(), SESSION, PREPARATION)
+    # A send that went through and was then stopped keeps its answer.
+    assert not stop_cancelled_send(_stopped(accepted=True), SESSION, PREPARATION)
+    # No draft revision: nothing was given back, so the shelf keeps the turn.
+    assert not stop_cancelled_send(
+        _stopped(cancelled_draft_revision=None), SESSION, PREPARATION
+    )
+    # A failed save with no Stop re-pauses for the card instead.
+    assert not stop_cancelled_send(
+        _stopped(terminal_status=ConsoleRunStatus.BLOCKED), SESSION, PREPARATION
+    )
+    assert not stop_cancelled_send(_stopped(), SESSION, "another-preparation")
+    assert not stop_cancelled_send(_stopped(), "another-session", PREPARATION)
+    assert not stop_cancelled_send(None, SESSION, PREPARATION)

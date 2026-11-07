@@ -2942,3 +2942,7 @@ Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_failing_c
 Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_failing_commit_gives_the_send_back_and_frees_the_chat[inside-reservation]
 Tests/UI/test_console_stop_during_failed_commit.py::test_a_failing_commit_with_no_stop_still_pauses_for_retry[before-reservation]
 Tests/UI/test_console_stop_during_failed_commit.py::test_a_failing_commit_with_no_stop_still_pauses_for_retry[inside-reservation]
+# TASK-33621.59 review (2026-11-06): Stop pressed during the card's Retry
+# send, whose save then fails too, settles the same way (6-7 s each).
+Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_card_retry_whose_commit_fails_gives_the_send_back[before-reservation]
+Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_card_retry_whose_commit_fails_gives_the_send_back[inside-reservation]
