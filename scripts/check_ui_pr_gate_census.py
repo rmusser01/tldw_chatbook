@@ -905,6 +905,9 @@ MINIMUM_FILES = 1827
 # retry and pick-mode nodes at the tail. The floor is the measured entry
 # count.
 MINIMUM_FILES = 1830
+# TASK-38968 (2026-11-07): append the send-admission deferred-Enter capture
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1831
 
 
 def read_census(path: Path) -> list[str]:

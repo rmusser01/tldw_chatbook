@@ -2651,3 +2651,8 @@ Tests/UI/test_console_response_rules.py::test_active_run_copy_takes_priority_ove
 Tests/UI/test_console_endpoint_discovery.py::test_refused_chat_settings_test_blocks_console_until_one_retry
 Tests/UI/test_console_endpoint_discovery.py::test_create_endpoint_with_live_controller_rebase_settles
 Tests/UI/test_console_endpoint_discovery.py::test_endpoint_command_create_lands_on_a_pair_in_pick_mode
+# TASK-38968 (2026-11-07): the deferred-Enter pin that only durable
+# acceptance removes a sent draft's captured prefix from the composer (the
+# whole file is 115 s serial; this node 24-39 s per lane run at load 61-89).
+# Appended at the tail.
+Tests/UI/test_console_send_admission_off_pump.py::test_an_enter_deferred_behind_a_send_sends_its_own_capture_only
