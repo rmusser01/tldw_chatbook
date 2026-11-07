@@ -18,14 +18,34 @@ from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSig
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.loopback_network]
 
 
+#: Every OpenAI-compatible family the one-time retry covers: the Custom slot
+#: (legacy handler), vLLM, and a named custom endpoint run by the hosted
+#: engine (``custom-hosted``, TASK-37762).
+_RETRIED = ["custom", "vllm", "custom-ep:box"]
+#: Run by the strict hosted engine, which needs the finish record a real
+#: server streams before its usage record (the loopback server's
+#: ``finish_records``); the legacy handlers keep the short form.
+_HOSTED = frozenset({"custom-ep:box"})
+#: The provider each family's normalized trace usage is attributed to.
+_USAGE_PROVIDER = {
+    "custom": "custom-openai-api",
+    "vllm": "vllm",
+    "custom-ep:box": "custom-hosted",
+}
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["custom", "vllm"])
+@pytest.mark.parametrize("provider", _RETRIED)
 @pytest.mark.parametrize("allowance", [1, 2])
 async def test_retry_has_separate_automatic_call_admission(db, provider, allowance):
     context = context_for(db, model_calls=allowance, output_tokens=13)
     first = {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
     signals = ConsoleProviderStreamSignals()
-    with _server(empty_stream=True, empty_stream_usage=first) as server:
+    with _server(
+        empty_stream=True,
+        empty_stream_usage=first,
+        finish_records=provider in _HOSTED,
+    ) as server:
         gateway, selected = await asyncio.to_thread(_resolve, provider, server.base_url)
         try:
             with context.scope():
@@ -47,10 +67,10 @@ async def test_retry_has_separate_automatic_call_admission(db, provider, allowan
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["custom", "vllm"])
+@pytest.mark.parametrize("provider", _RETRIED)
 async def test_unknown_first_usage_keeps_reservation_and_blocks_retry(db, provider):
     context = context_for(db, model_calls=2, output_tokens=13)
-    with _server(empty_stream=True) as server:
+    with _server(empty_stream=True, finish_records=provider in _HOSTED) as server:
         gateway, selected = await asyncio.to_thread(_resolve, provider, server.base_url)
         try:
             with context.scope(), pytest.raises(
@@ -209,7 +229,7 @@ async def test_whole_json_preserves_native_tools_without_retry(provider):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["custom", "vllm"])
+@pytest.mark.parametrize("provider", _RETRIED)
 async def test_capture_on_retry_retains_both_calls_usage_and_project_context(
     tmp_path, monkeypatch, provider
 ):
@@ -221,7 +241,11 @@ async def test_capture_on_retry_retains_both_calls_usage_and_project_context(
     from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 
     first_usage = {"prompt_tokens": 21, "completion_tokens": 0, "total_tokens": 21}
-    with _server(empty_stream=True, empty_stream_usage=first_usage) as server:
+    with _server(
+        empty_stream=True,
+        empty_stream_usage=first_usage,
+        finish_records=provider in _HOSTED,
+    ) as server:
         async with _project_console(tmp_path, monkeypatch) as app:
             helper, selected = await asyncio.to_thread(
                 _resolve, provider, server.base_url
@@ -259,7 +283,7 @@ async def test_capture_on_retry_retains_both_calls_usage_and_project_context(
                 "model": "local-model",
                 "output": 0,
                 "partial": False,
-                "provider": "custom-openai-api" if provider == "custom" else "vllm",
+                "provider": _USAGE_PROVIDER[provider],
                 "transcription_seconds": 0.0,
                 "uncached_input": 21,
             }
@@ -450,9 +474,10 @@ async def test_fallback_trace_recovery_keeps_accepted_owner(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["custom", "custom-ep:box"])
 @pytest.mark.parametrize("tool_phase", ["before_retry", "after_retry"])
 async def test_capture_on_post_tool_stream_retry_keeps_tool_chain(
-    tmp_path, monkeypatch, tool_phase
+    tmp_path, monkeypatch, tool_phase, provider
 ):
     from Tests.Chat.test_console_project_instruction_traces import _project_console
 
@@ -461,10 +486,11 @@ async def test_capture_on_post_tool_stream_retry_keeps_tool_chain(
         empty_stream_usage={"prompt_tokens": 21, "completion_tokens": 0},
         tool_first=tool_phase == "before_retry",
         tool_on_retry=tool_phase == "after_retry",
+        finish_records=provider in _HOSTED,
     ) as server:
         async with _project_console(tmp_path, monkeypatch, tools=1) as app:
             helper, selected = await asyncio.to_thread(
-                _resolve, "custom", server.base_url
+                _resolve, provider, server.base_url
             )
             await helper.aclose()
 

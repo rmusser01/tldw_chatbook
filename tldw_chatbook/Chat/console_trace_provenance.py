@@ -525,10 +525,8 @@ def stream_fallback_route_provenance(
     The TOOL_LOOP admission still proves the settled prior call and unchanged
     request surface; this projection grants no adapter authority by itself.
     """
-    generic = (
-        bool(execution_key)
-        and execution_key != "custom-hosted"
-        and not (provider in {"llama_cpp", "local_llamacpp"} and not has_tools)
+    generic = bool(execution_key) and not (
+        provider in {"llama_cpp", "local_llamacpp"} and not has_tools
     )
     if generic and original.route in {
         ConsoleRequestRoute.AGENT_FIRST,

@@ -6,13 +6,14 @@ arrives, or opens the stream and sends no text. Two consequences follow, and
 they share the one classification below:
 
 * TASK-37421 (owner decision 2026-10-29): a self-hosted server or a Custom
-  OpenAI-compatible slot is asked once more without streaming, the way the
-  llama.cpp path already supports. Each physical retry retains its own
-  admission, usage and trace; missing usage is not proof of zero spend.
+  OpenAI-compatible endpoint (a Custom slot, or a named custom endpoint run
+  by the hosted engine, TASK-37762) is asked once more without streaming,
+  the way the llama.cpp path already supports. Each physical retry retains
+  its own admission, usage and trace; missing usage is not proof of zero
+  spend.
 * TASK-37180: a provider that is not retried (a cloud provider, where a
-  silent second paid call is not wanted, and for now a named custom endpoint
-  run by the hosted engine) names the Streaming setting in its failure copy,
-  beside the model advice.
+  silent second paid call is not wanted) names the Streaming setting in its
+  failure copy, beside the model advice.
 
 Classification and recovery copy only: nothing here reaches the wire.
 Imported lazily by the gateway (ADR-097 boot ratchet).
@@ -72,17 +73,39 @@ def is_refused_stream(exc: BaseException) -> bool:
     return not is_context_overflow_error(exc)
 
 
+def is_unreadable_stream(exc: BaseException) -> bool:
+    """Whether a streamed reply failed because its stream could not be read.
+
+    A named custom endpoint (``custom-ep:<slug>``) streams through the hosted
+    engine, which raises a protocol error, not a status, for a stream that
+    ends with no finish record or is not SSE at all: what a server that
+    sends no text, or ignores ``stream`` and answers whole, looks like there
+    (TASK-37762). The caller decides the rest: the request was streamed, to
+    a server that is retried, and nothing arrived before the failure.
+
+    Args:
+        exc: The adapter's failure, before any projection.
+
+    Returns:
+        True for the hosted engine's stream protocol error.
+    """
+    from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatProtocolError
+
+    return isinstance(exc, HostedChatProtocolError)
+
+
 def retries_refused_stream(resolution: Any) -> bool:
     """Whether a refused or empty stream is retried once without streaming.
 
-    Every self-hosted provider and the Custom OpenAI-compatible slots
-    (``custom``, ``custom_2``). Cloud providers never are. Nor, for now, is a
-    named ``custom-ep:<slug>`` entry that runs through the hosted engine
-    (``custom-hosted``): its traced request never aligns with the prepared
-    one (each call's surface is an alignment-mismatch omission), so the
-    retry's own trace call cannot be reserved and, with capture on, the run
-    would block (measured live 2026-10-29, TASK-37762). Its refused stream
-    names the Streaming setting instead, as a cloud provider's does.
+    Every self-hosted provider and every Custom OpenAI-compatible endpoint:
+    the ``custom`` and ``custom_2`` slots and a named ``custom-ep:<slug>``
+    entry, which runs through the hosted engine under the ``custom-hosted``
+    key. Cloud providers never are. TASK-37762: the named entry was left out
+    while its traced request never aligned (each call's surface was an
+    alignment-mismatch omission, so the retry's own trace call could not be
+    reserved and, with capture on, the run blocked); since the gateway and
+    the trace reconstruction share one adapter base URL, it records the
+    saved user revision like a Custom slot call and is retried the same way.
 
     Args:
         resolution: The Console provider resolution about to stream.
@@ -91,8 +114,6 @@ def retries_refused_stream(resolution: Any) -> bool:
         True when the resolution streams to a self-hosted endpoint.
     """
     if getattr(resolution, "streaming", False) is not True:
-        return False
-    if getattr(resolution, "execution_key", None) == "custom-hosted":
         return False
     from tldw_chatbook.Chat.provider_readiness import is_self_hosted_provider
 

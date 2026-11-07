@@ -976,7 +976,11 @@ _BUDGETS: dict[str, int] = {
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8364,  # 2026-11-06: +6, QwenCloud reads a schemeless loopback session endpoint as http:// (TASK-39042 review C1) and aphrodite, koboldcpp, oobabooga and tabbyapi get the pinned base (review r11g-rev2) (owner waiver)
+    # 2026-11-06: +6, QwenCloud reads a schemeless loopback session endpoint as http:// (TASK-39042 review C1) and aphrodite, koboldcpp, oobabooga and tabbyapi get the pinned base (review r11g-rev2) (owner waiver)
+    # TASK-37762, 2026-11-12: +8, a named custom endpoint's empty or
+    # unreadable stream is retried without streaming; exact measurement after
+    # rebasing onto dev 4b90eb860b (8337 -> 8345, inside dev's 8364 row).
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8345,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
