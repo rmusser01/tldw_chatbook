@@ -1048,7 +1048,11 @@ _BUDGETS: dict[str, int] = {
     # dev's 7,046 plus TASK-39117's +3.
     # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 7,040
     # plus TASK-39117's +3; exact measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7043,
+    # 2026-11-06, TASK-33620.8.3 (owner rule "expand limits, don't contort
+    # code"): +9, both capture seams note an unrecorded Library reply with the
+    # turn's own session for the one-time records question; rebased onto dev
+    # (measured 7,028): exact measurement 7,037.
+    "tldw_chatbook/Chat/console_runtime.py": 7037,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
