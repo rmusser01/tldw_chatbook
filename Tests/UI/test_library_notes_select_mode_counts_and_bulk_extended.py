@@ -374,3 +374,57 @@ def _folder_row(screen, label: str):
         if label in str(row.label):
             return row
     raise AssertionError(f"no folder row {label!r}")
+
+
+#: A terminal at which the Actions… chooser does not fit one row and stacks.
+STACKED = (120, 36)
+
+
+async def test_the_stacked_actions_chooser_paints_one_row_per_action(
+    tmp_path,
+) -> None:
+    """Re-review 2 m-4: the stacked chooser's height fits its option count.
+
+    The stacked chooser takes the ``h-3`` sizing utility (ADR-161: a class,
+    not an inline height), one row per entry of
+    ``NOTES_SELECT_ACTION_CHOICES``. A fourth action under ``h-3`` would be
+    clipped with nothing else going red, so every option must be painted on
+    its own row inside the chooser, and the chooser exactly as tall as the
+    options.
+    """
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+        NOTES_SELECT_ACTION_CHOICES,
+    )
+
+    count = len(NOTES_SELECT_ACTION_CHOICES)
+    host, _seed = mounted(tmp_path)
+    async with host.run_test(size=STACKED) as pilot:
+        screen = await notes_ready(host, pilot)
+        await enter_select_mode(host, pilot, screen)
+        await _check(host, pilot, screen, ("Reading list",))
+        await pilot.click("#library-notes-select-actions")
+        await until(
+            pilot,
+            lambda: len(screen.query(".library-notes-select-action-choice")) == count
+            and all(
+                option.region.height > 0
+                for option in screen.query(".library-notes-select-action-choice")
+            ),
+            lambda: f"the {count} chooser options to paint: {painted(host)}",
+        )
+        chooser = screen.query_one("#library-notes-select-action-choices")
+        assert chooser.styles.layout.name == "vertical", (
+            f"the chooser did not stack at {STACKED}: {painted(host)}"
+        )
+        options = list(screen.query(".library-notes-select-action-choice"))
+        assert chooser.region.height == count, (chooser.region, count)
+        rows = [option.region for option in options]
+        assert all(region.height == 1 for region in rows), rows
+        assert len({region.y for region in rows}) == count, rows
+        assert all(chooser.region.contains_region(region) for region in rows), (
+            chooser.region,
+            rows,
+        )
+        text = painted(host)
+        for _option_id, _value, label in NOTES_SELECT_ACTION_CHOICES:
+            assert label in text, (label, text)
