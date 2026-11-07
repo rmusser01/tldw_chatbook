@@ -1,0 +1,73 @@
+{
+  "status": "RED",
+  "qualified": false,
+  "product_samples": 0,
+  "results": {
+    "default_off": {
+      "actual": {
+        "calls_once_unchanged": true,
+        "return_preserved": true,
+        "error_preserved": false,
+        "arm_count": 1,
+        "one20s_repeatFalse": true,
+        "all_timer_calls": 2
+      },
+      "pass": false
+    },
+    "opt_in": {
+      "actual": {
+        "calls_once_unchanged": true,
+        "return_preserved": true,
+        "error_preserved": false,
+        "arm_count": 1,
+        "one20s_repeatFalse": true,
+        "all_timer_calls": 2
+      },
+      "pass": true
+    },
+    "off_original_error": {
+      "actual": {
+        "calls_once_unchanged": true,
+        "return_preserved": false,
+        "error_preserved": true,
+        "arm_count": 1,
+        "one20s_repeatFalse": true,
+        "all_timer_calls": 2
+      },
+      "pass": false
+    },
+    "qualification_debug_refused": {
+      "actual_limit": 41,
+      "pass": false
+    },
+    "qualification_off_allowed": {
+      "actual_limit": 41,
+      "pass": true
+    },
+    "validation_badflag_refused": {
+      "actual_limit": 1,
+      "pass": false
+    },
+    "explicit_selected_child_flag_binding": {
+      "pass": false
+    },
+    "seeder_default_off": {
+      "actual_flag": null,
+      "pass": false
+    },
+    "seeder_opt_in": {
+      "actual_flag": null,
+      "pass": false
+    }
+  },
+  "failures": [
+    "default_off",
+    "off_original_error",
+    "qualification_debug_refused",
+    "validation_badflag_refused",
+    "explicit_selected_child_flag_binding",
+    "seeder_default_off",
+    "seeder_opt_in"
+  ],
+  "scope": "Actual private command/class/parser AST plus pure mode policy with controlled timers/tasks/files only; no real C timer, App, native API, product import, external/model traffic or crash causality."
+}

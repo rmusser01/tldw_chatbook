@@ -1,0 +1,13 @@
+{
+  "status": "GREEN",
+  "qualified": false,
+  "product_samples": 0,
+  "results": {
+    "actual_sink_64perround_then_loss_without_owner_exception": true,
+    "actual_sink_fixed41correlations_then_loss": true,
+    "unbounded_scalar_never_enters_private_spool": true,
+    "actual_reader_mathematical_rows_bytes_caps": true,
+    "clock_conversion_keeps_before_after_union_uncertainty": true
+  },
+  "scope": "Actual private sink/reader with stdlib queues/locks/tempfiles and controlled clock brackets; no App/UI/native/product import, external/service/model traffic or real timing qualification."
+}

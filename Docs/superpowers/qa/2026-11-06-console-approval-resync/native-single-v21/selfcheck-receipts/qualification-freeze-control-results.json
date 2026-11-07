@@ -1,0 +1,60 @@
+{
+  "status": "GREEN",
+  "qualified": false,
+  "product_samples": 0,
+  "source_sha256": {
+    "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
+    "prepare_native_run.py": "38bdeb7f6881b8fbf12461e0d958b44ad35c9502ee4c7deb6a0478125d6801a7",
+    "qa_process_guard.py": "5929c9d89253645b205a90a37215a2fa131c20deb8bdfba0e39fc6876f590251"
+  },
+  "results": {
+    "qualification_false": {
+      "actual_limit": null,
+      "expected_allowed": false,
+      "reason": "Actual freeze does not explicitly authorize qualification for selected source/revision",
+      "pass": true
+    },
+    "qualification_missing": {
+      "actual_limit": null,
+      "expected_allowed": false,
+      "reason": "Actual freeze does not explicitly authorize qualification for selected source/revision",
+      "pass": true
+    },
+    "qualification_integer1": {
+      "actual_limit": null,
+      "expected_allowed": false,
+      "reason": "Actual freeze does not explicitly authorize qualification for selected source/revision",
+      "pass": true
+    },
+    "qualification_string_true": {
+      "actual_limit": null,
+      "expected_allowed": false,
+      "reason": "Actual freeze does not explicitly authorize qualification for selected source/revision",
+      "pass": true
+    },
+    "qualification_explicit_true": {
+      "actual_limit": 41,
+      "expected_allowed": true,
+      "reason": null,
+      "pass": true
+    },
+    "freeze_source_mismatch": {
+      "actual_limit": null,
+      "pass": true
+    },
+    "freeze_revision_mismatch": {
+      "actual_limit": null,
+      "pass": true
+    },
+    "prepare_native_run.py_windows_safe_directory": {
+      "safe_directory_argument": "safe.directory=Q:/synthetic-selected/repository",
+      "pass": true
+    },
+    "qa_process_guard.py_windows_safe_directory": {
+      "safe_directory_argument": "safe.directory=Q:/synthetic-selected/repository",
+      "pass": true
+    }
+  },
+  "failures": [],
+  "scope": "All other authorization flags/bytes/reviews match controlled fixtures. No App/product/native import, Git process, GUI, real model, external/service traffic or actual Root qualification."
+}

@@ -1,0 +1,155 @@
+{
+  "qualified": false,
+  "product_samples": 0,
+  "GUI_launched": false,
+  "scope": "Pure private fixture validator/serialization only; synthesized protocol controls are NOT product or real discovery evidence",
+  "shape_caps": {
+    "batch_distinct_native_calls": 4,
+    "large_content_utf8_bytes": 1048576,
+    "raw_command_utf8_bytes": 16384
+  },
+  "refusal_controls": [
+    {
+      "shape": "single",
+      "control": "actual_V12_ask_user_only_discovery",
+      "target_consumed": false
+    },
+    {
+      "shape": "single",
+      "control": "wrong_catalog_id",
+      "target_consumed": false
+    },
+    {
+      "shape": "single",
+      "control": "actual_V12_invalid_id_load",
+      "target_consumed": false
+    },
+    {
+      "shape": "single",
+      "control": "budget_omitted_load",
+      "target_consumed": false
+    },
+    {
+      "shape": "single",
+      "control": "wrong_result_call_id",
+      "target_consumed": false
+    },
+    {
+      "shape": "single",
+      "control": "duplicate_result",
+      "target_consumed": false
+    },
+    {
+      "shape": "single",
+      "control": "missing_actual_native_schema",
+      "target_consumed": false
+    },
+    {
+      "shape": "batch",
+      "control": "actual_V12_ask_user_only_discovery",
+      "target_consumed": false
+    },
+    {
+      "shape": "batch",
+      "control": "wrong_catalog_id",
+      "target_consumed": false
+    },
+    {
+      "shape": "batch",
+      "control": "actual_V12_invalid_id_load",
+      "target_consumed": false
+    },
+    {
+      "shape": "batch",
+      "control": "budget_omitted_load",
+      "target_consumed": false
+    },
+    {
+      "shape": "batch",
+      "control": "wrong_result_call_id",
+      "target_consumed": false
+    },
+    {
+      "shape": "batch",
+      "control": "duplicate_result",
+      "target_consumed": false
+    },
+    {
+      "shape": "batch",
+      "control": "missing_actual_native_schema",
+      "target_consumed": false
+    },
+    {
+      "shape": "large",
+      "control": "actual_V12_ask_user_only_discovery",
+      "target_consumed": false
+    },
+    {
+      "shape": "large",
+      "control": "wrong_catalog_id",
+      "target_consumed": false
+    },
+    {
+      "shape": "large",
+      "control": "actual_V12_invalid_id_load",
+      "target_consumed": false
+    },
+    {
+      "shape": "large",
+      "control": "budget_omitted_load",
+      "target_consumed": false
+    },
+    {
+      "shape": "large",
+      "control": "wrong_result_call_id",
+      "target_consumed": false
+    },
+    {
+      "shape": "large",
+      "control": "duplicate_result",
+      "target_consumed": false
+    },
+    {
+      "shape": "large",
+      "control": "missing_actual_native_schema",
+      "target_consumed": false
+    },
+    {
+      "shape": "raw-deny",
+      "control": "actual_V12_ask_user_only_discovery",
+      "target_consumed": false
+    },
+    {
+      "shape": "raw-deny",
+      "control": "wrong_catalog_id",
+      "target_consumed": false
+    },
+    {
+      "shape": "raw-deny",
+      "control": "actual_V12_invalid_id_load",
+      "target_consumed": false
+    },
+    {
+      "shape": "raw-deny",
+      "control": "budget_omitted_load",
+      "target_consumed": false
+    },
+    {
+      "shape": "raw-deny",
+      "control": "wrong_result_call_id",
+      "target_consumed": false
+    },
+    {
+      "shape": "raw-deny",
+      "control": "duplicate_result",
+      "target_consumed": false
+    },
+    {
+      "shape": "raw-deny",
+      "control": "missing_actual_native_schema",
+      "target_consumed": false
+    }
+  ],
+  "product_modules_imported": 0,
+  "helper_sha256": "2bab44e762702a8c8f18f3e59e5e769a1cc67fa31a2d4d735599b4217cc2825c"
+}
