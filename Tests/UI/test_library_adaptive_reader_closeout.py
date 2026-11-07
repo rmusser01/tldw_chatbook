@@ -415,9 +415,10 @@ async def _open_destination(
     With the shared Library pane closed, the rail is hidden, so by default
     this reopens the pane, presses the rail row, and closes the pane again
     (waiting for that choice to persist). ``keep_library_closed`` (TASK-39052)
-    instead hands the hidden rail row's ``Pressed`` to the rail's own handler,
-    ``handle_library_rail_row`` (the code a press runs), and never reopens the
-    pane: the shared closed choice then stands for the whole visit.
+    instead presses the hidden rail row, whose ``Pressed`` reaches the screen's
+    handler (``handle_library_rail_row``) through its message pump as usual,
+    and never reopens the pane: the shared closed choice then stands for the
+    whole visit. The shell returned is always the one mounted on return.
     """
     rail, shell_selector, second_selector, _preferences, _layout = DESTINATION_CONTRACT[
         destination
@@ -450,9 +451,7 @@ async def _open_destination(
         == {False}
     )
     if restore_closed_library and keep_library_closed:
-        await screen.handle_library_rail_row(
-            Button.Pressed(screen.query_one(rail, Button))
-        )
+        screen.query_one(rail, Button).press()
         restore_closed_library = False
     elif restore_closed_library:
         mounted_shells[0].library_grip.press()
@@ -631,7 +630,9 @@ async def _open_destination(
             ),
             message=f"Shared Library choice did not restore after {destination}",
         )
-    return shell
+    # Collections repaints its reader while page/detail settlement lands
+    # (r11l-rev2): return the shell mounted now, on every path.
+    return screen.query_one(shell_selector)
 
 
 def _destination_state(screen, destination: str) -> tuple[object, ...]:
@@ -1438,15 +1439,6 @@ async def _exercise_closeout_single_app_route_cycle(
                     )
                     == 1
                 )
-                # The reader can paint a frame after its item lands (a work
-                # pane with no item yet is hidden at zero width, TASK-38981).
-                shell_selector = DESTINATION_CONTRACT[destination][1]
-                await _route_wait(
-                    pilot,
-                    lambda: screen.query_one(shell_selector).work.display,
-                    message=f"{destination} work pane did not show on return",
-                )
-                shell = screen.query_one(shell_selector)
                 assert shell.work.is_mounted and shell.work.display
                 assert {
                     operator.attrgetter(contract[3])(screen).library_open
@@ -1602,6 +1594,50 @@ async def test_closeout_single_app_route_cycle(
     assert receipts["prompts"]["draft"]["dirty"] is True
     assert receipts["prompts"]["draft"]["retained_without_save"] is True
     assert facts["observations"]["notes_draft_saved_on_return"] is True
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination", DESTINATIONS)
+async def test_each_destination_library_grip_close_persists(
+    tmp_path: Path, request: pytest.FixtureRequest, destination: str
+) -> None:
+    """TASK-39052 review: each destination persists the shared Library choice
+    from its own grip. ``_toggle_library_media_reader_pane`` has one branch per
+    destination, each with its own persist call. The route cycle used to
+    re-close the Library from every destination's grip and wait for that close
+    to persist; it now keeps the Library closed, so this test carries that
+    check: close the shared Library from Media, then open ``destination``
+    through ``_open_destination``'s default path, which reopens the pane,
+    presses the rail row, closes the pane again from ``destination``'s own
+    grip and waits for the durable close."""
+    app, prompt_db = await _seed_closeout_app(tmp_path / destination)
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            shell = await _open_destination(screen, pilot, "media")
+            generation = screen._library_reader_durable_generations["library"]
+            shell.library_grip.press()
+            await _route_wait(
+                pilot,
+                lambda: (
+                    screen._library_reader_durable_generations["library"] > generation
+                    and not screen._library_reader_durable_preferences["library"]
+                ),
+                message="Media's grip did not persist the shared Library close",
+            )
+            # The default path: reopen, rail, then close from this
+            # destination's own grip and wait until that close is durable.
+            await _open_destination(screen, pilot, destination)
+            assert {
+                operator.attrgetter(contract[3])(screen).library_open
+                for contract in DESTINATION_CONTRACT.values()
+            } == {False}
+            assert not screen._library_reader_durable_preferences["library"]
+    finally:
+        prompt_db.close()
 
 
 def _assert_inside_items(items, widget) -> None:

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 22:10
+updated_date: 2026-11-07 00:10
 labels:
 - follow-up
 - library
@@ -88,15 +88,28 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
   - `Tests/CI` at `-n 4`: 1215 passed, 1 skipped.
 - **Review r11l-rev1, item 3: robust under load.** On the required lane, the reviewer's runs with the step's flags at load 50-95 passed 0 of 6. Four failed in `_open_destination` with "Shared Library choice did not restore after conversations", and two hit the 180 s timeout. My profile at load 60-80 found the same: 125-196 s of call time, and one timeout.
   - **Trimmed.** Each of the cycle's 11 visits after Media used to reopen the closed shared Library pane, press the rail row, then close the pane again and wait for that choice to persist. That was a grip press with a wait, then a grip press with a durable config write and its wait. No assertion depends on these round trips. They only existed so the hidden rail could be pressed.
-  - With `keep_library_closed=True` (the default for other callers is unchanged), `_open_destination` instead hands the hidden rail row's `Pressed` to the rail's own handler, `handle_library_rail_row`, and never reopens the pane.
-    - A first cut that called `_select_library_rail_row` directly failed: the Conversations rows never mounted, because the rail handler also starts the Conversations page recovery. So the handler itself is used.
+  - With `keep_library_closed=True` (the default for other callers is unchanged), `_open_destination` instead presses the hidden rail row and never reopens the pane. The row's `Pressed` reaches the screen's handler, `handle_library_rail_row`, through its message pump as usual.
+    - A first cut that called `_select_library_rail_row` directly failed: the Conversations rows never mounted, because the rail handler also starts the Conversations page recovery.
+    - A second cut called the handler inline, outside the screen's message pump. Review r11l-rev2 showed that `.press()` works on the hidden row (all 11 presses ran), so the cycle presses the row.
     - The closed shared choice now stands for the whole cycle, and the second loop still asserts it on every return.
   - **Waits.** Every wait in `_open_destination`, `_focus_closeout_work_via_f6` and the cycle is now `_route_wait` / `_route_selector`: a 60 s wall-clock deadline, with conditions polled every 50 ms rather than 20 ms, since each `pilot.pause` walks the whole screen. A slow machine slows the journey instead of failing it.
-  - **One point read became a wait.** The second loop's `shell.work.display` check used to be a point read. The old grip round trip hid a race there: a destination's reader can paint a frame after its item lands, and a work pane with no item yet is hidden at zero width (TASK-38981). The check now waits for the pane, re-queries the shell and asserts as before. No assertion was removed.
+  - **Stale Collections shell, fixed at its source (review r11l-rev2).** The second loop's point assertion `shell.work.is_mounted and shell.work.display` failed for Collections once the restore branch was skipped.
+    - **Cause.** `_open_destination` returned the shell it had captured before the selection settled; only the restore branch re-queried it. Collections repaints its reader while its page and detail settle, so the returned shell was a stale one, and its work pane reads `display=False`.
+    - **My first fix was wrong.** It waited for the pane and blamed a TASK-38981 zero-width hide. The reviewer logged every work-pane hide and show across 5 route-cycle runs and found none.
+    - **Now.** `_open_destination` returns `screen.query_one(shell_selector)` on every path, the wait is gone, and the second loop's original point assertion is back, unchanged.
   - **Evidence.**
     - With the step's flags (serial, `--storage-lease-guard --timeout=180`), 5 of 5 passed: 91.5, 133.3, 122.5, 101.6 and 88.0 s of call time (99.9-145.9 s per pytest), at load 54-89 on 18 CPUs.
     - Both negative controls are red again on the reworked test, through an in-memory mutation harness outside the tree: `Returning to Notes did not save the parked draft at once: saves=[]`.
     - The whole closeout file at `-n 4` (load 64-80) passed, except `test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-50]`. That node failed on base too at load 80, and it passed on a rerun here. `Tests/CI` at `-n 4`: 1215 passed, 1 skipped. Preflight passes.
+  - **Coverage the trim removed, restored (review r11l-rev2).** The old cycle re-closed the shared Library from every destination's grip and checked that each close persisted. These are separate per-destination branches of `_toggle_library_media_reader_pane`, each with its own persist call, and no laned test covered them any more.
+    - New: `test_each_destination_library_grip_close_persists[media, collections, conversations, notes, prompts, skills]`. It closes the shared Library from Media and waits for the durable close. It then opens the destination through `_open_destination`'s unchanged default path, which reopens the pane, presses the rail row, closes the pane from that destination's own grip and waits until the close is durable.
+    - Each node is red with its own destination's persist call removed, through an in-memory mutation outside the tree. The five non-Media nodes fail with "Shared Library choice did not restore after <destination>", and Media fails with "Media's grip did not persist the shared Library close".
+    - Six passed at `-n 4` in 42-50 s each (load 75-90), and serially in 28-56 s each (load 74-167).
+    - The six nodes are appended at the UI census tail; the floor is 1761.
+  - **Checks after review r11l-rev2.**
+    - The route-cycle node with the Dreams step's flags passed twice: 96.4 and 84.1 s of call time, at load 66-95.
+    - The whole closeout file at `-n 4`: 55 passed (load 76-97).
+    - `Tests/CI` at `-n 4`: 1215 passed, 1 skipped. Preflight passes.
 - **Not changed.** The frozen task-23019 evidence runner (`Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py`) still encodes the old "Notes draft retained without save" receipt. No lane runs it, and it requires its own pinned subject revision. `Tests/Live/test_library_adaptive_reader_closeout.py` names only the node id, which is unchanged.
 - **Lesson.** `backlog/docs/lessons-testing-evidence.md`: a `-p` repeat plugin cannot reach a `@private_profile_test` child. The first 10-repeat run here "failed" 10 of 10 in 15 s with `not found` in each child's log.
 - Files: `Tests/UI/test_library_adaptive_reader_closeout.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`, `backlog/docs/lessons-testing-evidence.md`.

@@ -866,6 +866,9 @@ MINIMUM_FILES = 1753
 # TASK-39062 review (2026-11-06): append the two narrow Artifacts
 # first-artifact Tab nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1755
+# TASK-39052 review (2026-11-06): append the six per-destination Library
+# grip persistence nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1761
 
 
 def read_census(path: Path) -> list[str]:

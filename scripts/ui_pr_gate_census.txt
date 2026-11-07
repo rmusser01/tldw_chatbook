@@ -2541,3 +2541,13 @@ Tests/UI/test_library_artifacts_focus.py::test_empty_narrow_stage_tab_never_rest
 # reader (the shell's sync() re-apply; 60x24 and 50x25). Appended at the tail.
 Tests/UI/test_library_artifacts_focus.py::test_narrow_tab_reaches_the_reader_once_the_first_artifact_lands[size0]
 Tests/UI/test_library_artifacts_focus.py::test_narrow_tab_reaches_the_reader_once_the_first_artifact_lands[size1]
+# TASK-39052 review (2026-11-06): each destination's own Library grip
+# persists the shared Library close (the per-destination branches of
+# _toggle_library_media_reader_pane), which the route cycle no longer
+# exercises. Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[media]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[conversations]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[notes]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[prompts]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[skills]
