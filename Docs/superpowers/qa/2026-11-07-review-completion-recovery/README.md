@@ -474,3 +474,24 @@ RED reproduced wrong-role guide calls, absent disposition readback, absent check
 No accounting policy was weakened: recorded native cancellation controls retain known usage, while exceptions escaping the runtime preserve unknown usage under ADR-131. The previous physical-cap exception was a diagnostic abort, not evidence that a normal completed child lost its usage. Historical aborted counters are not rewritten. The new live result must still have fully settled accounting.
 
 Zero new live requests or children in this repair. November 7 actual remains 201 requests / 16 product children; the last 60/3 grant is consumed. No new full-review success is claimed. Current offline logs: `/private/tmp/task39147-handoff-tests.log` and `/private/tmp/task39147-handoff-review-fixes.log`.
+
+## Hosted CI bundle-stamp correction
+
+PR #3473's Tool Recovery run `42418580000` failed the same bundle byte-parity
+assertion on Python 3.12 and 3.14. The unchanged assertion also failed locally.
+Running the existing bundle generator changes only the final SHA-256 stamp;
+the executable prefix, builder, worker behavior and module-size budgets are
+unchanged. This is a generated-artifact correction, requiring no new ADR.
+
+After regeneration, all 17 bundle/selected loopback checks and both existing
+bundle-size checks pass. Generated-file lint and diff whitespace pass. Scoped
+review found no blocker. Hosted CI on the corrected head is still required.
+Logs and the exact artifact delta are retained at
+`/private/tmp/task39147-bundle-ci-20261107/`.
+
+The user subsequently approved one fresh full Console qualification after CI:
+60 new generation requests, three children, Luna coordinator, Luna/DeepSeek
+reviewers and Haiku verifier, no retries or extra generation probes. That grant
+remains unused through this CI correction: zero new requests/children, November 7
+actual still 201/16. Repinning this unconsumed grant adds no allowance. The earlier
+failed full run and its unknown aborted accounting remain historical limitations.
