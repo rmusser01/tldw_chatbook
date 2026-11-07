@@ -360,9 +360,24 @@ async def resolve_scope_for_session(
 ) -> "ScopeResolution":
     """Resolve ``session``'s RAG retrieval scope with the app's services.
 
-    See ``RAG_Search.scope_evidence.resolve_scope_for_session`` for the
-    contract. This supplies the ``storage`` and ``workspace`` slices from
+    The resolution itself is ``RAG_Search.scope_evidence.
+    resolve_scope_for_session`` (patch that name to reach the logic); this
+    wrapper supplies the ``storage`` and ``workspace`` slices from
     ``app.services`` and the app-attached ``ScopeCache``.
+
+    Args:
+        app: The running app; only ``app.services`` and its scope cache are
+            read.
+        session: The Console session to resolve scope for, or ``None`` (no
+            active session, unscoped with no DB work).
+        use_cache: Whether to consult and populate the scope cache. Pass
+            ``False`` at a provider prompt boundary.
+        retain_display_reads: Console display workers retain each stock
+            finite read before propagating cancellation.
+
+    Returns:
+        The raw conversation and workspace scopes and the resolved
+        ``EffectiveScope``.
     """
     from ...RAG_Search import scope_evidence
 
@@ -433,7 +448,7 @@ async def authorize_local_results_for_prompt(
         services.storage,
         services.workspace,
         normalized_results,
-        session=_active_console_session(app),
+        active_session=lambda: _active_console_session(app),
     )
 
 
@@ -460,7 +475,7 @@ async def assemble_local_evidence_for_prompt(
         services.storage,
         services.workspace,
         results,
-        session=_active_console_session(app),
+        active_session=lambda: _active_console_session(app),
         max_length=max_length,
     )
 
@@ -473,8 +488,22 @@ async def capture_console_staged_evidence_for_chat(
 ) -> "LocalRagContextResult":
     """Capture Console-staged local evidence with the app's services.
 
-    See ``RAG_Search.scope_evidence.capture_console_staged_evidence``. Scope
-    is authorized against the active Console session.
+    The capture itself is ``RAG_Search.scope_evidence.
+    capture_console_staged_evidence``; this wrapper supplies the ``storage``,
+    ``workspace`` and citation trace repository from ``app.services`` and
+    authorizes against the active Console session.
+
+    Args:
+        app: The running app; ``app.services`` and the active Console
+            session are read.
+        launch: Current ``ConsoleLiveWorkLaunch``-like staged context.
+        user_message: Current Console draft, used only when the staged bundle
+            has no retrieval query.
+
+    Returns:
+        Exact provider context, an optional request-local citation builder,
+        its prompt-evidence-set ID and the repair contract; empty fields when
+        nothing is authorized or recorded.
     """
     from ...RAG_Search import scope_evidence
 
@@ -498,7 +527,21 @@ async def capture_console_prepared_evidence_for_chat(
 ) -> "LocalRagContextResult":
     """Capture an Automatic send's prepared bundle with the app's services.
 
-    See ``RAG_Search.scope_evidence.capture_console_prepared_evidence``.
+    The capture itself is ``RAG_Search.scope_evidence.
+    capture_console_prepared_evidence``; this wrapper supplies the
+    ``storage``, ``workspace`` and citation trace repository from
+    ``app.services``.
+
+    Args:
+        app: The running app; ``app.services`` is read, and the active Console
+            session only when ``session`` yields no scope identity.
+        bundle: The ``EvidenceBundle`` an Automatic preparation produced.
+        user_message: The executed draft, used when the bundle has no query.
+        session: The turn's own Console session, which authorizes the
+            evidence even after a tab switch.
+
+    Returns:
+        The same contract as ``capture_console_staged_evidence_for_chat``.
     """
     from ...RAG_Search import scope_evidence
 

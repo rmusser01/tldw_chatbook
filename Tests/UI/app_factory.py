@@ -217,11 +217,25 @@ def attach_chachanotes_db(
     db = CharactersRAGDB(db_path, client_id)
     if not db.is_memory_db:
         _created_databases.append(db)
-    app.chachanotes_db = db
-    # Code that reads ``app.services.storage`` (the RAG scope/evidence wiring,
-    # TASK-36947.3) must see the same DB as the alias.
-    app._publish_application_services()
+    swap_app_aliases(app, chachanotes_db=db)
     return db
+
+
+def swap_app_aliases(app, **aliases) -> None:
+    """Replace service aliases on a built app and re-publish ``app.services``.
+
+    A migrated consumer reads ``app.services`` (ADR-250), which the app
+    published at construction; assigning ``app.chachanotes_db = db`` alone
+    leaves it on the old object (TASK-36947.3). Swap aliases through this
+    helper, after any rewiring that reassigns them, so both agree.
+
+    Args:
+        app: A `_build_test_app` product.
+        **aliases: App attribute names and their replacement objects.
+    """
+    for name, value in aliases.items():
+        setattr(app, name, value)
+    app._publish_application_services()
 
 
 async def drain_created_runtimes() -> None:

@@ -778,7 +778,7 @@ def get_pipeline(pipeline_id: str) -> Optional[Dict[str, Any]]:
 
 
 async def perform_plain_rag_search(
-    app: "TldwCli",
+    app: Any,
     query: str,
     sources: Dict[str, bool],
     top_k: int = 5,
@@ -827,7 +827,7 @@ async def perform_plain_rag_search(
 
 
 async def perform_full_rag_pipeline(
-    app: "TldwCli",
+    app: Any,
     query: str,
     sources: Dict[str, bool],
     top_k: int = 10,
@@ -882,7 +882,7 @@ async def perform_full_rag_pipeline(
 
 
 async def perform_hybrid_rag_search(
-    app: "TldwCli",
+    app: Any,
     query: str,
     sources: Dict[str, bool],
     top_k: int = 10,
@@ -986,7 +986,7 @@ async def perform_hybrid_rag_search(
 
 
 async def perform_search_with_pipeline(
-    app: "TldwCli",
+    app: Any,
     query: str,
     sources: Dict[str, bool],
     pipeline_id: str,
