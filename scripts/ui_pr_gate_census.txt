@@ -2667,3 +2667,19 @@ Tests/UI/test_console_inspector_section.py
 # Appended at the tail.
 Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]
 Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]
+# TASK-39133: the llama.cpp "Make default…" handoff reaches Settings on its own channel.
+Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[False-False]
+Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[True-False]
+Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[False-True]
+Tests/UI/test_llamacpp_consumers.py::test_settings_stages_verified_llamacpp_without_persisting
+Tests/UI/test_llamacpp_consumers.py::test_each_default_consumer_leaves_the_other_providers_intent_pending
+Tests/UI/test_llamacpp_consumers.py::test_llamacpp_default_persists_only_after_settings_save
+Tests/UI/test_llamacpp_consumers.py::test_stale_llamacpp_target_cannot_change_console_or_settings
+Tests/UI/test_llamacpp_consumers.py::test_llamacpp_settings_late_owner_expiry_compensates_before_ack
+Tests/UI/test_llamacpp_consumers.py::test_llamacpp_default_recovery_blocks_other_default_until_released
+# TASK-39135: a focus the user moves while a category swap lands is kept.
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[none]
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[key]
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[click]
+# TASK-39134: widening the terminal never narrows the Settings detail pane.
+Tests/UI/test_settings_category_sweep.py::test_widening_the_terminal_never_narrows_the_detail_pane

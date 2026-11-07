@@ -914,6 +914,10 @@ MINIMUM_FILES = 1832
 # TASK-38948 (2026-11-07): append the two 100 ms Send-feedback route nodes
 # at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1834
+# TASK-39133 / TASK-39135 / TASK-39134 (2026-11-07): append the llama.cpp
+# Settings handoff nodes (9), the moved-focus swap nodes (3) and the detail
+# width sweep (1) at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1847
 
 
 def read_census(path: Path) -> list[str]:
