@@ -5086,8 +5086,8 @@ class SettingsScreen(BaseAppScreen):
         ownership = self._ownership_record(category)
         badge = self._persistence_badge(category)
         badge_note = f"Save contract: {badge}."
-        if badge.startswith("Draft") and category is not SettingsCategoryId.SPEECH_TTS:
-            badge_note += (  # TASK-33002.10: the State line has no room to say it.
+        if badge.startswith(("Draft", "Pending")) and category is not SettingsCategoryId.SPEECH_TTS:
+            badge_note += (  # TASK-33002.10 (Pending: Network, TASK-1378.1): no room on the State line.
                 " Switching categories keeps the draft; the rail marks it with *."
             )
         if category is SettingsCategoryId.OVERVIEW:

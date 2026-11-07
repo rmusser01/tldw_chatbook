@@ -121,14 +121,26 @@ _NETWORK_TLS_MODE_VALUES = frozenset(value for _, value in NETWORK_TLS_MODE_OPTI
 class _NetworkCard(Vertical):
     """Network's card; its Select and Input stage edits through the panel."""
 
-    def __init__(self, settings_screen: SettingsScreen, **kwargs) -> None:
+    def __init__(
+        self, settings_screen: SettingsScreen, seeded: dict[str, str], **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self._settings_screen = settings_screen
+        self._seeded = seeded
+
+    def _stage(self, key: str, value: str) -> None:
+        # Textual posts Changed when a control mounts with its seeded value.
+        # That echo is no edit: an invalid ssl_verify seeds "verify", and
+        # staging it raised a `*` that `r` could never clear (review N1).
+        screen = self._settings_screen
+        if key not in NETWORK_PANEL.pending(screen) and value == self._seeded[key]:
+            return
+        NETWORK_PANEL.stage(screen, **{key: value})
 
     @on(Select.Changed, "#settings-network-ssl-mode")
     def _mode_changed(self, event: Select.Changed) -> None:
         event.stop()
-        NETWORK_PANEL.stage(self._settings_screen, mode=str(event.value or "verify"))
+        self._stage("mode", str(event.value or "verify"))
         try:
             warning = self.query_one("#settings-network-warning", Static)
         except QueryError:
@@ -141,7 +153,7 @@ class _NetworkCard(Vertical):
 
     @on(Input.Changed, "#settings-network-ca-path")
     def _ca_path_changed(self, event: Input.Changed) -> None:
-        NETWORK_PANEL.stage(self._settings_screen, ca_bundle_path=event.value)
+        self._stage("ca_bundle_path", event.value)
 
 
 class NetworkPanel:
@@ -165,9 +177,17 @@ class NetworkPanel:
         # mode -- a hand-edited invalid config is a config-file fact, not a
         # pending edit.
         effective = self.effective_values(screen)
+        seeded = {
+            "mode": (
+                effective.mode if effective.mode in _NETWORK_TLS_MODE_VALUES else "verify"
+            ),
+            "ca_bundle_path": (
+                effective.ca_bundle_path if effective.mode == "custom-ca" else ""
+            ),
+        }
         yield Static("Network", classes="destination-section settings-column-title")
         with _NetworkCard(
-            screen, id="settings-network-card", classes="settings-focus-card"
+            screen, seeded, id="settings-network-card", classes="settings-focus-card"
         ):
             yield Static(
                 "TLS trust for outbound API traffic", classes="destination-section"
@@ -184,11 +204,7 @@ class NetworkPanel:
                 yield Static("Certificate verification", classes="settings-input-label")
                 yield Select(
                     NETWORK_TLS_MODE_OPTIONS,
-                    value=(
-                        effective.mode
-                        if effective.mode in _NETWORK_TLS_MODE_VALUES
-                        else "verify"
-                    ),
+                    value=seeded["mode"],
                     id="settings-network-ssl-mode",
                     classes="settings-compact-select",
                     allow_blank=False,
@@ -197,11 +213,7 @@ class NetworkPanel:
             with Horizontal(classes="settings-input-row"):
                 yield Static("CA bundle path", classes="settings-input-label")
                 yield Input(
-                    value=(
-                        effective.ca_bundle_path
-                        if effective.mode == "custom-ca"
-                        else ""
-                    ),
+                    value=seeded["ca_bundle_path"],
                     id="settings-network-ca-path",
                     classes="settings-compact-input",
                     placeholder="/path/to/corp-ca.pem (used by 'Custom CA bundle')",
@@ -213,8 +225,8 @@ class NetworkPanel:
             )
 
     def has_unsaved_changes(self, screen: SettingsScreen) -> bool:
-        # Compared by value, not by "anything staged": the Select and Input
-        # echo their seeded values on mount, which is no edit.
+        # Compared by value, not by "anything staged": a choice set back to
+        # the saved value is no edit either.
         return self.effective_values(screen) != self.effective_values(screen, {})
 
     def request_save(self, screen: SettingsScreen) -> None:
@@ -309,11 +321,20 @@ class NetworkPanel:
 class SpeechTTSCategoryPanel:
     """Speech & TTS: routes the mounted widget's own contract through here.
 
-    ponytail: a thin adapter, not a full move. The detail pane is still built
-    by ``SettingsScreen._render_speech_tts_detail`` (its names are patched on
-    the screen module by many tests), and the dirty banner, unsaved count and
-    F1 note keep their Speech arms in the screen. Move them here when Speech
-    moves for real.
+    ponytail: a thin adapter, not a full move. Still in the screen:
+
+    - the detail pane, ``SettingsScreen._render_speech_tts_detail`` (its names
+      are patched on the screen module by many tests);
+    - the dirty banner's leave wording, the unsaved count and the F1 note;
+    - the category-leave guard in ``_select_category``. It asks the live
+      widget (``has_unsaved_changes()`` collects visible fields the
+      ``_settings_drafts`` mirror has not heard of yet) and the audio_cpp
+      cleanup, not this adapter. ``revert`` below reads the widget the same
+      way, while ``has_unsaved_changes`` reads the mirror (as at base).
+
+    Routing the guard here first needs one unsaved answer for Speech (live
+    widget or mirror) for every caller. Move all of these when Speech moves
+    for real.
     """
 
     category = SettingsCategoryId.SPEECH_TTS
