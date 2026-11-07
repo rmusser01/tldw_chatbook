@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +27,28 @@ from tldw_chatbook.Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxPr
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 
 _RESOURCE_SYNC_ID_TABLES = ("keywords", "keyword_collections")
+
+
+@dataclass(frozen=True)
+class ResolvedNotesSyncProfile:
+    """A Sync v2 profile resolved once for a run of keyword changes.
+
+    TASK-34000.116 (PR #3423 re-review N-1): the Library's bulk keyword
+    change resolves this before its per-note write transactions and passes
+    it back to every ``sync_subject_keywords`` call as ``resolved_profile``,
+    so no note pays ``SyncStateRepository`` reads while it holds the
+    ChaChaNotes write lock.
+
+    Attributes:
+        scope: The routing scope ``resolve_profile_scope`` returned, or
+            ``None`` when there is no local-first profile.
+        profile: The persisted profile ``_profile`` returned for ``scope``,
+            or ``None`` when organization sync does not apply (no scope, or
+            a ``local_only`` profile).
+    """
+
+    scope: dict[str, Any] | None
+    profile: dict[str, Any] | None
 
 
 class NotesOrganizationSyncService:
@@ -117,6 +140,42 @@ class NotesOrganizationSyncService:
         scope = dict(explicit)
         self._profile(**scope)
         return scope
+
+    def resolve_profile(self, explicit: Any = None) -> ResolvedNotesSyncProfile:
+        """Resolve the routing scope and its persisted profile once.
+
+        TASK-34000.116: the reads ``resolve_profile_scope`` and
+        ``sync_subject_keywords`` make on every call, made once for a run of
+        changes that pass the result back as ``resolved_profile``. Readiness
+        is not checked here (``require_ready`` does that).
+        """
+
+        scope = self.resolve_profile_scope(explicit)
+        if scope is None:
+            return ResolvedNotesSyncProfile(scope=None, profile=None)
+        return ResolvedNotesSyncProfile(
+            scope=dict(scope), profile=self._profile(**scope)
+        )
+
+    def require_ready(self, resolved: ResolvedNotesSyncProfile) -> None:
+        """Raise unless ``resolved``'s Notes organization group is ready.
+
+        The same check every ``sync_subject_keywords`` change repeats inside
+        its own transaction: one read of this Notes database's checkpoint
+        row, no ``SyncStateRepository`` read. A resolution that carries no
+        synchronized profile passes.
+
+        Raises:
+            ValueError: If the group is not ready.
+        """
+
+        if resolved.scope is None or resolved.profile is None:
+            return
+        self._require_ready(
+            self.notes_repository.db.get_connection(),
+            server_profile_id=resolved.scope["server_profile_id"],
+            dataset_id=self._dataset_id(resolved.profile),
+        )
 
     def create_folder(
         self,
@@ -328,11 +387,22 @@ class NotesOrganizationSyncService:
         keywords: Sequence[str],
         notes_db: Any = None,
         cursor: Any = None,
+        resolved_profile: ResolvedNotesSyncProfile | None = None,
         **scope: Any,
     ) -> list[str] | None:
-        """Replace a note/conversation keyword set in one ready Notes transaction."""
+        """Replace a note/conversation keyword set in one ready Notes transaction.
 
-        profile = self._profile(**scope)
+        ``resolved_profile`` (TASK-34000.116) is a ``resolve_profile`` result
+        for this same ``scope``: the persisted profile is taken from it
+        instead of read again. Omitted, it is read as before. The group's
+        readiness is checked inside the transaction either way.
+        """
+
+        profile = (
+            self._profile(**scope)
+            if resolved_profile is None
+            else self._resolved_profile_for(resolved_profile, scope)
+        )
         if profile is None:
             return None
         if subject_type not in {"note", "conversation"}:
@@ -345,6 +415,7 @@ class NotesOrganizationSyncService:
                 subject_id=subject_id,
                 keywords=keywords,
                 cursor=cursor,
+                resolved_profile=resolved_profile,
                 **scope,
             )
         db = self.notes_repository.db
@@ -702,6 +773,14 @@ class NotesOrganizationSyncService:
                     dataset=dataset_id,
                 )
         return result
+
+    @staticmethod
+    def _resolved_profile_for(
+        resolved: ResolvedNotesSyncProfile, scope: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        if resolved.scope is None or dict(scope) != resolved.scope:
+            raise ValueError("resolved Notes profile does not match its routing scope")
+        return resolved.profile
 
     def _profile(
         self,

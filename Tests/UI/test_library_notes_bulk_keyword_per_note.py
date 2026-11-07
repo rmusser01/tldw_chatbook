@@ -23,12 +23,7 @@ wired by the app's own ``_wire_notes_sync_services``:
   runs ``add_note`` and then ``add_conversation`` on a thread of their own
   (so their own connection) and holds the bulk until both return, for at
   most ``GATE_HOLD`` seconds. Both must succeed within ``WRITER_BOUND`` seconds.
-  This pins that the bulk lets go of the database between notes. It does
-  NOT show that a writer arriving at any moment gets in: each note's ~0.12 s
-  of Sync v2 profile reads still runs inside that note's write transaction,
-  and a writer that arrives mid-note is starved (``add_conversation`` waits
-  out the rest of the run, ``add_note`` fails at once) -- measured and
-  tracked in TASK-34000.116.
+  This pins that the bulk lets go of the database between notes.
 - A fault after the first note's writes (the organization service's own
   ``failure_injector``, called after a note's keyword, link and intents are
   written) rolls that note back whole: no link, no intents, and the receipt
@@ -36,17 +31,36 @@ wired by the app's own ``_wire_notes_sync_services``:
 - A refusal names its reason: the runtime policy's own sentence, and the Sync
   v2 group not being ready.
 
+TASK-34000.116 (the rest of N-1): each note also used to resolve the Sync v2
+profile inside its own write transaction -- four ``SyncStateRepository``
+reads, about 0.12 s -- so the write lock was held for nearly the whole run,
+and a writer that arrived mid-note waited out the rest of the run. The bulk
+now resolves the profile, and checks its group's readiness, once before the
+first note's transaction:
+
+- Profile reads. A counting seam on the wired ``SyncStateRepository`` counts
+  every profile read the bulk worker makes, and those made while it holds a
+  note's transaction: none inside, and the same few for 5 notes as for 25.
+- An un-gated writer. On a 50-note and a 120-note bulk, ``add_conversation``
+  starts on its own thread the moment the middle note commits, and nothing
+  waits for it: it must succeed within ``UNGATED_BOUND`` seconds.
+
 Base (the shared transaction, the ``PR #3423`` review-fix head): the writers
 fail (``add_note``: "database is locked" at once; ``add_conversation``: held
 past the bound), the faulted note keeps its link and intents, and the
-receipts carry no reason.
+receipts carry no reason. Base for the last two (``fcdebff32c``, a profile
+resolution per note): four profile reads inside every note's transaction,
+and the un-gated writer waits out the remaining notes (measured 4.1 s at 50
+notes; at 120 the bulk outlasts the wait).
 """
 
 from __future__ import annotations
 
 import sqlite3
+import sys
 import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -73,6 +87,10 @@ from Tests.UI.test_library_notes_select_mode_counts_and_bulk_extended import (
 from Tests.UI.test_library_notes_trash_pages_and_purges_extended import (
     _painted_toasts,
 )
+from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
+    LibraryNoteKeywordDialog,
+)
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 #: Each concurrent writer must succeed within this many seconds of the gate.
@@ -80,6 +98,9 @@ WRITER_BOUND = 3.0
 #: The longest the gate holds the bulk while the writers run. Longer than the
 #: bound, so a writer that can only finish after the bulk lets go fails it.
 GATE_HOLD = 6.0
+#: TASK-34000.116 AC #4: a writer started at any moment of a bulk run gets in
+#: within this many seconds.
+UNGATED_BOUND = 1.0
 #: The not-ready group's sentence, pinned as the receipt paints it.
 SYNC_NOT_READY = (
     "Sync v2 is not ready to carry note keywords yet — see Manual Sync in "
@@ -348,3 +369,202 @@ async def test_a_refused_bulk_keyword_change_names_its_reason(tmp_path) -> None:
             lambda: f"the not-ready receipt: {screen._notes_state.notice!r}",
         )
         assert seed.keyword_state() == before
+
+
+#: The bulk keyword worker's database closure: a read made with this frame on
+#: the stack is the bulk's.
+_BULK_WRITE = "_run_library_notes_bulk_keyword.<locals>.write"
+
+
+class _ProfileReads:
+    """Count the bulk's ``SyncStateRepository`` profile reads (TASK-34000.116).
+
+    Wraps ``list_sync_v2_profile_states`` and ``get_sync_v2_profile_state``
+    on the wired repository (the list's own per-row read is counted too), and
+    ``note_transaction`` to know when the bulk's thread holds a note's write
+    transaction. A read counts only when the bulk worker's ``write`` closure
+    is on the stack, so the Library's own reads stay out of it.
+    """
+
+    def __init__(self, state, interop) -> None:
+        self.inside = 0
+        self.outside = 0
+        self._holder: int | None = None
+        for name in ("list_sync_v2_profile_states", "get_sync_v2_profile_state"):
+            setattr(state, name, self._counted(getattr(state, name)))
+        real_transaction = interop.note_transaction
+
+        @contextmanager
+        def note_transaction(user_id):
+            with real_transaction(user_id) as cursor:
+                self._holder = threading.get_ident()
+                try:
+                    yield cursor
+                finally:
+                    self._holder = None
+
+        interop.note_transaction = note_transaction
+
+    def _counted(self, method):
+        def counted(*args, **kwargs):
+            frame = sys._getframe(1)
+            while frame is not None and not frame.f_code.co_qualname.endswith(
+                _BULK_WRITE
+            ):
+                frame = frame.f_back
+            if frame is not None:
+                if self._holder == threading.get_ident():
+                    self.inside += 1
+                else:
+                    self.outside += 1
+            return method(*args, **kwargs)
+
+        return counted
+
+
+class _UngatedWriter:
+    """Start ``add_conversation`` once note ``at`` has committed; never wait.
+
+    ``note_transaction`` is wrapped to count the bulk's commits and time each
+    one's hold (lock acquired to commit). The writer runs on a thread of its
+    own (so its own connection), started from the commit of note ``at``
+    without holding the bulk: it races whatever the bulk does next.
+    """
+
+    def __init__(self, db, interop, *, at: int) -> None:
+        self.db = db
+        self.at = at
+        self.committed = 0
+        self.holds: list[float] = []
+        self.result: tuple[str, float] | None = None
+        real_transaction = interop.note_transaction
+
+        @contextmanager
+        def note_transaction(user_id):
+            with real_transaction(user_id) as cursor:
+                acquired = time.monotonic()
+                yield cursor
+            self.holds.append(time.monotonic() - acquired)
+            self.committed += 1
+            if self.committed == self.at:
+                threading.Thread(target=self._write, daemon=True).start()
+
+        interop.note_transaction = note_transaction
+
+    def _write(self) -> None:
+        start = time.monotonic()
+        try:
+            self.db.add_conversation({"title": "Concurrent chat", "character_id": None})
+        except Exception as exc:  # noqa: BLE001 - the pin reports it
+            self.result = (f"{type(exc).__name__}: {exc}", time.monotonic() - start)
+            return
+        self.result = ("ok", time.monotonic() - start)
+
+
+async def _bulk_add(host, pilot, screen, note_ids, keyword: str) -> None:
+    """Add ``keyword`` to ``note_ids`` through the real dialog and worker.
+
+    The tree renders one page of rows, so a selection larger than a page is
+    handed to the controller's own entry -- the one the Actions chooser
+    calls with the checked ids -- and the dialog takes it from there.
+    """
+    count = len(note_ids)
+    screen._notes_controller._ask_library_notes_bulk_keyword(
+        tuple(note_ids), remove=False
+    )
+    await until(
+        pilot,
+        lambda: isinstance(host.screen, LibraryNoteKeywordDialog)
+        and f"Add a keyword to {count} notes" in painted(host),
+        lambda: f"the keyword dialog for {count} notes: {painted(host)}",
+    )
+    await pilot.press(*keyword, "enter")
+    await until(pilot, lambda: host.screen is screen, "the dialog to apply")
+
+
+async def test_a_bulk_keyword_change_reads_the_profile_once_not_per_note(
+    tmp_path,
+) -> None:
+    host, seed = mounted(tmp_path)
+    db = seed.profile.db
+    ids = [db.add_note(f"Bulk {index:02d}", "bulk body") for index in range(25)]
+    state = _ready_sync_v2(seed, tmp_path)
+    reads = _ProfileReads(state, seed.profile.interop)
+    per_run: list[tuple[int, int, int]] = []
+    async with host.run_test(size=WIDE) as pilot:
+        screen = await notes_ready(host, pilot)
+        fenced = screen._notes_controller._library_notes_mutation_fenced
+        for keyword, picked in (("travel", ids[:5]), ("food", ids)):
+            await until(pilot, lambda: not fenced(), "the Notes writer to be free")
+            inside, outside = reads.inside, reads.outside
+            await _bulk_add(host, pilot, screen, picked, keyword)
+            receipt = f"Added '{keyword}' to {len(picked)} notes"
+            await until(
+                pilot,
+                lambda: receipt in str(screen._notes_state.notice),
+                lambda: f"{receipt!r}: {screen._notes_state.notice!r}",
+            )
+            assert seed.keyword_links(keyword) == set(picked)
+            per_run.append(
+                (len(picked), reads.inside - inside, reads.outside - outside)
+            )
+    # No profile read while a note holds the write lock, at any size...
+    assert [inside for _, inside, _ in per_run] == [0, 0], (
+        f"(notes, profile reads inside note transactions, outside): {per_run}"
+    )
+    # ...and one resolution per bulk: the same reads for 5 notes as for 25.
+    (_, _, small), (_, _, large) = per_run
+    assert 0 < small == large, (
+        f"(notes, profile reads inside note transactions, outside): {per_run}"
+    )
+
+
+@pytest.mark.parametrize("bulk", [50, 120])
+async def test_a_writer_started_mid_run_gets_in_within_a_second(
+    tmp_path, bulk: int
+) -> None:
+    host, seed = mounted(tmp_path)
+    db = seed.profile.db
+    ids = [db.add_note(f"Bulk {index:03d}", "bulk body") for index in range(bulk)]
+    _ready_sync_v2(seed, tmp_path)
+    writer = _UngatedWriter(db, seed.profile.interop, at=bulk // 2)
+    async with host.run_test(size=WIDE) as pilot:
+        screen = await notes_ready(host, pilot)
+        await _bulk_add(host, pilot, screen, ids, "travel")
+        # The writer reports before anything else is judged: on the old code
+        # it waits out the remaining notes, and the receipt would time out
+        # first.
+        await until(
+            pilot,
+            lambda: writer.result is not None,
+            lambda: f"the mid-run writer to return ({writer.committed} committed)",
+        )
+        holds = sorted(writer.holds)
+        outcome, seconds = writer.result
+        assert outcome == "ok" and seconds <= UNGATED_BOUND, (
+            f"add_conversation started after note {writer.at} of {bulk} "
+            f"committed: {outcome} after {seconds:.2f} s (bound {UNGATED_BOUND} "
+            f"s); median note hold {holds[len(holds) // 2] * 1000:.0f} ms over "
+            f"{len(holds)} notes so far"
+        )
+        receipt = f"Added 'travel' to {bulk} notes"
+        await until(
+            pilot,
+            lambda: receipt in str(screen._notes_state.notice),
+            lambda: f"the add receipt: {screen._notes_state.notice!r}",
+        )
+    assert writer.committed == bulk
+    # The bulk itself is whole: every note linked, one link intent per note,
+    # one resource for the new keyword (TASK-34000.116 AC #2).
+    assert seed.keyword_links("travel") == set(ids)
+    intents = _intents(seed)
+    assert sorted(row[2] for row in intents if row[0] == "notes.keyword_link") == (
+        sorted(ids)
+    )
+    assert [row for row in intents if row[0] == "notes.keyword"] == [
+        ("notes.keyword", "upsert", "travel")
+    ]
+    with sqlite3.connect(tmp_path / "notes.sqlite3") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM conversations WHERE title = 'Concurrent chat'"
+        ).fetchone() == (1,)

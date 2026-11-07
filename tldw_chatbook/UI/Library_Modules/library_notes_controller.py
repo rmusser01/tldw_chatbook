@@ -7500,7 +7500,11 @@ class LibraryNotesController:
 
         PR #3423 re-review N-1/N-2: each note commits on its own, so the
         ChaChaNotes write lock is held for one note at a time and a note
-        whose change raises rolls back whole.
+        whose change raises rolls back whole. TASK-34000.116: the Sync v2
+        profile is resolved, and its group's readiness checked, once before
+        the first note's transaction, so no note reads the profile store
+        while it holds that lock; a group that is not ready refuses every
+        note before any is written.
         """
         app = self.app_instance
         try:
@@ -7509,6 +7513,9 @@ class LibraryNotesController:
             scope_service = None
         service = getattr(scope_service, "local_notes_service", None)
         change_keyword = getattr(scope_service, "change_local_note_keyword", None)
+        resolve_profile = getattr(
+            scope_service, "resolve_local_note_keyword_profile", None
+        )
         user_id = self._library_notes_user_id()
         snapshot = self._library_note_session.snapshot
         open_id = snapshot.note_id if snapshot is not None else ""
@@ -7533,6 +7540,20 @@ class LibraryNotesController:
             keyword_id = row.get("id") if isinstance(row, dict) else None
             # The receipt names the keyword as stored (matching ignores case).
             label = str(row.get("keyword") or keyword) if keyword_id else keyword
+            resolved = None
+            try:
+                # Once, outside every note's transaction (TASK-34000.116).
+                if callable(resolve_profile):
+                    resolved = resolve_profile(user_id=user_id)
+            except Exception as exc:  # noqa: BLE001 - counted, never raised
+                logger.warning(
+                    "Bulk keyword change refused before any note; error_type={}",
+                    type(exc).__name__,
+                )
+                for note_id in note_ids:
+                    note_failed(note_id, _bulk_keyword_refusal_reason(exc))
+                return label, changed, unchanged, failed, reasons
+            profile_kwargs = {} if resolved is None else {"resolved_profile": resolved}
             for note_id in note_ids:
                 if note_id == open_id and open_busy:
                     note_failed(note_id, BULK_KEYWORD_OPEN_NOTE_BUSY)
@@ -7544,12 +7565,12 @@ class LibraryNotesController:
                     # writer with SQLITE_BUSY_SNAPSHOT -- measured here as an
                     # OperationalError on the first run that raced the tree
                     # reload (TASK-34000.28 N-24's trap). Per note (PR #3423
-                    # re-review N-1/N-2): a ready Sync v2 profile pays about
-                    # 0.2 s of profile reads inside each change, and one
-                    # transaction around the whole run write-locked every
-                    # ChaChaNotes table for its length (a concurrent
-                    # ``add_note`` failed at once); and a note whose change
-                    # raised after a write was committed half-done.
+                    # re-review N-1/N-2): one transaction around the whole
+                    # run write-locked every ChaChaNotes table for its length
+                    # (a concurrent ``add_note`` failed at once), and a note
+                    # whose change raised after a write was committed
+                    # half-done. ``resolved_profile``: no Sync v2 profile
+                    # read in here (each used to pay about 0.12 s of them).
                     with service.note_transaction(user_id) as cursor:
                         linked = change_keyword(
                             user_id=user_id,
@@ -7557,6 +7578,7 @@ class LibraryNotesController:
                             keyword=label,
                             remove=remove,
                             cursor=cursor,
+                            **profile_kwargs,
                         )
                 except Exception as exc:  # noqa: BLE001 - counted, never raised
                     logger.warning(

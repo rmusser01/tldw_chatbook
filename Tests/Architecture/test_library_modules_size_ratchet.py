@@ -766,6 +766,10 @@ _BUDGETS: dict[str, int] = {
     # each note in its own transaction and its receipt names a refusal's
     # reason (``_bulk_keyword_refusal_reason`` and its copy):
     # 9037 -> 9093 (measured).
+    # 2026-11-06, TASK-34000.116 (the rest of N-1; same owner decision:
+    # expand limits, don't contort code): the bulk keyword worker resolves
+    # the Sync v2 profile once, before its per-note transactions:
+    # 9093 -> 9115 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
