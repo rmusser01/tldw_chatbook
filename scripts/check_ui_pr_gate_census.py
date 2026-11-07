@@ -876,6 +876,11 @@ MINIMUM_FILES = 1761
 # five heaviest tests) at the tail, split so they spread over consecutive
 # shards. The floor is the measured entry count.
 MINIMUM_FILES = 1809
+# TASK-33910.36 (2026-11-06, rebased on dev 8b762b52fa): append the five
+# TestPersonaHumanIdentityRemoval node ids at the tail (the class errored at
+# setup on dev until this change; the whole file is far over the 30 s
+# per-file budget). The floor is the measured entry count.
+MINIMUM_FILES = 1814
 
 
 def read_census(path: Path) -> list[str]:

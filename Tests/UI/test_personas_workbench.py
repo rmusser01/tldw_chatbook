@@ -11922,10 +11922,9 @@ class TestDelete:
 
 
 @pytest.fixture
-def legacy_human_config(tmp_path, monkeypatch):
+def legacy_human_config(monkeypatch):
     """Seed and snapshot a retired human-pointer value without mutating it."""
     legacy_key = "active_user_profile"
-    config_path = tmp_path / "legacy-persona-config.toml"
     serialized = (
         "[character_defaults]\n"
         f'{legacy_key} = "Archivist"\n'
@@ -11937,12 +11936,18 @@ def legacy_human_config(tmp_path, monkeypatch):
         "\n[api_settings.anthropic]\n"
         'api_key = "unit-test-placeholder-key"\n'
     ).encode()
-    config_path.write_bytes(serialized)
 
     from tldw_chatbook import config as config_module
 
-    previous_config_path = config_module.get_cli_config_path()
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # TASK-33910.36: seed the config path that is ALREADY selected (the
+    # bootstrap profile's). Re-pointing TLDW_CONFIG_PATH mid-process made the
+    # config raw participant refuse the new selection with
+    # RecoveryRequired("raw_source_selection_changed") at every setup. The
+    # class is marked ``bootstrap_profile``, and Tests/conftest.py restores
+    # these bytes after each test (_restore_bootstrap_profile_config).
+    config_path = config_module.get_cli_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_bytes(serialized)
     mapping = config_module.load_cli_config_and_ensure_existence(force_reload=True)
     assert mapping["character_defaults"][legacy_key] == "Archivist"
     mapping_snapshot = deepcopy(mapping)
@@ -11967,9 +11972,11 @@ def legacy_human_config(tmp_path, monkeypatch):
             callback_name,
             _forbid_mutation(label),
         )
+    # chat_screen imports only these two writers (TASK-33910.36: it has no
+    # ``save_settings_to_cli_config``, so patching that name raised
+    # AttributeError at setup on dev today; this change removes it).
     for callback_name in (
         "save_setting_to_cli_config",
-        "save_settings_to_cli_config",
         "delete_settings_from_cli_config",
     ):
         monkeypatch.setattr(
@@ -11991,8 +11998,8 @@ def legacy_human_config(tmp_path, monkeypatch):
             assert_unchanged=_assert_unchanged,
         )
     finally:
-        monkeypatch.setenv("TLDW_CONFIG_PATH", str(previous_config_path))
-        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+        # Bytes and caches are handed back by the conftest restore.
+        pass
 
 
 class TestBulkLibraryActions:
@@ -12212,6 +12219,7 @@ class TestBulkLibraryActions:
             assert "s sort" not in screen._shortcut_context().render().lower()
 
 
+@pytest.mark.bootstrap_profile
 class TestPersonaHumanIdentityRemoval:
     """Personas never identify the human user (F-034: "who you play" copy
     teaches the play-identity convention without reviving that framing)."""

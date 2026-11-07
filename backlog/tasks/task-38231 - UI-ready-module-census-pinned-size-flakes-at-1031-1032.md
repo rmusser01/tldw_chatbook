@@ -1,7 +1,7 @@
 ---
 id: TASK-38231
 title: 'UI-ready module census pinned size flakes at 1031/1032'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-30 18:43'
 labels:
@@ -20,5 +20,11 @@ test_ui_ready_module_census fails on both the base and head arms with a pinned s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The census test passes repeatedly on dev with a pinned size that matches the measured one, or the pin is made robust to the 1031/1032 variation
+- [x] #1 The census test passes repeatedly on dev with a pinned size that matches the measured one, or the pin is made robust to the 1031/1032 variation
 <!-- AC:END -->
+
+## Implementation Notes
+
+Already fixed on dev; this PR changes nothing for it. TASK-38765 (`2f6b7a7a21`, 2026-11-05) re-pinned `MAX_TLDW_MODULES_AT_UI_READY = 1037` with the documented +/-1 warm-boot wobble (`Tests/Performance/test_ui_ready_module_census.py`).
+
+Re-verified 2026-11-05 on a clean origin/dev worktree (`29592ecc9b`), config isolated: 3 of 3 runs `5 passed`, each printing `ui-ready-census: 1037/1037 modules (headroom 0); snapshot drift +1/-0`. Caution, not this task's scope: headroom is 0 on dev today, so the next resident module trips the pin.
