@@ -104,9 +104,12 @@ def patch_character_paging(monkeypatch, records=None):
     monkeypatch.setattr(ps, "get_character_page_for_ui", _page)
     monkeypatch.setattr(ps, "count_character_page", _count)
     monkeypatch.setattr(ps, "list_character_tags", _tags)
-    # Keep the paged loader off the real lazy DB entirely (the patched functions
-    # ignore the db arg, so any non-None sentinel is fine).
-    monkeypatch.setattr("tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object())
+    # Keep the paged loader off the services-bundle DB entirely (the patched
+    # functions ignore the db arg, so any non-None sentinel is fine).
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db",
+        lambda _self: object(),
+    )
 
 
 def _entry_response(dictionary_id: int, index: int, entry: dict) -> dict:

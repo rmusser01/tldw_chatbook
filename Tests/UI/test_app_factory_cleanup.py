@@ -113,7 +113,7 @@ def test_factory_cleanup_keeps_replacement_instance_lock_caller_owned():
     borrowed_close.assert_not_called()
 
 
-async def test_app_owner_finalizer_joins_cancelled_native_worker_before_config_reset(
+async def test_app_owner_finalizer_joins_cancelled_native_worker_before_profile_reset(
     monkeypatch,
 ):
     import threading
@@ -137,7 +137,7 @@ async def test_app_owner_finalizer_joins_cancelled_native_worker_before_config_r
             finished.set()
 
     def reset_after_join():
-        assert finished.is_set(), "config reset preceded native worker completion"
+        assert finished.is_set(), "prompts reset preceded native worker completion"
         reset()
 
     monkeypatch.setattr(

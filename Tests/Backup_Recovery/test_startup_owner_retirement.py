@@ -142,7 +142,7 @@ def test_startup_worker_retires_native_handle_and_owner_reopens(
     _run(tmp_path, kind, failure)
 
 
-def test_failed_notes_seed_retires_constructed_owner_before_reset(tmp_path):
+def test_failed_notes_seed_retires_its_startup_connection(tmp_path):
     _run(tmp_path, "notes_seed", True)
 
 

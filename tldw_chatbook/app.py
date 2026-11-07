@@ -752,12 +752,15 @@ def _open_profile_chachanotes(app_config: Mapping[str, Any]) -> Any:
         return None
 
 
-def _select_profile_database(notes_service: Any, app_config: Mapping[str, Any]) -> Any:
-    """Return the seeded injected DB, the notes service's own DB, or a fresh open."""
+def _select_profile_database(
+    notes_service: Any, app_config: Mapping[str, Any], opened: Any = None
+) -> Any:
+    """Return the seeded injected DB, the DB startup opened, or a fresh open."""
     injected = getattr(notes_service, "db", None)
     if injected:
         return seed_builtin_content(injected)
-    opened = getattr(notes_service, "unified_db_template", None)
+    if opened is None:  # the notes service holds the same instance as its template
+        opened = getattr(notes_service, "unified_db_template", None)
     return _open_profile_chachanotes(app_config) if opened is None else opened
 
 
@@ -1357,6 +1360,8 @@ class TldwCli(
         user_name_for_notes = settings.get("USERS_NAME", "default_tui_user")
         self.notes_user_id = user_name_for_notes
 
+        self._startup_chachanotes_db = None  # set by _init_notes_service's open
+
         # Run independent initializations in parallel.
         #
         # TASK-21111(a): each task is timed AROUND ITS OWN EXECUTION, on the
@@ -1548,7 +1553,9 @@ class TldwCli(
             client_provider=self.server_context_provider,
         )
 
-        self.chachanotes_db = _select_profile_database(self.notes_service, self.app_config)
+        self.chachanotes_db = _select_profile_database(
+            self.notes_service, self.app_config, self._startup_chachanotes_db
+        )
         if self.chachanotes_db is None:
             logging.error(
                 "ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__."
@@ -2084,7 +2091,9 @@ class TldwCli(
                 f"Notes for user '{user_name_for_notes}' will use the unified DB: {chachanotes_db_file_path}"
             )
 
-            notes_db = _open_profile_chachanotes(self.app_config)
+            notes_db = self._startup_chachanotes_db = _open_profile_chachanotes(
+                self.app_config
+            )
             self.notes_service = NotesInteropService(
                 base_db_directory=actual_base_directory_for_service,
                 api_client_id="tldw_tui_client_v1",

@@ -1290,7 +1290,7 @@ TLDW_API_PLACEHOLDER_AUTH_TOKEN = "default-secret-key-for-single-user"
 #: even though the shipped app and the full-suite alphabetical collect
 #: order happened to hide it. `config.py` is the dependency ROOT nearly
 #: everything else in this app already imports directly (verified: none of
-#: this module's own top-level imports -- the `DB.*`/`Utils.*` modules --
+#: this module's own top-level imports -- the `Utils.*` modules and the rest --
 #: reach back into `Chat` or `runtime_policy`), so the shared definition
 #: belongs here, with `Chat/provider_readiness.py` importing it -- not the
 #: reverse. This keeps the actual property Task 7 exists for -- exactly

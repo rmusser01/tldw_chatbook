@@ -423,8 +423,8 @@ def fresh_profile(tmp_path, monkeypatch):
     app.services = replace(
         app.services, storage=replace(app.services.storage, chachanotes=db)
     )
-    # The app builder constructs the local services while the lazy DB is
-    # patched to None, so re-point their db attribute at the real one
+    # The app builder constructs the local services while the profile open
+    # (``_open_profile_chachanotes``) is patched to None, so re-point their db attribute at the real one
     # (production init hands them the live DB directly).
     for service_name in (
         "local_chat_dictionary_service",
