@@ -2192,8 +2192,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "c2cf25dbd924cc45d5dc",
+      "call_count": 3,
+      "diagnostic_digest": "5b6f07aa6a279c6d45ad",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/config.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2280,6 +2280,13 @@
       "diagnostic_digest": "6abff4e1f1524cf81260",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/vector_store.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "4869a396b31f39e8aa7f",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/RAG_Search/state_paths.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {

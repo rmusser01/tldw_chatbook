@@ -79,6 +79,15 @@ target = (
     sys.argv[1] if len(sys.argv) > 1 else "Tests/UI/test_approval_action_ownership.py"
 )
 assert target in {
+    "Tests/Tools/test_remote_worker_bundle.py",
+    "Tests/Tools/test_file_tool_sandbox.py::test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_contains_it",
+    "Tests/Tools/test_local_tool_sensitive_paths.py::test_both_file_tool_families_refuse_the_same_denylisted_paths",
+    "Tests/RAG/test_config_profiles.py::test_default_rag_profiles_dir_keeps_live_userdata_accessor",
+
+    "Tests/RAG/test_state_paths.py",
+    "Tests/Utils/test_sensitive_paths.py",
+    "Tests/RAG/simplified/test_vector_store_selection.py",
+    "Tests/RAG/simplified/test_chroma_persist_directory.py",
     "Tests/Tools/test_remote_worker_bundle.py::test_cli_regeneration_writes_canonical_utf8_lf_bytes",
     "Tests/Tools/test_remote_worker_bundle.py::test_bundle_rebuild_matches_committed_artifact",
     "Tests/Tools/test_remote_executor_loopback.py::test_committed_bundle_stamp_matches_artifact_prefix",

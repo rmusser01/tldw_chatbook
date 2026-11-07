@@ -1002,8 +1002,7 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
         check, as elsewhere in this module.
     """
     raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
-    raise ImportError("'..RAG_Search.config_profiles' (importing default_rag_profiles_dir) is not available inside the remote worker bundle")
-    raise ImportError("'..RAG_Search.simplified.config' (importing default_chroma_persist_directory) is not available inside the remote worker bundle")
+    raise ImportError("'..RAG_Search.state_paths' (importing default_chroma_persist_directory, default_rag_profiles_dir) is not available inside the remote worker bundle")
     resolved: list[Path] = []
     try:
         resolved.append(_config.get_user_data_dir())
@@ -5856,4 +5855,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("c3317c1fc4d53ce3a1f495554d924382e806f38af8bc5d5e85f3338dafb759ca")
+BUNDLE_SHA256 = _enter_worker_exchange("98d3d4a830c8a18b1c810e82c816326f430816ae915d5c9ebaf6c4a2a67b8d64")

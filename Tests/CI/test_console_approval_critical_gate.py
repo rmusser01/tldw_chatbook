@@ -16,6 +16,7 @@ UI_TARGETS = {
     "Tests/UI/test_approval_interaction.py::test_stale_more_options_cannot_change_replacement",
 }
 OWNER_TARGETS = {
+    "Tests/RAG/test_state_paths.py",
     "Tests/Chat/test_console_approval_feedback.py::test_feedback_first_access_is_single_and_binds_only_existing_bridge",
     "Tests/Chat/test_console_relay_approval_integration.py",
     "Tests/Web_Server/test_served_relay_publisher.py",
