@@ -1143,6 +1143,10 @@ _BUDGETS: dict[str, int] = {
     # a legacy/imported chat's missing Library-policy row (the safe
     # Never/Blocked default its turn ran under) instead of refusing it.
     # 2026-11-08, TASK-39119 review (owner size waiver): +19, the pending reply row save without a mix-in attempt.
+    # 2026-11-06 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): +4 -- the mix-in attempt save's docstring
+    # says why it starts BEGIN IMMEDIATE (dev 591a723c0d made the same switch;
+    # a deferred start refused a turn with "database is locked").
     "tldw_chatbook/Chat/chat_persistence_service.py": 4258,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet

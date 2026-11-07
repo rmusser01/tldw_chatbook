@@ -1278,7 +1278,11 @@ class ChatPersistenceService:
         native_message_ids: Mapping[str, str],
         pending_assistant: tuple[str | None, str | None] | None = None,
     ) -> None:
-        """Persist an exact replay attempt and its marker before provider entry."""
+        """Persist an exact replay attempt and its marker before provider entry.
+
+        IMMEDIATE: this reads then writes; a deferred start failed with
+        "database is locked" when another writer committed in between.
+        """
         from .console_prompt_mixin_service import MixinAttemptContribution
         from .console_transaction_contribution import _scoped_console_transaction_writer
 
