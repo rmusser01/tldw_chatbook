@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+# Capture the original tuple before other module initialization.
+# isort: split
+from tldw_chatbook.Chat.console_ordinary_tree import (
+    _NATIVE_CURRENTNESS_SOURCE as _ORIGINAL_CURRENTNESS_SOURCE,
+)
+
+# isort: split
+
 import asyncio
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from types import FunctionType, MappingProxyType, MethodType
 from typing import Any
@@ -477,16 +486,130 @@ class _CapturedSources:
                 "permission.kill": candidate.get_kill_switch,
             }
             identity = _source_identity(candidate)
+            if not all(
+                _original_method(callbacks[key], candidate, name, MCPPermissionStore)
+                for key, name in (
+                    ("permission.load", "load"),
+                    ("permission.mark", "mark_config_changed"),
+                    ("permission.kill", "get_kill_switch"),
+                )
+            ):
+                raise RecoveryRequired("mcp_source_selection_changed")
+            from tldw_chatbook.Chat.console_ordinary_tree import (
+                _OrdinaryTurn,
+                current_ordinary_tree,
+            )
+
+            tree = current_ordinary_tree()
+            direct = tree if type(tree) is _OrdinaryTurn and tree.source is None else None
+            if direct is not None:
+                direct.borrow(direct.runtime)
+                app = direct.app
+                try:
+                    app_service = app.unified_mcp_service
+                except AttributeError:
+                    app_service = None
+                if (
+                    app_service is not self.service
+                    or direct.native_permission_publication is not None
+                ):
+                    raise RecoveryRequired("mcp_source_selection_changed")
+            ordinary = tree.source if tree is not None else None
+            if ordinary is None:
+                from types import ModuleType as _currentness_module_type
+
+                from tldw_chatbook.Chat import (
+                    console_chat_controller as _currentness_controller,
+                )
+                from tldw_chatbook.Chat import console_runtime as _currentness_runtime
+
+                _currentness_source = _ORIGINAL_CURRENTNESS_SOURCE
+                if (
+                    type(_currentness_runtime) is not _currentness_module_type
+                    or type(_currentness_controller) is not _currentness_module_type
+                    or _currentness_source is not vars(_currentness_runtime).get("_ORIGINAL_CURRENTNESS_SOURCE")
+                    or _currentness_source is not vars(_currentness_controller).get("_ORIGINAL_CURRENTNESS_SOURCE")
+                    or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_runtime") is not _currentness_runtime
+                    or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_chat_controller") is not _currentness_controller
+                ):
+                    raise RuntimeError("original native currentness consumer changed")
+                _currentness_record = _currentness_source[4][-1][1]
+                _currentness_reader, _currentness_code, _currentness_defaults, _currentness_kwdefaults, _currentness_entries, _currentness_closure, _currentness_cells = _currentness_record
+                if (
+                    _currentness_reader.__code__ is not _currentness_code
+                    or _currentness_reader.__defaults__ is not _currentness_defaults
+                    or _currentness_reader.__kwdefaults__ is not _currentness_kwdefaults
+                    or tuple((_currentness_kwdefaults or {}).items()) != _currentness_entries
+                    or _currentness_reader.__closure__ is not _currentness_closure
+                    or any(cell.cell_contents is not value for cell, value in _currentness_cells)
+                ):
+                    raise RuntimeError("original native currentness dispatcher changed")
+
+                preparation = _currentness_reader(_currentness_source, 'workflow')
+                if preparation is not None:
+                    preparation.borrow_preparation(preparation.runtime)
+                    ordinary = preparation.source
+            if ordinary is not None:
+                ordinary.check_memory()
+                if (
+                    ordinary.mcp is not self.service
+                    or ordinary.permission is not None
+                    or ordinary.prospective_mcp_store is not self.store
+                    or ordinary.prospective_mcp_identity != _source_identity(self.store)
+                    or ordinary.prospective_permission_path != identity[2]
+                ):
+                    raise RecoveryRequired("mcp_source_selection_changed")
+            self.require_current()
+            method_codes = tuple(
+                (name, callbacks[key].__func__, callbacks[key].__func__.__code__)
+                for key, name in (
+                    ("permission.load", "load"),
+                    ("permission.mark", "mark_config_changed"),
+                    ("permission.kill", "get_kill_switch"),
+                )
+            )
             with self.service._execution_log_init_lock:
-                self.require_current()
-                if not all(
-                    _original_method(
-                        callbacks[key], candidate, name, MCPPermissionStore
+                if direct is not None:
+                    direct.borrow(direct.runtime)
+                    if (
+                        current_ordinary_tree() is not direct
+                        or direct.source is not None
+                    ):
+                        raise RecoveryRequired("mcp_source_selection_changed")
+                    app = direct.app
+                    try:
+                        app_service = app.unified_mcp_service
+                    except AttributeError:
+                        app_service = None
+                    if (
+                        app_service is not self.service
+                        or direct.native_permission_publication is not None
+                    ):
+                        raise RecoveryRequired("mcp_source_selection_changed")
+                if (
+                    vars(self.service).get("_permission_store") is not None
+                    or self.permission is not None
+                    or vars(self.service).get("local_service") is not self.local
+                    or vars(self.service).get("_execution_log") is not self.log
+                    or vars(self.local).get("store") is not self.store
+                    or vars(self.local).get("manifest_provider")
+                    is not self.manifest_provider
+                    or vars(self.local).get("policy_enforcer")
+                    is not self.policy_enforcer
+                    or vars(self.store).get("path") != self.store_identity[2]
+                    or vars(candidate).get("path") != identity[2]
+                    or any(
+                        vars(MCPPermissionStore).get(name) is not function
+                        or function.__code__ is not code
+                        for name, function, code in method_codes
                     )
-                    for key, name in (
-                        ("permission.load", "load"),
-                        ("permission.mark", "mark_config_changed"),
-                        ("permission.kill", "get_kill_switch"),
+                    or sources._BINDINGS.get(self.store) is not self.store_binding
+                    or sources._BINDINGS.get(candidate) is not identity[3]
+                    or ordinary is not None
+                    and (
+                        ordinary.permission is not None
+                        or ordinary.mcp is not self.service
+                        or ordinary.prospective_mcp_store is not self.store
                     )
                 ):
                     raise RecoveryRequired("mcp_source_selection_changed")
@@ -496,7 +619,27 @@ class _CapturedSources:
                 self.permission_reader = callbacks["permission.load"]
                 self.permission_binding = identity[3]
                 self.method_bindings = {**self.method_bindings, **callbacks}
-                self.require_current()
+                if ordinary is not None:
+                    ordinary.permission = candidate
+                    ordinary.permission_path = identity[2]
+                    ordinary.native_permission_publication = (
+                        self.service,
+                        self.store,
+                        candidate,
+                        identity[3],
+                        identity[2],
+                        method_codes,
+                    )
+                elif direct is not None:
+                    direct.native_permission_publication = (
+                        self.service,
+                        self.store,
+                        candidate,
+                        identity[3],
+                        identity[2],
+                        method_codes,
+                    )
+            self.require_current()
         return self.permission
 
     def read_permission_payload(self):
@@ -615,13 +758,111 @@ async def capture_console_effective_states(
         return states
 
 
+@dataclass(frozen=True, slots=True)
+class _DefinitionSelection:
+    """Detached fields from one original metadata capture, without authority."""
+
+    definitions: Mapping[str, str]
+    sources: tuple[tuple[str, str, str, str], ...]
+    complete: bool = True
+    pending: bool = False
+
+
+def _mcp_metadata_is_closed(service):
+    """Recognize only the already loaded, original metadata-only path."""
+    from inspect import getattr_static
+
+    from .local_control_service import _default_manifest_provider
+
+    if type(service) is not UnifiedMCPControlPlaneService:
+        return False
+    local = getattr_static(service, "local_service", None)
+    if type(local) is not LocalMCPControlService:
+        return False
+    if (
+        getattr_static(local, "manifest_provider", None)
+        is not _default_manifest_provider
+        or getattr_static(local, "policy_enforcer", None) is not None
+    ):
+        return False
+    server = sys.modules.get("tldw_chatbook.MCP.server")
+    records = vars(server).get("_CONSOLE_ORDINARY_MANIFEST_SOURCE") if server else None
+    return bool(records) and all(
+        vars(server).get(name) is function and function.__code__ is code
+        for name, function, code in records
+    )
+
+
+def _project_definition_selection(tools, states, exclusions, persona_policy_rules):
+    from tldw_chatbook.Agents.persona_policy import (
+        evaluate_tool_policy,
+        parse_persona_policy_from_rules,
+    )
+
+    from .tool_naming import dedupe_names, llm_tool_name
+
+    persona = parse_persona_policy_from_rules(persona_policy_rules)
+    eligible = [
+        tool
+        for tool in tools
+        if not (tool.server_key == "builtin:tldw_chatbook" and tool.name in exclusions)
+        and states[(tool.server_key, tool.name)].state != "deny"
+        and evaluate_tool_policy(
+            persona, rule_kind="mcp_tool", tool_name=tool.name
+        ).advertised
+    ]
+    identities = [tool.tool_id for tool in eligible]
+    if len(identities) != len(set(identities)):
+        raise ValueError("ambiguous MCP definition identity")
+    names = dedupe_names(
+        [llm_tool_name(tool.server_key, tool.name) for tool in eligible]
+    )
+    return _DefinitionSelection(
+        MappingProxyType(
+            {
+                tool.tool_id: definition_hash(tool.description, tool.input_schema)
+                for tool in eligible
+            }
+        ),
+        tuple(
+            (tool.tool_id, tool.server_key, tool.name, name)
+            for tool, name in zip(eligible, names, strict=True)
+        ),
+    )
+
+
 async def capture_console_definition_maximum(
     service: UnifiedMCPControlPlaneService,
     exclusions: frozenset[str],
     *,
     _run_native=None,
+    profile_id="default",
+    persona_policy_rules=(),
 ) -> dict[str, str]:
+    """Preserve the public hash-only view of the same original capture."""
+    result = await _capture_console_definition_selection(
+        service,
+        exclusions,
+        _run_native=_run_native,
+        profile_id=profile_id,
+        persona_policy_rules=persona_policy_rules,
+        _admitted=True,
+    )
+    return dict(result.definitions)
+
+
+async def _capture_console_definition_selection(
+    service: UnifiedMCPControlPlaneService,
+    exclusions: frozenset[str],
+    *,
+    _run_native=None,
+    profile_id="default",
+    persona_policy_rules=(),
+    _admitted=False,
+) -> _DefinitionSelection:
     """Prepare one narrowing maximum; dispatch still uses its fresh live gates."""
+    if not _admitted and not _mcp_metadata_is_closed(service):
+        return _DefinitionSelection(MappingProxyType({}), (), False, True)
     captured = _CapturedSources(service)
     run_native = _owned_worker if _run_native is None else _run_native
 
@@ -646,7 +887,7 @@ async def capture_console_definition_maximum(
             payload, bundle = await run_native(read_sources)
             captured.require_current()
             if bool(payload.get("kill_switch", False)):
-                return {}
+                return _DefinitionSelection(MappingProxyType({}), ())
             captured.local._require_allowed("mcp.external_profiles.list.local")
             tools = []
             for profile in bundle["profiles"]:
@@ -665,7 +906,7 @@ async def capture_console_definition_maximum(
                 tools.extend(builtin_tools_from_inventory(inventory))
             states = {
                 (tool.server_key, tool.name): resolve_effective_state(
-                    payload, tool, profile_id="default"
+                    payload, tool, profile_id=profile_id
                 )
                 for tool in tools
             }
@@ -682,21 +923,16 @@ async def capture_console_definition_maximum(
                         captured.audit_writer(
                             captured.permission,
                             tool,
-                            profile_id="default",
+                            profile_id=profile_id,
                             _captured_execution_log=captured.log_owner,
                         )
 
                 await run_native(audit_changes)
             captured.require_current()
-            return {
-                tool.tool_id: definition_hash(tool.description, tool.input_schema)
-                for tool in tools
-                if not (
-                    tool.server_key == "builtin:tldw_chatbook"
-                    and tool.name in exclusions
-                )
-                and states[(tool.server_key, tool.name)].state != "deny"
-            }
+            return _project_definition_selection(
+                tools, states, exclusions, persona_policy_rules
+            )
+
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - preserve optional maximum-capture refusal.
@@ -704,7 +940,7 @@ async def capture_console_definition_maximum(
                 "Console MCP maximum capture unavailable (exception_type={})",
                 type(exc).__name__,
             )
-            return {}
+            return _DefinitionSelection(MappingProxyType({}), (), False)
 
 
 def _capture_controller_inputs(function):

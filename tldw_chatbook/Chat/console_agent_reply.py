@@ -256,7 +256,9 @@ async def _run_agent_reply(
                     )
                 )
             else:
-                startup_candidate = await host.asyncio.to_thread(
+                from .console_ordinary_tree import run_ordinary_preparation
+
+                startup_candidate = await run_ordinary_preparation(self, host.functools.partial(
                     host.ProjectInstructionResolver().resolve_startup,
                     binding_id=project_selection.binding.binding_id,
                     binding_root=project_selection.root,
@@ -274,7 +276,7 @@ async def _run_agent_reply(
                     excluded_dirs=host._project_instruction_excluded_dirs(
                         project_selection
                     ),
-                )
+                ))
             from .console_project_dispatch import build_project_dispatch_callbacks
 
             (
@@ -682,7 +684,9 @@ async def _run_agent_reply(
         )
         profile_provider = None
         if personal_context_service is not None and session is not None:
-            profile_provider = await host.asyncio.to_thread(
+            from .console_ordinary_tree import run_ordinary_preparation
+
+            profile_provider = await run_ordinary_preparation(self, host.functools.partial(
                 host._compose_profile_tool_provider,
                 personal_context_service,
                 workspace_id=session.workspace_id,
@@ -693,7 +697,7 @@ async def _run_agent_reply(
                 kill_switch=(
                     self._console_tool_kill_switch_reader() or (lambda: False)
                 ),
-            )
+            ))
         canvas_provider = None
         canvas_authority = None
         canvas_controller = getattr(self.store, "canvas_turn_controller", None)
@@ -732,14 +736,10 @@ async def _run_agent_reply(
     if setup_stop.stopped:  # TASK-33621.22: Stop while "Connecting tools…"
         return await setup_stop.settle(session_id)
     recovery_runtime = getattr(self, "_archive_recovery_runtime", None)
-    recovery_provider = (
-        recovery_runtime.admit(turn_context, session)
-        if recovery_runtime is not None
-        and session is not None
-        and work_origin is host.WorkOrigin.MANUAL
-        and not resume_provider_continuation
-        else None
-    )
+    from .console_ordinary_tree import current_ordinary_tree
+
+    ordinary = current_ordinary_tree(self)
+    recovery_provider = recovery_authority = None
     # TASK-35311: bound by the provider-worker await inside the try; a
     # cancellation landing before that await returns leaves them None,
     # and the CancelledError handler recovers a finished outcome from
@@ -747,7 +747,35 @@ async def _run_agent_reply(
     run_id: str | None = None
     outcome = None
     try:
+        if (
+            recovery_runtime is not None
+            and session is not None
+            and work_origin is host.WorkOrigin.MANUAL
+            and not resume_provider_continuation
+        ):
+            if ordinary is not None:
+                selection = ordinary.recovery
+                if selection is None:
+                    raise RuntimeError("ordinary archive runtime changed")
+                selection.check_source(ordinary)
+                if recovery_runtime is not selection.runtime:
+                    raise RuntimeError("ordinary archive runtime changed")
+                selection.check_proof(ordinary, turn_context, session)
+                try:
+                    recovery_provider = recovery_runtime.admit(
+                        turn_context, session, _ordinary=ordinary
+                    )
+                finally:
+                    recovery_authority = selection.authority
+                if recovery_provider is not None:
+                    selection.receive(ordinary, recovery_provider, recovery_authority)
+            else:
+                recovery_provider = recovery_runtime.admit(turn_context, session)
+                if recovery_provider is not None:
+                    recovery_authority = recovery_provider.authority
         if recovery_provider is not None:
+            if ordinary is not None:
+                ordinary.recovery.check_source(ordinary)
             from .archive_recovery.runtime import prepare_archive_followup
 
             agent_messages, trace_request = await prepare_archive_followup(
@@ -759,6 +787,7 @@ async def _run_agent_reply(
                 agent_messages,
                 trace_request,
                 trusted_profile_user_message_id,
+                _ordinary=ordinary,
             )
         # run_reply returns (run_id, outcome): run_id lets us write the
         # produced reply's PERSISTED id back onto the run after
@@ -1112,8 +1141,8 @@ async def _run_agent_reply(
         return host.ConsoleSubmitResult(True, True, visible_copy)
     finally:
         self._active_provider_workers.pop(session_id, None)
-        if recovery_provider is not None:
-            await recovery_runtime.release(recovery_provider.authority)
+        if recovery_authority is not None:
+            await recovery_runtime.release(recovery_authority)
         # Task 3b: this finally intentionally pops NONE of the three
         # per-session entries (stream task, assistant message id,
         # cancel event) -- `_finalize_agent_reply` below (and, through
@@ -1154,3 +1183,12 @@ async def _run_agent_reply(
         stream_signals=stream_signals,
         resolution=resolution,
     )
+
+
+# Definition-time records follow the actual extracted native receivers (ADR-285).
+from tldw_chatbook.Chat.console_ordinary_tree import _function_record as _native_record
+
+_NATIVE_WORKFLOW_RECEIVERS = tuple(
+    (name, _native_record(globals()[name]))
+    for name in ('_run_agent_reply',)
+)

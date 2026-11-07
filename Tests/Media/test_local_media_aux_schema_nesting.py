@@ -114,3 +114,74 @@ def test_bootstrap_still_creates_every_table_and_index(database):
 def test_bootstrap_is_idempotent(database):
     LocalMediaReadingService._ensure_local_reading_aux_schema(database)
     LocalMediaReadingService._ensure_local_reading_aux_schema(database)
+
+
+def test_schema_alias_preserves_the_standalone_loader_and_live_old_patch(
+    database, monkeypatch
+):
+    from importlib.util import find_spec
+
+    name = "tldw_chatbook.Media.local_media_reading_schema"
+    assert find_spec(name) is not None, "local schema data leaf is missing"
+    from tldw_chatbook.Media import local_media_reading_schema as schema
+
+    assert _MODULE._LOCAL_READING_AUX_SCHEMA is schema._LOCAL_READING_AUX_SCHEMA
+    monkeypatch.setattr(
+        _MODULE,
+        "_LOCAL_READING_AUX_SCHEMA",
+        ("CREATE TABLE old_service_patch (value TEXT)",),
+    )
+    LocalMediaReadingService._ensure_local_reading_aux_schema(database)
+    with database.transaction() as conn:
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE name='old_service_patch'"
+        ).fetchone() == ("old_service_patch",)
+    assert _MODULE._LOCAL_READING_AUX_SCHEMA is not schema._LOCAL_READING_AUX_SCHEMA
+
+
+@pytest.mark.parametrize("schema_first", [True, False])
+def test_media_clean_import_orders_preserve_collector_shapes(schema_first):
+    import subprocess
+    import sys
+
+    script = """
+import importlib
+import sys
+from types import FunctionType
+schema_name = "tldw_chatbook.Media.local_media_reading_schema"
+service_name = "tldw_chatbook.Media.local_media_reading_service"
+order = (schema_name, service_name) if sys.argv[1] == "1" else (service_name, schema_name)
+for name in order:
+    importlib.import_module(name)
+schema, service = (sys.modules[schema_name], sys.modules[service_name])
+assert service._LOCAL_READING_AUX_SCHEMA is schema._LOCAL_READING_AUX_SCHEMA
+cls = service.LocalMediaReadingService
+assert service._NATIVE_ORDINARY_LIBRARY_CLASS is cls
+methods = tuple((name, value) for name, value in vars(cls).items()
+                if isinstance(value, (FunctionType, staticmethod, classmethod, property)))
+assert service._NATIVE_ORDINARY_LIBRARY_METHODS == methods
+functions = tuple(value for value in tuple(vars(service).values())
+                  if type(value) is FunctionType and value.__module__ == service_name)
+functions += tuple(value.__func__ if isinstance(value, (staticmethod, classmethod)) else value
+                   for _, value in methods if not isinstance(value, property))
+records = service._NATIVE_ORDINARY_LIBRARY_FUNCTIONS
+assert len(records) == len(functions)
+for record, fn in zip(records, functions, strict=True):
+    assert len(record) == 7 and record[0] is fn
+    assert record[1] is fn.__code__ and record[2] is fn.__defaults__
+    assert record[3] is fn.__kwdefaults__ and record[4] == tuple((fn.__kwdefaults__ or {}).items())
+    assert record[5] is fn.__closure__
+    assert record[6] == tuple((cell, cell.cell_contents) for cell in fn.__closure__ or ())
+    assert fn.__globals__ is vars(service)
+for _, prop in methods:
+    if isinstance(prop, property) and prop.fget is not None:
+        assert all(record[0] is not prop.fget for record in records)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, "1" if schema_first else "0"],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr

@@ -65,6 +65,25 @@ class TurnAuthority:
 
 
 @dataclass(frozen=True, slots=True)
+class _OwnedTurnPreparation:
+    owner: Any
+    session_id: str
+    configuration: Any
+    check: Any
+
+
+def prepared_configuration_for(owner, session_id):
+    """Return the same checked configuration throughout one dispatch attempt."""
+    prepared = _PRECAPTURED.get()
+    if not isinstance(prepared, _OwnedTurnPreparation):
+        return None
+    if prepared.owner is not owner or prepared.session_id != session_id:
+        raise RuntimeError("Console preparation source changed; Send again.")
+    prepared.check()
+    return prepared.configuration
+
+
+@dataclass(frozen=True, slots=True)
 class AuthorityInputs:
     """What the authority is read for, taken from the store on the UI pump."""
 
@@ -151,6 +170,23 @@ def capture_authority(controller: Any, inputs: AuthorityInputs, *, mcp_definitio
     Touches no store and no widget, so it may run on a worker thread.
     """
     app = getattr(controller, "app_instance", None)
+    from functools import partial
+    from inspect import getattr_static
+
+    from tldw_chatbook.Chat.console_configuration_capture import (
+        _has_managed_console_runtime,
+    )
+
+    scratch = getattr_static(controller, "_scratch_snapshot_provider", None)
+    screen = (
+        scratch.args[0] if type(scratch) is partial and len(scratch.args) == 1 else None
+    )
+    if (
+        _has_managed_console_runtime(app)
+        or screen is not None
+        and getattr_static(screen, "_console_runtime", None) is not None
+    ):
+        raise RuntimeError("Console preparation source unavailable; Send again.")
     from tldw_chatbook.DB.base_db import operation_owned_connection
 
     registry = getattr(app, "workspace_registry_service", None)

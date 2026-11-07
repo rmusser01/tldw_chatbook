@@ -452,30 +452,238 @@ def test_first_request_plan_matches_live_native_fleet_disclosure(tmp_path, monke
     )
 
 
-def test_core_imports_keep_progress_runtime_lazy_and_public_schemas_available():
+def test_core_imports_keep_progress_runtime_lazy_and_public_schemas_available(tmp_path):
+    import os
     import subprocess
     import sys
+    from pathlib import Path
 
-    probe = """
+    # Match the repository's isolated startup profile, including source selectors.
+    profile = tmp_path / "cold-profile"
+    profile.mkdir(mode=0o700)
+    environment = dict(os.environ)
+    for key, leaf in (
+        ("HOME", "home"),
+        ("XDG_CONFIG_HOME", "config"),
+        ("XDG_DATA_HOME", "data"),
+        ("XDG_CACHE_HOME", "cache"),
+        ("TMPDIR", "tmp"),
+    ):
+        path = profile / leaf
+        path.mkdir(mode=0o700)
+        environment[key] = str(path)
+    environment.update(
+        USERPROFILE=environment["HOME"],
+        TLDW_TEST_CONFIG_ROOT=str(profile),
+        TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+        TLDW_TEST_MODE="1",
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        HF_HUB_OFFLINE="1",
+    )
+    environment.pop("TLDW_TEST_CONFIG_ROOT_OWNER", None)
+    source = Path(__file__).resolve().parents[2]
+    probe = r"""
+import importlib
+import json
+import sqlite3
 import sys
-from tldw_chatbook.Agents import agent_runtime, agent_service, fleet_coordinator, tool_catalog
-assert 'tldw_chatbook.Agents.fleet_message_tools' not in sys.modules
-assert 'tldw_chatbook.Agents.fleet_messages' not in sys.modules
-assert 'tldw_chatbook.Agents.automatic_work_budget' not in sys.modules
-assert 'tldw_chatbook.Agents.automatic_work_runtime' not in sys.modules
-assert 'tldw_chatbook.Agents.execution_capacity' not in sys.modules
-# Name-based anti-forgery checks do not require loading the queue or schemas.
-assert 'read_agent_messages' in tool_catalog.MESSAGE_TOOL_NAMES
-from tldw_chatbook.Agents.tool_catalog import READ_AGENT_MESSAGES_SCHEMA, REPORT_TO_SUPERVISOR_SCHEMA
-assert READ_AGENT_MESSAGES_SCHEMA.name == 'read_agent_messages'
-assert REPORT_TO_SUPERVISOR_SCHEMA.name == 'report_to_supervisor'
-assert 'tldw_chatbook.Agents.fleet_messages' not in sys.modules
-from tldw_chatbook.Agents.agent_models import WorkOrigin
-from tldw_chatbook.Agents.execution_capacity import WorkOrigin as LegacyWorkOrigin
-assert LegacyWorkOrigin is WorkOrigin
-assert agent_service.WorkOrigin is WorkOrigin
+import threading
+from pathlib import Path
+from types import FunctionType, ModuleType
+
+source = Path(sys.argv[1]).resolve(strict=True)
+sys.path.insert(0, str(source))
+from Tests import real_profile_guard
+real_profile_guard.install()
+assert not any(name == 'tldw_chatbook' or name.startswith('tldw_chatbook.') for name in sys.modules)
+assert threading.enumerate() == [threading.current_thread()]
+
+# Retain code objects by identity, never frames, arguments or product callbacks.
+lock = threading.Lock()
+phase = 'cold'
+entries = {}
+connections = []
+def observe(frame, event, argument):
+    if event != 'call' or not frame.f_globals.get('__name__', '').startswith('tldw_chatbook.'):
+        return
+    code = frame.f_code
+    thread = threading.get_ident()
+    with lock:
+        entries.setdefault((phase, thread), {})[id(code)] = code
+
+def audit(event, arguments):
+    if event == 'sqlite3.connect':
+        thread = threading.get_ident()
+        with lock:
+            connections.append((phase, thread))
+
+# This proves Python entries on the importer/future Thread workers, plus SQLite
+# admissions process-wide; it is not a general C-extension callback proof.
+targets = (
+    ('Agents.execution_capacity', 'RuntimeCapacity', '__init__'),
+    ('Agents.execution_capacity', 'ExecutionOwner', '__init__'),
+    ('Agents.execution_capacity', 'OwnedOperation', '__init__'),
+    ('Agents.automatic_work_runtime', 'AutomaticWorkContext', '__init__'),
+    ('DB.automatic_work', 'AutomaticWorkLedger', '__init__'),
+    ('Agents.fleet_coordinator', 'FleetCoordinator', '__init__'),
+    ('Agents.fleet_messages', 'MessageStore', '__init__'),
+    ('DB.AgentRuns_DB', 'AgentRunsDB', '__init__'),
+    ('DB.base_db', 'BaseDB', '__init__'),
+    ('Agents.agent_service', 'AgentService', '__init__'),
+    ('Agents.agent_runtime', None, 'run_agent_loop'),
+)
+
+def verify_module(name):
+    module = sys.modules[name]
+    assert type(module) is ModuleType, name
+    namespace = vars(module)
+    assert namespace['__name__'] == name, name
+    expected = source.joinpath(*name.split('.')).with_suffix('.py')
+    assert Path(namespace['__file__']).resolve(strict=True) == expected, name
+    parent, _, leaf = name.rpartition('.')
+    assert vars(sys.modules[parent])[leaf] is module, name
+    return module
+
+def resolve(target):
+    suffix, class_name, method_name = target
+    name = 'tldw_chatbook.' + suffix
+    module = verify_module(name)
+    namespace = vars(module)
+    if class_name is None:
+        owner = module
+        function = namespace[method_name]
+    else:
+        cls = namespace[class_name]
+        assert isinstance(cls, type) and cls.__module__ == name, target
+        owner = next(base for base in cls.__mro__ if method_name in vars(base))
+        function = vars(owner)[method_name]
+        verify_module(owner.__module__)
+    assert type(function) is FunctionType, target
+    defining_name = function.__module__
+    defining = verify_module(defining_name)
+    assert function.__globals__ is vars(defining), target
+    code = function.__code__
+    assert code.co_name == method_name, target
+    # Keep every resolved receiver/function/code alive, even for generated inits.
+    return (module, owner, function, code)
+
+previous_main = sys.getprofile()
+previous_threads = threading.getprofile()
+sys.addaudithook(audit)
+sys.setprofile(observe)
+threading.setprofile(observe)
+try:
+    from tldw_chatbook.Agents import agent_runtime, agent_service, fleet_coordinator, tool_catalog
+    assert 'tldw_chatbook.Agents.fleet_message_tools' not in sys.modules
+    assert 'tldw_chatbook.Agents.fleet_messages' not in sys.modules
+    assert 'tldw_chatbook.Agents.automatic_work_runtime' not in sys.modules
+    assert 'tldw_chatbook.DB.automatic_work' not in sys.modules
+    # Name-based anti-forgery checks do not require loading the queue or schemas.
+    assert 'read_agent_messages' in tool_catalog.MESSAGE_TOOL_NAMES
+    from tldw_chatbook.Agents.tool_catalog import READ_AGENT_MESSAGES_SCHEMA, REPORT_TO_SUPERVISOR_SCHEMA
+    assert READ_AGENT_MESSAGES_SCHEMA.name == 'read_agent_messages'
+    assert REPORT_TO_SUPERVISOR_SCHEMA.name == 'report_to_supervisor'
+    assert 'tldw_chatbook.Agents.fleet_messages' not in sys.modules
+    assert 'tldw_chatbook.Agents.automatic_work_runtime' not in sys.modules
+    assert 'tldw_chatbook.DB.automatic_work' not in sys.modules
+    from tldw_chatbook.Agents.agent_models import WorkOrigin
+    from tldw_chatbook.Agents.execution_capacity import WorkOrigin as LegacyWorkOrigin
+    from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+    assert LegacyWorkOrigin is WorkOrigin
+    assert agent_service.WorkOrigin is WorkOrigin
+    assert current_execution_owner() is None
+    with lock:
+        phase = 'qualification'
+        cold_entries = {thread: dict(codes) for (window, thread), codes in entries.items() if window == 'cold'}
+        cold_connections = list(connections)
+    assert not cold_connections, cold_connections
+
+    # Resident metadata must resolve now; absent modules are deliberately loaded
+    # only after the cold snapshot so misspelled targets cannot pass vacuously.
+    resident = {name for name in sys.modules if name.startswith('tldw_chatbook.')}
+    for module in (agent_runtime, agent_service, fleet_coordinator, tool_catalog):
+        verify_module(module.__name__)
+    verify_module('tldw_chatbook.Agents.automatic_work_budget')
+    records = {}
+    absent = []
+    for target in targets:
+        name = 'tldw_chatbook.' + target[0]
+        if name in resident:
+            records[target] = resolve(target)
+        else:
+            absent.append(target)
+    for target in absent:
+        importlib.import_module('tldw_chatbook.' + target[0])
+        records[target] = resolve(target)
+    assert len(records) == len(targets)
+    cold_counts = {
+        '.'.join(part for part in target if part): sum(id(record[3]) in codes for codes in cold_entries.values())
+        for target, record in records.items()
+    }
+    assert not any(cold_counts.values()), cold_counts
+
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+    failures = []
+    def positive():
+        capacity = RuntimeCapacity()
+        owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id='cold-observer-positive')
+        with owner.activate():
+            operation = owner.reserve_tool()
+            operation.finish()
+        owner.finish_root()
+        capacity.close()
+        with sqlite3.connect(':memory:') as connection:
+            assert connection.execute('SELECT 1').fetchone() == (1,)
+        connection.close()
+        assert current_execution_owner() is None
+
+    with lock:
+        phase = 'positive'
+    main_thread = threading.get_ident()
+    positive()
+    def worker_positive():
+        try:
+            positive()
+        except BaseException as error:
+            failures.append(error)
+    worker = threading.Thread(target=worker_positive, name='cold-observer-positive')
+    worker.start()
+    worker.join()
+    assert not failures, failures
+    assert worker.ident != main_thread
+    with lock:
+        phase = 'done'
+        positive_entries = {thread: dict(codes) for (window, thread), codes in entries.items() if window == 'positive'}
+        positive_connections = [thread for window, thread in connections if window == 'positive']
+    positive_counts = {}
+    for thread in (main_thread, worker.ident):
+        codes = positive_entries[thread]
+        counts = {target[1]: int(id(records[target][3]) in codes) for target in targets[:3]}
+        assert all(counts.values()), (thread, counts)
+        assert positive_connections.count(thread) == 1, positive_connections
+        positive_counts[str(thread)] = counts
+    assert current_execution_owner() is None
+    print('COLD_NONEXECUTION ' + json.dumps({
+        'cold_entries': cold_counts,
+        'cold_sqlite_connections': len(cold_connections),
+        'positive_entries_by_thread': positive_counts,
+        'positive_sqlite_threads': positive_connections,
+        'resolved_targets': len(records),
+        'source': str(source),
+    }, sort_keys=True))
+finally:
+    sys.setprofile(previous_main)
+    threading.setprofile(previous_threads)
+assert sys.getprofile() is previous_main
+assert threading.getprofile() is previous_threads
 """
     completed = subprocess.run(
-        [sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=False
+        [sys.executable, "-I", "-c", probe, str(source)],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "COLD_NONEXECUTION " in completed.stdout
+    print(completed.stdout)

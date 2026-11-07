@@ -8,6 +8,7 @@ import json
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from .data_cleanup import DataRootRef, RootReview
     from .git_source import SourceLocator
     from .models import AcquiredSnapshot, InspectionEvidence
+
+_hook_preparation = ContextVar("plugin_hook_preparation", default=None)
 
 
 @dataclass(frozen=True)
@@ -235,13 +238,27 @@ class PluginService:
         if not terminal:
             self._ordinary_calls.add(task)
         try:
+            preparation = _hook_preparation.get()
+            if preparation is not None:
+                preparation.check(self)
             result = callback()
             return await result if inspect.isawaitable(result) else result
         finally:
             self._ordinary_calls.discard(task)
 
     async def _call(self, callback, *, terminal=False):
+        preparation = _hook_preparation.get()
+        if preparation is not None:
+            preparation.check(self)
         loop = await asyncio.wrap_future(self._start(terminal=terminal))
+        if preparation is not None:
+            preparation.check(self)
+            with self._lock:
+                preparation.check_memory(self)
+                future = asyncio.run_coroutine_threadsafe(
+                    self._invoke(callback, terminal=terminal), loop
+                )
+            return await preparation.join(future)
         return await asyncio.wrap_future(
             asyncio.run_coroutine_threadsafe(
                 self._invoke(callback, terminal=terminal), loop

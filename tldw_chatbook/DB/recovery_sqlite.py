@@ -12,6 +12,67 @@ from typing import Callable, Iterator
 
 from tldw_chatbook.Backup_Recovery.models import StorageItem
 
+_CATALOG_LIMIT = 10_000
+_CATALOG_BYTES = 8 * 1024**2
+
+
+def _catalog(connection):
+    rows = []
+    size = 0
+    for row in connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
+    ):
+        size += sum(len(value.encode("utf-8")) for value in row if value is not None)
+        if len(rows) >= _CATALOG_LIMIT or size > _CATALOG_BYTES:
+            raise ValueError("sqlite_resource_limit")
+        rows.append(tuple(row))
+    return tuple(rows)
+
+
+def _metadata(connection, catalog, restrictions=None):
+    def quote(name):
+        return '"' + name.replace('"', '""') + '"'
+
+    result = []
+    for kind, name, _, sql in catalog:
+        if kind in ("table", "view"):
+            if restrictions is not None:
+                restrictions.reading_fts_metadata = (
+                    kind == "table"
+                    and sql is not None
+                    and sql.startswith("CREATE VIRTUAL TABLE")
+                    and "USING fts5(" in sql
+                )
+            try:
+                columns = tuple(
+                    tuple(row)
+                    for row in connection.execute(f"PRAGMA table_xinfo({quote(name)})")
+                )
+            finally:
+                if restrictions is not None:
+                    restrictions.reading_fts_metadata = False
+            # Sequence reflects creation order, not index semantics.
+            indexes = tuple(
+                sorted(
+                    row[1:]
+                    for row in connection.execute(f"PRAGMA index_list({quote(name)})")
+                )
+            )
+            result.append((name, columns, indexes))
+        elif kind == "index":
+            result.append(
+                (
+                    name,
+                    tuple(
+                        tuple(row)
+                        for row in connection.execute(
+                            f"PRAGMA index_xinfo({quote(name)})"
+                        )
+                    ),
+                )
+            )
+    return tuple(result)
+
 
 def _validate_sqlite(
     connection: sqlite3.Connection,
@@ -23,7 +84,6 @@ def _validate_sqlite(
     from tldw_chatbook.Backup_Recovery.sqlite_validation import (
         _canvas_payload_issues,
         _canvas_schema_access,
-        _catalog,
         _current_restrictions,
         _restrict_connection,
     )

@@ -38,6 +38,7 @@ CONSOLE_RUN_ALREADY_RUNNING_COPY = "A run is already running in this tab."
 async def _open_edit_modal(console, pilot, message_id: str):
     """Select ``message_id`` and click its Edit action; return the pushed modal."""
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    await _wait_for_selector(console, pilot, f"#console-message-{message_id}")
     transcript.select_message(message_id)
     await console._sync_native_console_chat_ui()
     await _wait_for_selector(
@@ -59,6 +60,7 @@ async def _wait_until(predicate, pilot, *, attempts: int = 80) -> None:
     raise AssertionError("Condition never became true.")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_modal_offers_resend_only_for_user_message():
     """A USER message's edit modal shows the resend button; an ASSISTANT

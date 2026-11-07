@@ -143,6 +143,27 @@ class RawCliResult:
     cleanup_proven: bool
 
 
+class RequiredCliOutput:
+    """Bounded sanitized native output, independent of optional previews/logs."""
+
+    def __init__(self, *, max_bytes: int = 96 * 1024) -> None:
+        self.max_bytes = min(96 * 1024, max(0, max_bytes))
+        self.stdout = ""
+        self.stderr = ""
+        self.bytes = 0
+        self.overflow = False
+        self.sealed = False
+
+    def append(self, stream: RawCliStream, text: str) -> None:
+        size = len(text.encode("utf-8"))
+        if self.bytes + size > self.max_bytes:
+            self.overflow = True
+            return
+        if not self.overflow:
+            self.bytes += size
+            setattr(self, stream, getattr(self, stream) + text)
+
+
 # ---------------------------------------------------------------------------
 # TASK-25905: the unbypassable hardline command floor.
 #
@@ -646,7 +667,12 @@ def _utf8_prefix(text: str, byte_limit: int) -> tuple[str, bool]:
 class _OutputAccumulator:
     """Own bounded sanitized previews and the private record spool."""
 
-    def __init__(self, spool: BinaryIO, max_record_bytes: int) -> None:
+    def __init__(
+        self,
+        spool: BinaryIO,
+        max_record_bytes: int,
+        required_output: RequiredCliOutput | None = None,
+    ) -> None:
         self._spool = spool
         self._max_record_bytes = max_record_bytes
         self._record_bytes = 0
@@ -666,6 +692,7 @@ class _OutputAccumulator:
         self._finished: set[RawCliStream] = set()
         self._reported_truncation: set[RawCliStream] = set()
         self.truncated = False
+        self._required_output = required_output
 
     def consume(
         self,
@@ -718,6 +745,8 @@ class _OutputAccumulator:
     ) -> None:
         if not text:
             return
+        if self._required_output is not None:
+            self._required_output.append(stream, text)
         preview_text, preview_truncated = _utf8_prefix(
             text,
             MAX_RAW_PREVIEW_BYTES - self._preview_bytes,
@@ -1143,7 +1172,41 @@ class RawShellExecutor:
         cancel_event: Any,
         on_event: Callable[[RawCliStreamEvent], None],
         admit_worker: RawCliAdmissionCallback,
+        required_output: RequiredCliOutput | None = None,
+        _join_helpers: bool = False,
     ) -> RawCliResult:
+        """Retain native callers through the actual returns of existing helpers."""
+        helpers: list[threading.Thread] = []
+        try:
+            result, output_complete = self._execute(
+                request,
+                cancel_event=cancel_event,
+                on_event=on_event,
+                admit_worker=admit_worker,
+                required_output=required_output,
+                _helpers=helpers,
+            )
+        finally:
+            for helper in helpers:
+                if helper.ident is not None:
+                    helper.join(None if _join_helpers else _RAW_QUEUE_POLL_SECONDS * 2)
+        proven = result.cleanup_proven and all(
+            not helper.is_alive() for helper in helpers
+        )
+        if required_output is not None:
+            required_output.sealed = output_complete and proven
+        return replace(result, cleanup_proven=proven)
+
+    def _execute(
+        self,
+        request: RawCliRequest,
+        *,
+        cancel_event: Any,
+        on_event: Callable[[RawCliStreamEvent], None],
+        admit_worker: RawCliAdmissionCallback,
+        required_output: RequiredCliOutput | None = None,
+        _helpers: list[threading.Thread],
+    ) -> tuple[RawCliResult, bool]:
         """Execute once; ``admit_worker``'s return value is ignored.
 
         The callback must call ``tree.admit()`` and then ``commit_launch()`` while
@@ -1155,7 +1218,9 @@ class RawShellExecutor:
 
         record_limit = configured_max_record_bytes()
         spool_owner = _open_spool(record_limit)
-        accumulator = _OutputAccumulator(spool_owner.file, record_limit)
+        accumulator = _OutputAccumulator(
+            spool_owner.file, record_limit, required_output
+        )
         process: Any | None = None
         tree: ExecutorProcessTree | None = None
         identity_receive: Any | None = None
@@ -1213,7 +1278,7 @@ class RawShellExecutor:
                             exit_code,
                             terminal_state,
                             cleanup_proven,
-                        )
+                        ), False
             _safe_close(identity_send)
             identity_send = None
 
@@ -1235,7 +1300,7 @@ class RawShellExecutor:
                     exit_code,
                     terminal_state,
                     cleanup_proven,
-                )
+                ), False
 
             tree = ExecutorProcessTree(process, admission_event, identity)
             launch_commit = _LaunchCommit(tree, launch_event, cancel_event)
@@ -1249,11 +1314,13 @@ class RawShellExecutor:
                 finally:
                     admission_done.set()
 
-            threading.Thread(
+            admission_thread = threading.Thread(
                 target=run_admission,
                 name=f"raw-cli-admission-{request.invocation_id}",
                 daemon=True,
-            ).start()
+            )
+            _helpers.append(admission_thread)
+            admission_thread.start()
             admission_deadline = time.monotonic() + _RAW_STARTUP_TIMEOUT_SECONDS
             while not launch_commit.wait(_RAW_QUEUE_POLL_SECONDS):
                 if cancel_event.is_set():
@@ -1283,9 +1350,10 @@ class RawShellExecutor:
                     exit_code,
                     terminal_state,
                     cleanup_proven,
-                )
+                ), False
 
             output_relay = _QueueRelay(output_queue)
+            _helpers.append(output_relay._thread)
             output_relay.start()
             terminal_state, exit_code, resolved_shell, triggered = self._consume(
                 request,
@@ -1306,7 +1374,14 @@ class RawShellExecutor:
                 process.join(_RAW_QUEUE_POLL_SECONDS * 4)
                 _request_relay_stop(output_relay)
                 cleanup_proven = _cleanup_tree(tree, terminate=False)
+            streams_complete = accumulator._finished == {"stdout", "stderr"}
             accumulator.finish_all(on_event)
+            output_complete = (
+                terminal_state == "exited"
+                and cleanup_proven
+                and not triggered
+                and streams_complete
+            )
             return self._result(
                 request,
                 accumulator,
@@ -1315,7 +1390,7 @@ class RawShellExecutor:
                 exit_code,
                 terminal_state,
                 cleanup_proven,
-            )
+            ), output_complete
         finally:
             if launch_commit is not None:
                 launch_commit.close()

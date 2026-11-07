@@ -2,13 +2,74 @@
 
 from __future__ import annotations
 
+import sys
 import threading
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Sequence
 
 from loguru import logger
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+_runtime_source = sys.modules.get("tldw_chatbook.Chat.console_runtime")
+_fleet_source = sys.modules.get("tldw_chatbook.Chat.console_fleet_attention")
+if _runtime_source is not None and "_ORIGINAL_RECEIPT_STORAGE" in vars(_runtime_source):
+    _attention_preparation = _runtime_source._attention_preparation
+    _ORIGINAL_RECEIPT_STORAGE = _runtime_source._ORIGINAL_RECEIPT_STORAGE
+elif _fleet_source is not None and "_ORIGINAL_RECEIPT_STORAGE" in vars(_fleet_source):
+    _attention_preparation = _fleet_source._attention_preparation
+    _ORIGINAL_RECEIPT_STORAGE = _fleet_source._ORIGINAL_RECEIPT_STORAGE
+else:
+    from . import console_attention_preparation as _attention_preparation
+
+    _ORIGINAL_RECEIPT_STORAGE = _attention_preparation._RECEIPT_STORAGE_SOURCE
+
+
+_ReceiptStorageFailure = _ORIGINAL_RECEIPT_STORAGE[5]
+
+
+class _ReceiptStorageStack(ExitStack):
+    def __exit__(self, *exception):
+        try:
+            return super().__exit__(*exception)
+        except Exception as error:
+            raise _ReceiptStorageFailure(
+                "console_attention_storage_retirement_failed"
+            ) from error
+
+
+def _enter_native_receipt_storage(stack, receiver):
+    source = _ORIGINAL_RECEIPT_STORAGE
+    helper = source[0]
+    runtime = sys.modules.get("tldw_chatbook.Chat.console_runtime")
+    parent = sys.modules.get("tldw_chatbook.Chat")
+    fleet = sys.modules.get("tldw_chatbook.Chat.console_fleet_attention")
+    if (
+        sys.modules.get("tldw_chatbook.Chat.console_attention_preparation")
+        is not _attention_preparation
+        or parent is None
+        or vars(parent).get("console_attention_preparation") is not _attention_preparation
+        or vars(_attention_preparation).get("_RECEIPT_STORAGE_SOURCE") is not source
+        or vars(_attention_preparation).get("_enter_receipt_storage") is not helper
+        or helper.__code__ is not source[1]
+        or helper.__defaults__ is not source[2]
+        or helper.__kwdefaults__ is not source[3]
+        or helper.__closure__ is not source[4]
+        or fleet is not None
+        and (
+            vars(fleet).get("_attention_preparation") is not _attention_preparation
+            or vars(fleet).get("_ORIGINAL_RECEIPT_STORAGE") is not source
+        )
+        or runtime is not None
+        and (
+            vars(runtime).get("_attention_preparation") is not _attention_preparation
+            or vars(runtime).get("_ORIGINAL_RECEIPT_STORAGE") is not source
+        )
+    ):
+        raise _ReceiptStorageFailure("console_attention_storage_source_changed")
+    values = vars(receiver)
+    helper(stack, values.get("_db"), values.get("_marks"))
 
 
 @dataclass(frozen=True)
@@ -211,19 +272,22 @@ class ConsoleActivityReceiptService:
         the next successful hydration/reconciliation may remove that
         false-positive once durable receipt state is known.
         """
-        conversation_id = str(conversation_id or "").strip()
-        with self._lock:
-            if not conversation_id or self._marks is None:
-                return False
-            mark = getattr(self._marks, "FLEET_UNSEEN", None)
-            if mark is None:
-                return False
-            try:
-                self._marks.set_mark(conversation_id, mark)
-            except Exception as exc:  # noqa: BLE001 - presentation bookkeeping
-                self._set_degraded("fleet_mark_set", exc)
-                return False
-            return True
+        with _ReceiptStorageStack() as storage:
+            if type(self) is __class__:
+                _enter_native_receipt_storage(storage, self)
+            conversation_id = str(conversation_id or "").strip()
+            with self._lock:
+                if not conversation_id or self._marks is None:
+                    return False
+                mark = getattr(self._marks, "FLEET_UNSEEN", None)
+                if mark is None:
+                    return False
+                try:
+                    self._marks.set_mark(conversation_id, mark)
+                except Exception as exc:  # noqa: BLE001 - presentation bookkeeping
+                    self._set_degraded("fleet_mark_set", exc)
+                    return False
+                return True
 
     def clear_fleet_mark_if_seen(self, conversation_id: str) -> bool:
         """Clear one coarse badge only from a ready, receipt-free snapshot.
@@ -311,70 +375,73 @@ class ConsoleActivityReceiptService:
 
     def publish_fleet_drain(self, event: Any) -> FleetReceiptPublication:
         """Publish post-turn survivors and report all-or-partial durability."""
-        with self._lock:
-            conversation_id = str(getattr(event, "conversation_id", "") or "")
-            drain_id = str(getattr(event, "drain_id", "") or "")
-            if not conversation_id or not drain_id:
-                self._set_degraded("fleet_identity")
-                return FleetReceiptPublication(activity_ids=(), complete=False)
-            published: list[str] = []
-            complete = True
-            eligible_children = 0
-            incomplete_operation = "fleet_status"
-            for ordinal, child in enumerate(getattr(event, "children", ()) or ()):
-                if getattr(child, "settled_after_turn", False) is not True:
-                    continue
-                eligible_children += 1
-                raw_status = str(getattr(child, "status", "") or "")
-                status = self._FLEET_STATUS.get(raw_status)
-                if status is None:
-                    complete = False
-                    continue
-                run_id = getattr(child, "run_id", None)
-                logical_outcome_id = (
-                    f"fleet-run:{run_id}"
-                    if run_id
-                    else f"fleet-drain:{drain_id}:{ordinal}"
-                )
-                try:
-                    activity_id, _created = self._db.publish_console_activity(
-                        origin="fleet_survivor",
-                        logical_outcome_id=logical_outcome_id,
-                        status=status,
-                        session_id=str(getattr(child, "session_id", "") or "") or None,
-                        conversation_id=conversation_id,
-                        run_id=str(run_id) if run_id else None,
-                        assistant_message_id=(
-                            str(getattr(child, "assistant_message_id", "") or "")
-                            or None
-                        ),
+        with _ReceiptStorageStack() as storage:
+            if type(self) is __class__:
+                _enter_native_receipt_storage(storage, self)
+            with self._lock:
+                conversation_id = str(getattr(event, "conversation_id", "") or "")
+                drain_id = str(getattr(event, "drain_id", "") or "")
+                if not conversation_id or not drain_id:
+                    self._set_degraded("fleet_identity")
+                    return FleetReceiptPublication(activity_ids=(), complete=False)
+                published: list[str] = []
+                complete = True
+                eligible_children = 0
+                incomplete_operation = "fleet_status"
+                for ordinal, child in enumerate(getattr(event, "children", ()) or ()):
+                    if getattr(child, "settled_after_turn", False) is not True:
+                        continue
+                    eligible_children += 1
+                    raw_status = str(getattr(child, "status", "") or "")
+                    status = self._FLEET_STATUS.get(raw_status)
+                    if status is None:
+                        complete = False
+                        continue
+                    run_id = getattr(child, "run_id", None)
+                    logical_outcome_id = (
+                        f"fleet-run:{run_id}"
+                        if run_id
+                        else f"fleet-drain:{drain_id}:{ordinal}"
                     )
-                except Exception as exc:  # noqa: BLE001 - child settlement is authoritative
-                    self._set_degraded("publish_fleet", exc)
-                    incomplete_operation = "publish_fleet"
-                    complete = False
-                    continue
-                published.append(activity_id)
-            reloaded = self._reload_locked()
-            if complete and reloaded:
-                self._state = "ready"
-                if eligible_children:
-                    # A complete replay has now represented every survivor as
-                    # a durable receipt, which supersedes the coarse debt.
-                    complete = self._clear_fleet_fallback_locked(conversation_id)
-                if complete:
-                    complete = self._reconcile_fleet_marks_locked()
-            if not complete or not reloaded:
-                # A partial receipt set must never reconcile away the one
-                # compatibility signal that still tells the user news exists.
-                self._set_fleet_fallback_locked(conversation_id)
-                self.ensure_fleet_mark(conversation_id)
-                self._set_degraded(
-                    incomplete_operation if not complete else "fleet_reload"
+                    try:
+                        activity_id, _created = self._db.publish_console_activity(
+                            origin="fleet_survivor",
+                            logical_outcome_id=logical_outcome_id,
+                            status=status,
+                            session_id=str(getattr(child, "session_id", "") or "") or None,
+                            conversation_id=conversation_id,
+                            run_id=str(run_id) if run_id else None,
+                            assistant_message_id=(
+                                str(getattr(child, "assistant_message_id", "") or "")
+                                or None
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - child settlement is authoritative
+                        self._set_degraded("publish_fleet", exc)
+                        incomplete_operation = "publish_fleet"
+                        complete = False
+                        continue
+                    published.append(activity_id)
+                reloaded = self._reload_locked()
+                if complete and reloaded:
+                    self._state = "ready"
+                    if eligible_children:
+                        # A complete replay has now represented every survivor as
+                        # a durable receipt, which supersedes the coarse debt.
+                        complete = self._clear_fleet_fallback_locked(conversation_id)
+                    if complete:
+                        complete = self._reconcile_fleet_marks_locked()
+                if not complete or not reloaded:
+                    # A partial receipt set must never reconcile away the one
+                    # compatibility signal that still tells the user news exists.
+                    self._set_fleet_fallback_locked(conversation_id)
+                    self.ensure_fleet_mark(conversation_id)
+                    self._set_degraded(
+                        incomplete_operation if not complete else "fleet_reload"
+                    )
+                return FleetReceiptPublication(
+                    activity_ids=tuple(published), complete=complete and reloaded
                 )
-            return FleetReceiptPublication(
-                activity_ids=tuple(published), complete=complete and reloaded
-            )
 
     def acknowledge(self, activity_ids: Sequence[str]) -> int:
         """Acknowledge exact frozen IDs and return durably confirmed count."""

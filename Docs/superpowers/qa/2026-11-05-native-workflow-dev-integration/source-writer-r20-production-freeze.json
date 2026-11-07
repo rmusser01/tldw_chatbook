@@ -1,0 +1,20 @@
+{
+  "source": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "count": 13,
+  "sha256": {
+    "tldw_chatbook/Agents/hooks_v2/command_executor.py": "5ef0c549b253b7c11f3c62708dde3825a5daa66833dac374a473eb9eabd8156d",
+    "tldw_chatbook/Agents/workflow_run_service.py": "7a2ab650fdae4f45c95f4a7ca9dcdf985bafa7c2505996ff4fabdb396d7726bb",
+    "tldw_chatbook/Chat/console_agent_sources.py": "f616a586a0d62367d99bf9afd1c116305f44f7a1a8da291ff4431b75af27536c",
+    "tldw_chatbook/Chat/console_chat_controller.py": "0c9583d2510717cc03f6ee10fabc8166fd11f1cbf117b82425b51661fa02b978",
+    "tldw_chatbook/Chat/console_plugin_context.py": "f45d8320935bc2140ae930ba37e8ac06a017d12626297930df1e5f48fe9840f8",
+    "tldw_chatbook/Chat/console_reference_preparation.py": "14d386a0ab20dc931b72f42c6572b324a1f63a787e94693fae6a1b394e72aad4",
+    "tldw_chatbook/DB/private_sqlite.py": "0cb314ed6cf3ecce4c5a94d9448a79b512e9d277ce7073a58edf87559e7af103",
+    "tldw_chatbook/DB/recovery_workflow_schema.py": "8acdf04fb95566b0185812020bc7a361a5e34a54699abbd28cad23a6b8f71dc1",
+    "tldw_chatbook/Chat/console_ordinary_tree.py": "76305540965a1c0a9b8f7f5ea689da0cf8ea3931fabd03e0fefce6495ba000d0",
+    "tldw_chatbook/Chat/console_automatic_submission.py": "9b7f7af01472cf170e2e438eb8eca0a63c80f17c2a89b1f087a8495ea30b6841",
+    "tldw_chatbook/Agents/local_tool_provider.py": "ecc786465294de14f5ba29c0f4a960b59a675fae9f1e1843d9a56fbb4b64d061",
+    "tldw_chatbook/Chat/console_configuration_preparation.py": "662f882fe0c10d3f38f5247693fa30bf5ca412f49a8de5c2d8264865d856af81",
+    "tldw_chatbook/MCP/console_snapshot.py": "1ed557ba3ed7adf6c77a7401d315914ad5023424beb694009c017d60ee71021b"
+  },
+  "ast_valid": true
+}

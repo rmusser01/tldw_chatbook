@@ -1,0 +1,23 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_console_reference_custody.py",
+    "-k",
+    "zero_roots or whole_repo or git_helpers or real_managed or original_finish or controller_result or original_received or queued_head or reference_timeout",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-reference-tail-current"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 39.419267541728914,
+  "source_file_count": 9108,
+  "before_sha256": "1c170039784ddaac72c3045738beb498317a535bfee47481edc803a7b2b9eb20",
+  "after_sha256": "1c170039784ddaac72c3045738beb498317a535bfee47481edc803a7b2b9eb20",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/reference-tail-current.log"
+}

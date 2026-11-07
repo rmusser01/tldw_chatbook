@@ -2356,14 +2356,16 @@ def _list_relative_directory(relative: Path, *, workspace: Path, max_entries: in
         raise LocalToolError(f'not a directory: {display_path or relative}')
     scanned: list[Path] = []
     scan_capped = False
-    for index, entry in enumerate(target.iterdir()):
-        if index >= MAX_SCAN_ENTRIES:
-            scan_capped = True
-            break
-        entry_relative = _workspace_relative_path(entry, workspace)
-        if not _relative_target_is_safe(entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir(), resolved_workspace=resolved_workspace, folded_exclusions=folded):
-            continue
-        scanned.append(entry)
+    with os.scandir(target) as directory:
+        for index, native_entry in enumerate(directory):
+            if index >= MAX_SCAN_ENTRIES:
+                scan_capped = True
+                break
+            entry = Path(native_entry.path)
+            entry_relative = _workspace_relative_path(entry, workspace)
+            if not _relative_target_is_safe(entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir(), resolved_workspace=resolved_workspace, folded_exclusions=folded):
+                continue
+            scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
     lines = []
     for entry in entries[:max_entries]:
@@ -2390,6 +2392,42 @@ def read_file(path: str, *, workspace_root: Path, offset: int=1, limit: int | No
     """
     root = resolve_workspace_path(path, workspace_root, intent='read')
     return _read_relative_file(root.relative_to(Path(workspace_root).resolve()), workspace=Path(workspace_root).resolve(), offset=offset, limit=limit, sensitive_exclusions=sensitive_exclusions_under(Path(workspace_root).resolve()), display_path=path)
+
+def _read_bounded_bytes(target: Path) -> bytes:
+    """Read one unchanged regular file, bounding both metadata and actual bytes.
+
+    The nonblocking, no-follow descriptor prevents a replacement FIFO or symlink
+    from turning a bounded read into an unbounded effect. Compare the descriptor
+    and path before and after reading; never stamp a changed or replaced file.
+    """
+    before = target.stat(follow_symlinks=False)
+    if not stat_module.S_ISREG(before.st_mode):
+        raise LocalToolError(f'file changed or is not regular: {target.name}')
+    if before.st_size > MAX_READ_FILE_BYTES:
+        raise LocalToolError(f"'{target.name}' is too large to read")
+
+    def version(info: os.stat_result) -> tuple[int, ...]:
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    descriptor = os.open(target, flags)
+    try:
+        if version(os.fstat(descriptor)) != version(before):
+            raise LocalToolError(f'file changed while opening: {target.name}')
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(1 << 20, MAX_READ_FILE_BYTES - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_READ_FILE_BYTES:
+                raise LocalToolError(f"'{target.name}' is too large to read")
+            chunks.append(chunk)
+        if total != before.st_size or version(os.fstat(descriptor)) != version(before) or version(target.stat(follow_symlinks=False)) != version(before):
+            raise LocalToolError(f'file changed while reading: {target.name}')
+        return b''.join(chunks)
+    finally:
+        os.close(descriptor)
 
 def _read_relative_file(relative: Path, *, workspace: Path, offset: int, limit: int | None, sensitive_exclusions: tuple[SensitiveExclusion, ...], display_path: str | None=None, content_stamps: bool=False) -> str:
     """Read a pinned-root-relative text file without reopening its resolved path.
@@ -2426,10 +2464,7 @@ def _read_relative_file(relative: Path, *, workspace: Path, offset: int, limit: 
     target = workspace / relative
     if not _relative_target_is_safe(relative, workspace, sensitive_exclusions, is_directory=False) or not target.is_file():
         raise LocalToolError(f'file not found: {display_path or relative}')
-    file_size = target.stat().st_size
-    if file_size > MAX_READ_FILE_BYTES:
-        raise LocalToolError(f"'{display_path or relative}' is too large to read ({file_size} bytes; maximum {MAX_READ_FILE_BYTES})")
-    data = target.read_bytes()
+    data = _read_bounded_bytes(target)
     if b'\x00' in data[:8192]:
         raise LocalToolError(f"'{display_path or relative}' appears to be binary; fs_read only reads text files")
     lines = data.decode('utf-8', errors='replace').splitlines()
@@ -2919,7 +2954,7 @@ def _edit_relative_file(relative: Path, old_string: str, new_string: str, *, wor
         data = updated.encode('utf-8')
     except UnicodeEncodeError as exc:
         raise LocalToolError(f'new_string is not UTF-8 encodable (lone surrogate?): {exc}') from exc
-    _atomic_write_target(target, data, shown=shown, expected_sha256=None, expected_absent=False)
+    _atomic_write_target(target, data, shown=shown, expected_sha256=hashlib.sha256(content.encode('utf-8')).hexdigest(), expected_absent=False)
     n = count if replace_all else 1
     summary = f"made {n} replacement{('s' if n != 1 else '')} in {shown}"
     if content_stamps:
@@ -3268,6 +3303,7 @@ def _is_relative_sensitive_path(relative: Path, exclusions: tuple[SensitiveExclu
         if kind == 'name' and (not is_directory) and parts and (parts[-1] == value):
             return True
     return False
+_NATIVE_PLANNING_READERS = tuple(((name, (function, function.__code__, function.__defaults__, function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()), function.__closure__, tuple(((cell, cell.cell_contents) for cell in function.__closure__ or ())))) for name, function in (('resolve_workspace_path', resolve_workspace_path), ('_read_bounded_bytes', _read_bounded_bytes), ('_read_relative_file', _read_relative_file), ('_list_relative_directory', _list_relative_directory))))
 
 
 # ===========================================================================
@@ -4821,6 +4857,14 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool=False) ->
             message = f'fs_patch failed [{exc.reason_code}]: {rel_path}'
             if getattr(exc, 'detail', None):
                 message += f' — {HINT_LABEL}: {exc.detail}'
+            if summaries and (not dry_run):
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except (LocalToolError, OSError) as exc:
+            prior = '; '.join(summaries)
+            message = f'fs_patch failed: {rel_path}: {exc}'
+            if prior and (not dry_run):
+                message += f'; earlier effects retained: {prior}'
             raise LocalToolError(message) from exc
         summaries.append(f"{('would patch' if dry_run else 'patched')} {rel_path}")
     return '\n'.join(summaries)
@@ -4856,6 +4900,14 @@ def patch_validated_files(plans: tuple[PatchFile, ...], *, root: PinnedWorkspace
             message = f'fs_patch failed [{exc.reason_code}]: {rel_path}'
             if getattr(exc, 'detail', None):
                 message += f' — {HINT_LABEL}: {exc.detail}'
+            if summaries and (not dry_run):
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except (LocalToolError, OSError) as exc:
+            prior = '; '.join(summaries)
+            message = f'fs_patch failed: {rel_path}: {exc}'
+            if prior and (not dry_run):
+                message += f'; earlier effects retained: {prior}'
             raise LocalToolError(message) from exc
         summaries.append(f"{('would patch' if dry_run else 'patched')} {rel_path}")
         if content_stamps and (not dry_run):
@@ -4892,7 +4944,7 @@ def _patch_relative_file(patch_file: PatchFile, relative: Path, *, workspace: Pa
     except UnicodeEncodeError as exc:
         raise LocalToolError(f"patched content for '{rel_path}' is not UTF-8 encodable (lone surrogate?): {exc}") from exc
     if not dry_run:
-        _atomic_write_target(target, data, shown=str(rel_path), expected_sha256=None, expected_absent=patch_file.action != 'modify')
+        _atomic_write_target(target, data, shown=str(rel_path), expected_sha256=hashlib.sha256(original.encode('utf-8')).hexdigest() if patch_file.action == 'modify' else None, expected_absent=patch_file.action != 'modify')
     return (hashlib.sha256(data).hexdigest(), len(data))
 
 
@@ -5807,4 +5859,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("d89080f8267d02d2992ecea12e0274a9b93110d8f99c3cbaed5f07da316d8e85")
+BUNDLE_SHA256 = _enter_worker_exchange("065414e8e6b3f73106b7c7276bdbdd21857f18b39fed647f665693c5a12c50f6")

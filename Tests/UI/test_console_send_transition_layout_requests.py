@@ -87,19 +87,25 @@ def _snapshot(owner: Widget) -> dict[int, tuple[bool, str]]:
 
 
 def _console_host(tmp_path):
+    from Tests.UI.app_factory import persist_seeded_config
     from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
     from Tests.UI.test_console_regenerate_feedback import GatedGateway
     from Tests.UI.test_destination_shells import _build_test_app
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
         ConsoleHarness,
     )
+    from tldw_chatbook import config
 
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     # A file-backed DB with its conversation services: a second turn reads
     # the persisted conversation (world books, dictionaries) off the UI
     # thread, where a ``:memory:`` DB would be a different, empty database.
     _attach_real_dbs(app, tmp_path)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
+    app._test_prepare_console_send_sources = True
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     # ``GatedGateway`` reads ``self.release`` when it waits, so each turn

@@ -50,7 +50,23 @@ def _research(path):
 
 def test_normalization_retains_committed_wal_and_leaves_acquired_set_unchanged(
     tmp_path,
+    monkeypatch,
 ):
+    from tldw_chatbook.DB import private_sqlite
+
+    original_backup = private_sqlite.backup_connection_to_private
+    checked_sources = []
+
+    def checked_backup(owner_id, source_connection, source_path, target, **kwargs):
+        assert owner_id == "recovery.detached_normalization"
+        assert source_path.name == "source.sqlite3"
+        # The checked copy must use the original restricted staged connection.
+        with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+            source_connection.execute("PRAGMA database_list")
+        original_backup(owner_id, source_connection, source_path, target, **kwargs)
+        checked_sources.append(source_path)
+
+    monkeypatch.setattr(private_sqlite, "backup_connection_to_private", checked_backup)
     source = tmp_path / "source.sqlite"
     owner = _research(source)
     connection = sqlite3.connect(source)
@@ -67,12 +83,21 @@ def test_normalization_retains_committed_wal_and_leaves_acquired_set_unchanged(
 
     _layout()._normalize_sqlite(owner, acquired, normalized, Event())
 
+    assert len(checked_sources) == 1
     with sqlite3.connect(normalized) as restored:
         assert restored.execute("SELECT query FROM research_runs").fetchone() == (
             "committed WAL",
         )
+        assert restored.execute("PRAGMA journal_mode").fetchone() == ("delete",)
     assert all(path.read_bytes() == data for path, data in before.items())
     assert not Path(str(normalized) + "-wal").exists()
+    import os
+    import stat
+
+    if os.name == "posix":
+        assert stat.S_IMODE(normalized.stat().st_mode) == 0o600
+        assert stat.S_IMODE(checked_sources[0].stat().st_mode) == 0o600
+        assert stat.S_IMODE(checked_sources[0].parent.stat().st_mode) == 0o700
 
 
 @pytest.mark.parametrize("damage", ["rollback", "wal"])
@@ -82,8 +107,78 @@ def test_normalization_refuses_ambiguous_or_damaged_sidecars(tmp_path, damage):
     Path(str(source) + ("-journal" if damage == "rollback" else "-wal")).write_bytes(
         b"damaged"
     )
+    before = {path: path.read_bytes() for path in tmp_path.glob("source.sqlite*")}
     with pytest.raises(ValueError, match="detached_sqlite"):
         _layout()._normalize_sqlite(owner, source, tmp_path / "normalized", Event())
+    assert all(path.read_bytes() == data for path, data in before.items())
+    assert not (tmp_path / "normalized").exists()
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink"])
+def test_normalization_refuses_occupied_destination(tmp_path, kind):
+    source = tmp_path / "source.sqlite"
+    owner = _research(source)
+    before = source.read_bytes()
+    occupied = tmp_path / "occupied"
+    occupied.write_bytes(b"retained destination")
+    destination = occupied
+    if kind == "symlink":
+        destination = tmp_path / "normalized"
+        destination.symlink_to(occupied)
+    with pytest.raises(FileExistsError):
+        _layout()._normalize_sqlite(owner, source, destination, Event())
+    assert source.read_bytes() == before
+    assert occupied.read_bytes() == b"retained destination"
+    assert kind != "symlink" or destination.is_symlink()
+
+
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+def test_normalization_checked_backup_honors_original_budget(
+    tmp_path, monkeypatch, stop
+):
+    from time import monotonic
+
+    from tldw_chatbook.Backup_Recovery import sqlite_validation
+    from tldw_chatbook.DB import private_sqlite
+
+    original_validation = sqlite_validation._check
+    original_backup = private_sqlite.backup_connection_to_private
+    budgets = []
+    cancel = Event()
+
+    def validate(connection, owner, policy, restrictions):
+        result = original_validation(connection, owner, policy, restrictions)
+        budgets.append(restrictions)
+        return result
+
+    def stop_backup(owner_id, connection, source, target, **kwargs):
+        assert kwargs["operation_deadline"] == budgets[0].deadline
+        if stop == "cancel":
+            cancel.set()
+        else:
+            budgets[0].deadline = monotonic() - 1
+        return original_backup(owner_id, connection, source, target, **kwargs)
+
+    monkeypatch.setattr(sqlite_validation, "_check", validate)
+    monkeypatch.setattr(private_sqlite, "backup_connection_to_private", stop_backup)
+    source = tmp_path / "source.sqlite"
+    owner = _research(source)
+    before = source.read_bytes()
+    destination = tmp_path / "normalized"
+    error = InterruptedError if stop == "cancel" else ValueError
+    with pytest.raises(error, match="cancel|detached_sqlite_limit"):
+        _layout()._normalize_sqlite(owner, source, destination, cancel)
+    assert source.read_bytes() == before
+    assert len(budgets) == 1
+    import os
+    import stat
+
+    if os.name == "posix":
+        assert all(
+            stat.S_IMODE(path.stat().st_mode) == 0o600
+            for path in tmp_path.glob("normalized*")
+            if path.is_file()
+        )
 
 
 def test_unknown_durable_file_refuses_before_packaging(tmp_path):

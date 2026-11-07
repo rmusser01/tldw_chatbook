@@ -558,6 +558,29 @@ class ConsolePromptMixinService:
             session.persisted_conversation_id,
         )
         persistence = self.persistence
+
+        def owns_binding() -> bool:
+            return (
+                self.store._sessions.get(session_id) is session
+                and binding
+                == (
+                    session.incarnation_id,
+                    session.conversation_binding_revision,
+                    session.persisted_conversation_id,
+                )
+                and self.store.persistence is persistence
+            )
+
+        def pending_assistant_is_selected() -> bool:
+            # The DB writer is already held. A cursor selection can have
+            # committed its cursor without publishing its new native leaf yet.
+            return (
+                not self.store._active_leaf_publications.get(session_id, 0)
+                and owns_binding()
+                and self.store._active_leaf_by_session.get(session_id)
+                == batch.assistant_message_id
+            )
+
         assistant = self.store.get_message(batch.assistant_message_id)
         user = self.store.get_message(batch.user_message_id)
         if not session.ephemeral and session.persisted_conversation_id is not None:
@@ -584,6 +607,7 @@ class ConsolePromptMixinService:
                 session.persisted_conversation_id,
                 batch=batch,
                 pending_assistant=pending_assistant,
+                pending_assistant_is_selected=pending_assistant_is_selected,
                 native_message_ids={
                     user.id: user.persisted_message_id or user.id,
                     assistant.id: assistant.persisted_message_id or assistant.id,
@@ -612,16 +636,7 @@ class ConsolePromptMixinService:
                 ) from None
         else:
             cancelled = False
-        if (
-            self.store._sessions.get(session_id) is not session
-            or binding
-            != (
-                session.incarnation_id,
-                session.conversation_binding_revision,
-                session.persisted_conversation_id,
-            )
-            or self.store.persistence is not persistence
-        ):
+        if not owns_binding():
             raise MixinSnapshotUnavailableError("mixin_attempt_owner_changed")
         self.store.publish_prompt_mixin_attempt(session_id, batch)
         if record_usage:

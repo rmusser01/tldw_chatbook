@@ -1037,3 +1037,15 @@ class VideoStore:
                 if resolved_root is None:
                     return
                 shutil.rmtree(self._root, ignore_errors=True)
+
+
+def _build_generated_video_store(read_logger):
+    store = VideoStore()
+    try:
+        store.enforce_retention()
+    except Exception as exc:  # noqa: BLE001 -- preserve the original best-effort retention boundary
+        read_logger().warning(
+            "Generated-video startup retention failed (error_type={}).",
+            type(exc).__name__,
+        )
+    return store

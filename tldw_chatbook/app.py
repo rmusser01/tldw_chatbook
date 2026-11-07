@@ -197,6 +197,7 @@ from tldw_chatbook.Utils.boot_worker_policy import (
     MAX_CONCURRENT_STAGGERED_BOOT_WORKERS,
     STAGGERED_BOOT_WORKER_KEYS,
     StaggeredBootWorkerGate,
+    _usable_cpu_count,
 )
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Utils.instance_lock import (
@@ -656,25 +657,6 @@ SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS = max(
 )
 
 
-def _usable_cpu_count() -> int:
-    """How many CPUs this process may actually run on.
-
-    Prefers the scheduler affinity mask where the platform has one (a
-    container pinned to one core reports the host's core count from
-    ``os.cpu_count()``), and falls back to ``os.cpu_count()``. Returns 1 when
-    neither will answer -- the conservative direction here, since the only
-    consequence of guessing low is that a background pass nothing waits on
-    paces itself more politely.
-    """
-    affinity = getattr(os, "sched_getaffinity", None)
-    if affinity is not None:
-        try:
-            return max(1, len(affinity(0)))
-        except OSError:
-            pass
-    return max(1, os.cpu_count() or 1)
-
-
 # Home's open-eval-runs feed queries pending and failed statuses separately;
 # this cap bounds both queries (a count, not a listing -- anything beyond it
 # still reads as "runs need attention").
@@ -690,17 +672,9 @@ _HOME_EVAL_RUN_QUERY_LIMIT = 50
 
 # --- Main App ---
 def _build_generated_video_store():
-    from tldw_chatbook.Video_Generation.video_store import VideoStore
+    from .Video_Generation.video_store import _build_generated_video_store as build
 
-    store = VideoStore()
-    try:
-        store.enforce_retention()
-    except Exception as exc:
-        logger.warning(
-            "Generated-video startup retention failed (error_type={}).",
-            type(exc).__name__,
-        )
-    return store
+    return build(lambda: logger)
 
 
 def _build_notes_scope_service(
@@ -2666,6 +2640,11 @@ class TldwCli(
                 )
 
                 service = bootstrap_personal_context_service()
+                from .Chat.console_ordinary_tree import current_ordinary_tree
+
+                ordinary = current_ordinary_tree()
+                if ordinary is not None:
+                    ordinary.publish_personal_service(self, service)
                 self._personal_context_service = service
         return service
 
@@ -5663,6 +5642,24 @@ _CONSOLE_SKILL_APP_SOURCE = (
     TldwCli._create_deferred_startup_task,
     TldwCli._create_deferred_startup_task.__code__,
     ConsoleRuntime,
+)
+
+
+# Original native raw-CLI policy closure; ordinary admission reads no callback.
+_NATIVE_RAW_CLI_APP_TYPE = TldwCli
+_NATIVE_RAW_CLI_PERMISSION_CALLBACK_CODE = next(
+    code
+    for code in TldwCli.__init__.__code__.co_consts
+    if isinstance(code, type(TldwCli.__init__.__code__))
+    and code.co_name == "<lambda>"
+    and code.co_names == ("_read_app_raw_cli_permitted",)
+)
+
+_NATIVE_ORDINARY_PERSONAL_GETTER = (
+    TldwCli.get_personal_context_service,
+    TldwCli.get_personal_context_service.__code__,
+    TldwCli.get_personal_context_service.__defaults__,
+    tuple((TldwCli.get_personal_context_service.__kwdefaults__ or {}).items()),
 )
 
 

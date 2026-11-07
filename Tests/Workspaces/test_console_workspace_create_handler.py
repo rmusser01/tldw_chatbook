@@ -27,11 +27,11 @@ class _Stub:
     def _sync_console_workspace_context(self):
         self.calls.append("context")
 
-    def _sync_native_console_chat_ui(self):
-        return "ui-sync-sentinel"
+    async def _sync_native_console_chat_ui(self):
+        self.calls.append("ui-sync")
 
     def run_worker(self, work, **kw):
-        self.calls.append(f"worker:{work}")
+        self.calls.append(("worker", work, kw))
 
 
 def _registry(tmp_path):
@@ -51,7 +51,11 @@ def test_make_active_runs_full_console_sequence(tmp_path):
         "core",
         "activate:workspace-local-1",
         "context",
-        "worker:ui-sync-sentinel",
+        (
+            "worker",
+            stub._sync_native_console_chat_ui,
+            {"exclusive": True, "group": "console-sync"},
+        ),
     ]
     assert any("switched Console" in n for n in stub.notifications)
 
@@ -116,10 +120,10 @@ def test_activation_failure_notifies_error_and_skips_sync(tmp_path):
 
 def test_result_with_project_skills_offers_import(tmp_path, monkeypatch):
     offered = []
-    import tldw_chatbook.UI.Console_Modules.workspace as ws_module
+    import tldw_chatbook.Widgets.project_skills_import_modal as skills_module
 
     monkeypatch.setattr(
-        ws_module,
+        skills_module,
         "maybe_offer_project_skills_import",
         lambda app, discoveries: offered.append(discoveries),
     )

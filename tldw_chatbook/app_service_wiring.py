@@ -537,48 +537,17 @@ def _install_deferred_notes_sync_facades(app: Any) -> bool:
 
 
 def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
-    """Whether the notes-sync state DB on disk carries real configuration.
-
-    TASK-21240: the TASK-21112 start gate's second clause was a bare
-    ``state_path.exists()``, which an ABANDONED first-time setup satisfies
-    forever -- opening setup force-starts the runtime (creating and
-    schema-initializing the file), and abandoning it without configuring a
-    sync directory leaves an empty store that re-arms the gate on every
-    subsequent boot. The honest evidence is a configured ROOT in
-    ``notes_sync_roots``.
-
-    Use the notes owner for read-only SELECTs, without creating or migrating
-    the database; its private-path and permission checks still apply. Corrupt
-    or unopenable stores raise so callers attempt normal runtime startup.
-
-    Args:
-        state_path: The state DB path from ``get_notes_sync_state_db_path()``.
-
-    Returns:
-        True when at least one sync root is configured; False when the file
-        is absent, schema-only (the abandoned-setup case), or missing the
-        roots table entirely.
-    """
+    """Check the path before the Notes owner's read-only configuration probe."""
     from pathlib import Path as _Path
 
     path = _Path(state_path)
     if not path.exists():
         return False
-    import sqlite3
+    from tldw_chatbook.Notes.notes_device_state_store import (
+        _notes_sync_state_db_has_configured_roots as probe,
+    )
 
-    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
-
-    connection = NotesDeviceStateStore(path)._connect(read_only=True, must_exist=True)
-    try:
-        row = connection.execute(
-            "SELECT 1 FROM notes_sync_roots LIMIT 1"
-        ).fetchone()
-    except sqlite3.OperationalError:
-        # No such table: a store whose schema never reached root creation.
-        return False
-    finally:
-        connection.close()
-    return row is not None
+    return probe(path)
 
 
 def _task_ended_without_result(task: "asyncio.Task[None]") -> bool:
@@ -1395,7 +1364,14 @@ class ServiceWiringMixin(
     def local_skill_trust_service(self) -> Any:
         """Local skill trust service, built on first access (TASK-21111(b))."""
         if self._local_skill_trust_service is None:
-            self._local_skill_trust_service = self._build_local_skill_trust_service()
+            candidate = self._build_local_skill_trust_service()
+            self._local_skill_trust_service = candidate
+            if _skill_wiring._skill_trust_publisher.get() is not None:
+                from .Chat.console_configuration_preparation import (
+                    record_native_skill_trust_candidate,
+                )
+
+                record_native_skill_trust_candidate(self, candidate)
         return self._local_skill_trust_service
 
     @local_skill_trust_service.setter
@@ -2193,6 +2169,9 @@ class ServiceWiringMixin(
                 self.workspace_registry_service
             )
             self.workspace_registry_service.attach_change_review_consent_service(
+                self.change_review_consent_service
+            )
+            self.console_runtime.bind_change_review_consent_service(
                 self.change_review_consent_service
             )
         except Exception:
@@ -3691,3 +3670,10 @@ import sys as _defining_sys
 
 _skill_wiring._install_skill_source(_defining_sys.modules[__name__])
 _collections_wiring._install_collections_source(_defining_sys.modules[__name__])
+
+_NATIVE_RAW_CLI_PERMISSION_READER = (
+    _read_app_raw_cli_permitted,
+    _read_app_raw_cli_permitted.__code__,
+    _read_app_raw_cli_permitted.__defaults__,
+    _read_app_raw_cli_permitted.__kwdefaults__,
+)

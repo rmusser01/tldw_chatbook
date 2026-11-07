@@ -35,6 +35,7 @@ from .store_kernel import SQLiteStoreKernel
 
 if TYPE_CHECKING:
     from .automatic_work import AutomaticWorkLedger
+    from .workflow_runs import WorkflowRunsStore
 
 
 AGENT_WORKTREES_SCHEMA = """
@@ -333,7 +334,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 25
+    _CURRENT_SCHEMA_VERSION = 30
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-353): connections open through BaseDB's
@@ -383,6 +384,13 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
         return GoalRunsStore(self)
 
+    @cached_property
+    def workflow_runs(self) -> WorkflowRunsStore:
+        """Load passive workflow storage only for an explicit history operation."""
+        from .workflow_runs import WorkflowRunsStore
+
+        return WorkflowRunsStore(self)
+
     def _open_connection(self) -> sqlite3.Connection:
         """Open through BaseDB's db.base path (ADR-353 provenance section)."""
         return BaseDB._get_connection(self)
@@ -420,6 +428,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
     def _initialize_schema(self) -> None:
         with self.connection() as conn:
+            from .recovery_workflow_schema import upgrade_legacy_workflow_profile
+
+            upgrade_legacy_workflow_profile(conn)
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -877,6 +888,82 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     "ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration'))"
                 )
             conn.executescript(_GOAL_RUNS_SCHEMA)
+            conn.executescript(_WORKFLOW_RUNS_SCHEMA)
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (26)")
+            # Unlike the kernel helper, these FULL transactions roll back failed
+            # commits before restoring synchronous on the held connection.
+            if not conn.execute(
+                "SELECT 1 FROM schema_version WHERE version>=27"
+            ).fetchone():
+                from .recovery_workflow_schema import WORKFLOW_ADMISSION_MIGRATION
+
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in WORKFLOW_ADMISSION_MIGRATION:
+                        conn.execute(statement)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+
+            if not conn.execute(
+                "SELECT 1 FROM schema_version WHERE version>=28"
+            ).fetchone():
+                from .recovery_workflow_schema import WORKFLOW_CHECKPOINT_MIGRATION
+
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in WORKFLOW_CHECKPOINT_MIGRATION:
+                        conn.execute(statement)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+
+            if not conn.execute(
+                "SELECT 1 FROM schema_version WHERE version>=29"
+            ).fetchone():
+                from .recovery_workflow_schema import WORKFLOW_WINDOW_MIGRATION
+
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in WORKFLOW_WINDOW_MIGRATION:
+                        conn.execute(statement)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+
+            if not conn.execute(
+                "SELECT 1 FROM schema_version WHERE version>=30"
+            ).fetchone():
+                from .recovery_workflow_schema import WORKFLOW_REPAIR_INPUT_MIGRATION
+
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in WORKFLOW_REPAIR_INPUT_MIGRATION:
+                        conn.execute(statement)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -1257,34 +1344,38 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         """Atomically record every root row for one completed review window."""
         if not records:
             return
-        created_at = _now_iso()
         with self.transaction() as conn:
-            conn.executemany(
-                """
-                INSERT INTO change_snapshots
-                    (run_id, root, baseline_sha, end_sha, files_changed,
-                     adds, dels, tracking_error, untracked_oversize,
-                     nested_repos, kind, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                tuple(
-                    (
-                        run_id,
-                        str(record.get("root") or ""),
-                        str(record.get("baseline_sha") or ""),
-                        str(record.get("end_sha") or ""),
-                        int(record.get("files_changed") or 0),
-                        int(record.get("adds") or 0),
-                        int(record.get("dels") or 0),
-                        str(record.get("tracking_error") or ""),
-                        int(record.get("untracked_oversize") or 0),
-                        json.dumps(list(record.get("nested_repos") or ())),
-                        kind,
-                        created_at,
-                    )
-                    for record in records
+            self._insert_change_snapshots(
+                conn, run_id=run_id, records=records, kind=kind
+            )
+
+    @staticmethod
+    def _insert_change_snapshots(conn, *, run_id, records, kind):
+        """Use the caller's transaction, including required workflow disclosure."""
+        created_at = _now_iso()
+        ids = []
+        for record in records:
+            cursor = conn.execute(
+                "INSERT INTO change_snapshots "
+                "(run_id,root,baseline_sha,end_sha,files_changed,adds,dels,tracking_error,"
+                "untracked_oversize,nested_repos,kind,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    run_id,
+                    str(record.get("root") or ""),
+                    str(record.get("baseline_sha") or ""),
+                    str(record.get("end_sha") or ""),
+                    int(record.get("files_changed") or 0),
+                    int(record.get("adds") or 0),
+                    int(record.get("dels") or 0),
+                    str(record.get("tracking_error") or ""),
+                    int(record.get("untracked_oversize") or 0),
+                    json.dumps(list(record.get("nested_repos") or ())),
+                    kind,
+                    created_at,
                 ),
             )
+            ids.append(cursor.lastrowid)
+        return ids
 
     def delete_change_snapshots_older_than(self, cutoff_iso: str) -> int:
         """Delete snapshot rows created before ``cutoff_iso`` (TASK-1975).
@@ -1298,7 +1389,11 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         """
         with self.transaction() as conn:
             cur = conn.execute(
-                "DELETE FROM change_snapshots WHERE created_at < ?",
+                "DELETE FROM change_snapshots WHERE created_at < ? "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts t "
+                "WHERE t.run_id=change_snapshots.run_id AND (t.retirement!='drained' "
+                "OR EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.attempt_id=t.id))) "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_change_window_refs r WHERE r.snapshot_id=change_snapshots.id)",
                 (cutoff_iso,),
             )
             return int(cur.rowcount or 0)
@@ -3290,6 +3385,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "AND child.wake_delivered_at IS NULL "
                 "AND NOT EXISTS (SELECT 1 FROM automatic_wake_claims AS claim WHERE claim.run_id=child.id) "
                 "AND child.status IN ('done', 'error', 'cancelled') "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts w WHERE w.run_id=child.id) "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at >= parent.updated_at "
                 "ORDER BY child.updated_at ASC, child.id ASC",
@@ -3309,6 +3405,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
                 "WHERE child.wake_delivered_at IS NULL AND child.agent_kind!='primary' "
                 "AND child.status IN ('done','error','cancelled') "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts w WHERE w.run_id=child.id) "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",
                 tuple(sorted(TERMINAL_RUN_STATUSES)),
@@ -3323,6 +3420,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
                 "WHERE child.conversation_id=? AND child.wake_delivered_at IS NULL "
                 "AND child.agent_kind!='primary' AND child.status IN ('done','error','cancelled') "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts w WHERE w.run_id=child.id) "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at>=parent.updated_at ORDER BY child.updated_at, child.id",
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
@@ -3728,3 +3826,119 @@ _CHANGE_REVIEW_READ_SOURCES = tuple(
     )
     for outer in (inspect.getattr_static(AgentRunsDB, name),)
 )
+
+
+# ADR-285 passive workflow persistence; no runtime imports at ordinary DB open.
+_WORKFLOW_RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id TEXT PRIMARY KEY,
+    launch_id TEXT NOT NULL UNIQUE,
+    payload_hash TEXT NOT NULL,
+    request_json TEXT NOT NULL CHECK(length(CAST(request_json AS BLOB)) <= 131072),
+    conversation_id TEXT NOT NULL,
+    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),
+    control_revision INTEGER NOT NULL DEFAULT 1 CHECK(typeof(control_revision)='integer' AND control_revision>0),
+    progress_cursor INTEGER NOT NULL DEFAULT 0 CHECK(typeof(progress_cursor)='integer' AND progress_cursor>=0),
+    status TEXT NOT NULL DEFAULT 'awaiting_plan' CHECK(status IN ('awaiting_plan','awaiting_approval','running','paused','stopped','completed','closed','recovery_required','removed','awaiting_resume')),
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_conversation ON workflow_runs(conversation_id, created_at DESC, id);
+CREATE TABLE IF NOT EXISTS workflow_plan_revisions (
+    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),
+    revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>0),
+    payload_hash TEXT NOT NULL,
+    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),
+    PRIMARY KEY(workflow_id, revision)
+);
+CREATE TABLE IF NOT EXISTS workflow_phases (
+    workflow_id TEXT NOT NULL,
+    plan_revision INTEGER NOT NULL,
+    phase_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 6),
+    PRIMARY KEY(workflow_id, plan_revision, phase_id),
+    UNIQUE(workflow_id, plan_revision, ordinal),
+    FOREIGN KEY(workflow_id, plan_revision) REFERENCES workflow_plan_revisions(workflow_id, revision)
+);
+CREATE TABLE IF NOT EXISTS workflow_tasks (
+    workflow_id TEXT NOT NULL,
+    plan_revision INTEGER NOT NULL,
+    phase_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 12),
+    PRIMARY KEY(workflow_id, plan_revision, phase_id, task_id),
+    UNIQUE(workflow_id, plan_revision, task_id),
+    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)
+);
+CREATE TABLE IF NOT EXISTS workflow_phase_attempts (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    plan_revision INTEGER NOT NULL,
+    phase_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>0),
+    native_attempt_id TEXT UNIQUE REFERENCES automatic_wake_attempts(id),
+    status TEXT NOT NULL CHECK(status IN ('prepared','accepted','completed','failed','uncertain','closed')),
+    retirement TEXT NOT NULL DEFAULT 'pending' CHECK(retirement IN ('pending','drained','unknown')),
+    UNIQUE(workflow_id, plan_revision, phase_id, ordinal),
+    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)
+);
+CREATE TABLE IF NOT EXISTS workflow_task_attempts (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    plan_revision INTEGER NOT NULL,
+    phase_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>0),
+    run_id TEXT UNIQUE REFERENCES agent_runs(id),
+    native_attempt_id TEXT UNIQUE REFERENCES automatic_wake_attempts(id),
+    status TEXT NOT NULL CHECK(status IN ('prepared','accepted','completed','failed','uncertain','closed')),
+    retirement TEXT NOT NULL DEFAULT 'pending' CHECK(retirement IN ('pending','drained','unknown')),
+    UNIQUE(id, workflow_id),
+    UNIQUE(workflow_id, plan_revision, task_id, ordinal),
+    FOREIGN KEY(workflow_id, plan_revision, phase_id, task_id) REFERENCES workflow_tasks(workflow_id, plan_revision, phase_id, task_id)
+);
+CREATE TABLE IF NOT EXISTS workflow_decisions (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    plan_revision INTEGER NOT NULL,
+    phase_id TEXT NOT NULL,
+    control_revision INTEGER NOT NULL CHECK(control_revision>0),
+    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),
+    UNIQUE(workflow_id, control_revision),
+    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)
+);
+CREATE TABLE IF NOT EXISTS workflow_payload_reservations (
+    attempt_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    bytes INTEGER NOT NULL CHECK(typeof(bytes)='integer' AND bytes BETWEEN 1 AND 131072),
+    state TEXT NOT NULL CHECK(state IN ('reserved','published','removed')),
+    FOREIGN KEY(attempt_id, workflow_id) REFERENCES workflow_task_attempts(id, workflow_id)
+);
+CREATE TABLE IF NOT EXISTS workflow_results (
+    attempt_id TEXT PRIMARY KEY REFERENCES workflow_payload_reservations(attempt_id),
+    workflow_id TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),
+    FOREIGN KEY(attempt_id, workflow_id) REFERENCES workflow_task_attempts(id, workflow_id)
+);
+CREATE TABLE IF NOT EXISTS workflow_active_intervals (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),
+    owner_id TEXT NOT NULL,
+    started_at REAL NOT NULL CHECK(started_at>=0),
+    ended_at REAL CHECK(ended_at>=started_at),
+    charged_seconds REAL NOT NULL DEFAULT 0 CHECK(charged_seconds>=0)
+);
+CREATE TRIGGER IF NOT EXISTS workflow_launch_immutable
+BEFORE UPDATE OF id, launch_id, payload_hash, request_json, conversation_id, chain_id ON workflow_runs
+BEGIN SELECT RAISE(ABORT, 'workflow launch is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS workflow_plan_immutable
+BEFORE UPDATE ON workflow_plan_revisions
+BEGIN SELECT RAISE(ABORT, 'workflow plan is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS workflow_decision_immutable
+BEFORE UPDATE ON workflow_decisions
+BEGIN SELECT RAISE(ABORT, 'workflow decision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS workflow_result_immutable
+BEFORE UPDATE ON workflow_results
+BEGIN SELECT RAISE(ABORT, 'workflow result is immutable'); END;
+"""

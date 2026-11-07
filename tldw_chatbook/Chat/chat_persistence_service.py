@@ -1280,6 +1280,7 @@ class ChatPersistenceService:
         batch: MixinAttemptWrite,
         native_message_ids: Mapping[str, str],
         pending_assistant: tuple[str | None, str | None] | None = None,
+        pending_assistant_is_selected: Callable[[], bool] | None = None,
     ) -> None:
         """Persist an exact replay attempt and its marker before provider entry."""
         from .console_prompt_mixin_service import MixinAttemptContribution
@@ -1302,6 +1303,15 @@ class ChatPersistenceService:
                     metadata_json=metadata_json,
                     assistant_generation_state="accepted",
                 )
+                if (
+                    pending_assistant_is_selected is not None
+                    and pending_assistant_is_selected()
+                ):
+                    leaf, before = self.db.get_conversation_active_cursor(conversation_id)
+                    if before is None and leaf in (None, parent_id):
+                        self.db.set_conversation_active_leaf(
+                            conversation_id, batch.assistant_message_id
+                        )
             with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
                 MixinAttemptContribution(batch).write_exact(
                     writer=writer,
@@ -4237,3 +4247,17 @@ class ChatPersistenceService:
             are omitted.
         """
         return self.db.get_generation_metadata_for_messages(message_ids)
+
+
+# Exact first-persistence producer records; ordinary behavior is unchanged.
+from .console_ordinary_tree import _function_record as _planning_function_record
+
+_NATIVE_PLANNING_PERSISTENCE_METHODS = tuple(
+    (name, method, _planning_function_record(method))
+    for name in (
+        "persist_console_conversation_with_policy",
+        "validate_workspace_target",
+        "create_conversation",
+    )
+    for method in (vars(ChatPersistenceService)[name],)
+)

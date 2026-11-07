@@ -21,7 +21,7 @@ import threading
 
 import pytest
 
-from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
+from Tests.UI.test_console_native_chat_flow import _build_console_send_test_app
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -125,8 +125,7 @@ def _assistant_rows(store):
 async def test_a_fresh_openai_console_shows_partial_reply_text_before_the_reply_completes(
     monkeypatch,
 ):
-    app = _build_test_app()
-    attach_chachanotes_db(app)
+    app = _build_console_send_test_app()
     # This harness has no world-books schema for exchange capture (the same
     # ordinary-send policy the composer send tests use).
     assert config_module.save_settings_to_cli_config(

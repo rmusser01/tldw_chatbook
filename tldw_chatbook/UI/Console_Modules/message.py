@@ -164,20 +164,14 @@ from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
-from ...Widgets.Console import (
-    ConsoleEditMessageModal,
-    ConsoleEditResult,
-    ConsoleEditThinkingModal,
-    ConsoleSaveAsModal,
-    ConsoleThinkingEditResult,
-)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
 
-    from ..Screens.chat_screen import ChatScreen
     from ...Chat.console_message_delete import ConsoleDeleteScope
+    from ...Widgets.Console import ConsoleEditResult, ConsoleThinkingEditResult
     from ...Widgets.Console.console_transcript import ConsoleThinkingEditRequested
+    from ..Screens.chat_screen import ChatScreen
 
 #: Actions the message Delete flow (``message_delete``) owns end to end; the
 #: confirm/cancel pair only exists on a row whose delete is pending. The flow
@@ -1555,6 +1549,8 @@ class ConsoleMessageController:
             return await handle_console_delete_action(self, action_id, message_id)
 
         if action_id == "save-as":
+            from ...Widgets.Console import ConsoleSaveAsModal
+
             destinations = self._console_save_as_destinations(message)
 
             def _apply_save_as(destination: str | None) -> None:
@@ -2831,6 +2827,8 @@ class ConsoleMessageController:
         self, *, message_id: str, content: str
     ) -> None:
         """Open the dedicated transcript edit modal for one Console message."""
+        from ...Widgets.Console import ConsoleEditMessageModal
+
         store = self._ensure_console_chat_store()
         from ...Chat.citation_key_first_use import ensure_fingerprint_key_off_loop
 
@@ -2896,7 +2894,7 @@ class ConsoleMessageController:
                     target_content=result.text,
                 )
                 self.run_worker(
-                    self._sync_native_console_chat_ui(),
+                    self._sync_native_console_chat_ui,
                     exclusive=True,
                     group="console-sync",
                 )
@@ -2979,6 +2977,8 @@ class ConsoleMessageController:
         self, *, owner_message_id: str, block_id: str, text: str
     ) -> None:
         """Open the block-scoped thinking edit modal for one displayable block."""
+        from ...Widgets.Console import ConsoleEditThinkingModal
+
         store = self._ensure_console_chat_store()
 
         def _apply_edit(result: ConsoleThinkingEditResult | None) -> None:
@@ -3011,7 +3011,7 @@ class ConsoleMessageController:
                 target_content=result.text,
             )
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )

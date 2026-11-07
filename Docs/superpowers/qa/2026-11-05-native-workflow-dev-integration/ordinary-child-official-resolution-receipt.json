@@ -1,0 +1,22 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_console_ordinary_tree.py::test_actual_child_joins_original_claim_before_its_row[1-normal]",
+    "Tests/Chat/test_console_ordinary_tree.py::test_conflicting_actual_reference_refuses_other_turn_before_row_or_model",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-ordinary-child-official-resolution"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 14.131324959453195,
+  "source_file_count": 9108,
+  "before_sha256": "b7c23ea4e9f37c5d21d6ba4791b84866e5524e9ce22f7291e739e14e2e54c27d",
+  "after_sha256": "b7c23ea4e9f37c5d21d6ba4791b84866e5524e9ce22f7291e739e14e2e54c27d",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/ordinary-child-official-resolution.log"
+}

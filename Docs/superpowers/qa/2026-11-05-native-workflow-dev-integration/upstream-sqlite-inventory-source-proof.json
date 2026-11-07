@@ -1,0 +1,31 @@
+{
+  "base": "3c39215749a96d5c1b8c05972fdd2aeb7588b002",
+  "head": "f4e72e54078413c35e01ea52607afe76283cc972",
+  "qualification": "Source identity establishes the unchanged upstream normalizer and unchanged inventory/guard policies. This is not an executed baseline test pass. Four workflow memory connections are introduced by this PR and require correction; unchanged detached normalizer violations remain separate.",
+  "files": [
+    {
+      "path": "tldw_chatbook/Backup_Recovery/detached_layout.py",
+      "identical_to_pinned_dev": true,
+      "base_sha256": "966f72863b5c42d748e9ffa6122c2398055ec1ae0eae8e6c98d4f5fa042faef5",
+      "candidate_sha256": "966f72863b5c42d748e9ffa6122c2398055ec1ae0eae8e6c98d4f5fa042faef5"
+    },
+    {
+      "path": "Tests/DB/test_private_sqlite_inventory.py",
+      "identical_to_pinned_dev": true,
+      "base_sha256": "aa86c17591f444401acad0f90c0c4c6b1b2cd154fe57651e2a6dd92bad2a9c89",
+      "candidate_sha256": "aa86c17591f444401acad0f90c0c4c6b1b2cd154fe57651e2a6dd92bad2a9c89"
+    },
+    {
+      "path": "tldw_chatbook/DB/private_sqlite.py",
+      "identical_to_pinned_dev": true,
+      "base_sha256": "ee442eb317eb7a230920bfc7915f84c2491e11668d55d28e45e5cfd63126b09a",
+      "candidate_sha256": "ee442eb317eb7a230920bfc7915f84c2491e11668d55d28e45e5cfd63126b09a"
+    },
+    {
+      "path": "backlog/docs/sqlite-private-owner-inventory.md",
+      "identical_to_pinned_dev": true,
+      "base_sha256": "69ed04b6894dd2664b852884ad81ce9a6e4bdb15276cb4c3c148c903f492c92e",
+      "candidate_sha256": "69ed04b6894dd2664b852884ad81ce9a6e4bdb15276cb4c3c148c903f492c92e"
+    }
+  ]
+}

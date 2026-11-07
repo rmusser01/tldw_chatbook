@@ -1,0 +1,21 @@
+tldw_chatbook/Chat/console_plugin_context.py: 1 -> 0 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 0
+
+- REMOVED -- these statements no longer exist:
+  - warning 18d827acf2f69f56 (was line 431)
+      | _owner.logger.opt(exception=True).warning(
+      |     "@-reference expansion failed; sending the raw draft"
+      | )
+
+tldw_chatbook/Chat/console_chat_controller.py: 71 -> 71 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 1
+
+- REMOVED -- these statements no longer exist:
+  - warning c40525b79b54c477 (was line 10350)
+      | logger.warning(
+      |     "@-reference expansion unavailable; sending the raw draft"
+      | )
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning c2dbc3fd9199a755 (now line 10336)
+      | logger.warning("@-reference expansion unavailable; sending the raw draft")

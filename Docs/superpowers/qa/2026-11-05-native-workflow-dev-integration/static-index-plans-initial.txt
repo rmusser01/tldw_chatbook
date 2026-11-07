@@ -1,0 +1,12 @@
+index plan pins: 333 index names declared under tldw_chatbook/DB, 330 census rows, 113 plan-pinned.
+
+FAIL: 3 index(es) are created but absent from scripts/index_plan_pin_census.tsv.
+  Adding an index is a query-plan decision, not a schema detail: with no sqlite_stat1
+  the planner may simply never choose it (TASK-21126 shipped 5 MB of dead index that way).
+  Capture EXPLAIN QUERY PLAN on a corpus with sqlite_stat1 ABSENT, then paste ONE of:
+    idx_workflow_conversation	plan-pinned	<test file> (tldw_chatbook/DB/AgentRuns_DB.py, tldw_chatbook/DB/migrations/agent_runs_v25_to_v26_workflow_runs.sql, tldw_chatbook/DB/recovery_workflow_legacy_schema.py, tldw_chatbook/DB/recovery_workflow_schema.py)
+    idx_workflow_conversation	pre-convention	<why no plan pin> (tldw_chatbook/DB/AgentRuns_DB.py, tldw_chatbook/DB/migrations/agent_runs_v25_to_v26_workflow_runs.sql, tldw_chatbook/DB/recovery_workflow_legacy_schema.py, tldw_chatbook/DB/recovery_workflow_schema.py)
+    idx_workflow_open_interval	plan-pinned	<test file> (tldw_chatbook/DB/migrations/agent_runs_v26_to_v27_workflow_admission.sql, tldw_chatbook/DB/recovery_workflow_legacy_schema.py, tldw_chatbook/DB/recovery_workflow_schema.py)
+    idx_workflow_open_interval	pre-convention	<why no plan pin> (tldw_chatbook/DB/migrations/agent_runs_v26_to_v27_workflow_admission.sql, tldw_chatbook/DB/recovery_workflow_legacy_schema.py, tldw_chatbook/DB/recovery_workflow_schema.py)
+    idx_workflow_task_phase	plan-pinned	<test file> (tldw_chatbook/DB/migrations/agent_runs_v26_to_v27_workflow_admission.sql, tldw_chatbook/DB/recovery_workflow_legacy_schema.py, tldw_chatbook/DB/recovery_workflow_schema.py)
+    idx_workflow_task_phase	pre-convention	<why no plan pin> (tldw_chatbook/DB/migrations/agent_runs_v26_to_v27_workflow_admission.sql, tldw_chatbook/DB/recovery_workflow_legacy_schema.py, tldw_chatbook/DB/recovery_workflow_schema.py)

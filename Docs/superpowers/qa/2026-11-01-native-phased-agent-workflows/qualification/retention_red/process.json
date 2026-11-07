@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "Tests/DB/test_sync_log_retention.py::test_app_pass_prunes_both_stores",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-retention_red-5ef11rzu/pytest",
+    "--junitxml",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-retention_red/tests.xml"
+  ],
+  "basetemp": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-retention_red-5ef11rzu",
+  "elapsed": 3.0389529580716044,
+  "pgid": 4449,
+  "pid": 4449,
+  "primary": 1,
+  "process_wait": 1,
+  "signals": [],
+  "source_deltas": [],
+  "sources": 8325,
+  "started": 1793853945.465312,
+  "whole_bound": 70
+}

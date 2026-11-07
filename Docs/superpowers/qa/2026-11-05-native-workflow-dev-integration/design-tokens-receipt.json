@@ -1,0 +1,17 @@
+{
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_design_token_governance.py",
+    "-q",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task38943-tokens-xvkhanq4"
+  ],
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 46.962,
+  "stylesheet_and_test_digest_before": "1d0906d1b41330636894c52606f8e57acf31fff51343adbf757c8998c9572e54",
+  "stylesheet_and_test_digest_after": "1d0906d1b41330636894c52606f8e57acf31fff51343adbf757c8998c9572e54",
+  "log": "design-tokens.log"
+}

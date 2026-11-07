@@ -1,0 +1,15 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+3.62s setup    Tests/Chat/test_console_ordinary_tree.py::test_queue_pending_capture_without_original_witness_refuses_before_draft
+3.19s call     Tests/Chat/test_console_ordinary_tree.py::test_mounted_owned_precapture_defers_original_custom_mcp
+2.96s setup    Tests/Chat/test_console_ordinary_tree.py::test_mounted_authority_defers_custom_sources_until_ordinary_owner
+2.95s call     Tests/Chat/test_console_ordinary_tree.py::test_mounted_owned_precapture_reuses_original_configuration_and_source[False]
+2.95s setup    Tests/Chat/test_console_ordinary_tree.py::test_mounted_owned_precapture_defers_original_custom_mcp
+2.64s setup    Tests/Chat/test_console_ordinary_tree.py::test_mounted_queued_precursor_refuses_replaced_controller_without_eager_mcp
+1.59s setup    Tests/Chat/test_console_ordinary_tree.py::test_wired_chatscreen_unqualified_cold_source_refuses
+1.59s call     Tests/Chat/test_console_ordinary_tree.py::test_wired_chatscreen_unqualified_cold_source_refuses
+1.22s setup    Tests/Chat/test_console_ordinary_tree.py::test_mounted_missing_original_runtime_refuses_before_callbacks
+1.11s setup    Tests/Chat/test_console_ordinary_tree.py::test_mounted_owned_precapture_reuses_original_configuration_and_source[True]
+
+(14 durations < 1s hidden.)
+8 passed in 27.39s

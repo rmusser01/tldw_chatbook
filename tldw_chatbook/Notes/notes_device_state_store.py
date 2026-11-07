@@ -574,6 +574,32 @@ class NotesDeviceStateError(RuntimeError):
     """A device-state operation failed without disclosing private values."""
 
 
+def _notes_sync_state_db_has_configured_roots(path: Path) -> bool:
+    """Probe an already-selected existing state DB for configured roots.
+
+    TASK-21240: the TASK-21112 gate once treated an existing file as evidence,
+    so abandoned setup's empty store re-armed the runtime on every boot. The
+    wiring entry checks for an absent file before importing this owner; this
+    read-only query checks for an actual root without creating or migrating
+    the database. Corrupt or unopenable stores raise for normal startup.
+
+    Args:
+        path: The already-checked state DB path.
+
+    Returns:
+        True when a root is configured, otherwise False for an empty or
+        missing roots table.
+    """
+    connection = NotesDeviceStateStore(path)._connect(read_only=True, must_exist=True)
+    try:
+        row = connection.execute("SELECT 1 FROM notes_sync_roots LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        connection.close()
+    return row is not None
+
+
 class NotesDeviceStateStore:
     """Own the sole private connection and transaction seam for notes.sync_state.
 

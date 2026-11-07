@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_index_plan_pins.py"
+  ],
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 1.939,
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/final-check_index_plan_pins.log",
+  "output_bytes": 126,
+  "qualification": "Production checkpoint announced stable; final before/after source receipt required."
+}

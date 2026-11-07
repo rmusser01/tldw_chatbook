@@ -1,0 +1,12 @@
+::error::7 new post-await DOM lookup(s) with no guard.
+A `query_one` that resumes after an `await` can find its subtree removed -- NoMatches propagates out of the worker and, with exit_on_error defaulting to True, exits the application (TASK-32800.1 was exactly this). Guard the lookup with `query()` + `first()`, or an enclosing `try`, or re-check the widget is still mounted after the await:
+  tldw_chatbook/Widgets/Console/console_workflow_setup.py::_submit  (0 in census, 1 now)
+  tldw_chatbook/Widgets/Console/console_workflow_setup.py::on_button_pressed  (0 in census, 6 now)
+  tldw_chatbook/Widgets/Console/console_workflow_status.py::_act  (0 in census, 1 now)
+  tldw_chatbook/Widgets/Console/console_workflow_status.py::_load  (0 in census, 12 now)
+  tldw_chatbook/Widgets/Console/console_workflow_status.py::_refresh  (0 in census, 1 now)
+  tldw_chatbook/Widgets/Console/console_workflow_status.py::_select_result  (0 in census, 4 now)
+  tldw_chatbook/Widgets/Console/console_workflow_status.py::on_button_pressed  (0 in census, 6 now)
+
+If the await genuinely cannot remove the subtree, re-pin the census with:  python scripts/check_textual_worker_contract.py --write
+

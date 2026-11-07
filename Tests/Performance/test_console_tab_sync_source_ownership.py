@@ -118,6 +118,7 @@ def make_screen():
     owner._console_chat_controller = None
     owner.store = make_store("first")
     owner.surface = Surface()
+    owner.query = lambda *_: ()
     owner.query_one = lambda *_: owner.surface
     owner._ensure_console_chat_store = lambda: owner.store
     owner.ensure_calls = []

@@ -162,6 +162,9 @@ class _HookPreparationSource:
     context_provider: Any = field(repr=False)
 
 def capture_hook_preparation_source(self, session_id, permissions):
+    native = self._native_plugin_hook_preparation
+    if native is not None:
+        native.pin_resources()
     store, controller, app = self._chat_store, self._chat_controller, self._app
     session = (
         next((row for row in store.sessions() if row.id == session_id), None)
@@ -201,14 +204,13 @@ def require_hook_preparation_source(self, source):
     except RuntimeError as error:
         # TASK-38751: a close fence or disposal that lands mid-check voids it.
         raise HookCheckOwnerChanged(str(error)) from error
-    session = (
-        next(
-            (row for row in source.store.sessions() if row.id == source.session_id),
-            None,
-        )
-        if source.store is not None
-        else None
-    )
+    if not hook_preparation_source_current(self, source):
+        raise HookCheckOwnerChanged("Console hook preparation owner changed.")
+
+
+def hook_preparation_source_current(self, source):
+    """Original direct-reference fence, safe at actual worker queue publication."""
+    session = source.store._sessions.get(source.session_id) if source.store else None
     reader = getattr(source.controller, "_hook_authority_values", None)
     same_reader = reader is source.authority_reader or (
         inspect.ismethod(reader)
@@ -216,8 +218,10 @@ def require_hook_preparation_source(self, source):
         and reader.__self__ is source.authority_reader.__self__
         and reader.__func__ is source.authority_reader.__func__
     )
-    if (
-        self._app is not source.app
+    return not (
+        self._disposed
+        or source.session_id in self._admission_fenced_sessions
+        or self._app is not source.app
         or self._chat_store is not source.store
         or self._chat_controller is not source.controller
         or self._hook_permissions is not source.permissions
@@ -254,8 +258,7 @@ def require_hook_preparation_source(self, source):
                 )
             )
         )
-    ):
-        raise HookCheckOwnerChanged("Console hook preparation owner changed.")
+    )
 
 
 async def read_hook_preparation(self, callback, source):
@@ -356,6 +359,38 @@ def hooks_v2_context_key(self, session_id: str):
             )
         )
 
+    def project_key(values):
+        authority = values["project_authority"]
+        (
+            snapshot_type,
+            capture,
+            capture_code,
+            capture_defaults,
+            capture_kwdefaults,
+            capture_closure,
+        ) = controller_module._HOOK_PROJECT_AUTHORITY_ORIGINAL
+        if (
+            type(controller) is controller_class
+            and controller._turn_context_provider is None
+            and type(registry) is registry_class
+            and bindings_current()
+            and controller_module.capture_project_instruction_authority is capture
+            and capture.__code__ is capture_code
+            and capture.__defaults__ is capture_defaults
+            and capture.__kwdefaults__ is capture_kwdefaults
+            and capture.__closure__ is capture_closure
+            and type(authority) is snapshot_type
+        ):
+            # Validated first-folder adoption and consent record these existing
+            # choices later. Full effective authority still revokes on change.
+            return (
+                authority.workspace_id,
+                authority.enabled,
+                authority.selected,
+                authority.options,
+            )
+        return authority
+
     stock = (
         type(self) is _HOOK_CONTEXT_KEY_ORIGINAL_OWNER
         and ConsoleRuntime is _HOOK_CONTEXT_KEY_ORIGINAL_OWNER
@@ -390,7 +425,7 @@ def hooks_v2_context_key(self, session_id: str):
             return (
                 session.workspace_id,
                 values["workspace_roots"],
-                values["project_authority"],
+                project_key(values),
             )
 
     chat_database = getattr(store.persistence, "db", None)
@@ -444,7 +479,7 @@ def hooks_v2_context_key(self, session_id: str):
         result = (
             workspace_id,
             values["workspace_roots"],
-            values["project_authority"],
+            project_key(values),
         )
     # Retirement can run callbacks; refuse a redirected result afterwards too.
     require_current()

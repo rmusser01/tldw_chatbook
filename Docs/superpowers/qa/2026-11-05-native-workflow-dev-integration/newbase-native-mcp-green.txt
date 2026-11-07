@@ -1,0 +1,9 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+8.32s call     Tests/Chat/test_console_ordinary_tree.py::test_actual_received_turn_with_native_killed_mcp_is_bounded[False]
+7.72s setup    Tests/Chat/test_console_ordinary_tree.py::test_actual_received_turn_with_native_killed_mcp_is_bounded[False]
+6.55s call     Tests/Chat/test_console_ordinary_tree.py::test_actual_received_turn_with_native_killed_mcp_is_bounded[True]
+6.42s setup    Tests/Chat/test_console_ordinary_tree.py::test_actual_received_turn_with_native_killed_mcp_is_bounded[True]
+
+(2 durations < 1s hidden.)
+2 passed in 32.50s

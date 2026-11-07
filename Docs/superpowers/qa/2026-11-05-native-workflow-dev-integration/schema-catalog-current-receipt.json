@@ -1,0 +1,22 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Backup_Recovery/test_workflow_dev_integration.py",
+    "Tests/DB/test_workflow_query_plans.py",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-schema-catalog-current"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 23.44390779128298,
+  "source_file_count": 9108,
+  "before_sha256": "eea8b0c6e5159afe70f8404760b1e193e65bd31780014b71ad65066065896b81",
+  "after_sha256": "eea8b0c6e5159afe70f8404760b1e193e65bd31780014b71ad65066065896b81",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/schema-catalog-current.log"
+}

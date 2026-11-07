@@ -748,3 +748,25 @@ def test_persona_catalog_only_materializes_requested_page(tmp_path, monkeypatch)
     page = service.list_persona_profiles(limit=3, offset=4)
     assert len(viewed) == 3
     assert [item["id"] for item in page] == ["persona-7", "persona-6", "persona-5"]
+
+
+def test_normalize_policy_rules_drops_invalid_without_private_warning():
+    from loguru import logger
+
+    from tldw_chatbook.Character_Chat.local_character_persona_service import (
+        normalize_policy_rules,
+    )
+
+    records = []
+    sink = logger.add(lambda message: records.append(message.record["message"]))
+    try:
+        rules = normalize_policy_rules(
+            [
+                {"rule_kind": "invalid", "rule_name": "PRIVATE_POLICY_RULE"},
+                {"rule_kind": "mcp_tool", "rule_name": "fs_read"},
+            ]
+        )
+    finally:
+        logger.remove(sink)
+    assert len(rules) == 1 and rules[0]["rule_name"] == "fs_read"
+    assert records == ["Dropping malformed persona policy rule"]

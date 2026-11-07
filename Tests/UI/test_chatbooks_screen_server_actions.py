@@ -15,6 +15,8 @@ from tldw_chatbook.UI.Chatbooks_Window_Improved import (
 )
 from tldw_chatbook.UI.Screens.chatbooks_screen import ChatbooksScreen
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.asyncio
 async def test_chatbooks_screen_uses_improved_window(monkeypatch):

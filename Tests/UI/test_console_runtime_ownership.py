@@ -245,6 +245,7 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
     }
     assert {field.name for field in fields(type(record.inputs))} == {
         "attachments",
+        "attachments_transferred",
         "staged_evidence_revision",
         "durable_accepted",
     }
@@ -306,8 +307,10 @@ def test_runtime_restore_staged_evidence_never_overwrites_a_newer_launch() -> No
 
 
 @pytest.mark.asyncio
-async def test_successful_viewless_manual_turn_records_first_send(monkeypatch) -> None:
-    """Terminal success records onboarding without retaining a ChatScreen."""
+async def test_viewless_manual_turn_keeps_session_flag_when_publisher_is_replaced(
+    monkeypatch,
+) -> None:
+    """Terminal success stays visible when native persistence must refuse."""
     saved: list[tuple[str, str, bool]] = []
     monkeypatch.setattr(
         "tldw_chatbook.config.save_setting_to_cli_config",
@@ -337,7 +340,9 @@ async def test_successful_viewless_manual_turn_records_first_send(monkeypatch) -
             assert session_id == session.id
             return ConsoleRunState(ConsoleRunStatus.COMPLETED, "done")
 
-    runtime.set_chat_controller(SuccessfulController())
+    controller = SuccessfulController()
+    controller.store = store
+    runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="turn-first-send",
         session_id=session.id,
@@ -353,7 +358,8 @@ async def test_successful_viewless_manual_turn_records_first_send(monkeypatch) -
 
     assert runtime.view is None
     assert app.app_config["console"]["onboarding"]["first_send_completed"] is True
-    assert saved == [("console.onboarding", "first_send_completed", True)]
+    await asyncio.wait_for(asyncio.shield(runtime._first_send_task), 5)
+    assert saved == []
 
 
 @pytest.mark.asyncio
@@ -2072,6 +2078,9 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
     release = asyncio.Event()
 
     class BlockingController:
+        def __init__(self, store):
+            self.store = store
+
         fleet_wake = SimpleNamespace(delivering_session_ids=lambda: ())
         prompt_queue_coordinator = SimpleNamespace(
             bind_turn_request=lambda _request, *, origin: None
@@ -2087,7 +2096,7 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
             return SimpleNamespace(accepted=True)
 
     runtime.set_chat_store(store)
-    runtime.set_chat_controller(BlockingController())
+    runtime.set_chat_controller(BlockingController(store))
     screen = ChatScreen.__new__(ChatScreen)
 
     def no_op(*_args, **_kwargs):
@@ -3487,18 +3496,51 @@ async def test_prepared_native_start_allows_mounted_manual_send(
         return await original(selection)
 
     controller._resolve_for_send_bounded = held
+
+    def cached_context_window(_settings):
+        # This scripted gateway has no serving metadata cache.
+        return None
+
+    async def resolve_context_window(settings):
+        # Settings expects a typed offline fallback, including unknown status.
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
+    gateway = controller.provider_gateway
+    gateway.cached_context_window = cached_context_window
+    gateway.resolve_context_window = resolve_context_window
+    from tldw_chatbook.config import get_user_data_dir
+
     app = _build_manually_mounted_console_app(
-        config_overrides={"splash_screen": {"enabled": False}}
+        user_data_dir=get_user_data_dir(),
+        isolate_databases=True,
+        config_overrides={"splash_screen": {"enabled": False}},
     )
     persist_seeded_config(app, "splash_screen")
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
+    trust = await app.ensure_local_skill_trust_service()
+    assert app.local_skills_service.trust_service is trust
     from tldw_chatbook.config import get_cli_setting
 
     assert get_cli_setting("splash_screen", "enabled", True) is False
     rig_registered = False
     try:
         async with app.run_test(size=(160, 48)) as pilot:
+            # The first wiring captures real owners, including raw CLI's store.
+            # Mounted configuration also requires the controller's scratch
+            # owner to be this runtime's exact scratch owner.
+            runtime = app.console_runtime
+            assert await asyncio.to_thread(runtime.scratch_spaces.dispose)
+            runtime._scratch_spaces = controller._scratch_spaces
+            runtime.set_chat_store(store)
+            runtime.set_provider_gateway(controller.provider_gateway)
+            runtime.set_chat_controller(controller)
+            runtime.set_agent_bridge(controller._agent_bridge)
+            _register_runtime_database_owners(runtime, runs)
+            _register_runtime_database_owners(runtime, store.persistence.db)
+            rig_registered = True
             chat = ChatScreen(app)
             await app.push_screen(chat)
             app.current_tab = "chat"
@@ -3508,26 +3550,38 @@ async def test_prepared_native_start_allows_mounted_manual_send(
                     break
                 await pilot.pause(0.1)
             assert chat._console_attach_reconciled and app.screen is chat
-            runtime = app.console_runtime
-            runtime._chat_store = store
-            runtime._chat_controller = controller
-            runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
-            _register_runtime_database_owners(runtime, runs)
-            _register_runtime_database_owners(runtime, store.persistence.db)
-            rig_registered = True
+            assert chat._ensure_console_chat_store() is store
+            assert chat._ensure_console_chat_controller() is controller
+            assert runtime.scratch_spaces is controller._scratch_spaces
+            assert runtime.provider_gateway is controller.provider_gateway
             store.switch_session(target.id)
+            if store.session_settings(target.id) is None:
+                defaults = chat._session._blank_console_session_settings()
+                store.replace_session_settings(
+                    target.id,
+                    defaults,
+                    mark_user_work=False,
+                    canonical_settings_baseline=defaults,
+                )
             chat._session._sync_console_session_draft()
             await chat._sync_native_console_chat_ui()
             composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
             assert composer.draft_text() == "original"
             from dataclasses import replace
 
-            request = replace(
-                request,
-                configuration=controller.resolve_turn_configuration_snapshot(target.id),
-                context_epoch=store.conversation_context_epoch(target.id),
+            from tldw_chatbook.UI.Console_Modules.wiring import (
+                _precapture_turn_authority,
             )
+
+            prepared = await _precapture_turn_authority(chat, target.id)
+            with prepared():
+                request = replace(
+                    request,
+                    configuration=chat._session._build_console_turn_execution_context(
+                        target.id
+                    ),
+                    context_epoch=store.conversation_context_epoch(target.id),
+                )
             assert controller._chat_start._target_unchanged(request)
             start = asyncio.create_task(controller._chat_start.start(request))
             try:
@@ -3551,18 +3605,33 @@ async def test_prepared_native_start_allows_mounted_manual_send(
                 assert not chat._console_setup_modal_blocking()
                 assert await pilot.click("#console-send-message")
                 assert (await asyncio.wait_for(start, 5)).launch_status == "not_started"
+                # Empty custody before the queued button event is admitted
+                # is not completion. Require the manual acceptance first, then
+                # physical custody return within this same polling budget.
+                users = []
                 for _ in range(50):
-                    if controller.run_state_for(target.id).status in {
-                        ConsoleRunStatus.COMPLETED,
-                        ConsoleRunStatus.FAILED,
-                    }:
+                    rows = store.persistence.db.get_messages_for_conversation(
+                        request.conversation_id
+                    )
+                    users = [row for row in rows if row["sender"] == "user"]
+                    if (
+                        len(users) == 1 and users[0]["content"] == "original"
+                        and not runtime.has_custodied_turns(target.id)
+                    ):
                         break
                     await pilot.pause(0.1)
-                rows = store.persistence.db.get_messages_for_conversation(
-                    request.conversation_id
-                )
-                users = [row for row in rows if row["sender"] == "user"]
-                assert len(users) == 1 and users[0]["content"] == "original"
+                assert not runtime.has_custodied_turns(target.id)
+                assert len(users) == 1 and users[0]["content"] == "original", {
+                    "user_rows": len(users),
+                    "provider_resolutions": calls,
+                    "provider_calls": controller.provider_gateway.calls,
+                    "state": controller.run_state_for(target.id),
+                }
+                assert controller.run_state_for(target.id).status in {
+                    ConsoleRunStatus.COMPLETED,
+                    ConsoleRunStatus.FAILED,
+                }
+                assert controller.provider_gateway.calls == 1
                 assert "agent_chat_start" not in str(users[0]["metadata_json"])
                 assert runs.automatic_work.snapshot(chain).used["generation"] == 0
             finally:
@@ -3613,6 +3682,8 @@ async def test_native_acceptance_consumes_only_open_target_revision(
     persist_seeded_config(app, "splash_screen")
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
+    trust = await app.ensure_local_skill_trust_service()
+    assert app.local_skills_service.trust_service is trust
     from tldw_chatbook.config import get_cli_setting
 
     assert get_cli_setting("splash_screen", "enabled", True) is False

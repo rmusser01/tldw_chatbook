@@ -5,6 +5,7 @@ from typing import (  # noqa: UP035 - preserve original public annotation object
 )
 
 from . import app_service_wiring as _source_wiring
+from .Skills_Interop import _skill_trust_publisher
 
 
 class _ConsoleSkillTrustSource(NamedTuple):
@@ -1090,6 +1091,7 @@ class SkillServiceWiringMixin:
             raise RuntimeError("console_skill_trust_owner_changed")
         if self._local_skill_trust_service is not None:
             return self._local_skill_trust_service
+        published_candidate = None
         async with self._local_skill_trust_service_build_lock:
             if (
                 _owner_current is not None
@@ -1117,4 +1119,12 @@ class SkillServiceWiringMixin:
                 # Another owner may publish while the native builder is held.
                 if self._local_skill_trust_service is None:
                     self._local_skill_trust_service = service
-            return self._local_skill_trust_service
+                    published_candidate = service
+            winner = self._local_skill_trust_service
+        if published_candidate is not None and _skill_trust_publisher.get() is not None:
+            from .Chat.console_configuration_preparation import (
+                record_native_skill_trust_candidate,
+            )
+
+            record_native_skill_trust_candidate(self, published_candidate)
+        return winner

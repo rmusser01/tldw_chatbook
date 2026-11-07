@@ -1,0 +1,32 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/UI/test_console_workflow_navigation.py",
+    "-k",
+    "not detach_preserves_planning_and_background_link_identifies_owner",
+    "--tb=short",
+    "-x",
+    "-W",
+    "error::RuntimeWarning",
+    "-W",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "--basetemp=../pytest-newbase-workflow-navigation-tail"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 90.41105929110199,
+  "source_file_count": 9109,
+  "before_sha256": "14feacd68e617e68ff97a337d3b45f9a6b2602cb91fd818b95f45d51d64b47bc",
+  "after_sha256": "11f985526d655685f8b92480d46b46b9e27844aa5c75095add2bb487b089d973",
+  "changed_during_command": [
+    "Tests/Chat/test_console_ordinary_tree.py",
+    "tldw_chatbook/Chat/console_configuration_preparation.py",
+    "tldw_chatbook/Chat/console_ordinary_tree.py",
+    "tldw_chatbook/MCP/console_snapshot.py"
+  ],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-workflow-navigation-tail.log"
+}

@@ -10,7 +10,7 @@ and status surfaces only reached the screen through the 0.2 s whole-screen
 sync tick.
 
 These tests drive the real ChatScreen send path (driver-delivered Enter, the
-app's eager task factory, a real in-memory ChaChaNotes store and runtime) and
+app's eager task factory, a real file-backed ChaChaNotes store and runtime) and
 record active-screen compositor commits (headless, without terminal writes). The ordering test
 holds nothing before admission: the send runs its real awaited steps, and the
 frame on screen is read at the instant the synchronous admission starts --
@@ -295,12 +295,16 @@ async def ready_console(host, pilot, gateway):
     return console, composer
 
 
-def build() -> tuple:
+def build(*, host: ConsoleHarness | None = None) -> tuple:
     """A send-ready Console harness whose gateway holds validation."""
-    app = _build_console_send_test_app()
+    if host is None:
+        app = _build_console_send_test_app()
+    else:
+        app = host.app_instance
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    host = ConsoleHarness(app)
+    if host is None:
+        host = ConsoleHarness(app)
     timeline = Timeline(host)
     gateway = HeldGateway(timeline)
     app.console_provider_gateway_factory = lambda: gateway
@@ -407,6 +411,9 @@ async def test_an_acknowledged_enter_dispatches_once_its_status_line_is_laid_out
     ``_PAINT_HOPS`` frame-length hops before it dispatched. It now reads the
     status line's run segment.
     """
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        standard_console_configuration_sources,
+    )
     from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
 
     checks: list[tuple[int, bool]] = []
@@ -417,11 +424,18 @@ async def test_an_acknowledged_enter_dispatches_once_its_status_line_is_laid_out
         checks.append((hops, laid_out(screen, session_id)))
         return hop(screen, session_id, dispatch, hops)
 
-    monkeypatch.setattr(module, "_dispatch_once_laid_out", counted_hop)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
-            _console, _composer = await ready_console(host, pilot, gateway)
+            console, _composer = await ready_console(host, pilot, gateway)
+            controller = console._ensure_console_chat_controller()
+            store = controller.store
+            session_id = store.active_session_id
+            assert session_id is not None
+            assert standard_console_configuration_sources(
+                host.app_instance, store, controller, session_id=session_id
+            ), "Original ready-send fixture sources are not eligible for native capture"
+            monkeypatch.setattr(module, "_dispatch_once_laid_out", counted_hop)
             try:
                 press(host, "enter", "\r")
                 await until(gateway.validation_started.is_set)

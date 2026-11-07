@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .console_ordinary_tree import _NATIVE_CURRENTNESS_SOURCE as _ORIGINAL_CURRENTNESS_SOURCE
+
 import asyncio
 import copy
 from contextlib import contextmanager
@@ -39,6 +41,7 @@ from uuid import uuid4
 import weakref
 
 from loguru import logger
+from textual.app import App as _TextualApp
 from tldw_chatbook.Utils.input_validation import escape_markup
 
 from tldw_chatbook.Agents.approval_provenance import (
@@ -346,6 +349,7 @@ from tldw_chatbook.Chat.console_configuration_capture import (
 from tldw_chatbook.Chat.console_turn_context import (
     commit_fence_configuration,
     read_session_change_review_admission,
+    capture_change_review_metadata,
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
     ConsoleProjectAuthoritySnapshot,
@@ -402,14 +406,21 @@ from tldw_chatbook.Chat.message_metadata import (
 )
 from tldw_chatbook.Chat.console_skill_resolver import (
     MENTION_SIGIL,
-    SKILL_MENTION_SKIPPED_NOTE,
-    SKILL_UNTRUSTED_REFUSE,
+    SKILL_MENTION_SKIPPED_NOTE,  # noqa: F401 -- live compatibility binding
+    SKILL_UNTRUSTED_REFUSE,  # noqa: F401 -- live compatibility binding
     SkillCommandCandidate,
-    cap_skill_args,
-    find_embedded_mentions,
-    resolve_skill_command,
+    cap_skill_args,  # noqa: F401 -- live compatibility binding
+    find_embedded_mentions,  # noqa: F401 -- live compatibility binding
+    resolve_skill_command,  # noqa: F401 -- live compatibility binding
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+_NATIVE_TEXTUAL_DISPATCH = (
+    _TextualApp.call_from_thread,
+    _TextualApp.call_from_thread.__code__,
+    _TextualApp._context,
+    _TextualApp._context.__code__,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.response_rules.runtime import ResponseRuleRuntime
@@ -516,7 +527,7 @@ from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.runtime_policy.bootstrap import (
     load_default_runtime_source_state,
 )
-from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError  # noqa: F401 -- live compatibility binding
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
 from tldw_chatbook.Tools.remote_root_types import RemoteRoot, is_remote
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
@@ -1223,6 +1234,17 @@ def capture_project_instruction_authority(
     )
 
 
+# Hook identity projects only this original effective-authority capture.
+_HOOK_PROJECT_AUTHORITY_ORIGINAL = (
+    ConsoleProjectAuthoritySnapshot,
+    capture_project_instruction_authority,
+    capture_project_instruction_authority.__code__,
+    capture_project_instruction_authority.__defaults__,
+    capture_project_instruction_authority.__kwdefaults__,
+    capture_project_instruction_authority.__closure__,
+)
+
+
 def capture_mcp_tool_maximum(app: Any) -> frozenset[str]:
     """Capture exact eligible MCP raw identities before turn acceptance."""
     return frozenset(capture_mcp_definition_maximum(app))
@@ -1770,6 +1792,9 @@ def _default_remote_run_executor_factory(
         canonical_host_key=host_key,
         session_key=session_key,
     )
+    from .console_ssh_custody import register_ordinary_ssh_executor
+
+    register_ordinary_ssh_executor(inner, binding, _default_remote_run_executor_factory)
     return _RemoteExecutorDispatchAdapter(inner, alias=binding_id)
 
 
@@ -1800,7 +1825,7 @@ def _default_remote_instruction_executor(
     metadata = getattr(selection.binding, "metadata", None) or {}
     python = str(metadata.get("python") or "python3")
     expected_fingerprint, host_key = ssh_binding_identity(metadata)
-    return RemoteWorkspaceToolExecutor.for_ssh(
+    executor = RemoteWorkspaceToolExecutor.for_ssh(
         loc,
         binding_id,
         cache=status_cache,
@@ -1810,6 +1835,11 @@ def _default_remote_instruction_executor(
         expected_fingerprint=expected_fingerprint,
         canonical_host_key=host_key,
         session_key=session_key,
+    )
+    from .console_ssh_custody import register_ordinary_ssh_executor
+
+    return register_ordinary_ssh_executor(
+        executor, selection.binding, _default_remote_instruction_executor
     )
 
 
@@ -1923,6 +1953,7 @@ def capture_run_admitted_workspace_roots(
     status_cache: Any = None,
     remote_executor_factory: Callable[..., Any] | None = None,
     remote_session_key: str | None = None,
+    binding_ids: frozenset[str] | None = None,
 ) -> tuple[Any, ...]:
     """Capture immutable run-root authority for one owning Console run.
 
@@ -2010,7 +2041,11 @@ def capture_run_admitted_workspace_roots(
             _schedule_recovery_probe(project_selection.binding, binding_id)
     else:
         try:
-            bindings = registry.list_runtime_bindings(workspace_id)
+            bindings = tuple(
+                binding
+                for binding in registry.list_runtime_bindings(workspace_id)
+                if binding_ids is None or binding.binding_id in binding_ids
+            )
         except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
             return ()
         # Remote pre-pass (cache-only reads): BLOCKED/MISSING rows are
@@ -2873,44 +2908,9 @@ def _split_skill_command_word(text: str) -> tuple[str, str]:
 
 
 def _render_skill_bundle_block(results: Iterable[Mapping[str, Any]]) -> str:
-    """Render one combined "Bundled files" block for a turn's bound skills.
+    from .console_plugin_context import _render_skill_bundle_block as _implementation
 
-    Task 5 (skills-fork-reachability): `_apply_skill_substitution` builds
-    this as pure string work from `execute_skill` results it already holds
-    -- no re-execution, no extra service calls -- for every skill actually
-    bound this turn (leading-resolved, or embedded mentions that spliced).
-    `run_reply` (never here) is the only place that ever appends the
-    returned string to a message, so plain sends and the stored transcript
-    never see it.
-
-    Row format matches `_BridgeSkillRunner.run`'s own bundle-pointer block
-    byte-for-byte (Task 4) -- ``{path} ({size} bytes)`` / ``{path} ({size}
-    bytes, binary)``, comma-joined under one combined header -- so a bound
-    skill's `skill_file` reads look identical whether granted turn-side
-    (this function) or fork-side (a spawned skill reading its own bundle).
-
-    Args:
-        results: `execute_skill` result mappings for the bound skills, in
-            any order; a result missing `reference_files` (absent when a
-            skill has no bundle beyond SKILL.md) or with it empty
-            contributes no rows.
-
-    Returns:
-        The combined block, or ``""`` when no result carries any rows.
-    """
-    rows: list[str] = []
-    for result in results:
-        refs = result.get("reference_files") if isinstance(result, Mapping) else None
-        if not refs:
-            continue
-        rows.extend(
-            f"{ref['path']} ({ref['size']} bytes"
-            f"{'' if ref.get('is_text', True) else ', binary'})"
-            for ref in refs
-        )
-    if not rows:
-        return ""
-    return "Bundled files (readable via skill_file): " + ", ".join(rows)
+    return _implementation(results)
 
 
 def _is_empty_transcript_row(message: ConsoleChatMessage) -> bool:
@@ -3096,6 +3096,7 @@ class _DurablePostcommitContinuation:
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
     hook_context: str = field(default="", repr=False)
+    hook_handoff: Any | None = field(default=None, repr=False, compare=False)
     hook_continuation: bool = False
     machine_followup: bool = False
     explicit_manual_retry: bool = False
@@ -3575,6 +3576,42 @@ class _ChatCreationObservation:
     parent: dict[str, Any] | None = None
 
 
+@dataclass(eq=False)
+class _LegacyCloseSubject:
+    runtime: Any
+    store: ConsoleChatStore
+    session: ConsoleChatSession
+    identity: tuple[Any, ...]
+    hook_lock: Any
+    mode: str | None = None
+    issuer: Any = None
+    engine: Any = None
+    permissions: Any = None
+    definitions: Any = None
+    witness: Any = None
+    condition: Any = None
+    events: Any = None
+    admissions: Any = None
+    source_observation: Any = None
+
+
+class _LegacyClosePending(RuntimeError):
+    """Original selected-session legacy retirement is still pending."""
+
+
+_LEGACY_CLOSE_TICKET_DESCRIPTORS = tuple(
+    (name, vars(ConsoleSessionCloseTicket)[name])
+    for name in (
+        "close_id",
+        "session_id",
+        "conversation_id",
+        "expected_revision",
+        "generation",
+    )
+)
+_LEGACY_CLOSE_LOCK_TYPE = type(threading.RLock())
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -3897,6 +3934,8 @@ class ConsoleChatController:
         #: up without rebuilding the controller.
         self._ensure_run_hooks = ensure_run_hooks
         self._hook_permissions_accessor = hook_permissions_accessor
+        # Runtime attachment is optional for the standalone controller API.
+        self._hooks_v2_runtime = None
         self._preparation_reads: set[Any] = set()
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
@@ -3966,7 +4005,7 @@ class ConsoleChatController:
         self._pending_round_kinds: dict[str, dict[str, str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         self._ordinary_outcome_ids: dict[str, str] = {}
-        self._run_hooks_stop_pending: set[str] = set()
+        self._run_hooks_stop_pending: dict[str, object] = {}
         self._ordinary_outcome_assistant_ids: dict[str, str | None] = {}
         #: F2b fix (Qodo wave): guards every mutation of `_pending_
         #: approvals`, `_parked_approval_payloads`, and `_pending_
@@ -4298,8 +4337,15 @@ class ConsoleChatController:
         self._failed_session_close_generations: dict[str, int] = {}
         self._session_close_states: dict[
             str,
-            tuple[ConsoleSessionCloseTicket, bool, Any, str | None],
+            tuple[
+                ConsoleSessionCloseTicket,
+                bool,
+                Any,
+                str | None,
+                _LegacyCloseSubject | None,
+            ],
         ] = {}
+        self._legacy_close_controller_source = _NATIVE_LEGACY_CLOSE_CONTROLLER_SOURCE
         #: Optional owner hook invoked once a submit is accepted (user message
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
@@ -6073,6 +6119,26 @@ class ConsoleChatController:
         """Receive queue-owner changes without copying its state."""
 
         self._advance_lifecycle_revision(session_id)
+        runtime = getattr(self, "_hooks_v2_runtime", None)
+        if runtime is not None:
+            runtime._wake_first_send()
+            activity = runtime.worktree_activity
+            if activity is not None:
+                from .console_prompt_queue import PromptQueueMode
+
+                queue = self.prompt_queue_coordinator
+                snapshot = queue._queue_snapshots.get(session_id)
+                activity._set_ready_manual(
+                    (queue, session_id),
+                    ready=bool(
+                        snapshot is not None
+                        and snapshot.total_count
+                        and snapshot.mode is not PromptQueueMode.PAUSED
+                        and not snapshot.closing
+                        and not queue._shutting_down
+                        and not queue._maintenance_paused
+                    ),
+                )
 
     def _lifecycle_revision_for(self, session_id: str | None) -> int:
         with self._lifecycle_revision_lock:
@@ -6137,8 +6203,37 @@ class ConsoleChatController:
         from tldw_chatbook.Agents.activation import worker_guard
 
         owned_call = functools.partial(self._run_owned_chat_db_operation, function)
+        from .console_agent_sources import current_agent_sources
+
+        sources = current_agent_sources(self)
+        tree = getattr(sources, "ordinary_tree", None)
+        native_host = tree.retain_primary_host() if tree is not None else None
+        retained_source = tree.retain_source_scope() if tree is not None else None
+        if retained_source is not None:
+            retained_source.__enter__()
+        if sources is not None:
+            original_call = owned_call
+
+            def owned_call(**kwargs):
+                try:
+                    with sources.activate():
+                        try:
+                            return original_call(**kwargs)
+                        finally:
+                            if tree is not None:
+                                tree.primary_host_returned(native_host)
+                finally:
+                    if retained_source is not None:
+                        retained_source.__exit__(None, None, None)
+
         worker = worker_guard(self._agent_bridge)(owned_call)
-        task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
+        try:
+            task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
+        except BaseException:
+            if tree is not None:
+                tree.primary_host_returned(native_host)
+                retained_source.__exit__(None, None, None)
+            raise
         return await asyncio.shield(task)
 
     def lifecycle_impact(
@@ -6259,76 +6354,87 @@ class ConsoleChatController:
     ) -> PromptQueueMutationResult:
         """Attempt atomic text-only admission behind queue-owned work."""
 
-        clean_text, validation_error = self._validated_draft(text)
-        if validation_error is not None:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail=validation_error,
-            )
-        captured_mixins = None
-        mixin_current = None
-        if configuration is None:
-            mixin_service = self.prompt_mixin_service()
-            revision = mixin_service.preferences(session_id).revision
-            mixin_current = mixin_service._capture_currentness(session_id, expected_revision=revision)
-            captured_mixins = await mixin_service.capture(
-                session_id, expected_revision=revision
-            )
-        from .console_hook_preparation import bind_hook_preparation_session
+        runtime = self._hooks_v2_runtime
+        scope = (
+            runtime._first_send_source_scope_async()
+            if runtime is not None
+            else contextlib.nullcontext()
+        )
+        async with scope:
+            clean_text, validation_error = self._validated_draft(text)
+            if validation_error is not None:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail=validation_error,
+                )
+            captured_mixins = None
+            mixin_current = None
+            if configuration is None:
+                mixin_service = self.prompt_mixin_service()
+                revision = mixin_service.preferences(session_id).revision
+                mixin_current = mixin_service._capture_currentness(session_id, expected_revision=revision)
+                captured_mixins = await mixin_service.capture(
+                    session_id, expected_revision=revision
+                )
+            from .console_hook_preparation import bind_hook_preparation_session
 
-        with bind_hook_preparation_session(self, session_id):
-            reason = await self.hook_admission_reason()
-        if mixin_current is not None:
-            mixin_current()
-        if reason is not None:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail=reason,
+            with bind_hook_preparation_session(self, session_id):
+                reason = await self.hook_admission_reason()
+            if mixin_current is not None:
+                mixin_current()
+            if reason is not None:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail=reason,
+                )
+            if configuration is None:
+                configuration = replace(
+                    self.resolve_turn_configuration_snapshot(session_id),
+                    prompt_mixins=captured_mixins,
+                )
+            if not isinstance(configuration, ConsoleTurnConfigurationSnapshot):
+                raise TypeError("Queue configuration must be an immutable turn snapshot.")
+            if configuration.session_id != session_id:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail="Queue configuration belongs to a different session.",
+                )
+            if _before_admission is not None:
+                _before_admission()
+            one_shot_prefill, one_shot_prefill_revision = (
+                self.store.session_one_shot_prefill_snapshot(session_id)
             )
-        if configuration is None:
-            configuration = replace(
-                self.resolve_turn_configuration_snapshot(session_id),
-                prompt_mixins=captured_mixins,
+            request = ConsoleTurnCustodyRequest(
+                turn_id=str(uuid4()),
+                session_id=session_id,
+                draft=clean_text,
+                configuration=configuration,
+                one_shot_prefill=one_shot_prefill,
+                one_shot_prefill_revision=one_shot_prefill_revision,
             )
-        if not isinstance(configuration, ConsoleTurnConfigurationSnapshot):
-            raise TypeError("Queue configuration must be an immutable turn snapshot.")
-        if configuration.session_id != session_id:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail="Queue configuration belongs to a different session.",
-            )
-        if _before_admission is not None:
-            _before_admission()
-        one_shot_prefill, one_shot_prefill_revision = (
-            self.store.session_one_shot_prefill_snapshot(session_id)
-        )
-        request = ConsoleTurnCustodyRequest(
-            turn_id=str(uuid4()),
-            session_id=session_id,
-            draft=clean_text,
-            configuration=configuration,
-            one_shot_prefill=one_shot_prefill,
-            one_shot_prefill_revision=one_shot_prefill_revision,
-        )
-        if mixin_current is not None:
-            mixin_current()
-        result = self.prompt_queue_coordinator.admit(
-            session_id,
-            text=clean_text,
-            expected_revision=expected_revision,
-            custody_request=request,
-        )
-        if result.applied:
-            self.prompt_mixin_service().publish_accepted_usage(
-                session_id, configuration.prompt_mixins,
-                observed_revision=mixin_current.revision if mixin_current is not None else None,
-            )
-        if result.applied and self.response_rules is not None:
-            self.response_rules.invalidate(session_id, "user_input")
-        return result
+            if mixin_current is not None:
+                mixin_current()
+            from .console_configuration_preparation import seal_pending_queue_capture
+
+            session = next(item for item in self.store.sessions() if item.id == session_id)
+            with seal_pending_queue_capture(self, session, configuration):
+                result = self.prompt_queue_coordinator.admit(
+                    session_id,
+                    text=clean_text,
+                    expected_revision=expected_revision,
+                    custody_request=request,
+                )
+            if result.applied:
+                self.prompt_mixin_service().publish_accepted_usage(
+                    session_id, configuration.prompt_mixins,
+                    observed_revision=mixin_current.revision if mixin_current is not None else None,
+                )
+            if result.applied and self.response_rules is not None:
+                self.response_rules.invalidate(session_id, "user_input")
+            return result
 
     def edit_queued_prompt(
         self,
@@ -9296,7 +9402,13 @@ class ConsoleChatController:
         """Observe the whole attempt, including refusals before trace setup."""
         from .console_send_diagnostics import send_diagnostic_scope
 
-        async with send_diagnostic_scope("controller_submit") as diagnostic:
+        runtime = self._hooks_v2_runtime
+        scope = (
+            runtime._first_send_source_scope_async()
+            if runtime is not None
+            else contextlib.nullcontext()
+        )
+        async with scope, send_diagnostic_scope("controller_submit") as diagnostic:
             result = await self._submit_draft_lifecycle(
                 draft,
                 session_id=session_id,
@@ -9579,6 +9691,9 @@ class ConsoleChatController:
                 self, "_plugin_pending_submissions", {}
             ).pop(active_task, ()):
                 await service.retire_pending(pending_id)
+            from .console_ordinary_tree import finish_ordinary_submission
+
+            finish_ordinary_submission(self, active_task)
             self._unregister_submit_task(active_task)
 
     async def _submit_draft_inner(
@@ -9617,8 +9732,10 @@ class ConsoleChatController:
         from .console_automatic_submission import submission_scope
 
         scope = submission_scope(self, origin, session_id)
+        from .console_agent_sources import issuing_agent_sources
+
         try:
-            with scope:
+            with scope, issuing_agent_sources(self):
                 result = await self._submit_draft_body(
                     draft,
                     session_id=session_id,
@@ -10058,15 +10175,36 @@ class ConsoleChatController:
                 from .console_prompt_mixins import MixinPreferenceConflictError
                 raise MixinPreferenceConflictError("mixin_preference_conflict")
             configuration = replace(configuration, prompt_mixins=mixins)
-        from .console_plugin_context import _prepare_native_references
+        from . import console_plugin_context, console_references
+        from .console_ordinary_tree import _function_unchanged
 
         try:
+            parser, pattern, candidate_type, candidate_init = (
+                console_plugin_context._NATIVE_REFERENCE_PARSER
+            )
+            if (
+                any(
+                    vars(console_plugin_context).get(name) is not record[0]
+                    or not _function_unchanged(record)
+                    for name, record in console_plugin_context._NATIVE_WORKFLOW_RECEIVERS
+                )
+                or console_references._native_reference_candidates is not parser[0]
+                or not _function_unchanged(parser)
+                or console_references._REFERENCE_RE is not pattern
+                or console_references.ReferenceCandidate is not candidate_type
+                or candidate_type.__init__ is not candidate_init[0]
+                or not _function_unchanged(candidate_init)
+                or _split_skill_command_word is not _NATIVE_REFERENCE_SPLITTER[0]
+                or not _function_unchanged(_NATIVE_REFERENCE_SPLITTER)
+            ):
+                raise PermissionError("original reference metadata source changed")
             (
                 clean_draft,
                 executed_draft_text,
                 reference_records,
                 reference_offsets,
-            ) = await _prepare_native_references(
+                reference_candidates,
+            ) = await console_plugin_context._prepare_native_references(
                 self,
                 clean_draft,
                 configuration,
@@ -10131,6 +10269,87 @@ class ConsoleChatController:
             return self._block(
                 session.id, turn_selection.workspace_context.recovery_copy
             )
+        if origin.automatic:
+            selected_prefill = (None, False, None)
+        elif prepared_continuation is not None:
+            selected_prefill = (
+                prepared_continuation.prefill,
+                prepared_continuation.prefill_from_one_shot,
+                prepared_continuation.one_shot_prefill_revision,
+            )
+        elif custodied_inputs:
+            selected_prefill = (
+                admitted_prefill,
+                admitted_prefill_from_one_shot,
+                admitted_prefill_revision,
+            )
+        elif preserve_composer:
+            selected_prefill = (
+                self._pinned_prefill_for_session(session.id),
+                False,
+                None,
+            )
+        else:
+            one_shot, revision = self.store.session_one_shot_prefill_snapshot(
+                session.id
+            )
+            selected_prefill = (
+                (one_shot, True, revision)
+                if one_shot
+                else (self._pinned_prefill_for_session(session.id), False, None)
+            )
+        from .console_agent_sources import prepare_agent_sources
+
+        await prepare_agent_sources(self, session, configuration)
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+
+        from .console_ordinary_tree import admit_ordinary_turn
+        try:
+            ordinary_tree, configuration = await admit_ordinary_turn(
+                self,
+                session,
+                configuration,
+                origin,
+                clean_draft,
+                reference_candidates,
+                review_boundary=getattr(wake_authorization, "review_boundary", None),
+                agent_eligible=self._agent_dispatch_is_eligible(
+                    session, prefill=selected_prefill[0]
+                ),
+            )
+        except CapacityRefused:
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Workspace activity is busy; retry after it finishes.",
+                session_id=session.id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+        from .console_received_dispatch import admit_received_attachments
+
+        transferred = admit_received_attachments(self, session.id)
+        if transferred is not None:
+            accepted_attachments = transferred
+        if reference_candidates:
+            try:
+                from .console_reference_preparation import prepare_reference_expansion
+
+                async with prepare_reference_expansion(
+                    self, session, origin, clean_draft, reference_candidates
+                ) as (expansion, reference_offsets):
+                    executed_draft_text = expansion.expanded_text
+                    reference_records = tuple(expansion.records)
+            except Exception:  # noqa: BLE001 - references must never block a send
+                from .console_references import ReferenceRecord
+
+                logger.warning("@-reference expansion unavailable; sending the raw draft")
+                executed_draft_text = clean_draft
+                reference_offsets = ()
+                reference_records = tuple(
+                    ReferenceRecord(c.raw, "refused", False, "reference source unavailable")
+                    for c in reference_candidates
+                )
         hook_refusal = await self._prepare_submission_hooks(
             session, configuration, origin, queue_authorization,
             chat_start_authorization=chat_start_authorization,
@@ -10140,6 +10359,27 @@ class ConsoleChatController:
             _prompt_mixin_capture[2]()
         if hook_refusal is not None:
             return hook_refusal
+        if ordinary_tree is not None:
+            from tldw_chatbook.Agents.activation import worker_guard
+
+            from .console_preparation_reads import run_preparation_read
+
+            def hold_legacy_stop():
+                engine = self._run_hooks_engine()
+                ordinary_tree.stop_notification = (
+                    (engine, engine.prepare_notification("Stop", session.id))
+                    if engine is not None
+                    else (None, None)
+                )
+
+            await run_preparation_read(
+                worker_guard(self._agent_bridge)(hold_legacy_stop),
+                creator=self,
+                session_id=session.id,
+                reads=self._preparation_reads,
+                observers=(ordinary_tree.runtime._preparation_reads,),
+                require_current=ordinary_tree.check,
+            )
         library_authority = (
             resumed_preparation.execution_context.library_authority
             if resumed_preparation is not None
@@ -10576,21 +10816,7 @@ class ConsoleChatController:
                 queue_generation = self.prompt_queue_registry.snapshot(
                     session.id
                 ).revision
-            if custodied_inputs:
-                frozen_prefill = admitted_prefill
-                frozen_prefill_from_one_shot = admitted_prefill_from_one_shot
-                captured_prefill_revision = admitted_prefill_revision
-            elif preserve_composer:
-                frozen_prefill = self._pinned_prefill_for_session(session.id)
-                frozen_prefill_from_one_shot = False
-                captured_prefill_revision = None
-            else:
-                one_shot_prefill, captured_prefill_revision = (
-                    self.store.session_one_shot_prefill_snapshot(session.id)
-                )
-                frozen_prefill, frozen_prefill_from_one_shot = (
-                    self._resolve_submit_prefill(session.id)
-                )
+            frozen_prefill, frozen_prefill_from_one_shot, captured_prefill_revision = selected_prefill
             one_shot_prefill = frozen_prefill if frozen_prefill_from_one_shot else None
             if custodied_inputs:
                 # TASK-34352: a turn admitted with a frozen capture seam froze
@@ -11020,33 +11246,7 @@ class ConsoleChatController:
                     source_event_id=attached_event_id,
                     sensitivity="system_context",
                 )
-            if origin.automatic:
-                # The one-shot prefill is USER-staged state; a wake must
-                # not consume (and thereby destroy) it.
-                prefill, prefill_from_one_shot, one_shot_prefill_revision = (
-                    None,
-                    False,
-                    None,
-                )
-            elif prepared_continuation is not None:
-                prefill = prepared_continuation.prefill
-                prefill_from_one_shot = prepared_continuation.prefill_from_one_shot
-                one_shot_prefill_revision = (
-                    prepared_continuation.one_shot_prefill_revision
-                )
-            elif custodied_inputs:
-                prefill = admitted_prefill
-                prefill_from_one_shot = admitted_prefill_from_one_shot
-                one_shot_prefill_revision = admitted_prefill_revision
-            else:
-                prefill, prefill_from_one_shot = self._resolve_submit_prefill(
-                    session.id
-                )
-                one_shot_prefill_revision = (
-                    self.store.session_one_shot_prefill_snapshot(session.id)[1]
-                    if prefill_from_one_shot
-                    else None
-                )
+            prefill, prefill_from_one_shot, one_shot_prefill_revision = selected_prefill
             terminal_citation_finalizer = self._build_terminal_citation_finalizer(
                 context=citation_context,
                 builder=citation_trace_builder,
@@ -11148,6 +11348,12 @@ class ConsoleChatController:
                     session_id=session.id,
                 )
                 raise
+            from tldw_chatbook.Agents.legacy_hook_ownership import (
+                check_prompt_handoff,
+                prompt_handed_off,
+            )
+
+            check_prompt_handoff()
             if outcome is not None and outcome.blocked:
                 if echoed_user is not None:
                     self._mark_transient_echo_blocked(echoed_user.id)
@@ -11164,6 +11370,7 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
+                prompt_handed_off()
                 return ConsoleSubmitResult(
                     False,
                     False,
@@ -11366,6 +11573,7 @@ class ConsoleChatController:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
             if hook_context:
+                check_prompt_handoff()
                 # Run hooks (spec 2026-09-11, Task 7): a UserPromptSubmit
                 # hook's captured stdout is recorded as its own hook-origin
                 # SYSTEM row -- appended only once the user echo is
@@ -11379,6 +11587,7 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
+                prompt_handed_off()
         from .console_pre_provider_stop import AcceptedStopAuthority
 
         accepted_authority = AcceptedStopAuthority(self, session.id)
@@ -12613,6 +12822,8 @@ class ConsoleChatController:
         assistant_holder: dict[str, ConsoleChatMessage] = {}
 
         def publish_owners() -> None:
+            if continuation.hook_handoff is not None:
+                continuation.hook_handoff.check()
             _user, assistant = self.store.publish_durable_turn_owners(
                 session_id,
                 commit,
@@ -12901,7 +13112,30 @@ class ConsoleChatController:
         try:
 
             async def publish_identity_and_settings() -> None:
-                self.store.publish_durable_turn_identity(session_id, commit)
+                from .console_configuration_preparation import (
+                    begin_first_library_publication,
+                    stage_first_library_publication,
+                )
+
+                transport = begin_first_library_publication(
+                    self,
+                    session_id,
+                    preparation_id,
+                    fingerprint,
+                    commit,
+                    continuation,
+                )
+                self.store.publish_durable_turn_identity(
+                    session_id,
+                    commit,
+                    **(
+                        {}
+                        if transport is None
+                        else {"_original_policy_result": transport.results}
+                    ),
+                )
+                if transport is not None:
+                    stage_first_library_publication(transport)
                 if not any(row.id == session_id for row in self.store.sessions()):
                     return
                 await self.store.reconcile_durable_turn_settings(session_id, commit)
@@ -12923,12 +13157,26 @@ class ConsoleChatController:
                 publish_identity_and_settings,
                 fingerprint=fingerprint,
             )
+            from .console_configuration_preparation import (
+                verify_first_library_publication,
+            )
+
+            verify_first_library_publication(
+                self,
+                session_id,
+                preparation_id,
+                fingerprint,
+                commit,
+                continuation,
+            )
             await self._run_durable_postcommit_effect(
                 preparation_id,
                 "durable_owner_publication",
                 publish_owners,
                 fingerprint=fingerprint,
             )
+            if continuation.hook_handoff is not None:
+                continuation.hook_handoff.complete()
             await self._run_durable_postcommit_effect(
                 preparation_id,
                 "staged_input_clearing",
@@ -13939,6 +14187,8 @@ class ConsoleChatController:
     ) -> None:
         """Release an exact frozen evidence lease once at owner retirement."""
 
+        if continuation.hook_handoff is not None:
+            continuation.hook_handoff.discard()
         prepared = continuation.prepared
         lease = prepared.staged_evidence if prepared is not None else None
         if lease is not None and not lease.released:
@@ -14523,6 +14773,52 @@ class ConsoleChatController:
             raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
         if session_id in self._session_close_generations:
             raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+        legacy_subject = None
+        runtime = self._hooks_v2_runtime
+        original_runtime = vars(self).get("_original_mcp_capture_runtime")
+        if original_runtime is not None and runtime is not original_runtime:
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+        if runtime is not None:
+            from .console_runtime import ConsoleRuntime
+
+            if type(runtime) is ConsoleRuntime:
+                source = _ORIGINAL_CURRENTNESS_SOURCE
+                reader_record, checker_record = source[4][-1][1], source[5]
+                if checker_record[0].__code__ is not checker_record[
+                    1
+                ] or not checker_record[0](reader_record):
+                    raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+                if reader_record[0](source, "platform"):
+                    from tldw_chatbook.Agents import run_hooks as legacy_hooks
+
+                    store = self.store
+                    registry = inspect.getattr_static(store, "_sessions", None)
+                    session = (
+                        registry.get(session_id) if type(registry) is dict else None
+                    )
+                    if type(session) is not ConsoleChatSession:
+                        raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+                    identity = tuple(
+                        inspect.getattr_static(session, key, None)
+                        for key in (
+                            "incarnation_id",
+                            "conversation_binding_revision",
+                            "ephemeral",
+                            "workspace_id",
+                        )
+                    )
+                    legacy_subject = _LegacyCloseSubject(
+                        runtime,
+                        store,
+                        session,
+                        identity,
+                        inspect.getattr_static(runtime, "_run_hooks_lock"),
+                        definitions=(
+                            self._legacy_close_controller_source,
+                            runtime._legacy_close_runtime_source,
+                            legacy_hooks._NATIVE_LEGACY_CLOSE_HOOK_SOURCE,
+                        ),
+                    )
         impact = self.lifecycle_impact(session_id=session_id)
         if impact.revision != expected_revision:
             raise ConsoleLifecycleRevisionChanged(
@@ -14796,8 +15092,260 @@ class ConsoleChatController:
             owns_active_stream,
             repair_session,
             previous_active_id,
+            legacy_subject,
         )
         return ticket
+
+    def _legacy_close_ready(self, ticket, state, subject):
+        """Qualify and observe the selected session's original hook owner."""
+        refusal = CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL
+        controller_record, runtime_record, hook_record = subject.definitions
+        checker = _ORIGINAL_CURRENTNESS_SOURCE[5]
+        unchanged = checker[0]
+        if (
+            unchanged.__code__ is not checker[1]
+            or unchanged.__defaults__ is not checker[2]
+            or unchanged.__kwdefaults__ is not checker[3]
+            or unchanged.__closure__ is not checker[5]
+        ):
+            raise RuntimeError(refusal)
+        runtime, store, session = subject.runtime, subject.store, subject.session
+        hook_module, engine_type, originals, hook_methods = hook_record
+        if (
+            inspect.getattr_static is not originals[7]
+            or controller_record is not _NATIVE_LEGACY_CLOSE_CONTROLLER_SOURCE
+            or subject.definitions[0] is not self._legacy_close_controller_source
+            or runtime_record
+            is not inspect.getattr_static(runtime, "_legacy_close_runtime_source", None)
+            or hook_record
+            is not vars(hook_module).get("_NATIVE_LEGACY_CLOSE_HOOK_SOURCE")
+            or _ORIGINAL_CURRENTNESS_SOURCE[6].modules.get(
+                "tldw_chatbook.Agents.run_hooks"
+            )
+            is not hook_module
+            or vars(hook_module).get("RunHooksEngine") is not engine_type
+            or vars(hook_module).get("_ORIGINAL_CLEANUP_SOURCE") is not originals
+            or type(runtime) is not runtime_record[0]
+            or type(self) is not controller_record[0]
+            or any(
+                vars(controller_record[0]).get(name) is not record[0]
+                or not unchanged(record)
+                for name, record in controller_record[4]
+            )
+            or any(
+                vars(runtime_record[0]).get(name) is not record[0]
+                or not unchanged(record)
+                for name, record in runtime_record[2]
+            )
+            or any(
+                vars(hook_module).get(name) is not record[0] or not unchanged(record)
+                for name, record in hook_methods
+            )
+        ):
+            raise RuntimeError(refusal)
+        validator = next(
+            record[0]
+            for name, record in hook_methods
+            if name == "_native_cleanup_definitions_current"
+        )
+        if not validator():
+            raise RuntimeError(refusal)
+        registry = inspect.getattr_static(store, "_sessions", None)
+        identity = tuple(
+            inspect.getattr_static(session, key, None)
+            for key in (
+                "incarnation_id",
+                "conversation_binding_revision",
+                "ephemeral",
+                "workspace_id",
+            )
+        )
+        fences = inspect.getattr_static(runtime, "_admission_fenced_sessions", None)
+        if not (
+            inspect.getattr_static(self, "_hooks_v2_runtime", None) is runtime
+            and inspect.getattr_static(self, "store", None) is store
+            and inspect.getattr_static(runtime, "_chat_controller", None) is self
+            and inspect.getattr_static(runtime, "_chat_store", None) is store
+            and inspect.getattr_static(runtime, "_run_hooks_lock", None)
+            is subject.hook_lock
+            and type(registry) is dict
+            and registry.get(ticket.session_id) is session
+            and type(fences) is set
+            and ticket.session_id in fences
+            and self._session_close_states.get(ticket.close_id) is state
+            and self._session_close_generations.get(ticket.session_id)
+            == ticket.generation
+            and len(subject.identity) == len(identity)
+            and all(
+                type(value) in (str, int, bool, type(None))
+                and type(value) is type(original)
+                and value == original
+                for value, original in zip(identity, subject.identity, strict=True)
+            )
+        ):
+            raise RuntimeError(refusal)
+        from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+        lock = subject.hook_lock
+        if type(lock) is not _LEGACY_CLOSE_LOCK_TYPE:
+            raise RuntimeError(refusal)
+        if not lock.acquire(blocking=False):
+            raise _LegacyClosePending()
+        try:
+            fields = vars(runtime)
+            if subject.mode is None:
+                witness = fields.get("_run_hooks_construction_witness")
+                engine = fields.get("_run_hooks_engine")
+                if (
+                    witness is False
+                    and engine is runtime_record[1]
+                    and "_legacy_hooks_source" not in fields
+                ):
+                    subject.mode = "absent"
+                elif type(witness) is tuple and len(witness) == 3:
+                    engine, issuer, permissions = witness
+                    if (
+                        fields.get("_run_hooks_engine") is not engine
+                        or fields.get("_hook_permissions") is not permissions
+                        or (
+                            issuer is not None
+                            and fields.get("_legacy_hooks_source") is not issuer
+                        )
+                    ):
+                        raise RuntimeError(refusal)
+                    if (
+                        type(engine) is not engine_type
+                        or vars(engine_type).get(
+                            "__getattribute__", object.__getattribute__
+                        )
+                        is not object.__getattribute__
+                        or vars(engine_type).get("__setattr__", object.__setattr__)
+                        is not object.__setattr__
+                    ):
+                        raise RuntimeError(refusal)
+                    if type(permissions) is not HookPermissions:
+                        raise RuntimeError(refusal)
+                    engine_fields = vars(engine)
+                    if issuer is None:
+                        if (
+                            "_legacy_hooks_source" in fields
+                            or engine_fields.get("_native_attached") is not False
+                            or engine_fields.get("_native_source") is not None
+                        ):
+                            raise RuntimeError(refusal)
+                        subject.mode = "ordinary"
+                    else:
+                        if type(issuer) is not originals[4]:
+                            raise RuntimeError(refusal)
+                        issuer_fields = vars(issuer)
+                        if not (
+                            issuer_fields.get("runtime") is runtime
+                            and issuer_fields.get("engine") is engine
+                            and issuer_fields.get("permissions") is permissions
+                            and issuer_fields.get("app") is fields.get("_app")
+                            and engine_fields.get("_native_attached") is True
+                            and engine_fields.get("_native_source") is issuer
+                        ):
+                            raise RuntimeError(refusal)
+                        callbacks = issuer_fields.get("callbacks")
+                        if (
+                            type(callbacks) is not tuple
+                            or len(callbacks) != 4
+                            or any(
+                                a is not b
+                                for a, b in zip(
+                                    callbacks,
+                                    (
+                                        engine_fields.get("_target_provider"),
+                                        engine_fields.get("_notification_targets"),
+                                        engine_fields.get("_launch_guard"),
+                                        engine_fields.get("_cwd_provider"),
+                                    ),
+                                    strict=True,
+                                )
+                            )
+                        ):
+                            raise RuntimeError(refusal)
+                        observation = issuer_fields.get("_close_observation")
+                        if (
+                            type(observation) is not tuple
+                            or len(observation) != 3
+                            or observation[0] is not issuer_fields.get("_condition")
+                            or observation[1] is not issuer_fields.get("_events")
+                            or observation[2]
+                            is not issuer_fields.get("_session_admissions")
+                        ):
+                            raise RuntimeError(refusal)
+                        subject.source_observation = observation
+                        subject.mode = "native"
+                    (
+                        subject.witness,
+                        subject.engine,
+                        subject.issuer,
+                        subject.permissions,
+                    ) = witness, engine, issuer, permissions
+                else:
+                    raise RuntimeError(refusal)
+            if subject.mode in ("native", "ordinary"):
+                if (
+                    fields.get("_run_hooks_construction_witness") is not subject.witness
+                    or fields.get("_run_hooks_engine") is not subject.engine
+                    or fields.get("_hook_permissions") is not subject.permissions
+                ):
+                    raise RuntimeError(refusal)
+                engine_fields = vars(subject.engine)
+                if subject.mode == "native":
+                    issuer_fields = vars(subject.issuer)
+                    observation = subject.source_observation
+                    callbacks = issuer_fields.get("callbacks")
+                    if not (
+                        fields.get("_legacy_hooks_source") is subject.issuer
+                        and issuer_fields.get("runtime") is runtime
+                        and issuer_fields.get("engine") is subject.engine
+                        and issuer_fields.get("permissions") is subject.permissions
+                        and issuer_fields.get("app") is fields.get("_app")
+                        and engine_fields.get("_native_attached") is True
+                        and engine_fields.get("_native_source") is subject.issuer
+                        and issuer_fields.get("_close_observation") is observation
+                        and observation[0] is issuer_fields.get("_condition")
+                        and observation[1] is issuer_fields.get("_events")
+                        and observation[2] is issuer_fields.get("_session_admissions")
+                        and type(callbacks) is tuple
+                        and len(callbacks) == 4
+                        and all(
+                            a is b
+                            for a, b in zip(
+                                callbacks,
+                                (
+                                    engine_fields.get("_target_provider"),
+                                    engine_fields.get("_notification_targets"),
+                                    engine_fields.get("_launch_guard"),
+                                    engine_fields.get("_cwd_provider"),
+                                ),
+                                strict=True,
+                            )
+                        )
+                    ):
+                        raise RuntimeError(refusal)
+                elif (
+                    "_legacy_hooks_source" in fields
+                    or engine_fields.get("_native_attached") is not False
+                    or engine_fields.get("_native_source") is not None
+                ):
+                    raise RuntimeError(refusal)
+        finally:
+            lock.release()
+        if subject.mode == "native":
+            selected = next(
+                record[0]
+                for owner, name, record in originals[6]
+                if owner is originals[4] and name == "selected_ready"
+            )
+            ready = selected(subject.issuer, ticket.session_id)
+            if ready is None:
+                raise _LegacyClosePending()
+            if ready is not True:
+                raise RuntimeError(refusal)
 
     def finalize_session_close(
         self,
@@ -14807,16 +15355,103 @@ class ConsoleChatController:
 
         from .console_preparation_reads import preparation_reads_for
 
+        if (
+            type(ticket) is not ConsoleSessionCloseTicket
+            or vars(ConsoleSessionCloseTicket).get(
+                "__getattribute__", object.__getattribute__
+            )
+            is not object.__getattribute__
+            or any(
+                vars(ConsoleSessionCloseTicket).get(name) is not descriptor
+                for name, descriptor in _LEGACY_CLOSE_TICKET_DESCRIPTORS
+            )
+            or type(ticket.close_id) is not str
+            or type(ticket.session_id) is not str
+            or type(ticket.conversation_id) is not str
+            or type(ticket.expected_revision) is not int
+            or type(ticket.generation) is not int
+        ):
+            raise RuntimeError("Console session close ticket is stale.")
         if preparation_reads_for(self._preparation_reads, ticket.session_id):
             raise RuntimeError("A native preparation still owns this session.")
         if self._ordinary_native_commit_tasks(ticket.session_id):
             raise RuntimeError("An ordinary save still owns this session.")
-        state = self._session_close_states.pop(ticket.close_id, None)
-        if state is None or state[0] != ticket:
+        state = self._session_close_states.get(ticket.close_id)
+        if type(state) is not tuple or len(state) != 5 or state[0] is not ticket:
             raise RuntimeError("Console session close ticket is stale.")
         if self._session_close_generations.get(ticket.session_id) != ticket.generation:
             raise RuntimeError("Console session close generation changed.")
-        _stored_ticket, owns_active_stream, repair_session, previous_active_id = state
+        (
+            _stored_ticket,
+            owns_active_stream,
+            repair_session,
+            previous_active_id,
+            legacy_subject,
+        ) = state
+        if legacy_subject is None:
+            # An attached native runtime cannot turn a removed close subject
+            # into the ordinary standalone route.
+            runtime = vars(self).get("_hooks_v2_runtime")
+            original_runtime = vars(self).get("_original_mcp_capture_runtime")
+            if original_runtime is not None and runtime is not original_runtime:
+                raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+            if runtime is not None:
+                from .console_runtime import ConsoleRuntime
+
+                if type(runtime) is ConsoleRuntime:
+                    source = _ORIGINAL_CURRENTNESS_SOURCE
+                    reader_record, checker_record = source[4][-1][1], source[5]
+                    if (
+                        checker_record[0].__code__ is not checker_record[1]
+                        or not checker_record[0](reader_record)
+                        or reader_record[0](source, "platform")
+                    ):
+                        raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+        if legacy_subject is not None:
+            if (
+                type(legacy_subject) is not _LegacyCloseSubject
+                or vars(_LegacyCloseSubject).get(
+                    "__getattribute__", object.__getattribute__
+                )
+                is not object.__getattribute__
+                or vars(_LegacyCloseSubject).get("__setattr__", object.__setattr__)
+                is not object.__setattr__
+                or any(
+                    name in vars(_LegacyCloseSubject)
+                    for name in ("runtime", "store", "session", "identity", "hook_lock")
+                )
+                or any(
+                    vars(_LegacyCloseSubject).get(name, object()) is not None
+                    for name in (
+                        "mode",
+                        "issuer",
+                        "engine",
+                        "permissions",
+                        "definitions",
+                        "witness",
+                        "condition",
+                        "events",
+                        "admissions",
+                        "source_observation",
+                    )
+                )
+            ):
+                raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+            record = legacy_subject.definitions[0]
+            ready_record = next(
+                item for name, item in record[4] if name == "_legacy_close_ready"
+            )
+            checker = _ORIGINAL_CURRENTNESS_SOURCE[5]
+            if (
+                checker[0].__code__ is not checker[1]
+                or vars(ConsoleChatController).get("_legacy_close_ready")
+                is not ready_record[0]
+                or not checker[0](ready_record)
+            ):
+                raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+            ready_record[0](self, ticket, state, legacy_subject)
+            ready_record[0](self, ticket, state, legacy_subject)
+        self._session_close_states.pop(ticket.close_id)
         session_id = ticket.session_id
         # Session-scoped grants die only after the close ticket is validated.
         self._chat_create_session_grants.pop(session_id, None)
@@ -15815,11 +16450,72 @@ class ConsoleChatController:
         )
         # TASK-33620.15.1: composed here, on the loop, or reused while nothing
         # it read has changed; ``None`` = switched off or a read failed.
+        from .console_ordinary_tree import bind_ordinary_tree, current_ordinary_tree
         from .console_run_start_tools import compose_run_mcp_provider
 
-        provider = await compose_run_mcp_provider(
-            service, uncomposed, local_kill_switch
-        )
+        ordinary = current_ordinary_tree(self)
+        if ordinary is None:
+            from types import ModuleType as _currentness_module_type
+
+            # Read the canonical package binding, including this module, before its anchor.
+            from tldw_chatbook.Chat import (
+                console_chat_controller as _currentness_controller,  # noqa: PLW0406
+            )
+            from tldw_chatbook.Chat import console_runtime as _currentness_runtime
+
+            _currentness_source = _ORIGINAL_CURRENTNESS_SOURCE
+            if (
+                type(_currentness_runtime) is not _currentness_module_type
+                or type(_currentness_controller) is not _currentness_module_type
+                or _currentness_source is not vars(_currentness_runtime).get("_ORIGINAL_CURRENTNESS_SOURCE")
+                or _currentness_source is not vars(_currentness_controller).get("_ORIGINAL_CURRENTNESS_SOURCE")
+                or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_runtime") is not _currentness_runtime
+                or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_chat_controller") is not _currentness_controller
+            ):
+                raise RuntimeError("original native currentness consumer changed")
+            _currentness_record = _currentness_source[4][-1][1]
+            _currentness_reader, _currentness_code, _currentness_defaults, _currentness_kwdefaults, _currentness_entries, _currentness_closure, _currentness_cells = _currentness_record
+            if (
+                _currentness_reader.__code__ is not _currentness_code
+                or _currentness_reader.__defaults__ is not _currentness_defaults
+                or _currentness_reader.__kwdefaults__ is not _currentness_kwdefaults
+                or tuple((_currentness_kwdefaults or {}).items()) != _currentness_entries
+                or _currentness_reader.__closure__ is not _currentness_closure
+                or any(cell.cell_contents is not value for cell, value in _currentness_cells)
+            ):
+                raise RuntimeError("original native currentness dispatcher changed")
+
+            preparation = _currentness_reader(_currentness_source, 'workflow', self)
+            if preparation is None:
+                provider = await compose_run_mcp_provider(
+                    service, uncomposed, local_kill_switch
+                )
+            else:
+                operation = preparation.borrow_preparation(
+                    self._hooks_v2_runtime
+                ).reserve_tool()
+                with preparation.activate_source():
+                    try:
+                        provider = await compose_run_mcp_provider(
+                            service, uncomposed, local_kill_switch
+                        )
+                    finally:
+                        operation.finish()
+        else:
+            operation = ordinary.borrow(
+                self._hooks_v2_runtime, opaque=False
+            ).reserve_tool()
+            with (
+                ordinary.source.activate()
+                if ordinary.source is not None
+                else bind_ordinary_tree(ordinary)
+            ):
+                try:
+                    provider = await compose_run_mcp_provider(
+                        service, uncomposed, local_kill_switch
+                    )
+                finally:
+                    operation.finish()
         if provider is None:
             publish(None, None)
             return None
@@ -16090,6 +16786,12 @@ class ConsoleChatController:
             and this run's ``build_local_review_hook``-built batch-review
             closure; ``(None, None)`` otherwise.
         """
+        from .console_ordinary_tree import current_ordinary_tree
+
+        ordinary = current_ordinary_tree(self)
+        if ordinary is not None:
+            ordinary.check_local_sources()
+
         # task-3240 fix round 1 (Critical 2): get_cli_setting returns the RAW
         # TOML value -- a hand-typed quoted "false" is a non-empty string
         # and therefore truthy under bare `not` truthiness, which would
@@ -16184,61 +16886,98 @@ class ConsoleChatController:
         else:
             root = project_root
             authority_scope = None
-        subscriptions_db = getattr(self.app, "subscriptions_db", None)
-        watchlists_service = WatchlistsToolService(
-            db_resolver=lambda: subscriptions_db,
-            # Owner-module loader (TASK-18609): constructing the store here
-            # violated the runtime-policy ownership boundary.
-            runtime_source_loader=load_default_runtime_source_state,
+        from types import ModuleType as _currentness_module_type
+
+        # Read the canonical package binding, including this module, before its anchor.
+        from tldw_chatbook.Chat import (
+            console_chat_controller as _currentness_controller,  # noqa: PLW0406
         )
-        local_watchlists_service = getattr(self.app, "local_watchlists_service", None)
-        watchlist_bundle_service = getattr(self.app, "watchlist_bundle_service", None)
-        watchlists_coordinator = getattr(
-            self.app,
-            "watchlists_operation_coordinator",
-            None,
-        )
+        from tldw_chatbook.Chat import console_runtime as _currentness_runtime
 
-        def _create_collection(**kwargs: Any) -> Any:
-            if watchlist_bundle_service is None:
-                raise RuntimeError("Watchlists collection service unavailable")
-            return watchlist_bundle_service.create_with_sources(**kwargs)
+        _currentness_source = _ORIGINAL_CURRENTNESS_SOURCE
+        if (
+            type(_currentness_runtime) is not _currentness_module_type
+            or type(_currentness_controller) is not _currentness_module_type
+            or _currentness_source is not vars(_currentness_runtime).get("_ORIGINAL_CURRENTNESS_SOURCE")
+            or _currentness_source is not vars(_currentness_controller).get("_ORIGINAL_CURRENTNESS_SOURCE")
+            or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_runtime") is not _currentness_runtime
+            or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_chat_controller") is not _currentness_controller
+        ):
+            raise RuntimeError("original native currentness consumer changed")
+        _currentness_record = _currentness_source[4][-1][1]
+        _currentness_reader, _currentness_code, _currentness_defaults, _currentness_kwdefaults, _currentness_entries, _currentness_closure, _currentness_cells = _currentness_record
+        if (
+            _currentness_reader.__code__ is not _currentness_code
+            or _currentness_reader.__defaults__ is not _currentness_defaults
+            or _currentness_reader.__kwdefaults__ is not _currentness_kwdefaults
+            or tuple((_currentness_kwdefaults or {}).items()) != _currentness_entries
+            or _currentness_reader.__closure__ is not _currentness_closure
+            or any(cell.cell_contents is not value for cell, value in _currentness_cells)
+        ):
+            raise RuntimeError("original native currentness dispatcher changed")
 
-        def _update_collection_sources(**kwargs: Any) -> Any:
-            if watchlist_bundle_service is None:
-                raise RuntimeError("Watchlists collection service unavailable")
-            return watchlist_bundle_service.update_sources(**kwargs)
-
-        def _create_sources_batch(rows: list[Mapping[str, Any]]) -> Any:
-            if local_watchlists_service is None:
-                raise RuntimeError("Watchlists source service unavailable")
-            return local_watchlists_service.create_sources_exact_batch_sync(rows)
-
-        watchlists_command_service = getattr(
-            self.app, "watchlists_command_service", None
-        )
-        if watchlists_command_service is None:
-            watchlists_command_service = WatchlistsCommandService(
+        planning = _currentness_reader(_currentness_source, 'planning', self)
+        watchlists_service = watchlists_command_service = None
+        if planning is None:
+            subscriptions_db = getattr(self.app, "subscriptions_db", None)
+            watchlists_service = WatchlistsToolService(
+                db_resolver=lambda: subscriptions_db,
+                # Owner-module loader (TASK-18609): constructing the store here
+                # violated the runtime-policy ownership boundary.
                 runtime_source_loader=load_default_runtime_source_state,
-                create_sources_batch=_create_sources_batch,
-                create_collection=_create_collection,
-                update_collection_sources=_update_collection_sources,
-                accept_source_checks=(
-                    watchlists_coordinator.submit_checks
-                    if watchlists_coordinator is not None
-                    else None
-                ),
-                accept_briefing=(
-                    watchlists_coordinator.submit_briefing
-                    if watchlists_coordinator is not None
-                    else None
-                ),
-                resolve_collection_sources=(
-                    watchlist_bundle_service.list_sources
-                    if watchlist_bundle_service is not None
-                    else None
-                ),
             )
+            local_watchlists_service = getattr(
+                self.app, "local_watchlists_service", None
+            )
+            watchlist_bundle_service = getattr(
+                self.app, "watchlist_bundle_service", None
+            )
+            watchlists_coordinator = getattr(
+                self.app,
+                "watchlists_operation_coordinator",
+                None,
+            )
+
+            def _create_collection(**kwargs: Any) -> Any:
+                if watchlist_bundle_service is None:
+                    raise RuntimeError("Watchlists collection service unavailable")
+                return watchlist_bundle_service.create_with_sources(**kwargs)
+
+            def _update_collection_sources(**kwargs: Any) -> Any:
+                if watchlist_bundle_service is None:
+                    raise RuntimeError("Watchlists collection service unavailable")
+                return watchlist_bundle_service.update_sources(**kwargs)
+
+            def _create_sources_batch(rows: list[Mapping[str, Any]]) -> Any:
+                if local_watchlists_service is None:
+                    raise RuntimeError("Watchlists source service unavailable")
+                return local_watchlists_service.create_sources_exact_batch_sync(rows)
+
+            watchlists_command_service = getattr(
+                self.app, "watchlists_command_service", None
+            )
+            if watchlists_command_service is None:
+                watchlists_command_service = WatchlistsCommandService(
+                    runtime_source_loader=load_default_runtime_source_state,
+                    create_sources_batch=_create_sources_batch,
+                    create_collection=_create_collection,
+                    update_collection_sources=_update_collection_sources,
+                    accept_source_checks=(
+                        watchlists_coordinator.submit_checks
+                        if watchlists_coordinator is not None
+                        else None
+                    ),
+                    accept_briefing=(
+                        watchlists_coordinator.submit_briefing
+                        if watchlists_coordinator is not None
+                        else None
+                    ),
+                    resolve_collection_sources=(
+                        watchlist_bundle_service.list_sources
+                        if watchlist_bundle_service is not None
+                        else None
+                    ),
+                )
 
         from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 
@@ -16296,9 +17035,9 @@ class ConsoleChatController:
             admitted_roots=admitted_roots,
             project_index_service=project_index_service,
             project_index_scopes=project_index_scopes,
-            **self._todo_wiring(session_id),
-            **self._ask_user_wiring(session_id),
-            **self._character_wiring(session_id),
+            **({} if planning is not None else self._todo_wiring(session_id)),
+            **({} if planning is not None else self._ask_user_wiring(session_id)),
+            **({} if planning is not None else self._character_wiring(session_id)),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
 
@@ -16673,6 +17412,11 @@ class ConsoleChatController:
         factory = self._library_provider_factory
         if factory is None:
             return None
+        from .console_ordinary_tree import current_ordinary_tree
+
+        ordinary = current_ordinary_tree(self)
+        if ordinary is not None:
+            ordinary.check_library_factory()
         provider = factory(turn_context)
         if provider is None:
             return None
@@ -18274,6 +19018,7 @@ class ConsoleChatController:
                     if owner.session.id == session_id:
                         owner.explicit_stop = True
             self._signal_stop(session_id=session_id)
+            self.prompt_queue_coordinator.pause_for_stop(session_id)
             for task in native_tasks:
                 if task is not asyncio.current_task():
                     task.cancel()
@@ -20799,11 +21544,20 @@ class ConsoleChatController:
             its budget.
         """
 
+        from .console_ordinary_tree import (
+            current_ordinary_tree,
+            run_ordinary_preparation,
+        )
+
+        ordinary = current_ordinary_tree(self)
+        if ordinary is not None:
+            ordinary.check_personal_source()
         getter = getattr(
             getattr(self, "app", None), "get_personal_context_service", None
         )
         if not callable(getter):
             return None
+        owned_task = None
         if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
             return None
         _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
@@ -20821,7 +21575,12 @@ class ConsoleChatController:
             # to the executor; the worker is running now, so re-assert it.
             _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
             try:
-                return getter()
+                if ordinary is not None:
+                    ordinary.check_personal_source()
+                result = getter()
+                if ordinary is not None:
+                    ordinary.check_personal_source()
+                return result
             finally:
                 _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
 
@@ -20832,12 +21591,36 @@ class ConsoleChatController:
             that worker is still parked on the app's bootstrap lock, which is
             exactly what the guard exists to stop later sends from joining.
             """
-            if not started.is_set():
+            if owned_task is None and not started.is_set():
                 _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
 
         try:
+            if ordinary is not None:
+                owned_task = asyncio.create_task(
+                    run_ordinary_preparation(
+                        self,
+                        _bootstrap,
+                        opaque=not ordinary.personal_native,
+                    )
+                )
+                retained = getattr(self, "_ordinary_preparation_tasks", None)
+                if retained is None:
+                    retained = self._ordinary_preparation_tasks = set()
+                retained.add(owned_task)
+
+                def returned(done):
+                    retained.discard(done)
+                    if not started.is_set():
+                        _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+                    if not done.cancelled():
+                        done.exception()
+
+                owned_task.add_done_callback(returned)
+                pending = asyncio.shield(owned_task)
+            else:
+                pending = asyncio.to_thread(_bootstrap)
             return await asyncio.wait_for(
-                asyncio.to_thread(_bootstrap),
+                pending,
                 CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
             )
         except (asyncio.TimeoutError, TimeoutError):
@@ -20993,14 +21776,22 @@ class ConsoleChatController:
                     project_selection.binding.binding_id,
                 )
                 return None
-            return await asyncio.to_thread(
-                ProjectInstructionResolver(remote_io=remote_io).resolve_startup,
-                binding_id=project_selection.binding.binding_id,
-                binding_root=project_selection.root,
-                locator_fingerprint=project_selection.locator_fingerprint,
-                max_bytes=startup_max_bytes,
-                dispatch_started_wall_ns=time.time_ns(),
-                excluded_dirs=_project_instruction_excluded_dirs(project_selection),
+            from .console_ordinary_tree import run_ordinary_preparation
+            from .console_ssh_custody import capture_preparation_ssh
+
+            return await run_ordinary_preparation(
+                self,
+                functools.partial(
+                    ProjectInstructionResolver(remote_io=remote_io).resolve_startup,
+                    binding_id=project_selection.binding.binding_id,
+                    binding_root=project_selection.root,
+                    locator_fingerprint=project_selection.locator_fingerprint,
+                    max_bytes=startup_max_bytes,
+                    dispatch_started_wall_ns=time.time_ns(),
+                    excluded_dirs=_project_instruction_excluded_dirs(project_selection),
+                ),
+                ssh=capture_preparation_ssh(io=remote_io),
+                opaque=True,
             )
         except Exception:  # noqa: BLE001 - prep failure proceeds
             # Content-free by design: no exception text is attached (a
@@ -21665,8 +22456,8 @@ class ConsoleChatController:
             return {key: getattr(snapshot, key) for key in keys}
         session = next(item for item in self.store.sessions() if item.id == session_id)
         workspace_id = self.store.session_workspace_id(session_id)
-        roots, _aliases, _skipped = read_session_change_review_admission(
-            self.app, self.store, session_id
+        roots, _aliases, _skipped = capture_change_review_metadata(
+            self.app, workspace_id
         )
         return {
             "workspace_roots": roots,
@@ -21761,7 +22552,7 @@ class ConsoleChatController:
         console_config = app_config.get("console", {})
         if not isinstance(console_config, Mapping):
             console_config = {}
-        return capture_console_turn_configuration(
+        configuration = capture_console_turn_configuration(
             self.app,
             self.store,
             session_id,
@@ -21822,7 +22613,16 @@ class ConsoleChatController:
             ),
             persona_policy_rules=resolve_turn_persona_policy_rules(self.app, session),
             mcp_definition_maximum=mcp_definition_maximum,
+            _capture_creator=self,
         )
+        if (
+            configuration.mcp_capture_pending
+            or configuration.change_review_capture_pending
+        ):
+            from .console_configuration_preparation import remember_pending_mcp_capture
+
+            remember_pending_mcp_capture(self, session, configuration)
+        return configuration
 
     def resolve_turn_execution_context(
         self, session_id: str
@@ -21850,6 +22650,7 @@ class ConsoleChatController:
             raise KeyError(f"Unknown Console session: {session_id}")
 
         coordinator = self.store.library_policy_coordinator
+        first_library_read = None
         if coordinator is None:
             policy = ConsoleLibraryPolicySnapshot(
                 auto_retrieve=ConsoleAutoRetrieve.NEVER,
@@ -21859,6 +22660,19 @@ class ConsoleChatController:
                 error_code="policy_read_error",
             )
         else:
+            from .console_configuration_preparation import (
+                begin_first_library_execution_read,
+            )
+
+            try:
+                first_library_read = begin_first_library_execution_read(
+                    self,
+                    session,
+                    configuration,
+                    coordinator,
+                )
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                first_library_read = None
             try:
                 from .console_received_dispatch import capture_received_library_policy
 
@@ -21896,6 +22710,20 @@ class ConsoleChatController:
         )
         frozen_policy = configuration.library_policy_maximum
         if frozen_policy is not None:
+            from .console_configuration_preparation import (
+                finish_first_library_execution_read,
+            )
+
+            try:
+                first_publication = finish_first_library_execution_read(
+                    self,
+                    session,
+                    configuration,
+                    policy,
+                    first_library_read,
+                )
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                first_publication = False
             live_narrowed = (
                 policy.auto_retrieve is ConsoleAutoRetrieve.NEVER
                 and frozen_policy.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
@@ -21906,7 +22734,7 @@ class ConsoleChatController:
             )
             # TASK-33621.17: a temporary chat saved after this ceiling froze
             # (Save & Send) has a durable policy row the commit checks against.
-            live_identity = live_narrowed or (
+            live_identity = live_narrowed or first_publication or (
                 frozen_policy.source == "temporary" and policy.source == "durable"
             )
             policy = ConsoleLibraryPolicySnapshot(
@@ -22194,392 +23022,15 @@ class ConsoleChatController:
         invocation_source: str | None = None,
         reference_offsets: tuple[tuple[int, int], ...] = (),
     ) -> tuple[list[dict[str, Any]], str | None, tuple[str, ...], tuple[str, ...], str]:
-        """Render-fresh the triggering turn's skill mention(s) at payload build time.
+        from .console_plugin_context import _substitute_skills as _implementation
 
-        Spec: "Invocation semantics" §5 (the substitution rule) -- one rule
-        for fresh sends AND retry/regenerate/continue. Only the FINAL
-        ``role == "user"`` message in ``provider_messages`` (the turn
-        actually driving this send) is ever a substitution candidate; every
-        earlier message -- including an earlier raw skill mention sitting
-        in history -- is left untouched, so the persisted transcript always
-        keeps the literal text the user typed (the raw mention is what gets
-        submitted and stored; only the ephemeral provider payload for this
-        turn is ever rendered). Re-resolves against a FRESH candidate
-        snapshot and re-verifies trust through ``execute_skill`` on every
-        call (never a cached snapshot), so a retry issued after a skill was
-        edited (now untrusted) refuses/skips instead of silently re-running
-        a stale render.
-
-        Both forms are DETECTED against trusted candidates UNION
-        user-invocable blocked (needs-review) skills -- a blocked skill must
-        still be found (leading refuses, embedded degrades to literal +
-        note) rather than silently staying plain, sigil-prefixed text with
-        no signal at all. `execute_skill` remains the sole trust authority;
-        detection here never grants execution.
-
-        Two independent forms, tried in order:
-
-        Leading form -- the message, with leading whitespace stripped
-        (mirroring `_annotate_skill_commands`'s own preview `lstrip()`
-        assumption -- a resolved leading mention replaces the whole message
-        either way, so the leading whitespace simply disappears), starts
-        with `MENTION_SIGIL` and the leading word resolves to a known
-        skill: the REST of the (stripped) message is passed as that skill's
-        args (`cap_skill_args`). A resolved leading mention is never also
-        scanned for embedded mentions -- its args are opaque payload, not
-        further mentions to expand.
-
-        Embedded form -- tried whenever the leading form doesn't apply (no
-        leading `MENTION_SIGIL`, or the leading word doesn't resolve):
-        scans the ORIGINAL (unstripped) message. Every `$skill-name`
-        mention anywhere in the message (case-sensitive, code-span-masked,
-        document order -- `find_embedded_mentions`) is looked up ARGLESS
-        (`execute_skill(name, mode="local", args="")`, once per unique
-        name, right-to-left splice so earlier spans stay valid) and spliced
-        in place at the mention's exact span, preserving all surrounding
-        prose. Only an ``execution_mode == "inline"`` result splices;
-        anything else (e.g. ``fork``, which has no "in place" meaning for
-        an embedded mention) silently leaves that mention's literal `$name`
-        text untouched. A trust-blocked mention (`SkillTrustBlockedError`)
-        also leaves the literal text untouched but records a
-        `SKILL_MENTION_SKIPPED_NOTE` for the caller to surface as a
-        non-aborting system row.
-
-        Args:
-            provider_messages: The fully-built payload about to be sent to
-                the provider (already includes any leading session-system
-                message and any synthesized continuation instruction).
-
-        Returns:
-            A 5-tuple ``(provider_messages, refuse, notes, skill_bindings,
-            skill_bundle_block)`` (Task 5, skills-fork-reachability).
-            ``skill_bindings`` is the leading-RESOLVED skill's name (both
-            ``inline`` and ``fork`` outcomes -- never on refuse) plus every
-            embedded mention name that actually SPLICED (never a
-            trust-blocked-literal or fork-literal mention).
-            ``skill_bundle_block`` is the fully-rendered "Bundled files"
-            block (`_render_skill_bundle_block`) for every bound skill
-            whose `execute_skill` result carried non-empty
-            `reference_files`, built as pure string work from the results
-            already in hand this call (no re-execution, no extra service
-            calls), or ``""`` when nothing bound has any. It is NEVER
-            inserted into ``provider_messages`` here -- only ``run_reply``
-            (bridge-side) ever appends it, so plain sends and the stored
-            transcript never see it.
-
-            ``(provider_messages, None, (), (), "")`` unchanged when there
-            is no skills service configured, substitution is disabled,
-            there is no final user message, that message's content isn't a
-            string, or neither form applies. ``(new_messages, None, notes,
-            skill_bindings, skill_bundle_block)`` when the leading form
-            resolves and renders (``notes`` always empty for the leading
-            form) or when the embedded pass splices one or more mentions
-            (``notes`` carries one `SKILL_MENTION_SKIPPED_NOTE` per unique
-            trust-blocked mention name, in document order); ``inline``
-            replaces just the final message in place (history preserved);
-            leading-form ``fork`` drops every message before it except a
-            leading ``role == "system"`` message (clean context = session
-            system prompt + rendered turn only).
-            ``(provider_messages, refuse_copy, (), (), "")`` -- the
-            ORIGINAL, unmodified messages, paired with
-            `SKILL_UNTRUSTED_REFUSE` copy -- when a LEADING resolved skill
-            is no longer trusted (`SkillTrustBlockedError` at
-            execute-time); the caller must append `refuse_copy` as a
-            system row and abort the turn without sending. An embedded
-            mention never refuses/aborts -- it degrades to a
-            literal-plus-note instead, and the send proceeds.
-        """
-        if self._skills_service is None or not self._skill_substitution_enabled:
-            return provider_messages, None, (), (), ""
-
-        final_index: int | None = None
-        for index in range(len(provider_messages) - 1, -1, -1):
-            if provider_messages[index].get("role") == ConsoleMessageRole.USER.value:
-                final_index = index
-                break
-        if final_index is None:
-            return provider_messages, None, (), (), ""
-
-        content = provider_messages[final_index].get("content")
-        if not isinstance(content, str):
-            return provider_messages, None, (), (), ""
-        source_content = content if invocation_source is None else invocation_source
-        if MENTION_SIGIL not in source_content:
-            # Fast path: no sigil anywhere means neither form can possibly
-            # apply -- plain-text sends never touch the skills service.
-            return provider_messages, None, (), (), ""
-
-        frozen_context = (
-            turn_context.skill_context_maximum if turn_context is not None else {}
+        return await _implementation(
+            self,
+            provider_messages,
+            turn_context,
+            invocation_source=invocation_source,
+            reference_offsets=reference_offsets,
         )
-
-        plugin_entries = {
-            item["name"]: item
-            for item in frozen_context.get("available_skills", ())
-            if item.get("plugin_owned")
-        }
-        local_service = getattr(self._skills_service, "local_service", None)
-        plugin_service = getattr(local_service, "plugin_service", None)
-        if plugin_entries:
-            try:
-                frozen_context = await plugin_service.admit(
-                    frozen_context, frozen_context["plugin_run_id"]
-                )
-                plugin_entries = {
-                    item["name"]: item
-                    for item in frozen_context["available_skills"]
-                    if item.get("plugin_owned")
-                }
-            except PermissionError:
-                return (
-                    provider_messages,
-                    "Plugin authority changed; review plugins and retry.",
-                    (),
-                    (),
-                    "",
-                )
-
-        def plugin_options(name: str) -> dict[str, str]:
-            entry = plugin_entries.get(name)
-            return {"plugin_admission": entry["plugin_admission"]} if entry else {}
-
-        def ensure_frozen_definition(name: str) -> None:
-            if name in plugin_entries:
-                return  # The plugin owner revalidates exact admission at execute.
-            expected = next(
-                (
-                    str(item.get("definition_digest"))
-                    for item in frozen_context.get("available_skills", ())
-                    if item.get("name") == name and item.get("definition_digest")
-                ),
-                None,
-            )
-            if expected is None:
-                return
-            local = getattr(self._skills_service, "local_service", None)
-            if local is None and hasattr(self._skills_service, "trust_service"):
-                local = self._skills_service
-            trust = getattr(local, "trust_service", None)
-            try:
-                current = trust.current_fingerprint_digest(name)
-            except Exception:  # noqa: BLE001 -- uncertainty revokes old authority
-                current = None
-            if current != expected:
-                raise SkillTrustBlockedError(
-                    skill_name=name,
-                    reason_code="skill_definition_changed",
-                    trust_status="quarantined_modified",
-                )
-
-        context = (
-            frozen_context
-            if frozen_context.get("backend") == "local"
-            else await self._skills_service.get_context(mode="local")
-        )
-        candidates = self._skill_candidates_from_context(context)
-        # DETECTION population = trusted candidates UNION user-invocable
-        # blocked (needs-review) skills. A blocked skill must still be
-        # DETECTED -- leading refuses, embedded degrades to literal + note
-        # -- rather than silently staying plain, sigil-prefixed text with no
-        # signal at all. `execute_skill` (not this resolution step) remains
-        # the sole authority on whether a resolved name may actually run:
-        # a name that resolves here to a blocked skill hits
-        # `SkillTrustBlockedError` at the `execute_skill` call below/in the
-        # embedded loop, which already drives the refuse/skip-with-note
-        # paths.
-        detection_candidates = candidates + self._skill_blocked_candidates_from_context(
-            context
-        )
-
-        # --- Leading form: message starts with a resolvable $skill-name.
-        # Leading whitespace is tolerated (stripped before the sigil check
-        # and the word/rest split) to match `_annotate_skill_commands`'s own
-        # `lstrip()` assumption in the preview -- a resolved leading mention
-        # replaces the ENTIRE message on both the inline-replace and fork
-        # paths, so the leading whitespace simply disappears either way.
-        stripped_content = source_content.lstrip()
-        if stripped_content.startswith(MENTION_SIGIL):
-            word, rest = _split_skill_command_word(stripped_content)
-            name = word[len(MENTION_SIGIL) :]
-            if name:
-                resolution = resolve_skill_command(name, rest, detection_candidates)
-                if resolution.kind == "resolved":
-                    args = (
-                        rest
-                        if plugin_entries.get(resolution.name, {}).get("plugin_kind")
-                        == "command"
-                        else cap_skill_args(rest)
-                    )
-                    try:
-                        ensure_frozen_definition(resolution.name)
-                        result = await self._skills_service.execute_skill(
-                            resolution.name,
-                            mode="local",
-                            args=args,
-                            **plugin_options(resolution.name),
-                        )
-                    except SkillTrustBlockedError as exc:
-                        refuse = SKILL_UNTRUSTED_REFUSE.format(
-                            name=resolution.name, reason=exc.reason_code
-                        )
-                        return provider_messages, refuse, (), (), ""
-
-                    rendered = (
-                        result.get("rendered_prompt", "")
-                        if isinstance(result, Mapping)
-                        else ""
-                    )
-                    rendered_message = {
-                        "role": ConsoleMessageRole.USER.value,
-                        "content": rendered,
-                    }
-                    execution_mode = (
-                        result.get("execution_mode")
-                        if isinstance(result, Mapping)
-                        else None
-                    )
-                    # Task 5: a resolved leading mention always binds its
-                    # name (fork AND inline outcomes -- never on refuse,
-                    # which already returned above) and its block is
-                    # rendered from this single execute_skill result.
-                    bindings = (resolution.name,)
-                    block = (
-                        _render_skill_bundle_block([result])
-                        if isinstance(result, Mapping)
-                        else ""
-                    )
-                    if execution_mode == "fork":
-                        leading = (
-                            [provider_messages[0]]
-                            if provider_messages
-                            and provider_messages[0].get("role")
-                            == ConsoleMessageRole.SYSTEM.value
-                            else []
-                        )
-                        return leading + [rendered_message], None, (), bindings, block
-
-                    new_messages = list(provider_messages)
-                    new_messages[final_index] = {
-                        **provider_messages[final_index],
-                        "content": rendered,
-                    }
-                    return new_messages, None, (), bindings, block
-
-        # --- Embedded pass: no leading mention, or the leading word didn't
-        # resolve to a known skill. Scans the ORIGINAL (unstripped) content
-        # -- the leading-whitespace tolerance above only applies to the
-        # leading form. `names` is the same detection population (trusted
-        # UNION user-invocable blocked) so a blocked mention is found and
-        # routed through the trust-blocked-note path below instead of
-        # staying invisible.
-        names = frozenset(candidate.name for candidate in detection_candidates)
-        mentions = find_embedded_mentions(source_content, names)
-        if not mentions:
-            return provider_messages, None, (), (), ""
-
-        rendered_by_name: dict[str, str | None] = {}
-        # Task 5: results_by_name only keeps a name's execute_skill result
-        # when that mention actually SPLICED (execution_mode == "inline")
-        # -- a blocked-literal or fork-literal mention's result is
-        # discarded here, so it can never leak into skill_bindings or the
-        # rendered bundle block below.
-        results_by_name: dict[str, Mapping[str, Any]] = {}
-        notes: list[str] = []
-        for mention in mentions:
-            if mention.name in rendered_by_name:
-                continue
-            try:
-                ensure_frozen_definition(mention.name)
-                result = await self._skills_service.execute_skill(
-                    mention.name,
-                    mode="local",
-                    args="",
-                    **plugin_options(mention.name),
-                )
-            except SkillTrustBlockedError:
-                rendered_by_name[mention.name] = None
-                notes.append(SKILL_MENTION_SKIPPED_NOTE.format(name=mention.name))
-                continue
-            execution_mode = (
-                result.get("execution_mode") if isinstance(result, Mapping) else None
-            )
-            rendered = (
-                result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
-            )
-            # Fork (or anything non-inline) cannot splice in place: leave
-            # the mention literal, no note (this is not a trust failure).
-            rendered_by_name[mention.name] = (
-                rendered if execution_mode == "inline" else None
-            )
-            if execution_mode == "inline" and isinstance(result, Mapping):
-                results_by_name[mention.name] = result
-
-        if plugin_entries:
-            from tldw_chatbook.Plugins.context import check_context_budget
-
-            try:
-                check_context_budget(
-                    [
-                        rendered_by_name[mention.name]
-                        for mention in mentions
-                        if mention.name in plugin_entries
-                        and rendered_by_name.get(mention.name) is not None
-                    ]
-                )
-                await plugin_service.check_entries(plugin_entries.values())
-            except PermissionError:
-                return (
-                    provider_messages,
-                    "Plugin context is unavailable or too large; review selected skills.",
-                    (),
-                    (),
-                    "",
-                )
-        new_content = content
-        for mention in reversed(mentions):
-            body = rendered_by_name.get(mention.name)
-            if body is None:
-                continue
-            start = mention.start + sum(
-                size for end, size in reference_offsets if end <= mention.start
-            )
-            end = mention.end + sum(
-                size for offset, size in reference_offsets if offset <= mention.end
-            )
-            new_content = new_content[:start] + body + new_content[end:]
-        if new_content == content:
-            return provider_messages, None, tuple(notes), (), ""
-        if plugin_entries:
-            from tldw_chatbook.Agents.agent_models import carry_plugin_context
-
-            new_content = carry_plugin_context(
-                new_content,
-                *(
-                    rendered_by_name[mention.name]
-                    for mention in mentions
-                    if rendered_by_name.get(mention.name) is not None
-                ),
-            )
-
-        # Task 5: bound names are every unique mention that actually
-        # spliced, in first-occurrence document order (`dict.fromkeys` on
-        # `mentions` dedups while preserving order) -- never a
-        # blocked-literal or fork-literal mention, which never reached
-        # `results_by_name`.
-        spliced_names = tuple(
-            name
-            for name in dict.fromkeys(mention.name for mention in mentions)
-            if rendered_by_name.get(name) is not None
-        )
-        block = _render_skill_bundle_block(
-            results_by_name[name] for name in spliced_names if name in results_by_name
-        )
-        new_messages = list(provider_messages)
-        new_messages[final_index] = {
-            **provider_messages[final_index],
-            "content": new_content,
-        }
-        return new_messages, None, tuple(notes), spliced_names, block
 
     @staticmethod
     def _preserve_plugin_text_transform(original: str, transformed: str) -> str:
@@ -22838,60 +23289,21 @@ class ConsoleChatController:
     def _skill_candidates_from_context(
         context: Any,
     ) -> tuple[SkillCommandCandidate, ...]:
-        """Build the user-invocable, trusted skill candidate population.
+        from .console_plugin_context import (
+            _skill_candidates_from_context as _implementation,
+        )
 
-        Mirrors ``ConsoleSkillController.
-        _console_skill_trusted_candidates_from_context``'s filter -- kept as
-        a small duplicate rather than a shared import because `Chat/`
-        business logic must not depend on `UI/Screens/` (project layering),
-        and `console_skill_resolver` deliberately stays unaware of trust/
-        context shape (see its own module docstring).
-        """
-        available = (
-            context.get("available_skills") if isinstance(context, Mapping) else None
-        )
-        return tuple(
-            SkillCommandCandidate(
-                name=str(item.get("name")),
-                description=str(item.get("description") or ""),
-            )
-            for item in (available or [])
-            if isinstance(item, Mapping)
-            and item.get("name")
-            and item.get("user_invocable", True)
-            and not item.get("trust_blocked", False)
-        )
+        return _implementation(context)
 
     @staticmethod
     def _skill_blocked_candidates_from_context(
         context: Any,
     ) -> tuple[SkillCommandCandidate, ...]:
-        """Build the user-invocable, trust-BLOCKED (needs-review) skill
-        candidate population.
+        from .console_plugin_context import (
+            _skill_blocked_candidates_from_context as _implementation,
+        )
 
-        Companion to `_skill_candidates_from_context`: unioned with it in
-        `_apply_skill_substitution` to widen the DETECTION population (never
-        the executable one) so a `$blocked-name` mention resolves a name
-        instead of silently staying literal, sigil-prefixed text with no
-        refusal or note at all. `execute_skill` remains the sole authority
-        on whether a resolved name may actually run -- candidates built here
-        are never executed directly by this method's caller. A blocked
-        skill flagged ``user_invocable: False`` is excluded, mirroring
-        `_skill_candidates_from_context`'s own filter discipline.
-        """
-        blocked = (
-            context.get("blocked_skills") if isinstance(context, Mapping) else None
-        )
-        return tuple(
-            SkillCommandCandidate(
-                name=str(item.get("name")),
-                description=str(item.get("description") or ""),
-            )
-            for item in (blocked or [])
-            if isinstance(item, Mapping)
-            and item.get("name")
-            and item.get("user_invocable", True)
-        )
+        return _implementation(context)
 
     @staticmethod
     def _validated_draft(
@@ -23371,16 +23783,21 @@ class ConsoleChatController:
         request = prompt.custody_request
         if request is None:
             raise RuntimeError("Queued prompt has no frozen custody request.")
-        return await self.submit_draft(
-            request.draft,
-            session_id=session_id,
-            origin=ConsoleSubmissionOrigin.QUEUED,
-            queue_entry_id=entry_id,
-            queue_authorization=authorization,
-            configuration=request.configuration,
-            accepted_attachments=(),
-            staged_evidence_launch=request.staged_evidence_launch,
-        )
+        from .console_configuration_preparation import use_pending_mcp_witness
+
+        with use_pending_mcp_witness(
+            prompt.mcp_capture_witness, prompt=prompt, authorization=authorization
+        ):
+            return await self.submit_draft(
+                request.draft,
+                session_id=session_id,
+                origin=ConsoleSubmissionOrigin.QUEUED,
+                queue_entry_id=entry_id,
+                queue_authorization=authorization,
+                configuration=request.configuration,
+                accepted_attachments=(),
+                staged_evidence_launch=request.staged_evidence_launch,
+            )
 
     def _notify_run_hook_approval(
         self, kind: str, payload: dict[str, Any], state: dict[str, Any]
@@ -28547,7 +28964,10 @@ class ConsoleChatController:
 
     def _arm_run_hooks_stop(self, session_id: str) -> None:
         """Register one accepted turn for a single terminal hook notification."""
-        self._run_hooks_stop_pending.add(session_id)
+        from .console_ordinary_tree import current_ordinary_tree
+
+        tree = current_ordinary_tree(self)
+        self._run_hooks_stop_pending[session_id] = tree.stop_notification if tree is not None else None
 
     def _set_run_state(
         self, run_state: ConsoleRunState, *, session_id: str | None = None
@@ -28586,7 +29006,39 @@ class ConsoleChatController:
             and previous_status is not ConsoleRunStatus.COMPLETED
             and target
         ):
-            self._maybe_schedule_micro_compaction(target)
+            from types import ModuleType as _currentness_module_type
+
+            # Read the canonical package binding, including this module, before its anchor.
+            from tldw_chatbook.Chat import (
+                console_chat_controller as _currentness_controller,  # noqa: PLW0406
+            )
+            from tldw_chatbook.Chat import console_runtime as _currentness_runtime
+
+            _currentness_source = _ORIGINAL_CURRENTNESS_SOURCE
+            if (
+                type(_currentness_runtime) is not _currentness_module_type
+                or type(_currentness_controller) is not _currentness_module_type
+                or _currentness_source is not vars(_currentness_runtime).get("_ORIGINAL_CURRENTNESS_SOURCE")
+                or _currentness_source is not vars(_currentness_controller).get("_ORIGINAL_CURRENTNESS_SOURCE")
+                or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_runtime") is not _currentness_runtime
+                or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_chat_controller") is not _currentness_controller
+            ):
+                raise RuntimeError("original native currentness consumer changed")
+            _currentness_record = _currentness_source[4][-1][1]
+            _currentness_reader, _currentness_code, _currentness_defaults, _currentness_kwdefaults, _currentness_entries, _currentness_closure, _currentness_cells = _currentness_record
+            if (
+                _currentness_reader.__code__ is not _currentness_code
+                or _currentness_reader.__defaults__ is not _currentness_defaults
+                or _currentness_reader.__kwdefaults__ is not _currentness_kwdefaults
+                or tuple((_currentness_kwdefaults or {}).items()) != _currentness_entries
+                or _currentness_reader.__closure__ is not _currentness_closure
+                or any(cell.cell_contents is not value for cell, value in _currentness_cells)
+            ):
+                raise RuntimeError("original native currentness dispatcher changed")
+
+            planning = _currentness_reader(_currentness_source, 'planning', self)
+            if planning is None or planning.session.id != target:
+                self._maybe_schedule_micro_compaction(target)
         if self._buddy_sink is not None:
             context_owners = self._buddy_run_owner_context.get() or {}
             if run_state.status is ConsoleRunStatus.VALIDATING:
@@ -28686,12 +29138,17 @@ class ConsoleChatController:
             ConsoleRunStatus.FAILED,
             ConsoleRunStatus.STOPPED,
         }:
-            self._run_hooks_stop_pending.discard(target)
+            original = self._run_hooks_stop_pending.pop(target)
             try:
-                engine = self._run_hooks_engine()
-                if engine is not None:
+                engine, custody = (
+                    original
+                    if original is not None
+                    else (self._run_hooks_engine(), None)
+                )
+                if engine is not None and (original is None or custody is not None):
                     engine.notify(
                         "Stop",
+                        _prepared=custody,
                         session_id=target,
                         data={
                             "status": {
@@ -29178,3 +29635,92 @@ def _stock_console_tool_composition_current(controller):
 _CONSOLE_TOOL_COMPOSITION_CHECKER = (_stock_console_tool_composition_current, _stock_console_tool_composition_current.__code__, globals())
 
 _CONSOLE_CONTEXT_PRESENTATION_READERS = tuple((name, function, function.__code__) for name in ("context_control_presentation_inputs", "_held_send_echo_id") for function in (getattr(ConsoleChatController, name),))
+_NATIVE_SSH_ADAPTER_METHODS = {
+    name: getattr(_RemoteExecutorDispatchAdapter, name) for name in ("execute", "ping")
+}
+
+_NATIVE_REMOTE_EXECUTOR_FACTORIES = (
+    _default_remote_run_executor_factory,
+    _default_remote_instruction_executor,
+)
+
+from tldw_chatbook.Agents.project_instruction_resolver import (
+    RemoteInstructionIO as _NativeRemoteInstructionIO,
+)
+
+_NATIVE_REMOTE_INSTRUCTION_IO_DESCRIPTORS = {
+    name: descriptor
+    for name, descriptor in vars(_NativeRemoteInstructionIO).items()
+    if name not in {"__module__", "__doc__", "__slots__"}
+}
+
+_NATIVE_ORDINARY_COMPOSITION_METHODS = tuple(
+    (name, vars(ConsoleChatController)[name])
+    for name in (
+        "_compose_local_provider",
+        "_compose_virtual_cli_provider",
+        "_compose_raw_shell_provider",
+        "_todo_wiring",
+        "_ask_user_wiring",
+        "_character_wiring",
+    )
+)
+
+_NATIVE_ORDINARY_COMPOSITION_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for _name, function in _NATIVE_ORDINARY_COMPOSITION_METHODS
+)
+
+
+# Exact planning terminal consumers; ordinary dispatch remains unchanged.
+from .console_ordinary_tree import _function_record as _planning_function_record
+
+_NATIVE_PLANNING_FINALIZERS = tuple(
+    (name, method, _planning_function_record(method))
+    for name in (
+        "_finalize_agent_reply",
+        "_finalize_agent_success",
+        "_finalize_agent_cancelled",
+        "_finalize_agent_failure",
+        "_complete_agent_message",
+        "_record_run_assistant_message",
+        "_ensure_assistant_placeholder",
+        "_set_run_state",
+    )
+    for method in (vars(ConsoleChatController)[name],)
+)
+_NATIVE_PLANNING_CONSENT_HELPERS = tuple(
+    (function.__name__, _planning_function_record(function))
+    for function in (
+        resolve_project_instruction_binding,
+        commit_project_instruction_dispatch_decision,
+        build_project_instruction_dispatch_notice,
+    )
+)
+
+_NATIVE_REFERENCE_SPLITTER = _planning_function_record(_split_skill_command_word)
+
+
+_NATIVE_LEGACY_CLOSE_CONTROLLER_SOURCE = (
+    ConsoleChatController,
+    _LegacyCloseSubject,
+    _LegacyClosePending,
+    _LEGACY_CLOSE_TICKET_DESCRIPTORS,
+    tuple(
+        (name, _planning_function_record(vars(ConsoleChatController)[name]))
+        for name in (
+            "__init__",
+            "begin_session_close",
+            "_legacy_close_ready",
+            "finalize_session_close",
+        )
+    ),
+)

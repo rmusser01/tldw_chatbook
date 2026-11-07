@@ -1299,6 +1299,19 @@ class RemoteWorkspaceToolExecutor:
         (shared across bindings on one host); the transport never
         retries — recovery is the status cache and the probe's job.
         """
+        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            with native.exchange(self, request_bytes) as request:
+                result = self._ssh_transport_call(request_bytes, budget=budget)
+                native.response(request, result)
+                return result
+        return self._ssh_transport_call(request_bytes, budget=budget)
+
+    def _ssh_transport_call(
+        self, request_bytes: bytes, *, budget: float
+    ) -> RemoteCallResult:
         cfg = self._ssh
         assert cfg is not None
         if cfg.session_key:
@@ -1509,11 +1522,30 @@ class RemoteWorkspaceToolExecutor:
                     f"recovery probe for {cfg.binding_id} failed: {error!r}"
                 )
 
-        threading.Thread(
-            target=_probe,
+        from contextvars import copy_context
+
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+        from tldw_chatbook.Chat.console_ssh_custody import capture_preparation_ssh
+
+        native = capture_preparation_ssh(self)
+        try:
+            callback = native.probe_worker(_probe) if native is not None else _probe
+        except CapacityRefused:
+            return  # Existing recovery work is best effort; no request was issued.
+        context = copy_context()
+        thread = threading.Thread(
+            target=lambda: context.run(callback),
             daemon=True,
             name=f"ssh-recovery-probe-{cfg.loc.host}",
-        ).start()
+        )
+        try:
+            thread.start()
+        except BaseException:
+            if thread.ident is not None:
+                thread.join()
+            elif native is not None:
+                native.unstarted()
+            raise
 
 
 def _require_ping_payload(payload: object) -> None:
@@ -1561,3 +1593,25 @@ __all__ = [
     "run_session_loopback",
     "split_fs_read_result",
 ]
+
+_NATIVE_SSH_METHODS = {
+    name: getattr(RemoteWorkspaceToolExecutor, name)
+    for name in (
+        "execute",
+        "ping",
+        "_execute_ssh",
+        "_ssh_ping",
+        "_verify_destination",
+        "_ssh_call",
+        "_ssh_transport_call",
+        "_ssh_session_call",
+        "_map_ssh_result",
+        "_parse_terminal",
+        "_build_request",
+    )
+}
+
+_NATIVE_SSH_FUNCTIONS = {
+    name: globals()[name]
+    for name in ("_encode_request", "_parse_worker_output", "_bundle_payload")
+}

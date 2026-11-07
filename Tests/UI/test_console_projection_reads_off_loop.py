@@ -30,6 +30,11 @@ import pytest
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_config_sync_cadence import _install_clock
+from Tests.UI.test_console_cited_sources_persisted import (
+    DIRECT,
+    _build_app as _build_persisted_console,
+    send_path as send_path,  # noqa: PLC0414 - expose the real dispatch fixture
+)
 from Tests.UI.test_console_send_acknowledgement import (
     build,
     eager_tasks,
@@ -374,8 +379,11 @@ async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_ti
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("send_path", [DIRECT], indirect=True)
 async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
     monkeypatch,
+    tmp_path,
+    send_path,
 ):
     """AC#3 (coalescing) and AC#5 (freshness: one poll interval at most).
 
@@ -384,72 +392,90 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
     clock stands still unless the test moves it. Projections are counted in
     the test's own task only.
     """
-    from Tests.UI.test_console_config_sync_cadence import _held_run
+    from Tests.UI.test_console_config_sync_cadence import _held_run, _run_over
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants
+    from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 
     clock = _install_clock(monkeypatch)
-    host, gateway, _timeline = build()
-    async with host.run_test(size=(160, 45)) as pilot:
-        with eager_tasks():
-            console = await _held_run(host, pilot, gateway)
-            timer = console._console_transcript_sync_timer
-            assert timer is not None, "the run start started no poll"
-            timer.pause()
-            owner = asyncio.current_task()
-            calls: list[bool] = []
-            real_project = console._sync_console_rail_and_controls
+    host, app, db, _gateway = _build_persisted_console(
+        tmp_path / "projection-chachanotes.sqlite",
+        send_path,
+        user_data_dir=config.get_user_data_dir(),
+    )
+    host, gateway, _timeline = build(host=host)
+    try:
+        mcp_binding = mcp_source_participants.binding(app.local_mcp_store)
+        assert mcp_binding is not None and mcp_binding[2] is True
+        async with host.run_test(size=(160, 45)) as pilot:
+            with eager_tasks():
+                console = await _held_run(host, pilot, gateway)
+                timer = console._console_transcript_sync_timer
+                assert timer is not None, "the run start started no poll"
+                timer.pause()
+                owner = asyncio.current_task()
+                calls: list[bool] = []
+                real_project = console._sync_console_rail_and_controls
 
-            def counting_project():
-                result = real_project()
-                if asyncio.current_task() is owner:
-                    calls.append(result)
-                return result
+                def counting_project():
+                    result = real_project()
+                    if asyncio.current_task() is owner:
+                        calls.append(result)
+                    return result
 
-            monkeypatch.setattr(
-                console, "_sync_console_rail_and_controls", counting_project
-            )
-
-            async def settled_sync() -> None:
-                await until(lambda: not console._console_sync_in_progress, timeout=30)
-                await console._sync_native_console_chat_ui()
-
-            async def tick() -> None:
-                await until(lambda: not console._console_sync_in_progress, timeout=30)
-                await timer._callback()
-
-            try:
-                await tick()  # The run start's own tick projects.
-                await until(lambda: True in calls, timeout=30)
-                cadence = config_sync._cadence(console)
-                before = len(calls)
-
-                # Three syncs requested within the poll interval: none projects.
-                for _ in range(3):
-                    await settled_sync()
-                assert len(calls) == before, (
-                    f"{len(calls) - before} explicit sync(s) projected inside the "
-                    "run start's poll interval"
+                monkeypatch.setattr(
+                    console, "_sync_console_rail_and_controls", counting_project
                 )
-                assert cadence.requested > cadence.served
 
-                # The next tick projects them, once.
-                await tick()
-                assert len(calls) == before + 1
-                assert cadence.requested == cadence.served
+                async def settled_sync() -> None:
+                    await until(lambda: not console._console_sync_in_progress, timeout=30)
+                    await console._sync_native_console_chat_ui()
 
-                # Freshness: a request with no projection for a poll interval
-                # projects at once, and so does one left waiting that long.
-                clock.now += config_sync.RUN_COALESCE_SECONDS
-                await settled_sync()
-                assert len(calls) == before + 2
-                await settled_sync()  # Within the interval again: it waits...
-                assert len(calls) == before + 2
-                clock.now += config_sync.RUN_COALESCE_SECONDS
-                await settled_sync()  # ...a poll interval at most.
-                assert len(calls) == before + 3
-                assert cadence.requested == cadence.served
-            finally:
-                gateway.validation_release.set()
-                timer.resume()
+                async def tick() -> None:
+                    await until(lambda: not console._console_sync_in_progress, timeout=30)
+                    await timer._callback()
+
+                try:
+                    await tick()  # The run start's own tick projects.
+                    await until(lambda: True in calls, timeout=30)
+                    cadence = config_sync._cadence(console)
+                    before = len(calls)
+
+                    # Three syncs requested within the poll interval: none projects.
+                    for _ in range(3):
+                        await settled_sync()
+                    assert len(calls) == before, (
+                        f"{len(calls) - before} explicit sync(s) projected inside the "
+                        "run start's poll interval"
+                    )
+                    assert cadence.requested > cadence.served
+
+                    # The next tick projects them, once.
+                    await tick()
+                    assert len(calls) == before + 1
+                    assert cadence.requested == cadence.served
+
+                    # Freshness: a request with no projection for a poll interval
+                    # projects at once, and so does one left waiting that long.
+                    clock.now += config_sync.RUN_COALESCE_SECONDS
+                    await settled_sync()
+                    assert len(calls) == before + 2
+                    await settled_sync()  # Within the interval again: it waits...
+                    assert len(calls) == before + 2
+                    clock.now += config_sync.RUN_COALESCE_SECONDS
+                    await settled_sync()  # ...a poll interval at most.
+                    assert len(calls) == before + 3
+                    assert cadence.requested == cadence.served
+                finally:
+                    gateway.validation_release.set()
+                    timer.resume()
+                await _run_over(console)
+                assert gateway.stream_calls == 1
+                send_path.assert_taken(sends=1)
+    finally:
+        gateway.validation_release.set()
+        await dispose_console_runtime(app)
+        db.close_connection()
 
 
 def test_a_stopping_poll_hands_a_request_it_was_left_to_the_running_sync():

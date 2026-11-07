@@ -13,7 +13,6 @@ from textual.reactive import reactive
 from textual import work
 
 # Local imports
-from tldw_chatbook.Stats.user_statistics import UserStatistics
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState, WorkbenchStatus
 from ..Workbench.workbench_widgets import DestinationHeader
@@ -198,6 +197,8 @@ class StatsScreen(BaseAppScreen):
                 return
 
             logger.info(f"Database instance obtained: {type(db)}")
+
+            from tldw_chatbook.Stats.user_statistics import UserStatistics
 
             # Calculate statistics
             stats_calculator = UserStatistics(db)

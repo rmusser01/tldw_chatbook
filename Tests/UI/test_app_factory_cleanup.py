@@ -302,3 +302,75 @@ async def test_canonical_disposal_detaches_before_original_database_retirement(
     finally:
         await shutdown()
         database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_native_send_sql_is_per_app_and_retires_without_removing_profile(request):
+    from pathlib import Path
+
+    from Tests.UI import app_factory
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery.mcp_source_participants import canonical_path
+
+    profile = config.get_user_data_dir()
+    apps = [
+        app_factory._build_test_app(user_data_dir=profile, isolate_databases=True)
+        for _ in range(2)
+    ]
+    directories = [Path(app.local_workspace_db.db_path).parent for app in apps]
+    assert directories[0] != directories[1]
+    assert all(directory != profile for directory in directories)
+    chats = [
+        app_factory.attach_chachanotes_db(app, db_path=directory / "chat.sqlite")
+        for app, directory in zip(apps, directories)
+    ]
+    apps[0].workspace_registry_service.create_workspace(
+        workspace_id="first-app-only", name="First app only"
+    )
+    assert apps[1].workspace_registry_service.get_workspace("first-app-only") is None
+    chats[0].add_note(title="First app only", content="Private fixture row")
+    assert chats[1].get_note_by_title("First app only") is None
+    owners = [
+        owner
+        for app in apps
+        for owner in (
+            app.local_library_collections_db,
+            app.local_workspace_db,
+            app.subscriptions_db,
+            app.evaluation_orchestrator.db,
+        )
+    ]
+    assert all(owner in app_factory._created_databases for owner in [*owners, *chats])
+    assert len({Path(owner.db_path) for owner in [*owners, *chats]}) == len(owners) + 2
+    for app in apps:
+        for source in (
+            app.local_mcp_store,
+            app.unified_mcp_target_store,
+            app.unified_mcp_context_store,
+        ):
+            assert canonical_path(source) == Path(source.path)
+            assert Path(source.path).parent == profile
+    connections = [
+        connection
+        for owner in owners
+        for connection in owner._maintenance_participant.connections
+    ] + [chat.get_connection() for chat in chats]
+    assert connections
+    worker_connection = await asyncio.to_thread(chats[0].get_connection)
+    assert worker_connection is not chats[0].get_connection()
+    assert worker_connection.execute("SELECT 1").fetchone()[0] == 1
+    connections.append(worker_connection)
+    from Tests import conftest as root_fixtures
+
+    cleanup = root_fixtures.retire_test_app_owners.__wrapped__(None, request)
+    await anext(cleanup)
+    with pytest.raises(StopAsyncIteration):
+        await anext(cleanup)
+    assert request.node._test_app_native_workers_uncertain is False
+    assert profile.is_dir()
+    assert all(not directory.exists() for directory in directories)
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connection.execute("SELECT 1")
+    assert all(not owner._maintenance_participant.connections for owner in owners)
+    assert all(chat.registered_connection_count() == 0 for chat in chats)

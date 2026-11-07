@@ -1,0 +1,3 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 4656, "time": 1793849018.619267}
+{"conversation": "eedec366-2df2-4d0b-8ee5-0d533792b08d", "event": "chat", "pid": 4656, "session": "9bc8dc25-5d35-47e3-9007-c2f4ac4a134d", "time": 1793849018.8526442}
+{"event": "ready", "label": "named-chat-tab", "pid": 4656, "time": 1793849020.347637}

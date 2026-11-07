@@ -54,6 +54,7 @@ def _reasoning_envelope(text: str) -> ThinkingEnvelope:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_thinking_row_edit_opens_modal_and_saves_block_text():
     app = _build_test_app()
@@ -73,6 +74,19 @@ async def test_thinking_row_edit_opens_modal_and_saves_block_text():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_until(
+            lambda: any(
+                transcript.thinking_detail_text(activity_id) == "original reasoning"
+                and any(
+                    row.is_mounted
+                    for row in transcript.query(
+                        f"#console-activity-disclosure-{activity_id}"
+                    )
+                )
+                for activity_id in transcript._thinking_activity_refs
+            ),
+            pilot,
+        )
         activity_id = next(iter(transcript._thinking_activity_refs))
         transcript.select_message(activity_id)
         await console._sync_native_console_chat_ui()

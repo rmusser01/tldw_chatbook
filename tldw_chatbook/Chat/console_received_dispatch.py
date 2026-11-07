@@ -18,6 +18,46 @@ if TYPE_CHECKING:
     from .console_received_intent import ConsoleReceivedTurnIntent
 
 
+def _attachment_receipt(controller, session_id):
+    from .console_received_turn import received_turn_claim_for
+
+    claim = received_turn_claim_for(controller.store, session_id)
+    runtime = controller._hooks_v2_runtime
+    if claim is None or runtime is None:
+        return None
+    record = runtime._turn_custody.get(claim.request_id)
+    if record is None or record.received_claim is not claim:
+        return None
+    runtime._require_received_custody_current(record, controller)
+    return record
+
+
+def received_attachment_metadata(controller, session_id):
+    """Read the original receipt's staged prefix without transferring it."""
+    record = _attachment_receipt(controller, session_id)
+    if record is None:
+        return None
+    if record.inputs.attachments_transferred:
+        return record.inputs.attachments
+    expected = record.request.attachment_ids
+    pending = tuple(record.store.pending_attachments(session_id))[: len(expected)]
+    if tuple(item.attachment_id for item in pending) != expected:
+        raise RuntimeError("Pending attachments changed before physical admission.")
+    return pending
+
+
+def admit_received_attachments(controller, session_id):
+    """Transfer only behind the originating asynchronous physical admission."""
+    record = _attachment_receipt(controller, session_id)
+    if record is None:
+        return None
+    if not record.inputs.attachments_transferred:
+        record.inputs.attachments = record.store.transfer_pending_attachments_to_turn(
+            session_id, record.turn_id, record.request.attachment_ids
+        )
+        record.inputs.attachments_transferred = True
+    return record.inputs.attachments
+
 
 def stock_native_methods(owner: Any, originals: tuple) -> bool:
     """Preserve custom outer and nested callback signatures and affinity."""
@@ -409,12 +449,6 @@ async def _run_received_intent_bound(runtime, record, source):
         runtime._note_received_admission_changed(store, record.session_id)
 
     require_received_source(runtime, record, source)
-    attachments = store.transfer_pending_attachments_to_turn(
-        record.session_id,
-        record.turn_id,
-        tuple(item.attachment_id for item in intent.inputs.attachments),
-    )
-    record.inputs.attachments = attachments
     record.inputs.staged_evidence_revision = intent.staged_evidence_revision
     record.request = ConsoleTurnCustodyRequest(
         turn_id=record.turn_id,
@@ -435,6 +469,14 @@ async def _run_received_intent_bound(runtime, record, source):
         goal_authorization=None,
         raise_on_refusal=True,
         hook_read=hook_read,
+        first_send_source=(
+            source.config_identity,
+            source.app_config,
+            source.controller,
+            source.store,
+            source.app,
+            source.config,
+        ),
     )
 
 

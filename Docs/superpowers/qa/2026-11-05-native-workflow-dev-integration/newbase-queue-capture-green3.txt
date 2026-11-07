@@ -1,0 +1,9 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+7.43s call     Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_queue_edit_retains_original_source_until_dispatch[False]
+6.52s call     Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_queue_edit_retains_original_source_until_dispatch[True]
+2.64s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_queue_edit_retains_original_source_until_dispatch[False]
+2.44s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_queue_edit_retains_original_source_until_dispatch[True]
+
+(2 durations < 1s hidden.)
+2 passed in 20.11s

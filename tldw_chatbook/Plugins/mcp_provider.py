@@ -205,6 +205,14 @@ class PluginMCPProvider(MCPToolProvider):
 
         return check
 
+    def _check_passive_result_permission(self, tool, args, decision, profile):
+        # Bind only the original permission profile, never a spent run/owner.
+        token = _permission_profile.set(profile)
+        try:
+            super()._check_passive_result_permission(tool, args, decision, profile)
+        finally:
+            _permission_profile.reset(token)
+
     def _apply_verdict(self, verdict, tool, args, *, unanswered=False):
         try:
             self._check_permission(tool, args)

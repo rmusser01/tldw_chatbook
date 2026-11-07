@@ -638,7 +638,8 @@ class ChangeReviewScreen(Screen):
                 tail, then cleared, so a later turn switch reverts to the
                 first leaf. An unmatched path degrades to the first leaf
                 rather than an empty pane.
-            initial_snapshot_id: When given alongside ``initial_path``,
+            initial_snapshot_id: Without a path, open the first file in this exact
+                snapshot or show its empty/unavailable state. With ``initial_path``,
                 prefer the leaf whose owning ``change_snapshots`` row id
                 equals this -- disambiguates two windows of the SAME run
                 that cover the same path (spec §2's same-run
@@ -1319,6 +1320,20 @@ class ChangeReviewScreen(Screen):
         self._initial_path = None
         self._initial_snapshot_id = None
 
+        if initial_path is None and initial_snapshot_id is not None:
+            for index, (row, _change) in enumerate(self._leaves):
+                if row.get("id") == initial_snapshot_id:
+                    self._focus_leaf(index)
+                    return
+            self._focused_leaf = -1
+            present = any(row.get("id") == initial_snapshot_id for row in turn.rows)
+            self._show_empty(
+                "No file changes in the selected snapshot."
+                if present
+                else "The selected snapshot is unavailable in this turn."
+            )
+            self._refresh_notes_strip()
+            return
         if self._leaves:
             # A path that doesn't exist in this turn (stale rail cache, a
             # revert since) degrades to the first leaf rather than an empty
@@ -3360,27 +3375,8 @@ class ChangeReviewScreen(Screen):
         self, rows_paths: list[tuple[dict, list[str]]], total: int
     ) -> None:
         """Read whole-turn overwrite warnings without blocking Textual."""
-        all_edited: list[str] = []
-        for row, paths in rows_paths:
-            preflight = await asyncio.to_thread(
-                self._provider.preflight_revert, row, paths
-            )
-            all_edited.extend(preflight.edited_since)
-
-        def _apply(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self.run_worker(
-                self._revert_rows(rows_paths),
-                group="change-review-revert",
-                exit_on_error=False,
-            )
-
-        self.app.push_screen(
-            ChangeRevertConfirmModal(
-                f"Undo all {total} files from this turn?", all_edited
-            ),
-            callback=_apply,
+        await self._prepare_revert_selection(
+            rows_paths, f"Undo all {total} files from this turn?"
         )
 
     def _confirm_and_revert(self, row: dict, paths: list[str], summary: str) -> None:
@@ -3394,27 +3390,19 @@ class ChangeReviewScreen(Screen):
         self, row: dict, paths: list[str], summary: str
     ) -> None:
         """Prepare one confirmation without hashing files on the UI thread."""
-        preflight = await asyncio.to_thread(self._provider.preflight_revert, row, paths)
+        await self._prepare_revert_selection([(row, paths)], summary)
 
-        def _apply(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self.run_worker(
-                self._revert_rows([(row, paths)]),
-                group="change-review-revert",
-                exit_on_error=False,
-            )
+    async def _prepare_revert_selection(self, rows_paths, summary):
+        from .change_review_actions import prepare_revert_selection
 
-        self.app.push_screen(
-            ChangeRevertConfirmModal(summary, preflight.edited_since), callback=_apply
+        await prepare_revert_selection(
+            self, rows_paths, summary, lambda: asyncio, lambda: ChangeRevertConfirmModal
         )
 
-    async def _revert_rows(self, rows_paths: list[tuple[dict, list[str]]]) -> None:
-        """Apply one confirmed selection off-thread, then update the screen."""
-        outcomes = []
-        for row, paths in rows_paths:
-            outcomes.extend(await self._run_revert(row, paths))
-        self._report_outcomes(outcomes)
+    async def _revert_rows(self, rows_paths, undo=None) -> None:
+        from .change_review_actions import revert_rows
+
+        await revert_rows(self, rows_paths, undo)
 
     async def _run_revert(self, row: dict, paths: list[str]) -> list:
         from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
@@ -3422,17 +3410,25 @@ class ChangeReviewScreen(Screen):
         try:
             return await asyncio.to_thread(self._provider.revert, row, paths)
         except RevertRefusedError as exc:
-            self.notify(str(exc), severity="warning")
+            self.notify(str(exc), severity="warning", markup=False)
             return []
 
     def _report_outcomes(self, outcomes: list) -> None:
         """Per-path honesty: failures are named, never rolled up silently."""
+        unsettled = [o for o in outcomes if not o.settled]
         failed = [o for o in outcomes if not o.ok]
-        if failed:
+        if unsettled:
+            self.notify(
+                "Undo changed files, but required history or bookkeeping is incomplete. "
+                "Native work remains protected.",
+                severity="error",
+            )
+        elif failed:
             names = ", ".join(f"{o.path} ({o.error})" for o in failed[:5])
             self.notify(
                 f"{len(failed)} file(s) could not be reverted: {names}",
                 severity="error",
+                markup=False,
             )
         elif outcomes:
             self.notify(f"Reverted {len(outcomes)} file(s).")

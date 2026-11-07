@@ -310,3 +310,14 @@ def get_canvas_execution_enabled() -> bool:
         diagnostics=[],
     )
     return enabled
+
+
+_NATIVE_ORDINARY_CANVAS_READER = (
+    get_canvas_execution_enabled,
+    get_canvas_execution_enabled.__code__,
+    get_canvas_execution_enabled.__defaults__,
+    get_canvas_execution_enabled.__kwdefaults__,
+    tuple((get_canvas_execution_enabled.__kwdefaults__ or {}).items()),
+    get_canvas_execution_enabled.__closure__,
+    (),
+)

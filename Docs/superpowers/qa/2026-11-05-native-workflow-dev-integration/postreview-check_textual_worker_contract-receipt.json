@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_textual_worker_contract.py"
+  ],
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 21.962,
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/postreview-check_textual_worker_contract.log",
+  "output_bytes": 266,
+  "qualification": "Production checkpoint announced stable; final before/after source receipt required."
+}

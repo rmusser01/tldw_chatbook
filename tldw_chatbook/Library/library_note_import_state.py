@@ -33,7 +33,6 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     planned_plan_change_count,
     resolved_wikilink_count,
 )
-from tldw_chatbook.Notes.note_import_planner import apply_item_override
 
 
 MAX_IMPORT_REVIEW_PAGE_SIZE = 25
@@ -742,6 +741,8 @@ def set_item_decision(
         and item.match.kind is ImportMatchKind.UNCERTAIN
     ):
         raise ValueError("The uncertain match must be confirmed before updating.")
+    from tldw_chatbook.Notes.note_import_planner import apply_item_override
+
     plan = apply_item_override(
         state.plan,
         item_id,

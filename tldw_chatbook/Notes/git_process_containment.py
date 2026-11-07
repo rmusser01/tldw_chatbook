@@ -60,7 +60,7 @@ class ProcessTreeControl(Protocol):
         *argv: ProcessArg,
         cwd: str,
         environment: Mapping[str, str],
-        stdin: bool,
+        stdin: bool | None,
     ) -> OwnedProcessTree:
         """Spawn and admit a direct child before returning.
 
@@ -68,7 +68,8 @@ class ProcessTreeControl(Protocol):
             *argv: Executable followed by its direct arguments.
             cwd: Working directory for the child.
             environment: Complete environment passed to the child.
-            stdin: Whether to create a writable standard-input pipe.
+            stdin: True creates a pipe; False uses DEVNULL. None inherits stdin
+                on POSIX (the qualified synchronous native capture caller only).
 
         Returns:
             The admitted child and its retained native containment identity.
@@ -149,7 +150,7 @@ class ProcessTreeController:
         *argv: ProcessArg,
         cwd: str,
         environment: Mapping[str, str],
-        stdin: bool,
+        stdin: bool | None,
     ) -> OwnedProcessTree:
         """Spawn one child and establish native containment before returning."""
         return await self._backend.spawn(
@@ -184,13 +185,19 @@ class _PosixProcessGroupController:
         *argv: ProcessArg,
         cwd: str,
         environment: Mapping[str, str],
-        stdin: bool,
+        stdin: bool | None,
     ) -> OwnedProcessTree:
         process = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
             env=dict(environment),
-            stdin=(asyncio.subprocess.PIPE if stdin else asyncio.subprocess.DEVNULL),
+            stdin=(
+                None
+                if stdin is None
+                else asyncio.subprocess.PIPE
+                if stdin
+                else asyncio.subprocess.DEVNULL
+            ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,

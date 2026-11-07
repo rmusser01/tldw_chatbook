@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_persistent_diagnostic_inventory.py"
+  ],
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 1,
+  "elapsed_seconds": 46.754,
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/postreview-check_persistent_diagnostic_inventory.log",
+  "output_bytes": 2409,
+  "qualification": "Production checkpoint announced stable; final before/after source receipt required."
+}

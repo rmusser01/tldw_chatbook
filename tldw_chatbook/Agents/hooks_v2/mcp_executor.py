@@ -142,6 +142,202 @@ class MCPHookContext:
         return name, provider
 
 
+@dataclass(frozen=True)
+class MCPHookSelection:
+    """Original metadata ceiling; admission callbacks remain in the real worker."""
+
+    context: MCPHookContext
+    handler: HookHandler
+    name: str
+    provider: object
+    definition: object
+    entry: tuple
+    service: object
+    generation: int
+    chain: tuple
+    context_key: tuple
+    source_bindings: tuple
+    maximum: tuple
+    plugin_mapping: str | None
+    schema: str
+
+    @classmethod
+    def capture(cls, context, handler, chain):
+        name, provider = context.resolve(handler)
+        definition = context.definition(ToolCall(name, {}, ""))
+        ancestry = (
+            tuple((h, t) for _, h, t in chain.visits)
+            if hasattr(chain, "visits")
+            else chain
+        )
+        if len(ancestry) >= 4 or any(
+            h == handler.id or t == definition.tool_id for h, t in ancestry
+        ):
+            raise ValueError("hook_dependency_cycle")
+        entry = provider._entry_by_llm_name[name]
+        if entry[1].state == "deny":
+            raise PermissionError("hook_mcp_tool_not_permitted")
+        executor = context.lifecycle.engine.mcp_executor
+        with executor._context_lock:
+            keys = tuple(
+                (kind, key)
+                for kind in ("_contexts", "_runtime_contexts", "_teardown_contexts")
+                for key, value in getattr(executor, kind).items()
+                if value is context
+            )
+        if not keys:
+            raise PermissionError("hook_mcp_original_context_unavailable")
+        # Equal replacement snapshots cannot inherit original event admission.
+        bindings = []
+        for source, names in (
+            (
+                provider,
+                (
+                    "_main_loop",
+                    "_persona_policy_provider",
+                    "_profile_id",
+                    "_runtime_source_provider",
+                    "_approval_callback",
+                    "plugins",
+                    "snapshot",
+                    "ownership",
+                ),
+            ),
+            (provider._service, ("local_service",)),
+            (provider._service, ("_permission_store", "_session_approvals")),
+            (provider._service.permission_store, ("path", "_permission_publication")),
+            (getattr(provider._service, "local_service", None), ("client", "store")),
+            (
+                getattr(provider, "plugins", None),
+                ("_thread", "_loop", "_coordinator", "_admission", "fences"),
+            ),
+        ):
+            bindings.extend(
+                (source, name, getattr(source, name, None)) for name in names
+            )
+        mappings = getattr(provider, "_tool_mappings", None)
+        return cls(
+            context,
+            handler,
+            name,
+            provider,
+            definition,
+            entry,
+            provider._service,
+            context.registry._catalog_generation,
+            ancestry + ((handler.id, definition.tool_id),),
+            keys,
+            tuple(bindings),
+            cls._maximum(provider),
+            json.dumps(mappings, sort_keys=True) if mappings is not None else None,
+            json.dumps(entry[0].input_schema, sort_keys=True),
+        )
+
+    @staticmethod
+    def _maximum(provider):
+        return (
+            provider._maximum_tool_ids,
+            None
+            if provider._maximum_definition_hashes is None
+            else frozenset(provider._maximum_definition_hashes.items()),
+            provider._owned_profile_ids,
+            provider._builtin_raw_name_exclusions,
+        )
+
+    def check_registration(self):
+        executor = self.context.lifecycle.engine.mcp_executor
+        if not any(
+            getattr(executor, kind).get(key) is self.context
+            for kind, key in self.context_key
+        ):
+            raise PermissionError("hook_mcp_original_registration_retired")
+
+    def check_memory(self):
+        if (
+            self.provider._service is not self.service
+            or any(
+                getattr(source, name, None) is not original
+                for source, name, original in self.source_bindings
+            )
+            or self._maximum(self.provider) != self.maximum
+            or (
+                self.plugin_mapping is not None
+                and json.dumps(self.provider._tool_mappings, sort_keys=True)
+                != self.plugin_mapping
+            )
+            or self.provider._entry_by_llm_name.get(self.name) is not self.entry
+            or self.context.registry._catalog_generation != self.generation
+            or json.dumps(self.entry[0].input_schema, sort_keys=True) != self.schema
+        ):
+            raise PermissionError("hook_mcp_original_selection_changed")
+        if self.plugin_mapping is not None:
+            from tldw_chatbook.Plugins.service import PluginService
+
+            if not PluginService.published_current(
+                self.provider.plugins, self.provider.snapshot
+            ):
+                raise PermissionError("hook_mcp_original_plugin_revoked")
+
+    def check(self):
+        self.check_registration()
+        self.check_memory()
+        if self.context.definition(ToolCall(self.name, {}, "")) != self.definition:
+            raise PermissionError("hook_mcp_original_definition_changed")
+
+
+class MCPHookPermission:
+    """Original actual grant receipt, refreshed outside host bookkeeping locks."""
+
+    def __init__(self, selection, grant):
+        if (
+            grant is None
+            or grant.provider is not selection.provider
+            or grant.tool is not selection.entry[0]
+        ):
+            raise PermissionError("hook_mcp_original_grant_unavailable")
+        self.selection, self.grant = selection, grant
+        self.store = selection.service._permission_store
+        self.publication = self.store._permission_publication
+        self.token = None
+        self.session_grant = (
+            (
+                dict(grant.profile).get("profile_id", "default"),
+                grant.tool.server_key,
+                grant.tool.name,
+            )
+            if grant.decision == "approved-session"
+            else None
+        )
+
+    def refresh(self):
+        self.token = None
+        self.selection.check_memory()
+        # This read observes disk edits as well as same-path store mutations.
+        # The actual provider then evaluates its original arguments/decision.
+        self.store.load()
+        before = self.publication.token
+        if before is None or self.publication.pending or self.publication.uncertain:
+            raise PermissionError("hook_mcp_permission_publication_unavailable")
+        self.grant.check()
+        self.selection.check_memory()
+        if self.publication.token is not before:
+            raise PermissionError("hook_mcp_permission_publication_changed")
+        self.token = before
+        self.check_memory()
+
+    def check_memory(self):
+        if (
+            self.token is None
+            or self.publication.token is not self.token
+            or self.publication.pending
+            or self.publication.uncertain
+            or self.store._mcp_persistence_error is not None
+            or self.session_grant is not None
+            and self.session_grant not in self.selection.service._session_approvals
+        ):
+            raise PermissionError("hook_mcp_original_permission_changed")
+
+
 @dataclass(eq=False)
 class _MCPDelivery:
     executor: object
@@ -165,6 +361,11 @@ class _MCPDelivery:
     pending_release: bool = False
     wait_depth: int = 0
     approval_depth: int = 0
+    native_target: object | None = None
+    native_plan: object | None = None
+    hook_run: object | None = None
+    chain: object | None = None
+    worker_returned: threading.Event = field(default_factory=threading.Event)
 
     @property
     def deadline(self):
@@ -181,6 +382,10 @@ class _MCPDelivery:
 
     def current(self):
         self.context.check()
+        if self.native_plan is not None:
+            self.native_plan.mcp.check_registration()
+            self.native_plan.mcp.check_memory()
+            self.native_target.event.source.check()
         for policy in self.inherited_policies:
             policy.check()
         engine = self.executor.engine
@@ -220,6 +425,7 @@ class _MCPDelivery:
     def terminal(self):
         return (
             self.worker is not None
+            and (self.native_target is None or self.worker_returned.is_set())
             and self.worker.done()
             and not self.worker.cancelled()
             and all(
@@ -397,6 +603,15 @@ class MCPHookExecutor:
         return bool(self._jobs)
 
     def start(self, event, handler, ticket, execution, cancellation, *, context=None):
+        from ..legacy_hook_ownership import current_target
+
+        target = current_target()
+        plan = execution.native.plans.get(handler.id) if target is not None else None
+        if target is not None:
+            if plan is None or plan.target is not target or plan.mcp is None:
+                raise PermissionError("hook_mcp_original_target_unavailable")
+            plan.mcp.check()
+            context = plan.mcp.context
         context = context or self._context(event)
         context.check()
         if event.event in {"Interrupt", "SessionEnd"}:
@@ -410,10 +625,30 @@ class MCPHookExecutor:
             cancellation,
             context,
             current_mcp_invocation_policies(),
+            native_target=target,
+            native_plan=plan,
         )
         job.active_started = time.monotonic()
+        if target is not None:
+            target.process_attempted()
+            target.retain_callback()
         self._jobs.add(job)
         job.task = asyncio.create_task(self._run(job))
+        if target is not None:
+
+            def returned(done):
+                target.proven = job.terminal()
+                if not target.proven:
+                    # The original reaper still owns proof; do not retire uncertain custody.
+                    target.operation.mark_stopping()
+                if job.worker is None:
+                    plan.producer_returned()
+                # Pending bridge/request proof belongs to the original reaper,
+                # even after the logical job callback has returned.
+                if not job.pending_release:
+                    target.callback_returned()
+
+            job.task.add_done_callback(returned)
         return job
 
     async def invoke(self, event: HookEvent, handler: HookHandler):
@@ -435,15 +670,22 @@ class MCPHookExecutor:
             return
         visited.add(identity)
         event, definition = hook_run.preview_call(ToolCall(name, {}, ""))
-        scope = self.engine.begin_event(event)
-        try:
-            plans = self.engine.plan_handlers(scope, event)
-        finally:
-            scope.close()
-        handlers = {value.id: value for value in self.engine.definitions}
-        for plan in plans:
-            child = handlers[plan.handler_id]
-            if plan.phase != "observe" and child.type == "mcp_tool":
+        from .matching import UnsupportedEventField, matches_handler
+        from .validation import handler_phase
+
+        for child in self.engine.definitions:
+            if child.event != event.event:
+                continue
+            try:
+                if not matches_handler(child, event):
+                    continue
+            except UnsupportedEventField:
+                pass
+            dependency, _failure = self.engine._dependency_status(child, event)
+            if (
+                handler_phase(child, dependency_required=dependency) != "observe"
+                and child.type == "mcp_tool"
+            ):
                 self._preflight(context, hook_run, child, next_chain, visited)
 
     def _invoke_worker_bound(self, job):
@@ -460,8 +702,9 @@ class MCPHookExecutor:
         chain = current_chain().enter(
             job.event.event_id, job.handler.id, definition.tool_id
         )
+        job.chain = chain
         operation_id = "hook-operation:" + uuid4().hex
-        hook_run = ToolHookRun(
+        hook_run = job.hook_run = ToolHookRun(
             self.engine,
             run_id=operation_id,
             session_id=context.session_id,
@@ -492,6 +735,7 @@ class MCPHookExecutor:
             on_owned_request=job.own_request,
         )
         result = ToolResult.blocked("hook_mcp_not_dispatched")
+        settled = False
         try:
             # This owner is a continuation operation in the SAME store. Its
             # actual parent dependency query remains in context.definition.
@@ -513,17 +757,25 @@ class MCPHookExecutor:
                     evidence = capture.consume_authorized(result)
                 with job.wait_scope("nested"):
                     hook_run.install_result(call, result)
+                    settled = True
                     hook_run.settle()
                 policy.check()
                 if evidence is None or result.dispatch_state != "settled":
                     raise ValueError("hook_mcp_execution_failed")
-                raw, owner_current = evidence
+                raw, owner_current, grant = evidence
+                permission = (
+                    MCPHookPermission(job.native_plan.mcp, grant)
+                    if job.native_plan is not None
+                    else None
+                )
 
                 def result_current():
                     policy.check()
                     if context.definition(call) != expected:
                         raise PermissionError("hook_mcp_result_definition_changed")
                     owner_current()
+                    if permission is not None:
+                        permission.refresh()
                     # The normal owned authority port can block. Its completion
                     # is not permission to outlive this original event/scope.
                     policy.check()
@@ -533,12 +785,18 @@ class MCPHookExecutor:
 
                 job.result_check = result_current
                 result_current()
+                if job.native_plan is not None:
+                    job.native_plan.permission = permission
                 return normalize_hook_result(raw, job.handler)
         finally:
             self.retire_context(operation_id)
-            # Also retire preparation on a pre-start failure; existing required
-            # post handlers remain with their existing checkpoint/engine owners.
-            context.lifecycle.close_scope(operation_id)
+            # Refused preparation/checkpoint acceptance still owns its original
+            # host scopes; use the normal ToolHookRun discard/terminal join.
+            try:
+                if not settled:
+                    hook_run.settle()
+            finally:
+                context.lifecycle.close_scope(operation_id)
 
     async def _wait_worker(self, job):
         """Join sequential work under this same ticket and original deadline."""
@@ -582,15 +840,40 @@ class MCPHookExecutor:
                 failure = failure or "hook_mcp_execution_failed"
         return accepted, failure
 
+    def _native_worker(self, job, callback, *args):
+        from ..activation import _guard, execution
+
+        try:
+            with (
+                _guard.worker_isolation(),
+                execution(sources=job.native_target.event.source.sources),
+                job.native_target.event.owner.activate(),
+            ):
+                job.native_target.event.source.check()
+                return callback(*args)
+        finally:
+            if job.native_plan is not None and callback == self._invoke_worker_bound:
+                job.native_plan.producer_returned()
+            job.worker_returned.set()
+            if job.native_target is not None:
+                job.native_target.callback_returned()
+
+    def _worker(self, job, callback, *args):
+        if job.native_target is None:
+            return asyncio.create_task(asyncio.to_thread(callback, *args))
+        job.worker_returned.clear()
+        job.native_target.retain_callback()
+        return asyncio.create_task(
+            asyncio.to_thread(self._native_worker, job, callback, *args)
+        )
+
     async def _run(self, job):
         from .engine import HookEventOutcome
 
         failure = None
         accepted = None
         try:
-            job.worker = asyncio.create_task(
-                asyncio.to_thread(self._invoke_worker_bound, job)
-            )
+            job.worker = self._worker(job, self._invoke_worker_bound, job)
             accepted, failure = await self._wait_worker(job)
             if accepted is not None:
                 current, code = await self.engine._authority_status(
@@ -608,9 +891,7 @@ class MCPHookExecutor:
                     # Sequential continuation, never another MCP request. Keep
                     # this actual check in the same worker/custody join so a
                     # cancelled awaiter cannot release a running owner check.
-                    job.worker = asyncio.create_task(
-                        asyncio.to_thread(job.result_check)
-                    )
+                    job.worker = self._worker(job, job.result_check)
                     checked, failure = await self._wait_worker(job)
                     if (
                         not checked
@@ -660,11 +941,14 @@ class MCPHookExecutor:
     async def _reap(self):
         while self._jobs:
             for job in tuple(self._jobs):
-                if job.pending_release and job.terminal():
+                if job.pending_release and job.task.done() and job.terminal():
                     if job.worker is not None and not job.worker.cancelled():
                         job.worker.exception()
                     job.ticket.release()
                     self._jobs.discard(job)
+                    if job.native_target is not None:
+                        job.native_target.process_terminal(True)
+                        job.native_target.callback_returned()
             if self._jobs:
                 await asyncio.sleep(0.1)
 

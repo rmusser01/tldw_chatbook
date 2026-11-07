@@ -1,0 +1,12 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+18.46s call     Tests/UI/test_console_workflow_navigation.py::test_malformed_saved_objective_stays_out_of_console_diagnostics
+17.02s call     Tests/UI/test_console_workflow_navigation.py::test_detach_waits_for_original_finite_workspace_read
+16.98s call     Tests/UI/test_console_workflow_navigation.py::test_narrow_history_reopens_same_run_after_detach
+13.71s call     Tests/UI/test_console_workflow_navigation.py::test_saved_history_paginates_without_starting_a_workflow
+12.29s call     Tests/UI/test_console_workflow_navigation.py::test_registry_storage_failure_leaves_console_usable_and_setup_can_retry
+6.80s call     Tests/UI/test_console_workflow_navigation.py::test_passive_default_setup_preserves_existing_stale_binding
+1.08s setup    Tests/UI/test_console_workflow_navigation.py::test_narrow_history_reopens_same_run_after_detach
+
+(17 durations < 1s hidden.)
+8 passed, 1 deselected in 87.81s (0:01:27)

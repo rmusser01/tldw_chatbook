@@ -274,6 +274,7 @@ def _run(
     timeout=45,
     installed_package=None,
     expect_restart=False,
+    return_status=False,
 ):
     root = tmp_path.resolve()
     test_root = Path(__file__).resolve().parents[2]
@@ -334,6 +335,8 @@ def _run(
             except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
                 primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
         raise
+    if return_status:
+        return result.returncode
     stdout = log.read_text(encoding="utf-8", errors="replace")
     stderr = ""
     assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]

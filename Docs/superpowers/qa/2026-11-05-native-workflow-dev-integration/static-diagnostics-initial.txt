@@ -1,0 +1,45 @@
+production diagnostic owners or persistent-sink topology changed; review the diff below before running --write
+summary:
+    owner_files: 729 -> 733
+    task_492_calls: 1080 -> 1092
+    task_494_calls: 7800 -> 7806
+owners:
+  + only in rebuild (file now has diagnostics): tldw_chatbook/Chat/console_workflow_preparation.py [TASK-492] count=1 digest=0be526ce8a44e52e3295
+  + only in rebuild (file now has diagnostics): tldw_chatbook/Chat/console_workflow_runs.py [TASK-492] count=8 digest=589c45b7a1ea079c417d
+  + only in rebuild (file now has diagnostics): tldw_chatbook/UI/Console_Modules/workflows.py [TASK-494] count=1 digest=d8dab03553f8dea619ef
+  + only in rebuild (file now has diagnostics): tldw_chatbook/Workspaces/worktree_activity.py [TASK-494] count=1 digest=0b8217371eabedc2ac0e
+  ~ changed: tldw_chatbook/Agents/agent_service.py 53/478a1f0b2f5fab786bad -> 54/fb373b621185ee62f6db  (+1 diagnostic call(s))
+  ~ changed: tldw_chatbook/Agents/execution_capacity.py 1/6ed2da38de1d42f998d1 -> 2/fda5cea0bf61380935f2  (+1 diagnostic call(s))
+  ~ changed: tldw_chatbook/Agents/run_hooks.py 26/6b757d7df786a82cb49d -> 28/62401925701f1bb66d94  (+2 diagnostic call(s))
+  ~ changed: tldw_chatbook/Chat/console_agent_bridge.py 36/e2226ef3c8ce0acee9f4 -> 36/5b8472276cdde1a537b8  (same count, content changed (reworded / re-levelled / new args / re-indented) -- use --statements to see which)
+  ~ changed: tldw_chatbook/Chat/console_chat_controller.py 70/2fbfcf7772e95c3df7f4 -> 71/b038fcfecf7b6fc99bef  (+1 diagnostic call(s))
+  ~ changed: tldw_chatbook/Chat/console_fleet_attention.py 11/aab30496184400f10ca1 -> 11/800922ed9fc98d4ed760  (same count, content changed (reworded / re-levelled / new args / re-indented) -- use --statements to see which)
+  ~ changed: tldw_chatbook/Chat/console_runtime.py 41/3c1de8fcc3762d3b0ef6 -> 43/374e07b37b0afaef6bb5  (+2 diagnostic call(s))
+  ~ changed: tldw_chatbook/Tools/remote_workspace_transport.py 12/10df07334e0ecdaacf66 -> 12/1f5702469c887d52c49c  (same count, content changed (reworded / re-levelled / new args / re-indented) -- use --statements to see which)
+  ~ changed: tldw_chatbook/UI/Screens/chat_screen.py 118/ecba6e85f787592b9262 -> 118/8b8ae963615659154f8e  (same count, content changed (reworded / re-levelled / new args / re-indented) -- use --statements to see which)
+Next: read every row above and confirm each change is one you intended.
+  - a call_count delta means a diagnostic was added or deleted;
+  - an unchanged count with a changed digest means one was reworded,
+    re-levelled, given different arguments, or merely RE-INDENTED -- check
+    it does not now interpolate user content, secrets, or paths into a
+    persistent sink;
+  - a sink-topology row means a new file/handler destination appeared.
+The pin stores only an aggregate per-file digest, so the rows above can name
+WHICH files changed and by how much, never the statement text -- and the
+interpolation check just above needs that text. Recover it with:
+  base=$(git log -1 --format=%H -- Docs/security/production-diagnostic-inventory.json)
+  python scripts/check_persistent_diagnostic_inventory.py \
+      --statements <each path listed above> --since $base
+That prints the added and removed STATEMENTS themselves, and separates the
+ones that only moved or re-indented from the ones whose text really changed.
+Do NOT reach for `git diff` here: the digest covers a statement's own source
+text, indentation included, so a call that merely shifted nesting level
+reports as changed, and a line diff buries it in unrelated edits -- measured
+on tldw_chatbook/Chat/console_fleet_wake.py, whose row changed inside a
+328-line diff in which not one statement had actually changed.
+Treat that base revision as a LOWER BOUND, not the truth: the pin has been
+committed stale before (TASK-19572 review found two rows whose drift predated
+the pin's own commit), so if a listed file shows no logger change in that
+range, widen it rather than assuming the row is noise.
+Only then run:  python scripts/check_persistent_diagnostic_inventory.py --write
+and commit Docs/security/production-diagnostic-inventory.json with the review recorded in the task/PR notes.

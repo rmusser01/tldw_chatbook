@@ -1,0 +1,22 @@
+{
+  "command": [
+    "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/bin/python3.12",
+    "scripts/check_persistent_diagnostic_inventory.py",
+    "--statements",
+    "tldw_chatbook/Chat/console_plugin_context.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "--since",
+    "f4e72e54078413c35e01ea52607afe76283cc972"
+  ],
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "before": {
+    "tldw_chatbook/Chat/console_plugin_context.py": "f45d8320935bc2140ae930ba37e8ac06a017d12626297930df1e5f48fe9840f8",
+    "tldw_chatbook/Chat/console_chat_controller.py": "0c9583d2510717cc03f6ee10fabc8166fd11f1cbf117b82425b51661fa02b978"
+  },
+  "after": {
+    "tldw_chatbook/Chat/console_plugin_context.py": "f45d8320935bc2140ae930ba37e8ac06a017d12626297930df1e5f48fe9840f8",
+    "tldw_chatbook/Chat/console_chat_controller.py": "0c9583d2510717cc03f6ee10fabc8166fd11f1cbf117b82425b51661fa02b978"
+  },
+  "stable_sources": true
+}

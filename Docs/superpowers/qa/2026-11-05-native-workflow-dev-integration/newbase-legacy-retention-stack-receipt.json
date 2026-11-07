@@ -1,0 +1,20 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/observe-hook-retention-line.py",
+    "-s",
+    "-q",
+    "Tests/Chat/test_native_legacy_hook_handoff.py::test_failed_required_native_commit_never_settles_hook_as_empty_obligation",
+    "--tb=short",
+    "--basetemp=../pytest-newbase-legacy-retention-stack"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 124,
+  "elapsed_seconds": 20.992705500219017,
+  "source_file_count": 9109,
+  "before_sha256": "b314516461ac05b1d23494cb65fcf87813662a04ebedef7899baafa3f56c0a83",
+  "after_sha256": "b314516461ac05b1d23494cb65fcf87813662a04ebedef7899baafa3f56c0a83",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-legacy-retention-stack.log"
+}

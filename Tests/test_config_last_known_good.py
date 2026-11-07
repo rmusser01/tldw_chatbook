@@ -122,3 +122,17 @@ def test_corrupt_file_is_preserved_once_not_every_read(tmp_path, monkeypatch):
     )
     asides = list(tmp_path.glob("config.toml.corrupt*"))
     assert len(asides) == 1, f"expected one aside, got {len(asides)}"
+
+
+def test_config_load_failure_keeps_old_identity_and_pickle_path():
+    import pickle
+
+    from tldw_chatbook import config
+    from tldw_chatbook.Utils import startup_errors
+
+    failure_type = getattr(startup_errors, "ConfigLoadFailure", None)
+    assert failure_type is config.ConfigLoadFailure
+    original = failure_type(Path("example.toml"), "invalid")
+    restored = pickle.loads(pickle.dumps(original))
+    assert type(restored) is config.ConfigLoadFailure
+    assert restored == (Path("example.toml"), "invalid")

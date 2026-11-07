@@ -1,0 +1,694 @@
+{
+  "scope": "Root-authorized bounded read-only exact identity resolution for three canonical hashes within this plan scratch only; no archive/index/canonical change or source correctness review.",
+  "filename_hash_name_candidate_matches": [],
+  "search_method": "First directory filename/hash-name inspection found no names containing the three target prefixes. Then SHA256 of bounded task-8g*/root-direct* Markdown source/report/review candidates only, including four initially inspected likely filenames.",
+  "targets": [
+    {
+      "sha256": "60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb",
+      "exact_content_matches": [],
+      "status": "no exact full-file match within bounded relevant candidate family; no broader search or missing-body inference"
+    },
+    {
+      "sha256": "813924bda92e6477885f520380f6cc03313b8dcd5a748499276107e113d53933",
+      "exact_content_matches": [
+        {
+          "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-review.md",
+          "basename": "task-8g-fix1-review.md",
+          "sha256": "813924bda92e6477885f520380f6cc03313b8dcd5a748499276107e113d53933",
+          "bytes": 12500
+        }
+      ],
+      "status": "exact full-file body available in this bounded scratch family"
+    },
+    {
+      "sha256": "8a917921e1b6162cd452c075b7acd299d077961b50fed14a6bdea4a66abad91b",
+      "exact_content_matches": [
+        {
+          "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-review.md",
+          "basename": "task-8g-fix2-review.md",
+          "sha256": "8a917921e1b6162cd452c075b7acd299d077961b50fed14a6bdea4a66abad91b",
+          "bytes": 7908
+        }
+      ],
+      "status": "exact full-file body available in this bounded scratch family"
+    }
+  ],
+  "candidate_files_hashed": 107,
+  "inspected_candidates": [
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/root-direct-nonwait-transport-review.frozen-67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa.md",
+      "basename": "root-direct-nonwait-transport-review.frozen-67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa.md",
+      "sha256": "67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa",
+      "bytes": 7690
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/root-direct-nonwait-transport-review.md",
+      "basename": "root-direct-nonwait-transport-review.md",
+      "sha256": "67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa",
+      "bytes": 7690
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-affected-source-analysis.md",
+      "basename": "task-8g-affected-source-analysis.md",
+      "sha256": "63b83e1eb3b271592e24c5cd0a9f5ffbf3abe60921ee4ab06d1a32aeeb815a60",
+      "bytes": 17531
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-capacity-source-analysis.md",
+      "basename": "task-8g-capacity-source-analysis.md",
+      "sha256": "0a1940e22f9dd31bc76a1300847d16c85a39ab6cf063d59dcc071070f0b4fdc2",
+      "bytes": 14119
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-callback-future-state-source.md",
+      "basename": "task-8g-fix1-callback-future-state-source.md",
+      "sha256": "a2db743a3615284941b52ef34e4c263d0f2dc636f5cc9c30fd015fe2fa49fc38",
+      "bytes": 1505
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-capacity-wait-source-analysis.md",
+      "basename": "task-8g-fix1-capacity-wait-source-analysis.md",
+      "sha256": "1e76f46b14f12204de8acc7e8d2b5b15b01507ea114449131d9b2b4562301700",
+      "bytes": 19680
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-constructor-claim-oracle-source.md",
+      "basename": "task-8g-fix1-constructor-claim-oracle-source.md",
+      "sha256": "b6e8cbf6266aa421b5b3e0d492736f0071bafa899bf5c7e07acb6dd9707f6cd1",
+      "bytes": 3403
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-callback-consumer-source.md",
+      "basename": "task-8g-fix1-direct-callback-consumer-source.md",
+      "sha256": "83e83be5bb2d1e08c1a3e59aefdda93e977038f613e9f933286cc8e9f0072723",
+      "bytes": 4857
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-callback-control-source.md",
+      "basename": "task-8g-fix1-direct-callback-control-source.md",
+      "sha256": "3f4196cbc4875794f087d2cf7c6a7648490be9fbfa5377950fbeccf9f7391937",
+      "bytes": 3653
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-callback-diagnostic-source.md",
+      "basename": "task-8g-fix1-direct-callback-diagnostic-source.md",
+      "sha256": "f7fa03a775a22b312a9871d39b60aa1e047f8737aec7315f8905ae529ff7533e",
+      "bytes": 3697
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-callback-order-source.md",
+      "basename": "task-8g-fix1-direct-callback-order-source.md",
+      "sha256": "b93fe919d0fa4939aa8eeba1a37b0da0f650b6771ae1bd3925cf8f14fdaf618d",
+      "bytes": 3868
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-callback-own-return-source-analysis.md",
+      "basename": "task-8g-fix1-direct-callback-own-return-source-analysis.md",
+      "sha256": "f39cf19c80ab43f65615715e64b7c5a15df306f3537aa1d83dd61794b08872a7",
+      "bytes": 17608
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-callback-sequencing-source-analysis.md",
+      "basename": "task-8g-fix1-direct-callback-sequencing-source-analysis.md",
+      "sha256": "e1822ec3530eaae3373fa7064968e938cdb580ac9f13a38da3917fc881e6b4b6",
+      "bytes": 21605
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-caller-source-analysis.md",
+      "basename": "task-8g-fix1-direct-caller-source-analysis.md",
+      "sha256": "6c372384b6b6d55f1821c781b1f1337f59972d6290f7c0006f382563f6323237",
+      "bytes": 31899
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-cancel-identity-source.md",
+      "basename": "task-8g-fix1-direct-cancel-identity-source.md",
+      "sha256": "a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03",
+      "bytes": 6838
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-capacity-body-source.md",
+      "basename": "task-8g-fix1-direct-capacity-body-source.md",
+      "sha256": "4fde4a6ed4a0fe0605e596ab3b7462a52c473c6c9b9b316c3e82a7e2c677a63a",
+      "bytes": 7143
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-capacity-observer-source.md",
+      "basename": "task-8g-fix1-direct-capacity-observer-source.md",
+      "sha256": "930ed5e25b876389bade661b7e935445fe2b799ee872f71032cfa5b54025631b",
+      "bytes": 7537
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-capacity-test-source.md",
+      "basename": "task-8g-fix1-direct-capacity-test-source.md",
+      "sha256": "e5e1cacd0b779e2fdb01eafc15fe00f37c74c5fa709e37150ad2ea323d0bb34c",
+      "bytes": 3301
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-complete-source-proposal.md",
+      "basename": "task-8g-fix1-direct-complete-source-proposal.md",
+      "sha256": "7b45b06d86a9b98604a140fd2bf6e75d4a7271fe731aa9d8f52c31ed78d10893",
+      "bytes": 53755
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-constructor-admission-source.md",
+      "basename": "task-8g-fix1-direct-constructor-admission-source.md",
+      "sha256": "5fde01eaf9fec220cb0ef8400ff208f6c7aeb86f577eabc83b28bc9792963f12",
+      "bytes": 8242
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-constructor-cleanup-source-analysis.md",
+      "basename": "task-8g-fix1-direct-constructor-cleanup-source-analysis.md",
+      "sha256": "970ebdd7d8e315a51c827f7efbf178b6b44245bf17396cc572c62153e3fde0cc",
+      "bytes": 23980
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-constructor-diagnostic-source.md",
+      "basename": "task-8g-fix1-direct-constructor-diagnostic-source.md",
+      "sha256": "19f17d5ba14ff4ae709196134769bf78d7c0dfa251cd0d31bfb275b7bd1682c4",
+      "bytes": 4490
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-freshness-options-source.md",
+      "basename": "task-8g-fix1-direct-freshness-options-source.md",
+      "sha256": "d2f34cc08d5cb112805f12566ca82d4ea42572f3307ee9da8b68bf630aae1aa4",
+      "bytes": 8792
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-freshness-transport-source.md",
+      "basename": "task-8g-fix1-direct-freshness-transport-source.md",
+      "sha256": "4553db9671aca8ff87034cb70bf8b731f0c0049180d391488c9f452a04d5a1d2",
+      "bytes": 4194
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-nonwait-transport-source.md",
+      "basename": "task-8g-fix1-direct-nonwait-transport-source.md",
+      "sha256": "a72e01b99a900a8527ec428f80b658a6081a0a233accde93932eefe7dab49f3d",
+      "bytes": 7451
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-open-refusal-source.md",
+      "basename": "task-8g-fix1-direct-open-refusal-source.md",
+      "sha256": "4e31ddca857f173f7fb6a207394a92570ebb5ff069cc8a9b48f43ae47e978fbf",
+      "bytes": 8394
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-ordinary-fixture-source-analysis.md",
+      "basename": "task-8g-fix1-direct-ordinary-fixture-source-analysis.md",
+      "sha256": "6d3b8cf9cc19455b2735cf3fa417c7a49f646c0c292676b3f6f21568e7474389",
+      "bytes": 15784
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-ordinary-profile-source.md",
+      "basename": "task-8g-fix1-direct-ordinary-profile-source.md",
+      "sha256": "f23fac8d92e2c3838c793b86623e05892ac3c4d4252d79bb6f59570d68358ae2",
+      "bytes": 5174
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-return-source-v1.md",
+      "basename": "task-8g-fix1-direct-return-source-v1.md",
+      "sha256": "380ca658a09aaf16e54f692f5040b77123613aca21cb9adf07e543659814a039",
+      "bytes": 14038
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-start-controls-source.md",
+      "basename": "task-8g-fix1-direct-start-controls-source.md",
+      "sha256": "512ae69eaedcaa01307492f1a2318f0d22c1097e1d08762983a3730dfb3e15f2",
+      "bytes": 6407
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-storage-freshness-adoption-source.md",
+      "basename": "task-8g-fix1-direct-storage-freshness-adoption-source.md",
+      "sha256": "ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3",
+      "bytes": 14219
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-storage-negative-source.md",
+      "basename": "task-8g-fix1-direct-storage-negative-source.md",
+      "sha256": "b1cf5f56cbaf97980f00e6a9c37a9961febc84c4fab997e409efc4137b12afdd",
+      "bytes": 4838
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-validator-source-analysis.md",
+      "basename": "task-8g-fix1-direct-validator-source-analysis.md",
+      "sha256": "69b0fe85c3f66d532f668e3a1dfc522a35b38a4b96fa8328c7eb1488299f836e",
+      "bytes": 23205
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-execution-close-storage-source.md",
+      "basename": "task-8g-fix1-execution-close-storage-source.md",
+      "sha256": "362efc63062820fd51af646458723c32ad10628aa763d2d38b4430073fbf526f",
+      "bytes": 6538
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-external-core-discriminator-source.md",
+      "basename": "task-8g-fix1-external-core-discriminator-source.md",
+      "sha256": "5ea5b6a145a10af73df709f28c820e872db9390ea1466435e3f888e74bd6a001",
+      "bytes": 5707
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-external-core-harness-source.md",
+      "basename": "task-8g-fix1-external-core-harness-source.md",
+      "sha256": "3ba6b4bd46c6ce71ecb3ce839e898ba6fa98ef01e2ccd4ad1e1de6d514c7fdae",
+      "bytes": 2059
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-external-core-preentry-source.md",
+      "basename": "task-8g-fix1-external-core-preentry-source.md",
+      "sha256": "21f639cdf0a6afb30cebf52b7e11f1959bf44a05fcd37284881e912060ade759",
+      "bytes": 9958
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-final-report.md",
+      "basename": "task-8g-fix1-final-report.md",
+      "sha256": "8e24ffb8862407cb3de3c98a89d41649b700ce38b8bb86cc81bb06d642e04460",
+      "bytes": 16177
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-i4-source-analysis.md",
+      "basename": "task-8g-fix1-i4-source-analysis.md",
+      "sha256": "c81416e1eb1a3be3a60ce490ccc2e5b8b46693c4bc99123bbc82044d61258f6e",
+      "bytes": 25825
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-i5-source-analysis.md",
+      "basename": "task-8g-fix1-i5-source-analysis.md",
+      "sha256": "27ed3fee8b6712fd079a74ad50e358d7c58b28e74f354c9b5e6a1a235e8438f1",
+      "bytes": 24812
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-initial-close-outer-core-adoption-source.md",
+      "basename": "task-8g-fix1-initial-close-outer-core-adoption-source.md",
+      "sha256": "76661104051f86818abf7ae13b2b9e63563b1bc75f09a6bc3f2cdda78abebd04",
+      "bytes": 12208
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-initial-close-outer-core-source-analysis.md",
+      "basename": "task-8g-fix1-initial-close-outer-core-source-analysis.md",
+      "sha256": "ed1a7b2621db482e18c555a5ce28ba572ea101873ebd1a189aa913bc4661a961",
+      "bytes": 18495
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-known-callback-resource-source.md",
+      "basename": "task-8g-fix1-known-callback-resource-source.md",
+      "sha256": "acebf9c3613080d7c51c4713c70dacaa49bc3fe2a39b7a55449aa0e61ae71f99",
+      "bytes": 3185
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-known-failure-callback-source.md",
+      "basename": "task-8g-fix1-known-failure-callback-source.md",
+      "sha256": "a58a0d2183f6a793e4900d7b891d6da3e13c5fc0d7e8f1f3fefd1711a5b09c6f",
+      "bytes": 8462
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-live-bind-dispatch-source-analysis.md",
+      "basename": "task-8g-fix1-live-bind-dispatch-source-analysis.md",
+      "sha256": "9a318333912224b16560182f7335864bcfaf2394ba131098ab16908dfba15695",
+      "bytes": 22353
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-live-bind-failed-result-source.md",
+      "basename": "task-8g-fix1-live-bind-failed-result-source.md",
+      "sha256": "b18ff86985af525787e41bfa4b6c4643db6a538965aa4bc896c059856068c418",
+      "bytes": 8010
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-live-bind-get-source.md",
+      "basename": "task-8g-fix1-live-bind-get-source.md",
+      "sha256": "feccd90512e2af5138d410925ac61ae34d4902f7c0db4c2156cb65ec650e9d80",
+      "bytes": 5713
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-live-bind-phase-source.md",
+      "basename": "task-8g-fix1-live-bind-phase-source.md",
+      "sha256": "7a86588fa4e13daa2e1488692863aa50c01aeb70586a34005ed749430707bf48",
+      "bytes": 3765
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-live-bind-projection-source.md",
+      "basename": "task-8g-fix1-live-bind-projection-source.md",
+      "sha256": "3b42eca04c4f9dff959295fc1b2a61fda0e5a0f38d7bd08acd4473a54c99a9d5",
+      "bytes": 3331
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-live-bind-tail-source-analysis.md",
+      "basename": "task-8g-fix1-live-bind-tail-source-analysis.md",
+      "sha256": "06a737ff300b1efc457a99e7f93935ab44d1961dd825e5ab45c0082f2e6aa6c4",
+      "bytes": 20690
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-mixed-snapshot-source-analysis.md",
+      "basename": "task-8g-fix1-mixed-snapshot-source-analysis.md",
+      "sha256": "dfc222dbb1226b355df61f8ae2cc3463578d8c34729f5e0b3ce9eccd2dad0db0",
+      "bytes": 18825
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-post-removal-baseexception-source-proposal.md",
+      "basename": "task-8g-fix1-post-removal-baseexception-source-proposal.md",
+      "sha256": "579f7be6fc73c272cd317cb4dfc17911df8824c6014c9283d3bfdac4d7fac4c9",
+      "bytes": 20764
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-q1-buddy-source-oracles.md",
+      "basename": "task-8g-fix1-q1-buddy-source-oracles.md",
+      "sha256": "9ecbf5be9f0aa8c05c1563453ac64f6e82099b74c4bb55ff1339cba89ec7da16",
+      "bytes": 2746
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-q1-control-source-analysis.md",
+      "basename": "task-8g-fix1-q1-control-source-analysis.md",
+      "sha256": "9d1003e65c3454eadace570e6f831e9ca0a1ef1e7b13c4c6c43961738b82b7a7",
+      "bytes": 25567
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-q1-posted-controller-shutdown-source.md",
+      "basename": "task-8g-fix1-q1-posted-controller-shutdown-source.md",
+      "sha256": "ee25abf2270782256d2d85fa0ec43c9d76a8c76547a65ef83096427cb2f1c7ea",
+      "bytes": 4647
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-q1-posted-observer-source-analysis.md",
+      "basename": "task-8g-fix1-q1-posted-observer-source-analysis.md",
+      "sha256": "f8a6fdc3344f46344d2be18f2aceff871587366b157dd5e71a1db5ee85a677aa",
+      "bytes": 22855
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-q1-retained-full-source-audit.md",
+      "basename": "task-8g-fix1-q1-retained-full-source-audit.md",
+      "sha256": "cbcd34f21baf87d38470cf459efdb4ca4e5ad406a90a7b36e4f32fa5f132b176",
+      "bytes": 8830
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-q1-self-review.md",
+      "basename": "task-8g-fix1-q1-self-review.md",
+      "sha256": "fdcd086fdaf58429b283babf0bf806868af4c8660715c307ec2d807caf251bee",
+      "bytes": 7189
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-queued-release-source-analysis.md",
+      "basename": "task-8g-fix1-queued-release-source-analysis.md",
+      "sha256": "d554525aaaa1d9c4e30214cd597f8c7d9ec607d29ba8703b62c3c371f8b6ce71",
+      "bytes": 20285
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-queued-release-source-v1.md",
+      "basename": "task-8g-fix1-queued-release-source-v1.md",
+      "sha256": "9fd94746359ded95d70a962951a17ca29cee62088e5531800f53e27aefe91ded",
+      "bytes": 8868
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-queued-release-source-v2.md",
+      "basename": "task-8g-fix1-queued-release-source-v2.md",
+      "sha256": "a05ff616b612612451391224c0a4bf5edd8779ff60f070390d3a9331be7b6e99",
+      "bytes": 12059
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-remaining-w-control-source-proposal.md",
+      "basename": "task-8g-fix1-remaining-w-control-source-proposal.md",
+      "sha256": "54948695a6426d22c1d73a968bfbb234841b1d74054a886d03150748e74c84cb",
+      "bytes": 27163
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-report.md",
+      "basename": "task-8g-fix1-report.md",
+      "sha256": "f52dd695f82fbc13140e679f75b31eb743fb3d6fac473837cc5bcb8b1b924b55",
+      "bytes": 166818
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-review.md",
+      "basename": "task-8g-fix1-review.md",
+      "sha256": "813924bda92e6477885f520380f6cc03313b8dcd5a748499276107e113d53933",
+      "bytes": 12500
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-source.md",
+      "basename": "task-8g-fix1-source.md",
+      "sha256": "f16bf6d76c8906945a45935d748f9e45141d36178004cc14f782d1f6aefea038",
+      "bytes": 409395
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-wave-capture-close-source.md",
+      "basename": "task-8g-fix1-wave-capture-close-source.md",
+      "sha256": "c9f87f27b3b36dfcea21f4d85e41d5b492461a4185a653be2bf989fd1903f050",
+      "bytes": 10008
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-wave-partial-body-entry-source.md",
+      "basename": "task-8g-fix1-wave-partial-body-entry-source.md",
+      "sha256": "f73a8ed1a68947c1b4ecc716ef05047303f45abc8030591fb191d215805786ae",
+      "bytes": 4733
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-wave-partial-enrollment-source.md",
+      "basename": "task-8g-fix1-wave-partial-enrollment-source.md",
+      "sha256": "de258a0823fe63a1853f90ebe81d78d118dc3d69c9a6b77fcfcae1a3cd40a57c",
+      "bytes": 7918
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-wave-partial-observer-scope-source.md",
+      "basename": "task-8g-fix1-wave-partial-observer-scope-source.md",
+      "sha256": "dd2a8ac7ec1a3cc945d3f84cceaef1d6c0b9e4f5c2b3291d53432a5a0dcfa73f",
+      "bytes": 4857
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-wave-partial-readiness-bound-source.md",
+      "basename": "task-8g-fix1-wave-partial-readiness-bound-source.md",
+      "sha256": "7869d55b3f206fc69a747dd32f16956bbc131f375d744b586005ba6ffb9d17e1",
+      "bytes": 3636
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-consent-custody-source-analysis.md",
+      "basename": "task-8g-fix2-consent-custody-source-analysis.md",
+      "sha256": "656e666d3f4fcc96975ab911dbf59e36c1fc53f951c6e4cbadbf6d7ed7970766",
+      "bytes": 18116
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-existing-return-oracles-source.md",
+      "basename": "task-8g-fix2-existing-return-oracles-source.md",
+      "sha256": "6ebcec32acb38a176ea7d7fb70a2c844273bf645bb267be2c9810a00c49cba61",
+      "bytes": 5086
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-final-report.md",
+      "basename": "task-8g-fix2-final-report.md",
+      "sha256": "a058e46c49a8eb7da873c1e1bee2efd0455ec2fd90c6c42d3ca1ee5e55253848",
+      "bytes": 12602
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-finite-read-source-analysis.md",
+      "basename": "task-8g-fix2-finite-read-source-analysis.md",
+      "sha256": "0efa8000deae5b1f5b374cda48a18d9601310e93a90c77ba4658d8bd4c39ad59",
+      "bytes": 21678
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-planning-observer-source.md",
+      "basename": "task-8g-fix2-planning-observer-source.md",
+      "sha256": "68c44cf5af2d083f3abf954405af5b62fda36c9d18d00b0cedf8c91750cecfcf",
+      "bytes": 5088
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-preentry-control-source.md",
+      "basename": "task-8g-fix2-preentry-control-source.md",
+      "sha256": "54d0932f3c6fc1897ee9ce85c71e5cfb01bc2a7e450ceb35908fa4b016ae8c8c",
+      "bytes": 6403
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-repeat-close-red-source.md",
+      "basename": "task-8g-fix2-repeat-close-red-source.md",
+      "sha256": "38d0123c8e39edfd1dd453f154a0d579de65ac5dea86a6634897d6da087458c9",
+      "bytes": 3081
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-repeat-close-source.md",
+      "basename": "task-8g-fix2-repeat-close-source.md",
+      "sha256": "ec093d999843455b1ab4a619eb7614e79d4f6229cc3350f4662cef9265d4c346",
+      "bytes": 8406
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-repeat-close-v2-source.md",
+      "basename": "task-8g-fix2-repeat-close-v2-source.md",
+      "sha256": "7aafe9d051163167bb3a833fee7bfd69003ebf128e83ab23a4df50d8a466ad4b",
+      "bytes": 9806
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-review.md",
+      "basename": "task-8g-fix2-review.md",
+      "sha256": "8a917921e1b6162cd452c075b7acd299d077961b50fed14a6bdea4a66abad91b",
+      "bytes": 7908
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-source.frozen-1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a.md",
+      "basename": "task-8g-fix2-source.frozen-1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a.md",
+      "sha256": "1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a",
+      "bytes": 50692
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-source.frozen-4d0f64d5331f6b587df583882c1a51bec6239768a488e8e5ec58bdea828c64ed.md",
+      "basename": "task-8g-fix2-source.frozen-4d0f64d5331f6b587df583882c1a51bec6239768a488e8e5ec58bdea828c64ed.md",
+      "sha256": "4d0f64d5331f6b587df583882c1a51bec6239768a488e8e5ec58bdea828c64ed",
+      "bytes": 32754
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-source.frozen-f871d7eeb765b919974ac4c877bfdd50797c1ea70184a9c08aae9300ffa9aaf0.md",
+      "basename": "task-8g-fix2-source.frozen-f871d7eeb765b919974ac4c877bfdd50797c1ea70184a9c08aae9300ffa9aaf0.md",
+      "sha256": "f871d7eeb765b919974ac4c877bfdd50797c1ea70184a9c08aae9300ffa9aaf0",
+      "bytes": 36231
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-source.md",
+      "basename": "task-8g-fix2-source.md",
+      "sha256": "1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a",
+      "bytes": 50692
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-terminal-exit-control-source.md",
+      "basename": "task-8g-fix2-terminal-exit-control-source.md",
+      "sha256": "34735186a10f7060df97c29a1ddbf2ebd58ea626476fe778013063cc063e82a6",
+      "bytes": 5616
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix2-wave-observer-source.md",
+      "basename": "task-8g-fix2-wave-observer-source.md",
+      "sha256": "d31cc8b729cc2af4a04a25bac3961285e136481458ed8fcd89efa5d3eab61177",
+      "bytes": 6686
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-complete-source-audit.md",
+      "basename": "task-8g-fix3-consent-complete-source-audit.md",
+      "sha256": "694cf04397d1f0e37597c75a41ebb810cd226359a8404c2ae2580601c7d3cf84",
+      "bytes": 18189
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-discriminator-source-analysis.md",
+      "basename": "task-8g-fix3-consent-discriminator-source-analysis.md",
+      "sha256": "c6a20d8e03226a93441d5bc0d64043cd416618aba388727a28cddf7739c35a21",
+      "bytes": 15239
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-discriminator-source.md",
+      "basename": "task-8g-fix3-consent-discriminator-source.md",
+      "sha256": "d996764bf384897a69eb0156fac73c5ced21e26cc6f42a0b84cd7f452d67e179",
+      "bytes": 7101
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-observer-correction-source.md",
+      "basename": "task-8g-fix3-consent-observer-correction-source.md",
+      "sha256": "3b69a3a3e50bcdd058780a4641cb8e575c1a88b9a890f955c22b973749e7bfbb",
+      "bytes": 4681
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-reservation-source.frozen-ff9e8c1bc538e5190b02f836e1a8c219bcd6094c91b11ecbaf022ca088b8ed4f.md",
+      "basename": "task-8g-fix3-consent-reservation-source.frozen-ff9e8c1bc538e5190b02f836e1a8c219bcd6094c91b11ecbaf022ca088b8ed4f.md",
+      "sha256": "ff9e8c1bc538e5190b02f836e1a8c219bcd6094c91b11ecbaf022ca088b8ed4f",
+      "bytes": 2777
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-reservation-source.md",
+      "basename": "task-8g-fix3-consent-reservation-source.md",
+      "sha256": "ac745fcb93ccf740cd35b2471bb001a05d96b81e94a681433bec0581be33c2fd",
+      "bytes": 6218
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-selector-source.md",
+      "basename": "task-8g-fix3-consent-selector-source.md",
+      "sha256": "8629b85f105a93c75b0158880a5e8c5142fde462e822d18c303d9891a9eecf00",
+      "bytes": 5917
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-unknown-source.md",
+      "basename": "task-8g-fix3-consent-unknown-source.md",
+      "sha256": "023fce3172619d9a31ab49caf616da4f09265c88d39585d6f00095331ee8e6e7",
+      "bytes": 6930
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-consent-worker-source-analysis.md",
+      "basename": "task-8g-fix3-consent-worker-source-analysis.md",
+      "sha256": "48f3f27662f5eaaa0e5cbc2aa50fd794642579a1f93bfe6a091023be8894560f",
+      "bytes": 12928
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-final-report.md",
+      "basename": "task-8g-fix3-final-report.md",
+      "sha256": "7a423b7acaf2fb1581a17d3cf619c083c48ca6876547ca3d8bed167868dfd6e7",
+      "bytes": 17933
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-review.md",
+      "basename": "task-8g-fix3-review.md",
+      "sha256": "f231675fba40591e84931cccee2a182c9d09e9338104d0a4555d6ffa8415f4d4",
+      "bytes": 7415
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-source.frozen-0bb8098dcb87548a98c9acc67742806507e2aad51dd0fb33b7dcd677c00ce39f.md",
+      "basename": "task-8g-fix3-source.frozen-0bb8098dcb87548a98c9acc67742806507e2aad51dd0fb33b7dcd677c00ce39f.md",
+      "sha256": "0bb8098dcb87548a98c9acc67742806507e2aad51dd0fb33b7dcd677c00ce39f",
+      "bytes": 27897
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-source.frozen-785a13fa5e58c01253781539f80e9e8cbd359a1c95e196da6764aa893b0e2618.md",
+      "basename": "task-8g-fix3-source.frozen-785a13fa5e58c01253781539f80e9e8cbd359a1c95e196da6764aa893b0e2618.md",
+      "sha256": "785a13fa5e58c01253781539f80e9e8cbd359a1c95e196da6764aa893b0e2618",
+      "bytes": 44149
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-source.frozen-b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402.md",
+      "basename": "task-8g-fix3-source.frozen-b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402.md",
+      "sha256": "b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402",
+      "bytes": 41126
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-source.md",
+      "basename": "task-8g-fix3-source.md",
+      "sha256": "785a13fa5e58c01253781539f80e9e8cbd359a1c95e196da6764aa893b0e2618",
+      "bytes": 44149
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix3-wave-release-controls-source.md",
+      "basename": "task-8g-fix3-wave-release-controls-source.md",
+      "sha256": "14b8f6cd08d0697dba2f10890135f3afea4fce884e2d75639c9620263b82542a",
+      "bytes": 7064
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-publication-source-analysis.md",
+      "basename": "task-8g-publication-source-analysis.md",
+      "sha256": "0b4e23e27a72b3550834719e49266a279998a0baa0c55645f2a1b35b493dc765",
+      "bytes": 14459
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-report.md",
+      "basename": "task-8g-report.md",
+      "sha256": "d837ec154b0bb647b5f167354d2e00c4a80ee29ce0db8b11eaf0e275cd97d6e0",
+      "bytes": 35119
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-review-context.md",
+      "basename": "task-8g-review-context.md",
+      "sha256": "e6636b896055a435428c0604d2eaf0189e73357354bfe633c3e0f228240732fb",
+      "bytes": 5090
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-review.md",
+      "basename": "task-8g-review.md",
+      "sha256": "680a020018004283c0f062d18ded4c8eeb34f94e3e1888ddca3b22c7576a8e53",
+      "bytes": 41029
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-source.md",
+      "basename": "task-8g-source.md",
+      "sha256": "1f64ae70303b45197d87387ba78e2e86d1d0d60fffa6eb7ffbafaa6feab16a1b",
+      "bytes": 112020
+    }
+  ],
+  "known_completed_task10_review": {
+    "sha256": "310931472fb9e279a490058f4b15aa8b2cc40c65216ab35f91d910c6d9865965",
+    "original_basename": "task-10-review.md",
+    "frozen_basename": "task-10-review.frozen-310931472fb9e279a490058f4b15aa8b2cc40c65216ab35f91d910c6d9865965.md",
+    "status": "Known original/frozen lookup supplied and accepted by root; filename existence observed, body/code judgment not read here; not yet in source index at inventory capture.",
+    "root_audit_hash_prefix": "1ede"
+  },
+  "limits": [
+    "The original final-retarget inventory correctly records unresolved durable-index lookups at captured index1ec2; scratch identity resolution does not retroactively add archive records.",
+    "Prior inventory was limited to its captured concrete proposals/supports; this new lookup inventory does not expand past certification or imply bodies were missing.",
+    "No recursive citation closure, historical65560 metadata re-search/reconstruction, active final whole-review read, process/native/test/provider/Git operation, cleanup or source-policy gate.",
+    "Five historically unpinned proposal identities and12 earlier Task10 driver bodies missing/null remain qualified."
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "commands": [
+    ".venv/bin/python tldw_chatbook/css/build_css.py",
+    ".venv/bin/python tldw_chatbook/css/check_bundle_sync.py"
+  ],
+  "cwd": "integration",
+  "build_exit_code": 0,
+  "sync_exit_code": 0,
+  "generated_sheets_reproduced": 15,
+  "app_bundle_characters": 428079,
+  "source_census_styles_security_input_sha256": "c3faa7fdac61c8679a11c908e56f6dbb5402403a41e658d629f2835e57a71e96",
+  "qualification": "Final executions confirmed in tool transcript; rebuilt outputs leave all3228 tracked-source/census/style/security input bytes unchanged. Earlier full stdout receipts remain separately source-labeled."
+}

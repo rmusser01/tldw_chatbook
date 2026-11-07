@@ -1,0 +1,76 @@
+{
+  "captured_at": "2026-11-04T23:50:44.449884+00:00",
+  "scope": "Independent root metadata/content audit; no native test or review verdict",
+  "HEAD": "7dc71ac16c3daf736b70d035e1888f6dd00965a6",
+  "parent": "0f7c4bd2c5a5ec14c04ba0a66a80e4df8738e91d",
+  "exact_committed_paths": [
+    "Docs/Architecture/agent-runtime.md",
+    "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+    "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+    "Tests/Chat/test_console_workflow_scheduling.py",
+    "Tests/Chat/workflow_coordinator_probe.py",
+    "backlog/decisions/285-native-phased-agent-workflows.md",
+    "backlog/tasks/task-38531 - Schedule-approved-phases-through-the-existing-Console-runtime.md",
+    "tldw_chatbook/Chat/console_workflow_preparation.py",
+    "tldw_chatbook/Chat/console_workflow_runs.py"
+  ],
+  "owned_commit_index_worktree": {
+    "tldw_chatbook/Chat/console_workflow_preparation.py": {
+      "worktree": "0862acdc9883dd684d4775c512810758e680982206dd4c83408fb5120fc67169",
+      "index": "0862acdc9883dd684d4775c512810758e680982206dd4c83408fb5120fc67169",
+      "commit": "0862acdc9883dd684d4775c512810758e680982206dd4c83408fb5120fc67169"
+    },
+    "tldw_chatbook/Chat/console_workflow_runs.py": {
+      "worktree": "50f798b4f0fb74ba88508d9088eb95a1775a5119a802ab9e1a65996801b39936",
+      "index": "50f798b4f0fb74ba88508d9088eb95a1775a5119a802ab9e1a65996801b39936",
+      "commit": "50f798b4f0fb74ba88508d9088eb95a1775a5119a802ab9e1a65996801b39936"
+    },
+    "Tests/Chat/test_console_workflow_scheduling.py": {
+      "worktree": "aaca57892db90d0adf0504530e3471b5c0e86e0ec7edf65e1b6833add2ef75ef",
+      "index": "aaca57892db90d0adf0504530e3471b5c0e86e0ec7edf65e1b6833add2ef75ef",
+      "commit": "aaca57892db90d0adf0504530e3471b5c0e86e0ec7edf65e1b6833add2ef75ef"
+    },
+    "Tests/Chat/workflow_coordinator_probe.py": {
+      "worktree": "b5f4470dc761fb99a4461af9b62ef79066030053352d8c3b76882e5d3ab8f756",
+      "index": "b5f4470dc761fb99a4461af9b62ef79066030053352d8c3b76882e5d3ab8f756",
+      "commit": "b5f4470dc761fb99a4461af9b62ef79066030053352d8c3b76882e5d3ab8f756"
+    },
+    "backlog/decisions/285-native-phased-agent-workflows.md": {
+      "worktree": "35963323ebf2e1720a7b12ce3008aa267e11b46fb99b4037bb9753eda2aa6633",
+      "index": "35963323ebf2e1720a7b12ce3008aa267e11b46fb99b4037bb9753eda2aa6633",
+      "commit": "35963323ebf2e1720a7b12ce3008aa267e11b46fb99b4037bb9753eda2aa6633"
+    },
+    "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md": {
+      "worktree": "7880904de05cf81d0f7293819df061ea1bc5e8ea5af4acda5060725b431b091a",
+      "index": "7880904de05cf81d0f7293819df061ea1bc5e8ea5af4acda5060725b431b091a",
+      "commit": "7880904de05cf81d0f7293819df061ea1bc5e8ea5af4acda5060725b431b091a"
+    },
+    "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md": {
+      "worktree": "d8768058594c3602248d2fb28bbe2de27c19f167026bf865f32d54264ed9a667",
+      "index": "d8768058594c3602248d2fb28bbe2de27c19f167026bf865f32d54264ed9a667",
+      "commit": "d8768058594c3602248d2fb28bbe2de27c19f167026bf865f32d54264ed9a667"
+    },
+    "backlog/tasks/task-38531 - Schedule-approved-phases-through-the-existing-Console-runtime.md": {
+      "worktree": "f9e27850d474c23e96f7767682b9f40d77895d72559db4069758156c1784a5ad",
+      "index": "f9e27850d474c23e96f7767682b9f40d77895d72559db4069758156c1784a5ad",
+      "commit": "f9e27850d474c23e96f7767682b9f40d77895d72559db4069758156c1784a5ad"
+    },
+    "Docs/Architecture/agent-runtime.md": {
+      "worktree": "cb06a4563415a421de57bb6c3f845e766bde9222f1a8e8696100c6096c5b2d57",
+      "index": "cb06a4563415a421de57bb6c3f845e766bde9222f1a8e8696100c6096c5b2d57",
+      "commit": "cb06a4563415a421de57bb6c3f845e766bde9222f1a8e8696100c6096c5b2d57"
+    }
+  },
+  "cached_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "cached_entries": 61,
+  "original279_protected_worktree_hashes": true,
+  "all13_full_support_original_frozen_pairs": true,
+  "native8317_maps": "Attributed to writer/controller; not independently rehashed in this root audit",
+  "report_sha256": "fcdfe60757ff6aea703acbb9e0b1ebc923a9685b6733e237b329444220283107",
+  "report_bytes": 16808,
+  "postcommit_manifest_sha256": "d2d85bd315e62548ce21b0b6a5311856fa8113d2d2b4890ce6a952551da53ca0",
+  "no_native_rerun": true,
+  "gate": "Task8 scoped WHOLE review pending; Task38531 still open",
+  "report_full_digest_readback_verified": true,
+  "report_digest_readback_at": "2026-11-04T23:51:18.455438+00:00"
+}

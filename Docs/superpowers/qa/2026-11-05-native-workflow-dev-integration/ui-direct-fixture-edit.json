@@ -1,0 +1,14 @@
+{
+  "parsed": [
+    {
+      "path": "Tests/UI/test_console_send_acknowledgement.py",
+      "sha256": "b3598cf5d203991c8857e09cd26ac4517b2778233c92e2409e13d92a55b2b4da"
+    },
+    {
+      "path": "Tests/UI/test_console_projection_reads_off_loop.py",
+      "sha256": "bb3d6c99dfb07ca4f8eec2e30b367f40e984af658dfbc13e52d50a0b6083242a"
+    }
+  ],
+  "production_changed": false,
+  "test_node": "Tests/UI/test_console_projection_reads_off_loop.py::test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection[direct]"
+}

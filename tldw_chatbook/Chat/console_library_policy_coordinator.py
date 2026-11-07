@@ -228,3 +228,22 @@ _CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS = tuple(
         ("_run_repository_call", ConsoleLibraryPolicyCoordinator._run_repository_call),
     )
 )
+
+from .console_ordinary_tree import _function_record as _ordinary_function_record
+
+_NATIVE_FIRST_LIBRARY_COORDINATOR = (
+    ConsoleLibraryPolicyCoordinator,
+    tuple(
+        (
+            name,
+            _ordinary_function_record(getattr(ConsoleLibraryPolicyCoordinator, name)),
+        )
+        for name in (
+            "capture_for_execution",
+            "_read_current_binding",
+            "_run_repository_call",
+            "_publish",
+            "_require_session",
+        )
+    ),
+)

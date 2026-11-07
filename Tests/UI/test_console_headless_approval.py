@@ -24,7 +24,7 @@ from Tests.Chat.test_console_fleet_wake import (
     _terminal_subagent_run,
 )
 from Tests.Chat.test_console_runtime_lifetime import _pending_call, _View
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_mcp_approval import _pending
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -35,6 +35,7 @@ from Tests.UI.test_console_store_continuity import (
     _StallingWakeGateway,
     _terminal_survivor_run,
 )
+from tldw_chatbook import config
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -277,12 +278,15 @@ def _toast_text(app) -> str:
 
 
 def _build_console_app(tmp_path):
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
     return app, gateway
 
 
@@ -292,6 +296,7 @@ def _build_console_app(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
     tmp_path,
 ):
@@ -319,6 +324,7 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
        the human's verdict.
     """
     app, gateway = _build_console_app(tmp_path)
+    app._initial_screen_pushed = True
 
     # `notifications=True` is REQUIRED and is not decoration: Textual's
     # `run_test` defaults it to False, which makes `Screen._extend_compose`

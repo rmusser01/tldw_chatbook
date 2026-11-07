@@ -1,0 +1,25 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Plugins/test_plugin_context.py",
+    "Tests/Chat/test_console_ordinary_tree.py::test_reference_metadata_replacement_refuses_before_callback",
+    "Tests/Chat/test_console_reference_custody.py",
+    "-k",
+    "reference or manual_rule or command_selector or literal",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-plugin-reference-focused"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 1,
+  "elapsed_seconds": 7.468538250308484,
+  "source_file_count": 9108,
+  "before_sha256": "77a9144c28d1c1b5e1e7f30384c585eb0541c0c11db359381ec321dcaaa49f0c",
+  "after_sha256": "77a9144c28d1c1b5e1e7f30384c585eb0541c0c11db359381ec321dcaaa49f0c",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/plugin-reference-focused.log"
+}

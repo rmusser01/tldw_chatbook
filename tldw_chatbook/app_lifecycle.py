@@ -59,7 +59,7 @@ from tldw_chatbook.Utils.app_shutdown import (
     arm_exit_watchdog,
     unregister_running_app,
 )
-from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.Utils.persistent_diagnostics import _exception_frames, persist_event
 from tldw_chatbook.Widgets.confirmation_dialog import (
     ConfirmationDialog,
     await_quit_prompt,
@@ -108,28 +108,6 @@ _DIAGNOSTICS_COMPONENT_APP = "app"
 _PUMP_DISPATCH_FRAMES = frozenset(
     {"_dispatch_message", "_flush_next_callbacks", "_process_messages_loop"}
 )
-
-def _exception_frames(error: BaseException) -> list[tuple[str, str, int | None]]:
-    """Return ``(module, function, line)`` for each traceback frame, outermost first.
-
-    TASK-32533. Identifiers only -- module ``__name__``, ``co_name`` and the
-    line number -- so the result can be persisted through the metadata-only
-    diagnostics schema without ever carrying the message or a file path.
-    """
-    frames: list[tuple[str, str, int | None]] = []
-    tb = error.__traceback__
-    while tb is not None:
-        frame = tb.tb_frame
-        frames.append(
-            (
-                str(frame.f_globals.get("__name__", "")),
-                frame.f_code.co_name,
-                tb.tb_lineno,
-            )
-        )
-        tb = tb.tb_next
-    return frames
-
 
 class LifecycleMixin:
     """``TldwCli``'s lifecycle, shutdown and quit members (moved from ``app.py``)."""
@@ -802,6 +780,9 @@ class LifecycleMixin:
         await self._shutdown_raw_cli_runtime()
         await self._shutdown_terminal_session_manager()
         await self._shutdown_console_settings_durability()
+        change_review = getattr(self, "change_review_consent_service", None)
+        if change_review is not None:
+            change_review.begin_close()
         await self._shutdown_console_runtime()
         change_review = getattr(self, "change_review_consent_service", None)
         if change_review is not None:
@@ -1582,6 +1563,7 @@ class LifecycleMixin:
                 return  # Documented off-switch (ADR-229).
             from datetime import timedelta
 
+            from .Backup_Recovery.participants import run_finite_local_worker
             from .DB.base_db import operation_owned_connection
             from .Utils.timestamps import to_utc_iso, utc_now
 
@@ -1598,7 +1580,7 @@ class LifecycleMixin:
                 db = getattr(self, attr, None)
                 if db is None:
                     continue
-                pruned = await asyncio.to_thread(prune, db)
+                pruned = await asyncio.to_thread(run_finite_local_worker, prune, db)
                 if pruned:
                     self.loguru_logger.info(
                         f"Sync-log retention pruned {pruned} rows older than "

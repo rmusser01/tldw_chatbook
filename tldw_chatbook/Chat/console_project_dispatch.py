@@ -129,3 +129,12 @@ def build_project_dispatch_callbacks(
         project_authority_guard,
         confirm_project_dispatch,
     )
+
+
+# Definition-time records follow the actual extracted native receivers (ADR-285).
+from tldw_chatbook.Chat.console_ordinary_tree import _function_record as _native_record
+
+_NATIVE_WORKFLOW_RECEIVERS = tuple(
+    (name, _native_record(globals()[name]))
+    for name in ('build_project_dispatch_callbacks',)
+)

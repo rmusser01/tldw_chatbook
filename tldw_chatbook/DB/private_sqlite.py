@@ -129,10 +129,21 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_AND_READ_ONLY,
         "Restricted disposable imported candidate, never a live repository open.",
     ),
+    "recovery.detached_normalization": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/detached_layout",
+        _PRIVATE_FILE,
+        "Disposable normalization from an installed-owner-validated restricted staged source; never live capture.",
+        centralized_backup_allowed=True,
+    ),
     "recovery.rag_projection_validation": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery/rag_projection_validation",
         _READ_ONLY_URI,
         "Restricted disposable Chroma candidate metadata with copied WAL visibility; never a live root.",
+    ),
+    "recovery.workflow_catalog": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_workflow_schema",
+        _MEMORY,
+        "Installed workflow SQL only; in-memory successor catalog construction.",
     ),
     "recovery.validation_schema": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery/sqlite_validation",
@@ -1663,31 +1674,9 @@ def _windows_descriptor_snapshot(descriptor: int, before: os.stat_result) -> byt
         MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     )
 
-    if not 100 <= before.st_size <= MAX_PROFILE_MIGRATION_ARTIFACT_BYTES:
-        raise ValueError("descriptor_snapshot_limit")
-    offset = os.lseek(descriptor, 0, os.SEEK_CUR)
-    data = bytearray()
-    try:
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        while len(data) < before.st_size:
-            chunk = os.read(descriptor, min(1024 * 1024, before.st_size - len(data)))
-            if not chunk:
-                raise ValueError("descriptor_snapshot_changed")
-            data.extend(chunk)
-        after = os.fstat(descriptor)
-        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-        if any(getattr(before, key) != getattr(after, key) for key in fields):
-            raise ValueError("descriptor_snapshot_changed")
-    finally:
-        os.lseek(descriptor, offset, os.SEEK_SET)
-    if data[:16] != b"SQLite format 3\x00":
-        raise ValueError("descriptor_snapshot_invalid")
-    # deserialize cannot open a WAL-mode image. This immutable main-file view
-    # deliberately ignores WAL, exactly like the existing immutable=1 route;
-    # change only the in-memory header, never the source or its sidecars.
-    if data[18:20] == b"\x02\x02":
-        data[18:20] = b"\x01\x01"
-    return data
+    return private_sqlite_files._windows_descriptor_snapshot_data(
+        descriptor, before, MAX_PROFILE_MIGRATION_ARTIFACT_BYTES, os
+    )
 
 
 class _ReadonlyDescriptorMixin:

@@ -147,18 +147,33 @@ def test_cleanup_unproven_is_sticky_through_actual_worker_finally():
     assert observed == [False, False]
 
 
-def test_thread_start_failure_and_repeated_release_do_not_lose_capacity(monkeypatch):
+def test_stock_construction_failure_and_repeated_release_do_not_lose_capacity():
     capacity = RuntimeCapacity(max_tool_workers=1, reserved_manual_tool_workers=0)
     owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
 
-    def fail_start(self):
-        raise RuntimeError("thread exhausted")
+    import sys
 
-    with monkeypatch.context() as patch:
-        patch.setattr(threading.Thread, "start", fail_start)
+    constructor = threading.Thread.__init__.__code__
+    observed = []
+    previous = sys.getprofile()
+
+    def fail_construction(frame, event, arg):
+        if (
+            event == "call"
+            and frame.f_code is constructor
+            and frame.f_locals.get("name") == "tool-tool"
+        ):
+            observed.append(True)
+            raise RuntimeError("original constructor refused before start invocation")
+
+    try:
+        sys.setprofile(fail_construction)
         result = _call_with_timeout(
             lambda: pytest.fail("not started"), 1, "tool", owner=owner
         )
+    finally:
+        sys.setprofile(previous)
+    assert observed == [True]
     assert not result.ok
     assert capacity.snapshot().tool_workers == 0
     assert _call_with_timeout(lambda: ToolResult(ok=True), 1, "tool", owner=owner).ok
@@ -342,3 +357,20 @@ def test_invalid_total_uses_default_instead_of_disabling_limits(invalid):
         operation.finish()
     for owner in owners:
         owner.finish_root()
+
+
+def test_admission_membership_distinguishes_real_owners_through_physical_retirement():
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+
+    capacity = RuntimeCapacity()
+    fabricated = ExecutionOwner(capacity, WorkOrigin.MANUAL, "fabricated", True)
+    assert not fabricated.is_admitted
+    owner = capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="real", child=True
+    )
+    assert owner.is_admitted
+    operation = owner.reserve_tool()
+    owner.finish_root()
+    assert owner.is_admitted
+    operation.finish()
+    assert not owner.is_admitted

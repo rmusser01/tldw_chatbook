@@ -142,6 +142,7 @@ async def exercise():
             "discovery": ConsoleSkillController._refresh_console_skill_candidates,
             "policy": PolicyEngine.evaluate,
             "hook": HookPermissions.snapshot,
+            "hook_authority": HookPermissions.authority_read,
             "catalog": preparation.capture_console_skill_catalog_owned,
             "finish": preparation.finish_console_skill_catalog_owned,
             "visible": LocalSkillsService._visible_records,
@@ -161,6 +162,7 @@ async def exercise():
                 ),
                 (PolicyEngine, "evaluate", functions["policy"]),
                 (HookPermissions, "snapshot", functions["hook"]),
+                (HookPermissions, "authority_read", functions["hook_authority"]),
                 (
                     preparation,
                     "capture_console_skill_catalog_owned",
@@ -412,11 +414,27 @@ async def exercise():
                     parent = frame.f_back
                     if (
                         parent is None
-                        or parent.f_code is not snapshot_code
-                        or parent.f_locals["runtime"] is not runtime
+                        or parent.f_code is not codes["hook_authority"]
+                        or parent.f_globals
+                        is not functions["hook_authority"].__globals__
                     ):
                         return
-                    receipt(parent.f_locals["record"])
+                    dispatch_frame = parent.f_back
+                    if (
+                        dispatch_frame is None
+                        or dispatch_frame.f_code is not snapshot_code
+                        or dispatch_frame.f_globals
+                        is not dispatch._run_received_intent_bound.__globals__
+                        or dispatch_frame.f_locals["runtime"] is not runtime
+                    ):
+                        return
+                    owner = frame.f_locals["self"]
+                    assert (
+                        parent.f_locals["self"] is owner
+                        and owner is runtime._hook_permissions
+                        and owner is dispatch_frame.f_locals["source"].permissions
+                    )
+                    receipt(dispatch_frame.f_locals["record"])
                     assert value.ready is True and not entered.is_set()
                     objects["hook_ready"] = True
                     phase("hook_ready")

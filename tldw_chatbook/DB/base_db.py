@@ -41,9 +41,21 @@ TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
 _OPERATION_OWNERS = threading.local()
 
 
+class _OperationEntryReturn:
+    """One database's original passive setup/bookkeeping disposition."""
+
+    def __init__(self, database):
+        self.database = database
+        self.thread = threading.current_thread()
+        self.used = False
+        self.stage = "new"
+        self.error = None
+        self.bookkeeping_returned = False
+
+
 @contextmanager
 def operation_owned_connection(
-    database: object, *, operation_deadline: float | None = None
+    database: object, *, operation_deadline: float | None = None, _entry_return=None
 ) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
@@ -54,6 +66,22 @@ def operation_owned_connection(
     outermost owner, which retires the handle when the whole operation ends.
     A monotonic deadline also bounds the departing handle's checkpoint wait.
     """
+    if _entry_return is not None:
+        if (
+            any(fn.__code__ is not code for fn, code in _OPERATION_ENTRY_RECEIVERS)
+            or operation_owned_connection is not _OPERATION_ENTRY_RECEIVERS[0][0]
+            or operation_owned_connection.__wrapped__
+            is not _OPERATION_ENTRY_RECEIVERS[1][0]
+            or _operation_owned_connection is not _OPERATION_ENTRY_RECEIVERS[2][0]
+            or _operation_owned_connection.__wrapped__
+            is not _OPERATION_ENTRY_RECEIVERS[3][0]
+            or type(_entry_return) is not _OperationEntryReturn
+            or _entry_return.used
+            or _entry_return.database is not database
+            or _entry_return.thread is not threading.current_thread()
+        ):
+            raise RuntimeError("original database entry record required")
+        _entry_return.used = True
     owners = getattr(_OPERATION_OWNERS, "ids", None)
     if owners is None:
         owners = _OPERATION_OWNERS.ids = set()
@@ -62,17 +90,24 @@ def operation_owned_connection(
         return
     owners.add(id(database))
     try:
-        with _operation_owned_connection(
-            database, operation_deadline=operation_deadline
-        ):
+        kwargs = {"operation_deadline": operation_deadline}
+        if _entry_return is not None:
+            kwargs["_entry_return"] = _entry_return
+        with _operation_owned_connection(database, **kwargs):
             yield
+    except BaseException as error:
+        if _entry_return is not None and _entry_return.stage == "passive_returned":
+            _entry_return.error = error
+        raise
     finally:
         owners.discard(id(database))
+        if _entry_return is not None:
+            _entry_return.bookkeeping_returned = True
 
 
 @contextmanager
 def _operation_owned_connection(
-    database: object, *, operation_deadline: float | None = None
+    database: object, *, operation_deadline: float | None = None, _entry_return=None
 ) -> Iterator[None]:
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
@@ -109,11 +144,27 @@ def _operation_owned_connection(
             else database._thread_local
         )
         close = database.close
+        passive_original = False
+        if _entry_return is not None:
+            from tldw_chatbook.Backup_Recovery import participants
+
+            record = participants._CORE_CACHE_INSPECTION
+            passive_original = (
+                type(database) is AgentRunsDB
+                and core_cached_connection is record[0]
+                and core_cached_connection.__code__ is record[1]
+                and participants.repository_types is record[2]
+                and record[2].__code__ is record[3]
+                and participants.retired_core_connections is record[4]
+            )
         previous = core_cached_connection(database, getattr(local, "conn", None))
         borrowed = previous is not None
     else:
         previous = getattr(local, "conn", None)
         borrowed = previous is not None and registry.is_registered(previous)
+    if _entry_return is not None and locals().get("passive_original"):
+        _entry_return.stage = "passive_returned"
+        _entry_return.stage = "inner_entry"
     try:
         yield
     finally:
@@ -135,6 +186,17 @@ def _operation_owned_connection(
                         )
             finally:
                 close()
+
+
+_OPERATION_ENTRY_RECEIVERS = tuple(
+    (fn, fn.__code__)
+    for fn in (
+        operation_owned_connection,
+        operation_owned_connection.__wrapped__,
+        _operation_owned_connection,
+        _operation_owned_connection.__wrapped__,
+    )
+)
 
 
 async def run_owned_db_call[**_CallParameters, _CallResult](

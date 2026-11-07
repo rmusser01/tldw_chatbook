@@ -82,3 +82,10 @@ ADR-021 (file-backed notes disk authority and recovery), ADR-296 (file-notes dis
 2. The watcher is polling-only (no FS events dependency); hints drive reconciliation timing.
 3. Executor worker coroutines run one loop per worker thread — an earlier per-call `asyncio.run` leaked SQLite connections.
 4. `duplicate_authority` pauses the root rather than picking a winner, because two bindings claiming one note cannot be reconciled safely.
+
+
+### PR3411 final trace and Notes owner decision — Task13, 2026-11-07
+
+The private Notes boot-evidence entry remains in `app_service_wiring`: it converts and checks the selected path before lazily importing Notes. Its read-only roots SELECT executes in the existing `Notes.notes_device_state_store` owner through the same `NotesDeviceStateStore._connect(read_only=True, must_exist=True)` seam, with original open/query/close error boundaries and old wiring entry/path patch routes retained. This predicate reports existing configuration, constructs no new logical owner and grants no sync authority.
+
+The old wiring wrapper retains its full signature and missing-path/conversion/exists behavior before import. The existing state module receives only the selected-path read-only predicate and its incident explanation; open errors remain outside the query catch, query/fetch OperationalError retains its original False policy, and close failures remain visible. The two wiring evidence callers continue resolving the old live predicate/path bindings, and actual Notes class/_connect patches retain their original seam. No new constructor/cache/schema or eager absent-path import is permitted.

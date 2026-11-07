@@ -240,18 +240,32 @@ async def compose_turn_review_provider(
         )
 
     try:
-        return await asyncio.to_thread(
-            compose_native_review_provider,
-            controller,
-            session_id=session_id,
-            message=message,
-            roots=roots,
-            resolution=resolution,
-            destination_check=review_destination_check,
-            conversation_id=conversation_id,
-            wake_authorization=wake_authorization,
-            tool_configuration=tool_configuration,
-            trusted_skill_bindings=skill_bindings,
+        from .console_ordinary_tree import (
+            check_ordinary_review_input,
+            current_ordinary_tree,
+            run_ordinary_preparation,
+        )
+
+        tree = current_ordinary_tree(controller)
+
+        def compose():
+            if tree is not None:
+                check_ordinary_review_input(tree, message, wake_authorization)
+            return compose_native_review_provider(
+                controller,
+                session_id=session_id,
+                message=message,
+                roots=roots,
+                resolution=resolution,
+                destination_check=review_destination_check,
+                conversation_id=conversation_id,
+                wake_authorization=wake_authorization,
+                tool_configuration=tool_configuration,
+                trusted_skill_bindings=skill_bindings,
+            )
+
+        return await run_ordinary_preparation(
+            controller, compose, opaque=bool(tree is not None and tree.review_possible)
         )
     except ReviewRefused as exc:
         controller.code_review.diagnostic = exc.reason
@@ -324,3 +338,11 @@ def attach_review_ledger(controller: Any, bridge: Any) -> None:
                 transition=review.boundary_transition,
                 acceptance_scope=review.boundary_acceptance_scope,
             )
+
+
+# Pin the actual extracted review composition receiver before source activation.
+from .console_ordinary_tree import _function_record as _native_record
+
+_NATIVE_WORKFLOW_RECEIVERS = (
+    ("compose_turn_review_provider", _native_record(compose_turn_review_provider)),
+)

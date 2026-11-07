@@ -1,0 +1,6 @@
+{
+  "before": "63d730b93ca958533483dc3c782878bb8cc83a61cb399adc50a8cc6362e90ad9",
+  "after": "37b4b07037ab79effd57564090c79fba511000ca9e0c3f26ae1ba26a9a2cf327",
+  "ast_valid": true,
+  "scope": "five observed fixture/oracle failures, exact original-session/initialization-refusal/fresh-v2-fallback semantics"
+}

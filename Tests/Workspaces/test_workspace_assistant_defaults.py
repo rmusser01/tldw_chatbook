@@ -240,7 +240,9 @@ def test_malformed_stored_json_degrades_without_logging_private_values(tmp_path)
         logger.remove(sink_id)
 
     rendered = "".join(str(record) for record in records)
-    assert "Ignoring malformed workspace assistant_defaults" in rendered
+    assert [record.record["message"] for record in records] == [
+        "Ignoring malformed workspace assistant_defaults"
+    ]
     assert "PRIVATE_UNSUPPORTED_KIND" not in rendered
 
 

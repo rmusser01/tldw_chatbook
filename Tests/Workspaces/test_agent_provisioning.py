@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore
 from tldw_chatbook.Workspaces.agent_provisioning import (
@@ -51,11 +53,23 @@ def test_provision_creates_persona_profile_and_reference(tmp_path):
 def test_provision_failure_is_non_fatal(tmp_path):
     class Broken:
         def create_persona_profile(self, payload):
-            raise RuntimeError("boom")
+            raise RuntimeError("PRIVATE_PROVISIONING_FAILURE")
+
+    from loguru import logger
 
     registry, _store = build(tmp_path, Broken())
-    record = registry.create_workspace(workspace_id="w-3", name="W3")
+    records = []
+    sink = logger.add(lambda message: records.append(message.record["message"]))
+    try:
+        record = registry.create_workspace(workspace_id="w-3", name="PRIVATE_WORKSPACE")
+    finally:
+        logger.remove(sink)
     assert record.assistant_defaults is None
+    assert records == [
+        "Workspace agent provisioning failed",
+        "Workspace agent provisioning returned no defaults",
+    ]
+    assert registry.get_workspace("w-3").assistant_defaults is None
 
 
 def test_explicit_none_survives_creation_and_pending_backfill_restart(tmp_path):
@@ -135,8 +149,19 @@ def test_backfill_retries_when_persist_fails(tmp_path):
     )
     registry.create_workspace(workspace_id="w-8", name="Retry Me")
 
+    from loguru import logger
+
+    records = []
+    sink = logger.add(lambda message: records.append(message.record["message"]))
     registry.fail_next = True
-    assert run_workspace_agent_backfill(registry=registry, provisioner=provisioner) == 0
+    try:
+        assert (
+            run_workspace_agent_backfill(registry=registry, provisioner=provisioner)
+            == 0
+        )
+    finally:
+        logger.remove(sink)
+    assert "Workspace agent backfill could not persist defaults" in records
     assert registry.db.is_agent_backfill_complete() is False
 
     second = run_workspace_agent_backfill(registry=registry, provisioner=provisioner)
@@ -209,3 +234,37 @@ def test_create_time_provisioning_and_backfill_traverse_tool_profile_guard(tmp_p
     assert run_workspace_agent_backfill(registry=registry, provisioner=provisioner) == 1
     assert [call["action"] for call in guard.calls] == ["set"]
     assert guard.calls[0]["intended_defaults"].tool_policy_profile_id == "ws-w-backfill"
+
+
+@pytest.mark.parametrize("failure", ["hook", "persist"])
+def test_registry_provisioning_callback_failure_keeps_created_workspace(
+    tmp_path, monkeypatch, failure
+):
+    from loguru import logger
+
+    from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
+
+    registry, _store = build(tmp_path)
+    defaults = WorkspaceAssistantDefaults(assistant_id="private-persona")
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("PRIVATE_REGISTRY_CALLBACK_FAILURE")
+
+    if failure == "hook":
+        registry.set_agent_provisioner(unavailable)
+        expected = "Workspace agent provisioning hook failed"
+    else:
+        registry.set_agent_provisioner(lambda _workspace: defaults)
+        monkeypatch.setattr(registry, "set_assistant_defaults", unavailable)
+        expected = "Workspace agent defaults could not be persisted"
+    records = []
+    sink = logger.add(lambda message: records.append(message.record["message"]))
+    try:
+        created = registry.create_workspace(
+            workspace_id="callback-failure", name="PRIVATE_WORKSPACE_NAME"
+        )
+    finally:
+        logger.remove(sink)
+    assert created.assistant_defaults is None
+    assert registry.get_workspace(created.workspace_id).assistant_defaults is None
+    assert records == [expected]

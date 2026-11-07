@@ -1,0 +1,27 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Agents/test_workflow_run_service.py",
+    "Tests/Workspaces/test_worktree_activity.py",
+    "Tests/Chat/test_workflow_settlement_delivery.py",
+    "Tests/Chat/test_workflow_extracted_receiver_guards.py",
+    "Tests/Chat/test_workflow_review_activity.py",
+    "-k",
+    "not held_native_review and not ordinary_native_child and not ordinary_child_scope_return",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-newbase-workflow-units"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 1,
+  "elapsed_seconds": 98.68525883322582,
+  "source_file_count": 9109,
+  "before_sha256": "6cec164c5471c167e2d23d29cadf1befbe931be251c4baeeb5d73771bc721555",
+  "after_sha256": "6cec164c5471c167e2d23d29cadf1befbe931be251c4baeeb5d73771bc721555",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-workflow-units.log"
+}

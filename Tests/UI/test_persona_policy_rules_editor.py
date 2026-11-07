@@ -299,7 +299,7 @@ class _FakeRegistry:
         item = self._defaults.get(workspace_id)
         if item is None:
             return None
-        return SimpleNamespace(assistant_defaults=item)
+        return _workspace(workspace_id, assistant_defaults=item)
 
 
 class _FakePersonaService:
@@ -313,8 +313,14 @@ class _FakePersonaService:
         return record
 
 
-def _workspace(workspace_id: str = "ws-1") -> SimpleNamespace:
-    return SimpleNamespace(workspace_id=workspace_id, name="Research")
+def _workspace(
+    workspace_id: str = "ws-1", *, assistant_defaults: Any = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        workspace_id=workspace_id,
+        name="Research",
+        assistant_defaults=assistant_defaults,
+    )
 
 
 def test_switcher_suffix_available_default_appends_label():
@@ -332,7 +338,12 @@ def test_switcher_suffix_available_default_appends_label():
             {"p1": {"id": "p1", "name": "Ops persona", "deleted": False}}
         ),
     )
-    assert workspace_persona_label_suffix(app, _workspace()) == " · Ops persona"
+    assert (
+        workspace_persona_label_suffix(
+            app, app.workspace_registry_service.get_workspace("ws-1")
+        )
+        == " · Ops persona"
+    )
 
 
 def test_switcher_suffix_absent_without_default_or_missing_persona():
@@ -355,7 +366,13 @@ def test_switcher_suffix_absent_without_default_or_missing_persona():
             {"p1": {"id": "p1", "name": "Ghost", "deleted": True}}
         ),
     )
-    assert workspace_persona_label_suffix(deleted_persona, _workspace()) == ""
+    assert (
+        workspace_persona_label_suffix(
+            deleted_persona,
+            deleted_persona.workspace_registry_service.get_workspace("ws-1"),
+        )
+        == ""
+    )
 
 
 def test_switcher_suffix_degrades_silently_without_services():
@@ -501,6 +518,7 @@ def _import_review(policy_rule_count: int):
     )
 
 
+@pytest.mark.bootstrap_profile
 async def test_import_completion_surfaces_policy_rule_notice(
     monkeypatch, mock_app_instance, stub_characters, local_scope, tmp_path
 ):
@@ -544,6 +562,7 @@ async def test_import_completion_surfaces_policy_rule_notice(
         assert "policy rule" not in notice
 
 
+@pytest.mark.bootstrap_profile
 async def test_policy_rules_changed_persists_validated_rules_via_service(
     monkeypatch, mock_app_instance, stub_characters, local_scope
 ):
@@ -592,6 +611,7 @@ async def test_policy_rules_changed_persists_validated_rules_via_service(
         assert any("policy rules saved" in item.lower() for item in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.usefixtures("stub_characters")
 async def test_policy_rule_save_failure_logs_metadata_only(
     monkeypatch, mock_app_instance, local_scope
@@ -604,7 +624,8 @@ async def test_policy_rule_save_failure_logs_metadata_only(
         "PRIVATE_POLICY_SAVE_FAILURE"
     )
     app = PersonasTestApp(mock_app_instance)
-    app.notify = lambda *_args, **_kwargs: None
+    notifications = []
+    app.notify = lambda message, **_kwargs: notifications.append(str(message))
     records = []
     sink_id = logger.add(records.append, level="ERROR", format="{message}")
     try:
@@ -639,4 +660,8 @@ async def test_policy_rule_save_failure_logs_metadata_only(
         record.record["extra"].get("exception_type") == "RuntimeError"
         for record in records
     )
+    assert [record.record["message"] for record in records] == [
+        "Error saving persona policy rules; mode=local"
+    ]
+    assert "Policy rules save failed: PRIVATE_POLICY_SAVE_FAILURE" in notifications
     assert "PRIVATE_POLICY_SAVE_FAILURE" not in rendered

@@ -1,0 +1,64 @@
+diff --git a/.superpowers/pr-prep/native-phased-workflows-2026-11-05/docs-review-current/backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md b/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md
+index 6a4d1b6202..78f37fee86 100644
+--- a/.superpowers/pr-prep/native-phased-workflows-2026-11-05/docs-review-current/backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md
++++ b/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md
+@@ -189,13 +189,13 @@ content-free warning explains the missing attribution. If the timeout occurs
+ while a predecessor survivor window remains open, both lineages become
+ attribution-invalid and the root enters a degraded epoch. It resynchronizes
+ only after known survivor and mutation-capable work becomes quiescent; no late
+ result can retroactively claim the intervening mutation.
+ 
+ The visible bounded prompt queue remains process-memory-only under
+-[ADR-046](046-visible-bounded-console-prompt-queue.md). This decision fixes the
++[ADR098](098-visible-bounded-console-prompt-queue.md). This decision fixes the
+ turn-release boundary; it does not persist or replay unsent private prompt
+ text.
+ 
+ ## Context
+ 
+ Change Review currently starts a baseline thread for an ordinary Console turn
+@@ -268,13 +268,13 @@ and lifecycle facts.
+ 
+ ## Links
+ 
+ - [Approved recovery design](../../Docs/superpowers/specs/2026-08-21-console-file-review-performance-recovery-design.md)
+ - [Original Agent Change Review design](../../Docs/superpowers/specs/2026-08-02-agent-change-review-design.md)
+ - [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
+-- [ADR-046: Visible bounded Console prompt queue](046-visible-bounded-console-prompt-queue.md)
++- [ADR098](098-visible-bounded-console-prompt-queue.md)
+ - [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
+ 
+ Task8D2C reuses the native Git qualification and physical transport described in
+ ADR285 for explicit references through an explicit executable/repository prefix
+ and original producer. ShadowRepo remains the original Change Review consumer;
+ its helper policy, storage/source/host contract, timeouts and ordinary unsupported
+@@ -320,13 +320,13 @@ The original coordinator issues an inert reservation before the workflow FULL
+ active-window commit; only the same original reservation/source/receipt activates
+ normal jobs afterward. B callback, handoff and physical return precede child
+ writes. Bind the first actual committed member run, never a fake supervisor.
+ Close E at actual quiescence before manual/capacity/human gaps; fresh B is required
+ after intervening effects. No-commit races close an honest unused window.
+ 
+-Workflow-only v28 window/ref records cover zero-row E, unused/no-run and late E
++Workflow-only v29 window/ref records cover zero-row E, unused/no-run and late E
+ without changing ordinary snapshot rows or immutable task checkpoint bytes.
+ Publication atomically writes native rows and refs/disposition. A successful
+ fallback discloses failure; both failures retain required window/phase/original
+ source/storage/config/recovery protection and cannot acknowledge quality success.
+ Conclusive finite observational return is distinct from required durable success;
+ never label failed rows durable to release them. Unknown physical/source proof
+@@ -340,13 +340,13 @@ budget accounting, migration/catalog/archive/recovery and costs are recorded in
+ [ADR-285](285-native-phased-agent-workflows.md#concurrent-phase-wave-capture-task8d2-approved-before-behavior).
+ 
+ 
+ Task8 D2 close refinement (source-confirmed): workflow preparation must not allocate the unused primary model lifeline. Only `run_primary` starts it, and that entry refuses workflow dispatch; actual children retain their unchanged native child model lifelines. Launched-task native frame teardown returns under a pre-reserved operation on that same original child before its physical drain. A no-launch frame may retire only the source-verified empty display/maps and native provider unbind metadata; any unexpected effectful callback or changed cleanup source refuses, retaining its source lifetime. There is no fresh cleanup owner or OPAQUE claim against the wave, and no generic cleanup exemption.
+ 
+ 
+-Task8 D2 required-reference count refinement: the v28 window records a bounded snapshot_count alongside the ONE normalized ref table: NULL while required E is pending/unresolved, 0..64 atomically with conclusive E rows/refs, and zero for unused/removed windows. This is the necessary count witness distinguishing a genuine successful zero-row E from missing required references during restore validation; it carries no second mapping or authority. It remains inside the existing 65536-byte reservation and does not change v25–v27 catalogs.
++Task8 D2 required-reference count refinement: the v29 window records a bounded snapshot_count alongside the ONE normalized ref table: NULL while required E is pending/unresolved, 0..64 atomically with conclusive E rows/refs, and zero for unused/removed windows. This is the necessary count witness distinguishing a genuine successful zero-row E from missing required references during restore validation; it carries no second mapping or authority. It remains inside the existing 65536-byte reservation and does not change v25–v28 catalogs.
+ 
+ 
+ Task8 D2 original native failure/host return refinement: a known failed native create/setup/thread start must finalize its original log and return its original frame under the pre-held close operation when no child thread was started. Unknown creation retains custody. Reserve one additional finite launch-host operation on the SAME child owner before dispatch callbacks, and finish it only after the original launch source/storage/execution scopes return; it prevents an early child or known failure root finish from releasing the original claim before host return. It adds one existing operation per admitted child, not an owner, scheduler or claim. Tool-worker automatic budget/authority checks must enter the existing owned_goal_storage scope before their first database read; the actual child model-loop coroutine must activate its exact original workflow source and owned_goal_storage before gateway checks. The unchanged original lifeline and pre-held child close/join retain protection through these real thread/source/storage returns. Live native archive evidence found AgentRunsDB leases on departed tool/model threads when those checks preceded the finite scopes; no cache reset or cross-thread close substitutes for their original return.
+ 
+ 
+ ### Wave review fix1: receiving source, unused publication and native callers

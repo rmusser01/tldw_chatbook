@@ -270,7 +270,6 @@ from ...Widgets.Persona_Widgets.personas_character_dictionaries import (
     CharacterDictionaryAttachRequested,
     CharacterDictionaryDetachRequested,
 )
-from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 from ...Widgets.Persona_Widgets.personas_character_world_books import (
     PersonasCharacterWorldBooksWidget,
     CharacterWorldBookAttachRequested,
@@ -6081,6 +6080,8 @@ class PersonasScreen(BaseAppScreen):
         self.run_worker(self._character_dictionary_attach_worker(), group="personas-io")
 
     async def _character_dictionary_attach_worker(self) -> None:
+        from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+
         try:
             if not self._local_character_actions_allowed():
                 return

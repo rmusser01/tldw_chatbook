@@ -63,6 +63,9 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.tool_executor import Tool
 
+# Native config readers remain bound to the collection-time private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _catalog_record(profile_id: str, tools: list[dict]) -> dict:
     return {

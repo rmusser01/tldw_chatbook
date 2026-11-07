@@ -188,6 +188,7 @@ class MCPResultCapture:
         self._lock = threading.Lock()
         self._value = None
         self._closed = False
+        self._permission = None
 
     def _record(self, provider, raw, projected, current=None):
         with self._lock:
@@ -224,17 +225,36 @@ class MCPResultCapture:
 
     def consume_authorized(
         self, result: ToolResult
-    ) -> tuple[MCPToolResult, Callable[[], None]] | None:
+    ) -> tuple[MCPToolResult, Callable[[], None], MCPResultPermission | None] | None:
         """Transfer exact result evidence and its original owner's read-only check."""
         value = self._take(result)
         return (
-            (value[0], value[2]) if value is not None and value[2] is not None else None
+            (value[0], value[2], self._permission)
+            if value is not None and value[2] is not None
+            else None
         )
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
             self._value = None
+            self._permission = None
+
+
+@dataclass(frozen=True)
+class MCPResultPermission:
+    """The actual provider call's grant, without its spent execution context."""
+
+    provider: object
+    tool: object
+    arguments: str
+    decision: str
+    profile: tuple
+
+    def check(self):
+        self.provider._check_passive_result_permission(
+            self.tool, json.loads(self.arguments), self.decision, dict(self.profile)
+        )
 
 
 _result_capture: ContextVar[MCPResultCapture | None] = ContextVar(
@@ -1925,6 +1945,13 @@ class MCPToolProvider:
 
         return lambda: original_context.copy().run(check)
 
+    def _check_passive_result_permission(self, tool, args, decision, profile):
+        """Read original grant policy only; never reactivate or invoke a call."""
+        if self._profile_kwargs() != profile:
+            raise PermissionError("hook_mcp_result_profile_changed")
+        self._check_current_definition(tool)
+        self._check_result_permission(tool, args, decision)
+
     def _execute(self, tool: HubTool, args: dict, *, decision: str) -> ToolResult:
         """Run the tool via the main loop. NEVER raises, NEVER hangs unbounded.
 
@@ -1962,6 +1989,8 @@ class MCPToolProvider:
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
         automatic_work = None
+        task_authorization = None
+        task_effect_started = False
         observation = MCPDispatchObservation()
         execution_completed = threading.Event()
         result_currentness = None
@@ -1972,10 +2001,36 @@ class MCPToolProvider:
         )
         try:
             from .automatic_work_runtime import current_automatic_work
+            from .execution_capacity import current_execution_owner
+            from .run_context import current_run_actor, use_run_actor
+            from .workflow_task_scope import (
+                check_task_provider,
+                current_task_authorization,
+            )
+
+            task_authorization = current_task_authorization()
+            task_owner = current_execution_owner()
+            task_actor = current_run_actor()
+            task_tool_id = next(
+                (
+                    name
+                    for name, entry in self._entry_by_llm_name.items()
+                    if entry[0] is tool
+                ),
+                "",
+            )
+            check_task_provider(self, task_tool_id, args)
 
             automatic_work = current_automatic_work()
             if _result_capture.get() is not None:
                 result_currentness = self._result_currentness(tool, args, decision)
+                _result_capture.get()._permission = MCPResultPermission(
+                    self,
+                    tool,
+                    json.dumps(args, sort_keys=True, allow_nan=False),
+                    decision,
+                    tuple(self._profile_kwargs().items()),
+                )
             if automatic_work is not None:
                 # An approval may have arrived after this chain stopped.
                 automatic_work.check()
@@ -2012,56 +2067,82 @@ class MCPToolProvider:
                 )
 
             async def execute_observed():
-                try:
-                    check_mcp_invocation_policies()
-                    return await create_execution()
-                finally:
-                    execution_completed.set()
+                check_mcp_invocation_policies()
+                return await create_execution()
 
             policies = current_mcp_invocation_policies()
             # Ordinary submissions retain their exact original coroutine and
             # transfer/close contract. Only hooks need this completion observer.
-            execution_factory = execute_observed if policies else create_execution
+            if policies:
+                from .activation import async_worker_guard
+
+                execution_factory = async_worker_guard()(execute_observed)
+            else:
+                execution_factory = create_execution
+
+            if task_authorization is not None:
+                prior_factory = execution_factory
+
+                async def execute_task_authorized():
+                    nonlocal task_effect_started
+                    with (
+                        task_authorization.scope(),
+                        task_owner.activate(),
+                        use_run_actor(task_actor),
+                    ):
+                        check_task_provider(self, task_tool_id, args)
+                        task_effect_started = True
+                        return await prior_factory()
+
+                execution_factory = execute_task_authorized
 
             if automatic_work is not None:
 
                 async def execute_authorized():
                     # Scheduling on the main loop can itself wait. Bind the
                     # captured authority and check again at actual dispatch.
+                    with automatic_work.scope():
+                        automatic_work.check()
+                        if automatic_work.goal is not None:
+                            from tldw_chatbook.MCP.permission_store import (
+                                definition_hash,
+                            )
+
+                            from .automatic_work_budget import AutomaticWorkRefused
+
+                            binding = next(
+                                (
+                                    item
+                                    for item in automatic_work.goal.goal.request.tool_scope.mcp_bindings
+                                    if item.server_key == tool.server_key
+                                    and item.tool_name == tool.name
+                                ),
+                                None,
+                            )
+                            if (
+                                binding is None
+                                or binding.definition_sha256
+                                != definition_hash(tool.description, tool.input_schema)
+                            ):
+                                raise AutomaticWorkRefused("mcp_binding_changed")
+                        return await execution_factory()
+
+                invocation_factory = execute_authorized
+            else:
+                invocation_factory = execution_factory
+            if policies or automatic_work is not None:
+
+                async def execute_completed():
+                    # Publish actual return only after all receiving guards and
+                    # scopes unwind, including admission-before-callback refusal.
                     try:
-                        with automatic_work.scope():
-                            automatic_work.check()
-                            if automatic_work.goal is not None:
-                                from tldw_chatbook.MCP.permission_store import (
-                                    definition_hash,
-                                )
-
-                                from .automatic_work_budget import AutomaticWorkRefused
-
-                                binding = next(
-                                    (
-                                        item
-                                        for item in automatic_work.goal.goal.request.tool_scope.mcp_bindings
-                                        if item.server_key == tool.server_key
-                                        and item.tool_name == tool.name
-                                    ),
-                                    None,
-                                )
-                                if (
-                                    binding is None
-                                    or binding.definition_sha256
-                                    != definition_hash(
-                                        tool.description, tool.input_schema
-                                    )
-                                ):
-                                    raise AutomaticWorkRefused("mcp_binding_changed")
-                            return await execution_factory()
+                        return await invocation_factory()
                     finally:
                         execution_completed.set()
 
-                execution_coroutine = execute_authorized()
+                execution_coroutine = execute_completed()
             else:
-                execution_coroutine = execution_factory()
+                execution_coroutine = invocation_factory()
             with observe_dispatch(observation):
                 future = asyncio.run_coroutine_threadsafe(
                     execution_coroutine,
@@ -2099,7 +2180,9 @@ class MCPToolProvider:
                         pass
             # Fixed diagnostics cannot disclose arbitrary remote exception text.
             error = "mcp_execution_failed"
-            if future is None:
+            if future is None or (
+                task_authorization is not None and not task_effect_started
+            ):
                 dispatch_state = "not_started"
             elif isinstance(
                 exc,

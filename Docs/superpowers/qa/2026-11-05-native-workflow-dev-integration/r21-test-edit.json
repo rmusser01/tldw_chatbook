@@ -1,0 +1,7 @@
+{
+  "path": ".superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/Tests/Chat/test_native_legacy_hook_handoff.py",
+  "before": "03dcee6cc8773f4fedfe9c837a5557d51538566a6d4e0d3a4751e2b788443c2e",
+  "after": "a3772bc3a3bb44c27fa1997086911523579990c6b47a1f8b8dabc33287419531",
+  "ast_valid": true,
+  "scope": "only failed-required-save adverse test; retention marker is not drain evidence"
+}

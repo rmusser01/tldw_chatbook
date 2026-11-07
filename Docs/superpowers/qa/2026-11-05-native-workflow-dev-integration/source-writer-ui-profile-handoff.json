@@ -1,0 +1,25 @@
+{
+  "current_python_sql_sha256": "6135b8861d91859f7a3367fa5c0c41e1e4ec051a067c0707c74080f0a2b089c7",
+  "source_count": 9109,
+  "only_expected_three_test_files_changed": true,
+  "changes": [
+    {
+      "path": "Tests/UI/test_console_cited_sources_persisted.py",
+      "before_sha256": "925b1c40d108d7691a1f1774ad5cf2408631bfc1b03c58c772097a0512540d34",
+      "after_sha256": "445f85ff4dc8b403cedd11e4c901d1e0f3cc5ca2e1092f3ae353ea40d7c62307"
+    },
+    {
+      "path": "Tests/UI/test_console_projection_reads_off_loop.py",
+      "before_sha256": "38f5e8e624792108d4fe52d4c7998e6f526c93e99f3ef8fbc4567d8bc8e042a8",
+      "after_sha256": "0bbfb7e86f8e93d87ea8d95b10723d7223cc91fe6e57a55ba041798651d86878"
+    },
+    {
+      "path": "Tests/UI/test_console_send_acknowledgement.py",
+      "before_sha256": "dd823effba6096407dacce9cdc7cb39bad257cb86e7e385ddc0d506577ed2124",
+      "after_sha256": "b3598cf5d203991c8857e09cd26ac4517b2778233c92e2409e13d92a55b2b4da"
+    }
+  ],
+  "writer_processes_active": false,
+  "root_ui_verification_pending": true,
+  "report": "integration-report.md"
+}

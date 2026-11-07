@@ -12,7 +12,7 @@ scratch space; live (Anthropic haiku, 160x45) a first send held keys for
   pump from delivering the next key.
 
 The admission test holds the MCP read that admission makes (the real
-service, wrapped where ``capture_mcp_definition_maximum`` calls it) and types
+service, observed inside its original native permission-payload body) and types
 a key while it is held. On the parent build the read ran on the loop thread,
 so no key could be handled until the hold timed out. Negative controls (run
 by hand, TASK-33620.15 notes): sending from inside the app-pump callback, or
@@ -25,11 +25,15 @@ screen when their send starts is the same "Sending…" acknowledgement.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sys
 import threading
+from concurrent.futures.thread import _WorkItem
+from types import CodeType
 
 import pytest
 
+from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 from Tests.UI.test_console_send_acknowledgement import (
     DRAFT,
     REPLY,
@@ -53,33 +57,221 @@ HOLD_SECONDS = 10.0
 ENTRY_SECONDS = 30.0
 
 
-class HeldMcpRead:
-    """Hold the MCP read admission makes, until the test releases it.
-
-    Wraps the real ``unified_mcp_service.get_kill_switch``; only the first
-    call made by ``capture_mcp_definition_maximum`` (admission's capture, on
-    whichever thread admission reads it) is held. Every other caller, such as
-    the run's own catalog composition, passes straight through.
-    """
+class HeldMcpRead(OriginalStorageUnitObserver):
+    """Hold the first original native permission payload for this service."""
 
     def __init__(self, service) -> None:
+        super().__init__({}, lambda: False, lambda _unit: None)
+        from tldw_chatbook.Chat import console_preparation_reads as preparation
+        from tldw_chatbook.MCP import console_snapshot as snapshot
+        from tldw_chatbook.MCP import permission_store as permissions
+
+        self.service = service
         self.entered = threading.Event()
         self.release = threading.Event()
         self.timed_out = False
         self.thread: str | None = None
         self.armed = True
-        real = service.get_kill_switch
+        self.permission = self.captured = self.read = self.future = None
+        self.body_returned = self.callback_returned = self.invoke_returned = False
+        self.tool_name = "held-native-mcp-permission"
+        self.enabled_codes = set()
+        self.observer_retired = False
+        self.foreign_callback = False
+        self.body_code = self._pin(
+            inspect.unwrap(permissions.MCPPermissionStore._load_locked)
+        )
+        owned_code = self._pin(permissions._load_in_owned_scope)
+        permission_code = self._pin(snapshot._CapturedSources.read_permission_payload)
+        selection_code = self._pin(snapshot._capture_console_definition_selection)
+        preparation_code = self._pin(preparation.run_preparation_read)
+        self.callback_code = next(
+            value
+            for value in selection_code.co_consts
+            if type(value) is CodeType and value.co_name == "read_sources"
+        )
+        self.invoke_code = next(
+            value
+            for value in preparation_code.co_consts
+            if type(value) is CodeType and value.co_name == "invoke"
+        )
+        read_code = next(
+            value
+            for value in permission_code.co_consts
+            if type(value) is CodeType and value.co_name == "read"
+        )
+        self.stack = (
+            (self.body_code, vars(permissions)),
+            (owned_code, vars(permissions)),
+            (read_code, vars(snapshot)),
+            (self._pin(snapshot._checked_read), vars(snapshot)),
+            (permission_code, vars(snapshot)),
+            (self.callback_code, vars(snapshot)),
+            (self.invoke_code, vars(preparation)),
+            (self._pin(_WorkItem.run), _WorkItem.run.__globals__),
+        )
+        self.codes = {self.body_code, self.callback_code, self.invoke_code}
 
-        def get_kill_switch():
-            caller = sys._getframe(1).f_code.co_name
-            if self.armed and caller == "capture_mcp_definition_maximum":
-                self.armed = False
-                self.thread = threading.current_thread().name
-                self.entered.set()
-                self.timed_out = not self.release.wait(timeout=HOLD_SECONDS)
-            return real()
+    def _start(self, observed_code, _offset):
+        if observed_code is not self.body_code or not self.armed:
+            return
+        frame = sys._getframe(1)
+        frames = []
+        try:
+            for code, namespace in self.stack:
+                if (
+                    frame is None
+                    or frame.f_code is not code
+                    or frame.f_globals is not namespace
+                ):
+                    return
+                frames.append(frame)
+                frame = frame.f_back
+            permission = frames[0].f_locals["self"]
+            captured = frames[4].f_locals["self"]
+            read = frames[6].f_locals["read"]
+            if not (
+                captured.service is self.service
+                and captured.permission is permission
+                and self.service._permission_store is permission
+                and frames[1].f_locals["source"] is permission
+                and frames[2].f_locals["self"] is captured
+                and frames[3].f_locals["source"] is permission
+                and frames[5].f_locals["captured"] is captured
+                and read.callback is frames[6].f_locals["callback"]
+                and read.creator is read.callback
+                and read.callback.__code__ is self.callback_code
+                and read.callback.__globals__ is self.stack[5][1]
+            ):
+                return
+            future = frames[7].f_locals["self"].future
+            assert future.running() and not future.done()
+            self.permission, self.captured = permission, captured
+            self.read, self.future = read, future
+            self.armed = False
+            self.worker_thread = threading.current_thread()
+            self.thread = self.worker_thread.name
+        finally:
+            # Frames must not retain native scope ownership while the worker waits.
+            frames.clear()
+            del frame
+        if not self.armed:
+            self.entered.set()
+            self.timed_out = not self.release.wait(timeout=HOLD_SECONDS)
 
-        service.get_kill_switch = get_kill_switch
+    def _return(self, observed_code, _offset, _result):
+        if self.armed or threading.current_thread() is not self.worker_thread:
+            return
+        frame = sys._getframe(1)
+        try:
+            if (
+                observed_code is self.body_code
+                and frame.f_locals.get("self") is self.permission
+            ):
+                self.body_returned = True
+            elif (
+                observed_code is self.callback_code
+                and frame.f_locals.get("captured") is self.captured
+            ):
+                self.callback_returned = True
+            elif (
+                observed_code is self.invoke_code
+                and frame.f_locals.get("read") is self.read
+            ):
+                self.invoke_returned = True
+        finally:
+            del frame
+
+    async def __aenter__(self):
+        self.tool = next(
+            value for value in range(1, 6) if self.monitor.get_tool(value) is None
+        )
+        self.monitor.use_tool_id(self.tool, self.tool_name)
+        try:
+            assert self.monitor.get_events(self.tool) == 0
+            for event, callback in (
+                (self.monitor.events.PY_START, self._start),
+                (self.monitor.events.PY_RETURN, self._return),
+            ):
+                previous = self.monitor.register_callback(self.tool, event, callback)
+                if previous is not None:
+                    self.foreign_callback = True
+                    self.monitor.register_callback(self.tool, event, previous)
+                    raise RuntimeError("monitoring_callback_not_unowned")
+                self.registered[event] = callback
+            for code in self.codes:
+                assert self.monitor.get_local_events(self.tool, code) == 0
+                self.monitor.set_local_events(
+                    self.tool,
+                    code,
+                    self.monitor.events.PY_START | self.monitor.events.PY_RETURN,
+                )
+                self.enabled_codes.add(code)
+            return self
+        except BaseException as error:
+            await self.__aexit__(type(error), error, error.__traceback__)
+            raise
+
+    async def __aexit__(self, _kind, primary, _traceback):
+        self.release.set()
+        errors = []
+        try:
+            if self.entered.is_set():
+                await until(
+                    lambda: self.future.done() and self.read.retired.done(),
+                    timeout=ENTRY_SECONDS,
+                )
+                self.future.result()
+                assert self.read._producer.done() and not self.read.retired.cancelled()
+                assert (
+                    self.body_returned
+                    and self.callback_returned
+                    and self.invoke_returned
+                )
+                assert not self.timed_out, "original native permission hold timed out"
+        except BaseException as error:  # noqa: BLE001 - retain cleanup and original test failures together.
+            errors.append(error)
+        finally:
+            ownership_errors = (
+                [RuntimeError("monitoring_callback_not_unowned")]
+                if self.foreign_callback
+                else []
+            )
+            mask = self.monitor.events.PY_START | self.monitor.events.PY_RETURN
+            if self.entered.is_set() and not self.future.done():
+                ownership_errors.append(
+                    RuntimeError("original_native_worker_not_returned")
+                )
+            elif self.monitor.get_tool(self.tool) != self.tool_name:
+                ownership_errors.append(RuntimeError("monitoring_tool_owner_changed"))
+            else:
+                for code in self.enabled_codes:
+                    if self.monitor.get_local_events(self.tool, code) == mask:
+                        self.monitor.set_local_events(self.tool, code, 0)
+                    else:
+                        ownership_errors.append(
+                            RuntimeError("monitoring_local_events_changed")
+                        )
+                for event, expected in self.registered.items():
+                    current = self.monitor.register_callback(self.tool, event, None)
+                    if current is not expected:
+                        self.monitor.register_callback(self.tool, event, current)
+                        ownership_errors.append(
+                            RuntimeError("monitoring_callback_owner_changed")
+                        )
+                if self.monitor.get_events(self.tool):
+                    ownership_errors.append(
+                        RuntimeError("monitoring_global_events_changed")
+                    )
+                if not ownership_errors:
+                    self.monitor.free_tool_id(self.tool)
+                    self.observer_retired = True
+            errors.extend(ownership_errors)
+        if errors:
+            raise BaseExceptionGroup(
+                "MCP hold cleanup failed",
+                ([primary] if primary is not None else []) + errors,
+            )
 
 
 @pytest.mark.asyncio
@@ -95,31 +287,31 @@ async def test_a_key_typed_while_admission_reads_mcp_is_handled_before_the_read_
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             console, composer = await ready_console(host, pilot, gateway)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
-            gateway.validation_release.set()
-            try:
-                press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
-                press(host, "x", "x")
-                await until(lambda: composer.draft_text().endswith("x"), timeout=10)
-                typed_while_held = not hold.release.is_set() and not hold.timed_out
-            finally:
-                hold.release.set()
-            assert typed_while_held, (
-                "admission held the UI loop: the typed key was handled only "
-                f"after its MCP read (thread {hold.thread!r}) gave up waiting"
-            )
-            assert hold.thread != threading.main_thread().name, hold.thread
-            await until(lambda: gateway.stream_calls == 1)
-            await until(lambda: REPLY in "\n".join(_painted_lines(host)))
-            assert composer.draft_text() == "x"
-            store = console._ensure_console_chat_store()
-            users = [
-                message.content
-                for message in store.messages_for_session(store.active_session_id)
-                if message.role.value == "user"
-            ]
-            assert users == [DRAFT]
+            async with HeldMcpRead(host.app_instance.unified_mcp_service) as hold:
+                gateway.validation_release.set()
+                try:
+                    press(host, "enter", "\r")
+                    await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                    press(host, "x", "x")
+                    await until(lambda: composer.draft_text().endswith("x"), timeout=10)
+                    typed_while_held = not hold.release.is_set() and not hold.timed_out
+                finally:
+                    hold.release.set()
+                assert typed_while_held, (
+                    "admission held the UI loop: the typed key was handled only "
+                    f"after its MCP read (thread {hold.thread!r}) gave up waiting"
+                )
+                assert hold.thread != threading.main_thread().name, hold.thread
+                await until(lambda: gateway.stream_calls == 1)
+                await until(lambda: REPLY in "\n".join(_painted_lines(host)))
+                assert composer.draft_text() == "x"
+                store = console._ensure_console_chat_store()
+                users = [
+                    message.content
+                    for message in store.messages_for_session(store.active_session_id)
+                    if message.role.value == "user"
+                ]
+                assert users == [DRAFT]
 
 
 async def _assert_acknowledged_when_send_starts(host, gateway, timeline, trigger):
@@ -193,40 +385,42 @@ async def test_enter_during_admission_is_replayed_after_it_as_the_held_pump_did(
                 notices.append(str(message)),
                 real_notify(message, **kwargs),
             )
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
-            gateway.validation_release.set()
-            try:
-                press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
-                press(host, "enter", "\r")
-                press(host, "y", "y")
-                press(host, "enter", "\r")
-                await until(lambda: composer.draft_text().endswith("y"), timeout=10)
-            finally:
-                hold.release.set()
-            await until(lambda: gateway.stream_calls >= 1)
-            await until(lambda: REPLY in "\n".join(_painted_lines(host)))
-            flight = getattr(console, "_console_send_flight", None)
-            await until(lambda: flight is None or not (flight.tasks or flight.deferred))
-            await pilot.pause(0.3)
-            controller = console._ensure_console_chat_controller()
-            store = console._ensure_console_chat_store()
-            session_id = store.active_session_id
-            users = [
-                message.content
-                for message in store.messages_for_session(session_id)
-                if message.role.value == "user"
-            ]
-            queued = [
-                entry.preview
-                for entry in controller.prompt_queue_registry.snapshot(
-                    session_id
-                ).entries
-            ]
-            assert users.count(DRAFT) == 1, users
-            kept = users + queued + [composer.draft_text()]
-            assert kept.count("y") == 1, kept
-            assert not [n for n in notices if "already in progress" in n], notices
+            async with HeldMcpRead(host.app_instance.unified_mcp_service) as hold:
+                gateway.validation_release.set()
+                try:
+                    press(host, "enter", "\r")
+                    await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                    press(host, "enter", "\r")
+                    press(host, "y", "y")
+                    press(host, "enter", "\r")
+                    await until(lambda: composer.draft_text().endswith("y"), timeout=10)
+                finally:
+                    hold.release.set()
+                await until(lambda: gateway.stream_calls >= 1)
+                await until(lambda: REPLY in "\n".join(_painted_lines(host)))
+                flight = getattr(console, "_console_send_flight", None)
+                await until(
+                    lambda: flight is None or not (flight.tasks or flight.deferred)
+                )
+                await pilot.pause(0.3)
+                controller = console._ensure_console_chat_controller()
+                store = console._ensure_console_chat_store()
+                session_id = store.active_session_id
+                users = [
+                    message.content
+                    for message in store.messages_for_session(session_id)
+                    if message.role.value == "user"
+                ]
+                queued = [
+                    entry.preview
+                    for entry in controller.prompt_queue_registry.snapshot(
+                        session_id
+                    ).entries
+                ]
+                assert users.count(DRAFT) == 1, users
+                kept = users + queued + [composer.draft_text()]
+                assert kept.count("y") == 1, kept
+                assert not [n for n in notices if "already in progress" in n], notices
 
 
 @pytest.mark.asyncio
@@ -319,22 +513,24 @@ async def test_an_enter_deferred_behind_a_send_never_sends_another_tab_draft():
             console, _composer = await ready_console(host, pilot, gateway)
             session_a, session_b = await _second_tab(console, pilot, ready=True)
             store = console._ensure_console_chat_store()
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
-            gateway.validation_release.set()
-            try:
-                press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
-                press(host, "enter", "\r")
-                press(host, "alt+2")
-                await until(lambda: store.active_session_id == session_b, timeout=10)
-            finally:
-                hold.release.set()
-            await until(lambda: gateway.stream_calls >= 1)
-            await _settled(console, pilot)
-            assert _users(console, session_a) == [DRAFT]
-            assert _users(console, session_b) == []
-            assert store.session_draft(session_b) == B_DRAFT
-            assert gateway.stream_calls == 1
+            async with HeldMcpRead(host.app_instance.unified_mcp_service) as hold:
+                gateway.validation_release.set()
+                try:
+                    press(host, "enter", "\r")
+                    await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                    press(host, "enter", "\r")
+                    press(host, "alt+2")
+                    await until(
+                        lambda: store.active_session_id == session_b, timeout=10
+                    )
+                finally:
+                    hold.release.set()
+                await until(lambda: gateway.stream_calls >= 1)
+                await _settled(console, pilot)
+                assert _users(console, session_a) == [DRAFT]
+                assert _users(console, session_b) == []
+                assert store.session_draft(session_b) == B_DRAFT
+                assert gateway.stream_calls == 1
 
 
 @pytest.mark.asyncio
@@ -358,21 +554,23 @@ async def test_leaving_a_tab_while_its_send_is_admitted_still_sends_it_there():
                 notices.append(str(message)),
                 real_notify(message, **kwargs),
             )
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
-            gateway.validation_release.set()
-            try:
-                press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
-                press(host, "alt+2")
-                await until(lambda: store.active_session_id == session_b, timeout=10)
-            finally:
-                hold.release.set()
-            await until(lambda: gateway.stream_calls == 1)
-            await _settled(console, pilot)
-            assert _users(console, session_a) == [DRAFT]
-            assert _users(console, session_b) == []
-            assert store.session_draft(session_b) == B_DRAFT
-            assert not [n for n in notices if "API key" in n], notices
+            async with HeldMcpRead(host.app_instance.unified_mcp_service) as hold:
+                gateway.validation_release.set()
+                try:
+                    press(host, "enter", "\r")
+                    await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                    press(host, "alt+2")
+                    await until(
+                        lambda: store.active_session_id == session_b, timeout=10
+                    )
+                finally:
+                    hold.release.set()
+                await until(lambda: gateway.stream_calls == 1)
+                await _settled(console, pilot)
+                assert _users(console, session_a) == [DRAFT]
+                assert _users(console, session_b) == []
+                assert store.session_draft(session_b) == B_DRAFT
+                assert not [n for n in notices if "API key" in n], notices
 
 
 def _sent_or_queued(console, session_id: str) -> list[str]:
@@ -451,28 +649,28 @@ async def test_an_enter_made_while_the_sent_draft_still_shows_never_takes_later_
             console, composer = await ready_console(host, pilot, gateway)
             notices = _record_notices(host)
             tail = _hold_first_send_tail(console)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
-            gateway.validation_release.set()
-            try:
-                press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
-                press(host, "y", "y")
-                press(host, "enter", "\r")
-                press(host, "z", "z")
-                await until(lambda: composer.draft_text().endswith("z"), timeout=10)
-            finally:
-                hold.release.set()
-            try:
+            async with HeldMcpRead(host.app_instance.unified_mcp_service) as hold:
+                gateway.validation_release.set()
+                try:
+                    press(host, "enter", "\r")
+                    await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                    press(host, "y", "y")
+                    press(host, "enter", "\r")
+                    press(host, "z", "z")
+                    await until(lambda: composer.draft_text().endswith("z"), timeout=10)
+                finally:
+                    hold.release.set()
+                try:
+                    await until(lambda: _first_turn_done(host, console))
+                finally:
+                    tail.set()
+                await _settled(console, pilot)
                 await until(lambda: _first_turn_done(host, console))
-            finally:
-                tail.set()
-            await _settled(console, pilot)
-            await until(lambda: _first_turn_done(host, console))
-            await _settled(console, pilot)
-            session_id = console._console_chat_store.active_session_id
-            assert _sent_or_queued(console, session_id) == [DRAFT]
-            assert composer.draft_text() == "yz"
-            assert [n for n in notices if "still being sent" in n], notices
+                await _settled(console, pilot)
+                session_id = console._console_chat_store.active_session_id
+                assert _sent_or_queued(console, session_id) == [DRAFT]
+                assert composer.draft_text() == "yz"
+                assert [n for n in notices if "still being sent" in n], notices
 
 
 @pytest.mark.asyncio
@@ -566,33 +764,33 @@ async def test_a_bare_second_enter_never_sends_a_committed_draft_again(then_y):
             console, composer = await ready_console(host, pilot, gateway)
             notices = _record_notices(host)
             tail = _hold_first_send_tail(console)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
-            gateway.validation_release.set()
-            try:
-                press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
-                press(host, "enter", "\r")
-                await pilot.pause(0.2)
-            finally:
-                hold.release.set()
-            try:
-                if then_y:
-                    await until(lambda: composer.draft_text() == "", timeout=10)
-                    press(host, "y", "y")
+            async with HeldMcpRead(host.app_instance.unified_mcp_service) as hold:
+                gateway.validation_release.set()
+                try:
                     press(host, "enter", "\r")
-                    press(host, "z", "z")
-                    await until(lambda: composer.draft_text() == "yz", timeout=10)
-                await until(lambda: _first_turn_done(host, console))
-            finally:
-                tail.set()
-            await _settled(console, pilot)
-            session_id = console._console_chat_store.active_session_id
-            if then_y:
-                await until(lambda: len(_sent_or_queued(console, session_id)) >= 2)
-            sent = [DRAFT, "y"] if then_y else [DRAFT]
-            assert _sent_or_queued(console, session_id) == sent
-            assert composer.draft_text() == ("z" if then_y else "")
-            assert not [n for n in notices if "still being sent" in n], notices
+                    await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                    press(host, "enter", "\r")
+                    await pilot.pause(0.2)
+                finally:
+                    hold.release.set()
+                try:
+                    if then_y:
+                        await until(lambda: composer.draft_text() == "", timeout=10)
+                        press(host, "y", "y")
+                        press(host, "enter", "\r")
+                        press(host, "z", "z")
+                        await until(lambda: composer.draft_text() == "yz", timeout=10)
+                    await until(lambda: _first_turn_done(host, console))
+                finally:
+                    tail.set()
+                await _settled(console, pilot)
+                session_id = console._console_chat_store.active_session_id
+                if then_y:
+                    await until(lambda: len(_sent_or_queued(console, session_id)) >= 2)
+                sent = [DRAFT, "y"] if then_y else [DRAFT]
+                assert _sent_or_queued(console, session_id) == sent
+                assert composer.draft_text() == ("z" if then_y else "")
+                assert not [n for n in notices if "still being sent" in n], notices
 
 
 @pytest.mark.asyncio

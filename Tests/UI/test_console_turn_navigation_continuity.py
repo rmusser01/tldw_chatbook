@@ -10,7 +10,9 @@ reconciles it.
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass, replace
 from typing import Any
 from uuid import uuid4
@@ -18,7 +20,8 @@ from uuid import uuid4
 import pytest
 from loguru import logger
 
-from Tests.UI.app_factory import _build_test_app
+from Tests.Chat.test_console_fleet_wake import _settle
+from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_headless_approval import (
     _arm,
@@ -29,11 +32,14 @@ from Tests.UI.test_console_headless_approval import (
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_store_continuity import (
     _StallingWakeGateway,
+    _admit_prepared_console_turn,
     _db_chain,
     _navigate,
     _rendered_text,
     _seed_console,
+    _wait_for_console_reattachment,
 )
+from tldw_chatbook import config
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     STEP_SPAWN,
@@ -48,8 +54,10 @@ from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     export_conversation_to_json,
 )
-from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
+from tldw_chatbook.UI.Console_Modules.wiring import _precapture_turn_authority
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 @dataclass
@@ -94,7 +102,19 @@ class _TwoChunkGateway(_StallingWakeGateway):
         await self.release_terminal.wait()
 
 
-class _TwoChunkAgentBridge:
+class _NavigationAgentBridge:
+    """These stream doubles supply no skill service and start no child workers."""
+
+    _skills_service = None
+
+    def native_tool_schemas(self):
+        return []
+
+    def subagent_counts(self, conversation_ids):
+        return {conversation_id: 0 for conversation_id in conversation_ids}
+
+
+class _TwoChunkAgentBridge(_NavigationAgentBridge):
     """Agent-bridge seam that blocks on the worker thread between deltas."""
 
     def __init__(
@@ -116,12 +136,6 @@ class _TwoChunkAgentBridge:
         self.recorded_assistant_ids: list[tuple[str, str]] = []
         self.steps = steps
         self.last_outcome: RunOutcome | None = None
-
-    def native_tool_schemas(self):
-        return []
-
-    def subagent_counts(self, conversation_ids):
-        return {conversation_id: 0 for conversation_id in conversation_ids}
 
     def record_run_assistant_message(self, run_id: str, message_id: str) -> None:
         self.recorded_assistant_ids.append((run_id, message_id))
@@ -156,16 +170,13 @@ class _TwoChunkAgentBridge:
         return "run-navigation", self.last_outcome
 
 
-class _WorkerTerminalBridge:
+class _WorkerTerminalBridge(_NavigationAgentBridge):
     """Agent seam that enters terminal persistence on its worker thread."""
 
     def __init__(self, store, final_content: str) -> None:
         self.store = store
         self.final_content = final_content
         self.calls = 0
-
-    def native_tool_schemas(self):
-        return []
 
     def record_run_assistant_message(self, _run_id: str, _message_id: str) -> None:
         return None
@@ -184,12 +195,15 @@ class _WorkerTerminalBridge:
 
 def _build_navigation_app(tmp_path):
     """Build a production-shaped app with isolated file-backed data."""
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _TwoChunkGateway()
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
     # Keep the injected test snapshot authoritative rather than reloading a
     # developer profile after the mounted app begins refreshing settings.
     app.app_config.pop("logging", None)
@@ -244,6 +258,43 @@ async def _wait_thread_event(event: threading.Event) -> None:
     )
 
 
+@contextmanager
+def _hold_prepared_dictionary_result(app, conversation_id, draft, entered):
+    """Hold this send's original worker return before its controller consumes it."""
+    from tldw_chatbook.Chat.console_runtime import _apply_chat_dictionaries_for_app
+
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.current_thread()
+    release = threading.Event()
+    monitor = sys.monitoring
+    event = monitor.events.PY_RETURN
+    code = _apply_chat_dictionaries_for_app.__code__
+    slot = next(i for i in (3, 4, 1, 2) if monitor.get_tool(i) is None)
+
+    def returned(_code, _offset, result):
+        args = sys._getframe(1).f_locals
+        if (
+            threading.current_thread() is not loop_thread
+            and args["app"] is app
+            and args["conversation_id"] == conversation_id
+            and args["text"] == draft
+            and result == draft
+        ):
+            loop.call_soon_threadsafe(entered.set)
+            release.wait()
+
+    monitor.use_tool_id(slot, "navigation-dictionary-return")
+    try:
+        monitor.register_callback(slot, event, returned)
+        monitor.set_local_events(slot, code, event)
+        yield
+    finally:
+        release.set()
+        monitor.set_local_events(slot, code, 0)
+        monitor.register_callback(slot, event, None)
+        monitor.free_tool_id(slot)
+
+
 def _unique_terminal_rows(store, session_id: str, content: str):
     return [
         message
@@ -277,7 +328,7 @@ async def _assert_hidden_turn_reconciles_all_four_layers(
     ) == 1
 
     reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
-    await pilot.pause()
+    await _wait_for_console_reattachment(reopened, pilot)
     assert _rendered_text(reopened).count(final_content) == 1
     assert (conversation_id, receipt_id) not in (
         marks_service.list_console_unseen_marks()
@@ -318,17 +369,17 @@ async def test_pre_durable_custody_does_not_publish_sensitive_inputs(
     app, gateway = _build_navigation_app(tmp_path)
     notifications: list[str] = []
     log_records: list[str] = []
-    sink_id = logger.add(
-        lambda message: log_records.append(str(message)),
-        level="DEBUG",
-        format="{message} {extra}",
-    )
-
-    try:
-        async with app.run_test(size=(160, 48), notifications=True) as pilot:
-            chat, _controller, store, session_id, conversation_id = await _seed_console(
-                app, pilot, gateway
-            )
+    app._initial_screen_pushed = True
+    async with app.run_test(size=(160, 48), notifications=True) as pilot:
+        chat, _controller, store, session_id, conversation_id = await _seed_console(
+            app, pilot, gateway
+        )
+        sink_id = logger.add(
+            lambda message: log_records.append(str(message)),
+            level="DEBUG",
+            format="{message} {extra}",
+        )
+        try:
             runtime = chat._console_runtime()
             monkeypatch.setattr(
                 app,
@@ -370,9 +421,11 @@ async def test_pre_durable_custody_does_not_publish_sensitive_inputs(
                 },
             )
             runtime.stage_console_staged_evidence(staged_evidence)
-            base_configuration = chat._session._build_console_turn_execution_context(
-                session_id
-            )
+            prepared = await _precapture_turn_authority(chat, session_id)
+            with prepared():
+                base_configuration = (
+                    chat._session._build_console_turn_execution_context(session_id)
+                )
             configuration = replace(
                 base_configuration,
                 provider_selection=replace(
@@ -439,6 +492,11 @@ async def test_pre_durable_custody_does_not_publish_sensitive_inputs(
                 )
                 assert exported is not None
                 assert gateway.payloads == []
+                logger.debug("Navigation privacy observer finished.")
+                assert any(
+                    "Navigation privacy observer finished." in row
+                    for row in log_records
+                )
                 owner_surfaces = "\n".join(
                     (
                         repr(request),
@@ -458,8 +516,11 @@ async def test_pre_durable_custody_does_not_publish_sensitive_inputs(
             finally:
                 release_custody.set()
                 await asyncio.wait_for(task, timeout=3)
-    finally:
-        logger.remove(sink_id)
+        finally:
+            with suppress(
+                ValueError
+            ):  # A removed sink must not mask the primary failure.
+                logger.remove(sink_id)
 
 
 @pytest.mark.parametrize("origin", ["ordinary", "main_agent"])
@@ -475,6 +536,7 @@ async def test_accepted_turn_survives_both_outer_navigation_races(
     app, gateway = _build_navigation_app(tmp_path)
     counter_state, counters = _install_detached_view_counters(monkeypatch, app)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
             app, pilot, gateway
@@ -514,7 +576,7 @@ async def test_accepted_turn_survives_both_outer_navigation_races(
 
             monkeypatch.setattr(runtime, "_run_custodied_turn", hold_before_domain_task)
 
-        turn_id = _admit_console_turn_to_runtime(chat, marker, session_id)
+        turn_id = await _admit_prepared_console_turn(chat, marker, session_id)
         custody = runtime._turn_custody[turn_id]
         task = custody.task
         assert task is not None
@@ -592,7 +654,7 @@ async def test_accepted_turn_survives_both_outer_navigation_races(
         counter_state["detached"] = False
         reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
         assert reopened is not chat
-        await pilot.pause()
+        await _wait_for_console_reattachment(reopened, pilot)
         rendered = _rendered_text(reopened)
         assert rendered.count(final_content) == 1
         assert (conversation_id, receipt_id) not in (
@@ -629,6 +691,7 @@ async def test_return_during_live_turn_keeps_fresh_view_reconciling(tmp_path):
     """
     app, gateway = _build_navigation_app(tmp_path)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         outgoing, controller, store, session_id, _conversation_id = await _seed_console(
             app, pilot, gateway
@@ -638,7 +701,7 @@ async def test_return_during_live_turn_keeps_fresh_view_reconciling(tmp_path):
         final_content = f"{marker}-A{marker}-B"
         gateway.arm_two_chunks(marker)
 
-        turn_id = _admit_console_turn_to_runtime(
+        turn_id = await _admit_prepared_console_turn(
             outgoing,
             "continue after returning to Console",
             session_id,
@@ -685,6 +748,7 @@ async def test_ordinary_turn_survives_navigation_during_async_interior_phase(
     """Preparation and readiness remain owned by the detached runtime task."""
     app, gateway = _build_navigation_app(tmp_path)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
             app, pilot, gateway
@@ -704,35 +768,29 @@ async def test_ordinary_turn_survives_navigation_during_async_interior_phase(
                 return await original_resolve(selection)
 
             monkeypatch.setattr(gateway, "resolve_for_send", hold_provider_readiness)
+            preparation = nullcontext()
         else:
-            original_capture = controller._capture_rag_context
-
-            async def hold_async_preparation(*args, **kwargs):
-                entered.set()
-                await release.wait()
-                return await original_capture(*args, **kwargs)
-
-            monkeypatch.setattr(
-                controller,
-                "_capture_rag_context",
-                hold_async_preparation,
+            preparation = _hold_prepared_dictionary_result(
+                app, conversation_id, phase, entered
             )
 
-        turn_id = _admit_console_turn_to_runtime(chat, phase, session_id)
-        task = runtime._turn_custody[turn_id].task
-        assert task is not None
-        await asyncio.wait_for(entered.wait(), timeout=3)
-
-        await _navigate(
-            app,
-            pilot,
-            "library",
-            expect="LibraryScreen",
-            allow_confirmation=False,
-        )
-        assert runtime.view is None
-        assert not task.done()
-        release.set()
+        try:
+            with preparation:
+                turn_id = await _admit_prepared_console_turn(chat, phase, session_id)
+                task = runtime._turn_custody[turn_id].task
+                assert task is not None
+                await asyncio.wait_for(entered.wait(), timeout=3)
+                await _navigate(
+                    app,
+                    pilot,
+                    "library",
+                    expect="LibraryScreen",
+                    allow_confirmation=False,
+                )
+                assert runtime.view is None
+                assert not task.done()
+        finally:
+            release.set()
         result = await asyncio.wait_for(task, timeout=8)
         assert result.accepted
         await pilot.pause()
@@ -771,6 +829,7 @@ async def test_agent_interior_work_survives_real_navigation_with_origin_evidence
     app, gateway = _build_navigation_app(tmp_path)
     counter_state, counters = _install_detached_view_counters(monkeypatch, app)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
             app, pilot, gateway
@@ -796,7 +855,7 @@ async def test_agent_interior_work_survives_real_navigation_with_origin_evidence
         controller._agent_runtime_enabled = True
         controller._agent_bridge = bridge
 
-        turn_id = _admit_console_turn_to_runtime(chat, work_kind, session_id)
+        turn_id = await _admit_prepared_console_turn(chat, work_kind, session_id)
         task = runtime._turn_custody[turn_id].task
         assert task is not None
         await _wait_thread_event(bridge.first_chunk)
@@ -848,13 +907,14 @@ async def test_claimed_queued_continuation_drains_while_console_is_hidden(
     """A real FIFO claim crosses the runtime handoff with no mounted view."""
     app, gateway = _build_navigation_app(tmp_path)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
             app, pilot, gateway
         )
         runtime = chat._console_runtime()
         gateway.arm_two_chunks("QUEUE-INITIAL")
-        first_turn_id = _admit_console_turn_to_runtime(
+        first_turn_id = await _admit_prepared_console_turn(
             chat,
             "first turn owns the chain",
             session_id,
@@ -937,6 +997,7 @@ async def test_navigation_during_terminal_row_and_receipt_transaction_commits_on
     """Navigation may land after the live row mutates but before SQLite commits."""
     app, gateway = _build_navigation_app(tmp_path)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
             app, pilot, gateway
@@ -977,7 +1038,7 @@ async def test_navigation_during_terminal_row_and_receipt_transaction_commits_on
             hold_atomic_terminal_update,
         )
 
-        turn_id = _admit_console_turn_to_runtime(
+        turn_id = await _admit_prepared_console_turn(
             chat,
             "navigate during terminal commit",
             session_id,
@@ -1026,6 +1087,7 @@ async def test_stale_attachment_generation_cannot_detach_successor(tmp_path):
     """A delayed outgoing teardown cannot clear a newly attached view."""
     app, gateway = _build_navigation_app(tmp_path)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         (
             outgoing,
@@ -1054,6 +1116,9 @@ async def test_stale_attachment_generation_cannot_detach_successor(tmp_path):
         assert detached is False
         assert runtime.view is successor
         assert runtime._attached_generation == successor_generation
+        # The stale-detach fence is proven above while the successor is fresh.
+        # Let its original mount/reconciliation finish before app teardown.
+        await _wait_for_console_reattachment(successor, pilot)
 
 
 @pytest.mark.asyncio
@@ -1065,99 +1130,129 @@ async def test_hidden_completion_and_background_approval_reconcile_by_session(
     approval_thread = None
     approval_round_id = None
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         chat, controller, store, turn_session_id, conversation_id = await _seed_console(
             app, pilot, gateway
         )
         runtime = chat._console_runtime()
-        approval_session = controller.new_session(title="Approval session")
-        controller.switch_session(turn_session_id)
-        assert store.active_session_id == turn_session_id
 
         gateway.arm_two_chunks("SESSION-A")
         final_content = "SESSION-A-ASESSION-A-B"
-        turn_id = _admit_console_turn_to_runtime(
+        turn_id = await _admit_prepared_console_turn(
             chat,
             "complete while another session waits",
             turn_session_id,
         )
         turn_task = runtime._turn_custody[turn_id].task
         assert turn_task is not None
-        await asyncio.wait_for(gateway.first_chunk.wait(), timeout=3)
+        try:
+            await asyncio.wait_for(gateway.first_chunk.wait(), timeout=3)
+            approval_session = controller.new_session(title="Approval session")
+            controller.switch_session(turn_session_id)
+            assert store.active_session_id == turn_session_id
 
-        await _navigate(
-            app,
-            pilot,
-            "library",
-            expect="LibraryScreen",
-            allow_confirmation=False,
-        )
-        assert runtime.view is None
+            await _navigate(
+                app,
+                pilot,
+                "library",
+                expect="LibraryScreen",
+                allow_confirmation=False,
+            )
+            assert runtime.view is None
 
-        approval_thread, _approval_box = _arm(
-            controller,
-            approval_session.id,
-            call=_risk_row(),
-        )
-        assert await _wait_for_round(controller, approval_session.id)
-        approval_round_id = _armed_round_ids(controller, approval_session.id)[0]
-        assert runtime.console_needs_attention is True
-        assert app.console_needs_attention is True
+            approval_thread, _approval_box = _arm(
+                controller,
+                approval_session.id,
+                call=_risk_row(),
+            )
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 3.0
+            assert await _wait_for_round(controller, approval_session.id)
+            (approval_round_id,) = _armed_round_ids(controller, approval_session.id)
+            assert await _settle(
+                lambda: runtime.console_needs_attention and app.console_needs_attention,
+                seconds=max(0.0, deadline - loop.time()),
+            )
+            assert runtime.console_needs_attention is True
+            assert app.console_needs_attention is True
 
-        gateway.release_second.set()
-        await asyncio.wait_for(gateway.second_chunk.wait(), timeout=3)
-        gateway.release_terminal.set()
-        result = await asyncio.wait_for(turn_task, timeout=8)
-        assert result.accepted
+            gateway.release_second.set()
+            await asyncio.wait_for(gateway.second_chunk.wait(), timeout=3)
+            gateway.release_terminal.set()
+            result = await asyncio.wait_for(turn_task, timeout=8)
+            assert result.accepted
 
-        terminal_rows = _unique_terminal_rows(
-            store,
-            turn_session_id,
-            final_content,
-        )
-        assert len(terminal_rows) == 1
-        receipt_id = terminal_receipt_id_for_message(terminal_rows[0])
-        assert receipt_id
-        marks_service = runtime._console_local_marks_service()
-        assert (conversation_id, receipt_id) in (
-            marks_service.list_console_unseen_marks()
-        )
+            terminal_rows = _unique_terminal_rows(
+                store,
+                turn_session_id,
+                final_content,
+            )
+            assert len(terminal_rows) == 1
+            receipt_id = terminal_receipt_id_for_message(terminal_rows[0])
+            assert receipt_id
+            marks_service = runtime._console_local_marks_service()
+            assert (conversation_id, receipt_id) in (
+                marks_service.list_console_unseen_marks()
+            )
 
-        reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
-        await pilot.pause()
-        assert store.active_session_id == turn_session_id
-        assert _rendered_text(reopened).count(final_content) == 1
-        assert not any(card.display for card in reopened.query("#chat-approval-card"))
-        assert (conversation_id, receipt_id) not in (
-            marks_service.list_console_unseen_marks()
-        )
-        # Visiting A acknowledges only A's terminal receipt. B's unresolved
-        # review continues to own the app-wide marker.
-        assert controller.has_pending_approval_round(approval_session.id)
-        assert runtime.console_needs_attention is True
-        assert app.console_needs_attention is True
+            reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
+            await _wait_for_console_reattachment(reopened, pilot)
+            assert store.active_session_id == turn_session_id
+            assert _rendered_text(reopened).count(final_content) == 1
+            assert not any(
+                card.display for card in reopened.query("#chat-approval-card")
+            )
+            assert (conversation_id, receipt_id) not in (
+                marks_service.list_console_unseen_marks()
+            )
+            # Visiting A acknowledges only A's terminal receipt. B's unresolved
+            # review continues to own the app-wide marker.
+            assert controller.has_pending_approval_round(approval_session.id)
+            assert runtime.console_needs_attention is True
+            assert app.console_needs_attention is True
 
-        controller.switch_session(approval_session.id)
-        await reopened._sync_native_console_chat_ui()
-        await pilot.pause()
-        assert final_content not in _rendered_text(reopened)
-        assert any(card.display for card in reopened.query("#chat-approval-card"))
+            controller.switch_session(approval_session.id)
+            await reopened._sync_native_console_chat_ui()
+            await pilot.pause()
+            assert final_content not in _rendered_text(reopened)
+            assert any(card.display for card in reopened.query("#chat-approval-card"))
 
-        controller.resolve_pending_approval(
-            {"builtin__write_file": "deny"},
-            round_id=approval_round_id,
-        )
-        await asyncio.to_thread(approval_thread.join, 5)
-        assert not approval_thread.is_alive()
-        approval_round_id = None
-        assert not controller.has_pending_approval_round(approval_session.id)
-        assert runtime.recompute_console_attention(force_projection=True) is False
-        assert app.console_needs_attention is False
-
-    if approval_thread is not None and approval_thread.is_alive():
-        if approval_round_id is not None:
             controller.resolve_pending_approval(
                 {"builtin__write_file": "deny"},
                 round_id=approval_round_id,
             )
-        await asyncio.to_thread(approval_thread.join, 5)
+            await asyncio.to_thread(approval_thread.join, 5)
+            assert not approval_thread.is_alive()
+            approval_round_id = None
+            assert not controller.has_pending_approval_round(approval_session.id)
+            assert runtime.recompute_console_attention(force_projection=True) is False
+            assert await _settle(
+                lambda: app.console_needs_attention is False, seconds=3.0
+            )
+        finally:
+            gateway.release_second.set()
+            gateway.release_terminal.set()
+            try:
+                if approval_thread is not None and approval_thread.is_alive():
+                    # This fresh session owns exactly the round started by _arm above.
+                    if approval_round_id is None:
+                        await _settle(
+                            lambda: (
+                                _armed_round_ids(controller, approval_session.id)
+                                or not approval_thread.is_alive()
+                            ),
+                            seconds=3.0,
+                        )
+                        owned = _armed_round_ids(controller, approval_session.id)
+                        if owned:
+                            (approval_round_id,) = owned
+                    if approval_round_id is not None:
+                        controller.resolve_pending_approval(
+                            {"builtin__write_file": "deny"}, round_id=approval_round_id
+                        )
+                    await asyncio.to_thread(approval_thread.join, 5)
+                    assert not approval_thread.is_alive()
+            finally:
+                if not turn_task.done():
+                    await asyncio.wait_for(turn_task, timeout=8)

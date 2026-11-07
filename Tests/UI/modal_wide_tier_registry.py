@@ -234,6 +234,16 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # the 2026-10-23 triage (TASK-36382) had skipped as a follow-up wave
     (".workflow-run-dialog", 170, "UI/Workflows_Modules/run_controls.py"),
     # cap 150 -- base width 84-96
+    (
+        "ConsoleWorkflowSetup > .workflow-dialog",
+        150,
+        "Widgets/Console/console_workflow_setup.py",
+    ),
+    (
+        "ConsoleWorkflowStatus > .workflow-dialog",
+        150,
+        "Widgets/Console/console_workflow_status.py",
+    ),
     ("#personal-context-review-modal", 150, "css/components/_profile_interview.tcss"),
     ("#console-scope-picker-modal", 150, "css/features/_console_panels.tcss"),
     (
@@ -299,6 +309,7 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
         "Widgets/Library/library_file_notes_workspace.py",
     ),
     # cap 120 -- base width <= 80
+    ("#workflow-history", 120, "Widgets/Console/console_workflow_status.py"),
     (
         "NoteCreationModal > Container",
         120,

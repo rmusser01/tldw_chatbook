@@ -106,6 +106,11 @@ from tldw_chatbook.Widgets.Console.console_fork_chat_modal import (
 from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
+from tldw_chatbook.Widgets.Console.console_workflow_setup import ConsoleWorkflowSetup
+from tldw_chatbook.Widgets.Console.console_workflow_status import (
+    ConsoleWorkflowHistory,
+    ConsoleWorkflowStatus,
+)
 from tldw_chatbook.Widgets.Console.console_goal_setup_modal import (
     ConsoleGoalSetupModal,
 )
@@ -1167,6 +1172,9 @@ _ROOT_INVENTORY_ONLY_MODAL_TYPES = (
     ConsoleTerminalSessionModal,
     ResponseRulesModal,
     WorkspaceArchiveReceiptModal,
+    ConsoleWorkflowSetup,
+    ConsoleWorkflowStatus,
+    ConsoleWorkflowHistory,
 )
 # TASK-33003.19 (re-measured after the rebase onto Phase 8's final head): the
 # Goals modals the root opens are plain ModalScreens (Esc -> close/cancel)
@@ -1581,6 +1589,46 @@ def test_console_modal_launch_declarations_match_runtime_construction() -> None:
     stale, THIS test fails while the inventory test still runs and reports
     its own count/set drift, instead of the first mismatch hiding both.
     """
+    from tldw_chatbook.UI.Console_Modules.workflows import ConsoleWorkflowsController
+
+    def source(method):
+        return " ".join(inspect.getsource(method).split())
+
+    # Constructors belong to the Console controller. Modal-to-modal hops
+    # retain the originating chat/result through its original callbacks.
+    assert (
+        "ConsoleWorkflowHistory( self._coordinator(), chat, "
+        "self.open_detail, self.open_setup )"
+    ) in source(ConsoleWorkflowsController.open_history)
+    history_init = source(ConsoleWorkflowHistory.__init__)
+    assert "self.open_workflow = open_workflow" in history_init
+    assert "self.new_workflow = new_workflow" in history_init
+    history = source(ConsoleWorkflowHistory.on_button_pressed)
+    assert (
+        'control == "workflow-new" and self.dismiss_safe_once(None): '
+        "self.new_workflow(self.conversation_id)"
+    ) in history
+    assert (
+        'control == "workflow-open": '
+        'selected = self.query_one("#workflow-saved", Select).value '
+        "if isinstance(selected, str) and self.dismiss_safe_once(None): "
+        "self.open_workflow(self.conversation_id, selected)"
+    ) in history
+    setup = source(ConsoleWorkflowsController._setup)
+    assert (
+        "def started(result): if result is not None and self.screen.is_mounted: "
+        "self.open_detail(result.request.conversation_id, result.id)"
+    ) in setup
+    assert "self.screen.app.push_screen( ConsoleWorkflowSetup(" in setup
+    assert "), callback=started, )" in setup
+    assert (
+        "if self._safe_mount_generation == generation: "
+        "self.dismiss_safe_once_when_on_top(snapshot)"
+    ) in source(ConsoleWorkflowSetup._submit)
+    assert (
+        "ConsoleWorkflowStatus( self._coordinator(), conversation_id, workflow_id,"
+    ) in source(ConsoleWorkflowsController.open_detail)
+
     result = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
     assert not result.mismatches, "\n".join(result.mismatches)
 
@@ -1662,7 +1710,8 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # two named below, less ConsoleRagSettingsModal, whose
     # ConsoleLibrarySearchModal subclass is what the root opens.
     # TASK-35582 adds the safe-dismissal code-review report reader.
-    assert len(reachable_modal_types) == 77
+    # Native workflows add three quit-guarded dialogs and transitive launches.
+    assert len(reachable_modal_types) == 80
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
@@ -1936,12 +1985,14 @@ def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None
 
     # Revert preflight now runs off the UI thread; inspect the async launch
     # sites rather than their thin action/worker dispatchers.
-    assert "ChangeRevertConfirmModal(" in inspect.getsource(
-        ChangeReviewScreen._prepare_confirm_and_revert
-    )
-    assert "ChangeRevertConfirmModal(" in inspect.getsource(
-        ChangeReviewScreen._prepare_undo_all
-    )
+    shared_revert = inspect.getsource(ChangeReviewScreen._prepare_revert_selection)
+    assert "ChangeRevertConfirmModal(" in shared_revert
+    assert "if not confirmed or not self.is_mounted:" in shared_revert
+    for opener in (
+        ChangeReviewScreen._prepare_confirm_and_revert,
+        ChangeReviewScreen._prepare_undo_all,
+    ):
+        assert "await self._prepare_revert_selection(" in inspect.getsource(opener)
 
     # TASK-16801 arc B: the two git modals are launched from ONE method
     # each -- pinning the launch SITE (not just the class's existence) is

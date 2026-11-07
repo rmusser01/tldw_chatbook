@@ -386,3 +386,24 @@ internal rollback does not disable local rules. The private-call census pins
 this symbol, literal adapter selection, candidate argument, and validation call.
 
 | C98 | tldw_chatbook/DB/Workspace_Project_Index_DB | WorkspaceProjectIndexDB._open_connection | db.workspace_project_index | private_file | derived cache read/write | Migrated via `connect_private_sqlite`. Through SQLiteStoreKernel. Opaque workspace/binding accounting parent, complete-key namespace children, and stable per-authority native lifetime files. All nested DB, sidecar, control, and lease bytes are excluded from centralized backup payload; the service retains storage admission until native worker and DB owner-thread retirement. Fresh v2 uses incremental reclamation; binding-wide Clear preserves DB identity, control history, and stable lease files. |
+
+
+### Native workflow installed successor catalogs (ADR-285)
+
+| ID | Module | Symbol | Owner ID | Classification | Intent | Disposition |
+| --- | --- | --- | --- | --- | --- | --- |
+| C99 | tldw_chatbook/DB/recovery_workflow_schema | workflow_admission_catalog | recovery.workflow_catalog | memory | installed successor catalog construction | Migrated via `connect_private_sqlite`. Explicit close, installed SQL only, no file/backup/capture authority. |
+| C100 | tldw_chatbook/DB/recovery_workflow_schema | workflow_checkpoint_catalog | recovery.workflow_catalog | memory | installed successor catalog construction | Migrated via `connect_private_sqlite`. Explicit close, installed SQL only, no file/backup/capture authority. |
+| C101 | tldw_chatbook/DB/recovery_workflow_schema | workflow_window_catalog | recovery.workflow_catalog | memory | installed successor catalog construction | Migrated via `connect_private_sqlite`. Explicit close, installed SQL only, no file/backup/capture authority. |
+| C102 | tldw_chatbook/DB/recovery_workflow_schema | workflow_repair_input_catalog | recovery.workflow_catalog | memory | installed successor catalog construction | Migrated via `connect_private_sqlite`. Explicit close, installed SQL only, no file/backup/capture authority. |
+
+
+### Detached normalization (TASK-38944, ADR-285/256)
+
+| C103 | tldw_chatbook/Backup_Recovery/detached_layout | _normalize_sqlite | recovery.detached_normalization | private_file | disposable destination journal finalization | Migrated via `connect_private_sqlite`. Reopens only the exclusively created operation-owned destination after complete restricted installed-owner validation and checked backup; preserves the original deadline and finalizes DELETE journaling. |
+| B41 | tldw_chatbook/Backup_Recovery/detached_layout | _normalize_sqlite | recovery.detached_normalization | private_file | backup_connection_to_private | Migrated via `backup_connection_to_private`. Copies the original restricted staged connection after exact installed-owner validation. No live capture authority or unrestricted source retry. |
+
+The dynamic validation dispatch is limited to this exact function, its private
+`source.sqlite3` staging path, original installed-owner lookup, restricted
+connection/budget binding and complete validation refusal before the copy.
+Acquired main/WAL/SHM bytes remain unchanged; occupied destinations refuse.

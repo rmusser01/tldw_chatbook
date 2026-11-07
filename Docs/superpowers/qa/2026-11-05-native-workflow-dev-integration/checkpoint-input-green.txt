@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+3.49s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[owned-edit]
+3.13s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[unchanged]
+2.12s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[external-edit]
+2.09s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[removed]
+2.07s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[partial-directory]
+1.04s call     Tests/Agents/test_workflow_run_service.py::test_completed_task_handoff_rejects_later_input_change_without_verifiers
+
+(12 durations < 1s hidden.)
+6 passed in 14.75s

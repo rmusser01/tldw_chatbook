@@ -1,0 +1,3 @@
+# Post-review diagnostic statement review
+
+Compared current receiver bytes against f4e72e54078413c35e01ea52607afe76283cc972 with the official --statements command; both receiving files were stable before/after. The only removed diagnostic is the plugin helper’s exception-bearing warning, because that helper no longer performs reference expansion. The controller retains its same literal raw-fallback warning, changed only from a multiline call to one line. No added interpolation, exception object, private value, path or sink is introduced. Approve exactly those two owner rows for official --write regeneration; preserve every other row and sink declaration. Earlier failed checker and statement receipts remain separate.

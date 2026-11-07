@@ -4,20 +4,21 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from Tests.Chat.test_response_rules_builder import Transport
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_native_chat_flow import (
+    _build_console_send_test_app,
+    _configure_native_ready_console,
+)
+from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 
 @asynccontextmanager
 async def mounted_rules_console(tmp_path, size=(80, 24)):
-    app = _build_test_app()
-    app.chachanotes_db = CharactersRAGDB(tmp_path / "console-rules.sqlite", "rules-ui")
+    app = _build_console_send_test_app()
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 
     app.local_chat_conversation_service = ChatConversationService(app.chachanotes_db)

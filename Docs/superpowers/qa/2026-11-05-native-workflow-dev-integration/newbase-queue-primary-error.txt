@@ -1,0 +1,1671 @@
+F
+=================================== FAILURES ===================================
+__ test_pending_mcp_queue_edit_retains_original_source_until_dispatch[False] ___
+
+snapshot_case = namespace(controller=<tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112b3a090>, session...context=ConsoleWorkspaceContext(active_workspace_id='global', staged_sources=(), active_run_id=None, handoff_id=None)))
+native_ordinary_host = namespace(snapshot_case=namespace(controller=<tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object ... maximum')>], registry=<tldw_chatbook.Workspaces.registry_service.LocalWorkspaceRegistryService object at 0x112d9b0e0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1125cbe00>
+busy = False
+
+    @pytest.mark.parametrize("busy", [False, True])
+    async def test_pending_mcp_queue_edit_retains_original_source_until_dispatch(
+        snapshot_case, native_ordinary_host, monkeypatch, busy
+    ):
+        import os
+        import traceback
+    
+        try:
+>           await _exercise_pending_mcp_queue(
+                snapshot_case, native_ordinary_host, monkeypatch, busy
+            )
+
+Tests/Chat/test_console_ordinary_tree.py:1711: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot_case = namespace(controller=<tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112b3a090>, session...context=ConsoleWorkspaceContext(active_workspace_id='global', staged_sources=(), active_run_id=None, handoff_id=None)))
+native_ordinary_host = namespace(snapshot_case=namespace(controller=<tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object ... maximum')>], registry=<tldw_chatbook.Workspaces.registry_service.LocalWorkspaceRegistryService object at 0x112d9b0e0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1125cbe00>
+busy = False
+
+    async def _exercise_pending_mcp_queue(
+        snapshot_case, native_ordinary_host, monkeypatch, busy
+    ):
+        from dataclasses import replace
+    
+        from Tests.Chat.test_console_skill_substitution import _RecordingGateway
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+    
+        snapshot_controls._loop_projection(snapshot_case)
+        h = native_ordinary_host
+        h.controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
+        calls, models = [], []
+        first_started, release = threading.Event(), threading.Event()
+    
+        def original_manifest():
+            calls.append((current_execution_owner(), current_ordinary_tree()))
+            return {"tools": []}
+    
+        snapshot_case.local.manifest_provider = original_manifest
+    
+        class Gateway(_RecordingGateway):
+            async def stream_chat(self, resolution, messages, **kwargs):
+                models.append((current_ordinary_tree(), messages))
+                self.payloads.append(messages)
+                if len(models) == 1:
+                    first_started.set()
+                    await asyncio.to_thread(release.wait)
+                yield "original queue reply"
+    
+        gateway = Gateway()
+        h.controller.provider_gateway = gateway
+        h.bridge._gateway = gateway
+        witness_seen = []
+        if busy:
+            from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+    
+            submit_queued = h.controller.prompt_queue_coordinator._submit_queued
+    
+            async def refuse_once(prompt, **kwargs):
+                witness_seen.append(prompt.mcp_capture_witness)
+                if len(witness_seen) == 1:
+                    with h.runtime.worktree_activity.prelaunch(
+                        footprint=WorktreeFootprint(opaque=True)
+                    ) as blocker:
+                        assert blocker is not None
+                        return await submit_queued(prompt, **kwargs)
+                return await submit_queued(prompt, **kwargs)
+    
+            monkeypatch.setattr(
+                h.controller.prompt_queue_coordinator, "_submit_queued", refuse_once
+            )
+    
+        async def initial():
+            configuration = await h.controller.capture_turn_configuration_snapshot(
+                h.session.id
+            )
+            tools = dict(configuration.tool_configuration)
+            tools["agent_run_budget_maximum"] = replace(
+                tools["agent_run_budget_maximum"], max_subagents=0
+            )
+            return await h.controller.submit_draft(
+                "first",
+                session_id=h.session.id,
+                configuration=replace(configuration, tool_configuration=tools),
+            )
+    
+        task = asyncio.create_task(
+            h.controller.run_prompt_chain(session_id=h.session.id, initial_turn=initial)
+        )
+        h.tasks.append(task)
+        try:
+            await until(lambda: first_started.is_set() or task.done())
+            if not first_started.is_set():
+>               result = await task
+                         ^^^^^^^^^^
+
+Tests/Chat/test_console_ordinary_tree.py:1646: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112bd3770>
+args = ()
+kwargs = {'initial_turn': <function _exercise_pending_mcp_queue.<locals>.initial at 0x11e552480>, 'session_id': 'ae3c0318-2691-48e7-95d7-03d7623a30ce'}
+task = <Task finished name='Task-5' coro=<ConsoleChatController.run_prompt_chain() done, defined at /Users/macbook-dev/Docume...book/Chat/console_chat_controller.py:3322> exception=ValueError('composition mode requires an unresolved MCP maximum')>
+depth = 0
+
+    @functools.wraps(function)
+    async def admitted(self, *args, **kwargs):
+        task = asyncio.current_task()
+        depth = self._maintenance_calls.get(task, 0)
+        if self._maintenance_paused and not depth:
+            # This refusal precedes the submit lifecycle's exact wake cleanup.
+            authorization = kwargs.get("wake_authorization")
+            if (
+                kwargs.get("origin") is ConsoleSubmissionOrigin.AGENT_WAKE
+                and self._fleet_wake.authorizes(
+                    authorization,
+                    kwargs.get("session_id") or self.store.active_session_id,
+                )
+                and not authorization.acceptance_started
+                and not authorization.accepted
+            ):
+                authorization.preflight_refused = True
+            if kind == "bool":
+                return False
+            if kind == "compact":
+                return False, _MAINTENANCE_REFUSAL
+            if kind == "impersonate":
+                return ImpersonateResult("", "maintenance", _MAINTENANCE_REFUSAL)
+            if kind in ("queue", "queue_message"):
+                if kind == "queue_message":
+                    message_id = args[0] if args else kwargs["message_id"]
+                    session_id = self.store.session_id_for_message(message_id)
+                else:
+                    session_id = args[0] if args else kwargs["session_id"]
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail=_MAINTENANCE_REFUSAL,
+                )
+            return ConsoleSubmitResult(False, False, _MAINTENANCE_REFUSAL)
+        self._maintenance_calls[task] = depth + 1
+        try:
+>           return await function(self, *args, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tldw_chatbook/Chat/console_chat_controller.py:3359: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112bd3770>
+draft = None
+
+    @_maintenance_boundary("turn")
+    async def run_prompt_chain(
+        self,
+        draft: str | None = None,
+        *,
+        session_id: str | None = None,
+        initial_turn: Callable[[], Awaitable[ConsoleSubmitResult]] | None = None,
+    ) -> ConsoleSubmitResult:
+        """Submit one manual draft and drain accepted follow-ups sequentially."""
+    
+        target_id = session_id or self.store.active_session_id
+        if not target_id:
+            session = self._ensure_default_session()
+            target_id = session.id
+        if initial_turn is None:
+            if draft is None:
+                raise ValueError("draft is required when initial_turn is omitted")
+    
+            def initial_turn() -> Awaitable[ConsoleSubmitResult]:
+                return self.submit_draft(draft, session_id=target_id)
+    
+>       return await self.prompt_queue_coordinator.run_prompt_chain(
+            target_id, initial_turn
+        )
+
+tldw_chatbook/Chat/console_chat_controller.py:6546: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_prompt_queue_coordinator.ConsolePromptQueueCoordinator object at 0x112c431a0>
+session_id = 'ae3c0318-2691-48e7-95d7-03d7623a30ce'
+initial_turn = <function _exercise_pending_mcp_queue.<locals>.initial at 0x11e552480>
+
+    async def run_prompt_chain(
+        self,
+        session_id: str,
+        initial_turn: Callable[[], Awaitable["ConsoleSubmitResult"]],
+    ) -> "ConsoleSubmitResult":
+        """Run one manual turn and sequentially drain accepted queued turns."""
+        if self._maintenance_paused:
+            from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
+    
+            return ConsoleSubmitResult(
+                False, False, "Console generation is paused for backup maintenance."
+            )
+    
+        if session_id in self._chains:
+            return await initial_turn()
+        self._sealed_continuations.discard(session_id)
+        self._chains[session_id] = _PromptChain()
+        self._changed(session_id)
+        try:
+>           result = await initial_turn()
+                     ^^^^^^^^^^^^^^^^^^^^
+
+tldw_chatbook/Chat/console_prompt_queue_coordinator.py:1533: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    async def initial():
+        configuration = await h.controller.capture_turn_configuration_snapshot(
+            h.session.id
+        )
+        tools = dict(configuration.tool_configuration)
+        tools["agent_run_budget_maximum"] = replace(
+            tools["agent_run_budget_maximum"], max_subagents=0
+        )
+>       return await h.controller.submit_draft(
+            "first",
+            session_id=h.session.id,
+            configuration=replace(configuration, tool_configuration=tools),
+        )
+
+Tests/Chat/test_console_ordinary_tree.py:1633: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112bd3770>
+args = ('first',)
+kwargs = {'configuration': ConsoleTurnConfigurationSnapshot(session_id='ae3c0318-2691-48e7-95d7-03d7623a30ce', persona_policy_r...licy_profile_id='default', mcp_definition_capture='composition'), 'session_id': 'ae3c0318-2691-48e7-95d7-03d7623a30ce'}
+task = <Task finished name='Task-5' coro=<ConsoleChatController.run_prompt_chain() done, defined at /Users/macbook-dev/Docume...book/Chat/console_chat_controller.py:3322> exception=ValueError('composition mode requires an unresolved MCP maximum')>
+depth = 1
+
+    @functools.wraps(function)
+    async def admitted(self, *args, **kwargs):
+        task = asyncio.current_task()
+        depth = self._maintenance_calls.get(task, 0)
+        if self._maintenance_paused and not depth:
+            # This refusal precedes the submit lifecycle's exact wake cleanup.
+            authorization = kwargs.get("wake_authorization")
+            if (
+                kwargs.get("origin") is ConsoleSubmissionOrigin.AGENT_WAKE
+                and self._fleet_wake.authorizes(
+                    authorization,
+                    kwargs.get("session_id") or self.store.active_session_id,
+                )
+                and not authorization.acceptance_started
+                and not authorization.accepted
+            ):
+                authorization.preflight_refused = True
+            if kind == "bool":
+                return False
+            if kind == "compact":
+                return False, _MAINTENANCE_REFUSAL
+            if kind == "impersonate":
+                return ImpersonateResult("", "maintenance", _MAINTENANCE_REFUSAL)
+            if kind in ("queue", "queue_message"):
+                if kind == "queue_message":
+                    message_id = args[0] if args else kwargs["message_id"]
+                    session_id = self.store.session_id_for_message(message_id)
+                else:
+                    session_id = args[0] if args else kwargs["session_id"]
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail=_MAINTENANCE_REFUSAL,
+                )
+            return ConsoleSubmitResult(False, False, _MAINTENANCE_REFUSAL)
+        self._maintenance_calls[task] = depth + 1
+        try:
+>           return await function(self, *args, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tldw_chatbook/Chat/console_chat_controller.py:3359: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112bd3770>
+draft = 'first'
+
+    @_maintenance_boundary("turn")
+    async def submit_draft(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+        goal_authorization: GoalIterationAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
+        preserve_composer: bool = False,
+        configuration: ConsoleTurnConfigurationSnapshot | None = None,
+        accepted_attachments: tuple[PendingAttachment, ...] | None = None,
+        captured_one_shot_prefill: str | None = None,
+        captured_one_shot_prefill_revision: int | None = None,
+        staged_evidence_launch: Any | None = None,
+        staged_evidence_capture: (
+            Callable[[str, Any, Any], Awaitable[Any]] | None
+        ) = None,
+        staged_evidence_release: Callable[[Any, Any], None] | None = None,
+        custody_acceptance_hook: Callable[[], None] | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
+        _hook_read: Any = None,
+    ) -> ConsoleSubmitResult:
+        """Observe the whole attempt, including refusals before trace setup."""
+        from .console_send_diagnostics import send_diagnostic_scope
+    
+        runtime = self._hooks_v2_runtime
+        scope = (
+            runtime._first_send_source_scope_async()
+            if runtime is not None
+            else contextlib.nullcontext()
+        )
+        async with scope, send_diagnostic_scope("controller_submit") as diagnostic:
+>           result = await self._submit_draft_lifecycle(
+                draft,
+                session_id=session_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                queue_authorization=queue_authorization,
+                wake_authorization=wake_authorization,
+                goal_authorization=goal_authorization,
+                chat_start_authorization=chat_start_authorization,
+                preserve_composer=preserve_composer,
+                configuration=configuration,
+                accepted_attachments=accepted_attachments,
+                captured_one_shot_prefill=captured_one_shot_prefill,
+                captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
+                staged_evidence_launch=staged_evidence_launch,
+                staged_evidence_capture=staged_evidence_capture,
+                staged_evidence_release=staged_evidence_release,
+                custody_acceptance_hook=custody_acceptance_hook,
+                _resume_preparation_id=_resume_preparation_id,
+                _resume_resolution=_resume_resolution,
+                _hook_read=_hook_read,
+            )
+
+tldw_chatbook/Chat/console_chat_controller.py:9402: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112bd3770>
+draft = 'first'
+
+    async def _submit_draft_lifecycle(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+        goal_authorization: GoalIterationAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
+        preserve_composer: bool = False,
+        configuration: ConsoleTurnConfigurationSnapshot | None = None,
+        accepted_attachments: tuple[PendingAttachment, ...] | None = None,
+        captured_one_shot_prefill: str | None = None,
+        captured_one_shot_prefill_revision: int | None = None,
+        staged_evidence_launch: Any | None = None,
+        staged_evidence_capture: (
+            Callable[[str, Any, Any], Awaitable[Any]] | None
+        ) = None,
+        staged_evidence_release: Callable[[Any, Any], None] | None = None,
+        custody_acceptance_hook: Callable[[], None] | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
+        _operation: Callable[[], Awaitable[ConsoleSubmitResult]] | None = None,
+        _hook_read: Any = None,
+    ) -> ConsoleSubmitResult:
+        """Fence one complete submit lifecycle for close and shutdown."""
+        from .console_automatic_submission import resolve_automatic_authorization
+        from .console_prompt_mixins import (
+            MixinPreferenceConflictError,
+            MixinSourceChangedError,
+        )
+    
+        coordinator, wake_authorization = resolve_automatic_authorization(
+            self, origin, session_id, wake_authorization, goal_authorization
+        )
+    
+        owner_key = session_id or self.store.active_session_id
+        if self._disposed or (
+            self._shutdown_requested.is_set()
+            and origin
+            not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            )
+        ):
+            return ConsoleSubmitResult(False, False, "Console is shutting down.")
+        from .console_hook_preparation import bind_hook_preparation_session
+    
+        mixin_service = None
+        pending = self._prepared_send_continuations.get(_resume_preparation_id)
+        mixin_capture = pending.prompt_mixin_capture if pending is not None else None
+        if (configuration is None and owner_key and origin is ConsoleSubmissionOrigin.MANUAL
+                and _resume_preparation_id is None and _operation is None):
+            mixin_service = self.prompt_mixin_service()
+            witness = self.store.session_input_snapshot(owner_key)
+            mixin_revision = mixin_service.preferences(owner_key).revision
+            mixin_current = mixin_service._capture_currentness(owner_key, expected_revision=mixin_revision)
+            mixins = await mixin_service.capture(owner_key, expected_revision=mixin_revision)
+            mixin_capture = (mixins, witness, mixin_current)
+        with bind_hook_preparation_session(self, owner_key):
+            reason, hook_read = await self._submission_hook_admission(
+                owner_key, _hook_read
+            )
+        if mixin_capture is not None:
+            try:
+                mixin_capture[2]()
+            except (MixinPreferenceConflictError, MixinSourceChangedError):
+                if pending is not None:
+                    preparation = self._preparation_by_id(pending.preparation_id)
+                    if preparation is not None:
+                        if preparation.transient_user_message_id is not None:
+                            self._mark_transient_echo_blocked(preparation.transient_user_message_id)
+                        if preparation.state is ConsoleTurnPreparationState.COMMITTING:
+                            self._rollback_committing_preparation(preparation.preparation_id)
+                        else:
+                            self._abandon_preparation(preparation.preparation_id)
+                raise
+        if reason is not None:
+            if (
+                origin
+                in (
+                    ConsoleSubmissionOrigin.AGENT_WAKE,
+                    ConsoleSubmissionOrigin.GOAL_ITERATION,
+                )
+                and coordinator.authorizes(wake_authorization, owner_key)
+                and not wake_authorization.acceptance_started
+                and not wake_authorization.accepted
+            ):
+                wake_authorization.preflight_refused = True
+            return ConsoleSubmitResult(
+                False,
+                False,
+                reason,
+                session_id=owner_key,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+        active_task = asyncio.current_task()
+        with self._capture_quiescence_lock:
+            if owner_key is not None and self.store.capture_quiescent(owner_key):
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Stored captures are being updated; retry shortly.",
+                    session_id=owner_key,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                )
+            if active_task is not None:
+                self._register_submit_task(active_task, owner_key)
+        if active_task is None:
+            if _operation is not None:
+                return await _operation()
+            return await self._submit_draft_inner(
+                draft,
+                session_id=session_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                queue_authorization=queue_authorization,
+                wake_authorization=wake_authorization,
+                goal_authorization=goal_authorization,
+                chat_start_authorization=chat_start_authorization,
+                preserve_composer=preserve_composer,
+                configuration=configuration,
+                accepted_attachments=accepted_attachments,
+                captured_one_shot_prefill=captured_one_shot_prefill,
+                captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
+                staged_evidence_launch=staged_evidence_launch,
+                staged_evidence_capture=staged_evidence_capture,
+                staged_evidence_release=staged_evidence_release,
+                custody_acceptance_hook=custody_acceptance_hook,
+                _resume_preparation_id=_resume_preparation_id,
+                _resume_resolution=_resume_resolution,
+                _hook_read=hook_read,
+                _prompt_mixin_capture=mixin_capture,
+            )
+        try:
+            if _operation is not None:
+                return await _operation()
+>           return await self._submit_draft_inner(
+                draft,
+                session_id=session_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                queue_authorization=queue_authorization,
+                wake_authorization=wake_authorization,
+                goal_authorization=goal_authorization,
+                chat_start_authorization=chat_start_authorization,
+                preserve_composer=preserve_composer,
+                configuration=configuration,
+                accepted_attachments=accepted_attachments,
+                captured_one_shot_prefill=captured_one_shot_prefill,
+                captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
+                staged_evidence_launch=staged_evidence_launch,
+                staged_evidence_capture=staged_evidence_capture,
+                staged_evidence_release=staged_evidence_release,
+                custody_acceptance_hook=custody_acceptance_hook,
+                _resume_preparation_id=_resume_preparation_id,
+                _resume_resolution=_resume_resolution,
+                _hook_read=hook_read,
+                _prompt_mixin_capture=mixin_capture,
+            )
+
+tldw_chatbook/Chat/console_chat_controller.py:9591: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112bd3770>
+draft = 'first'
+
+    async def _submit_draft_inner(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+        goal_authorization: GoalIterationAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
+        preserve_composer: bool = False,
+        configuration: ConsoleTurnConfigurationSnapshot | None = None,
+        accepted_attachments: tuple[PendingAttachment, ...] | None = None,
+        captured_one_shot_prefill: str | None = None,
+        captured_one_shot_prefill_revision: int | None = None,
+        staged_evidence_launch: Any | None = None,
+        staged_evidence_capture: (
+            Callable[[str, Any, Any], Awaitable[Any]] | None
+        ) = None,
+        staged_evidence_release: Callable[[Any, Any], None] | None = None,
+        custody_acceptance_hook: Callable[[], None] | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
+        _hook_read: Any = None,
+        _prompt_mixin_capture: tuple[Any, Any, Callable[[], None]] | None = None,
+    ) -> ConsoleSubmitResult:
+        """Submit work, explicitly identifying a wake's proven preflight refusal."""
+        from .console_automatic_submission import resolve_automatic_authorization
+    
+        coordinator, wake_authorization = resolve_automatic_authorization(
+            self, origin, session_id, wake_authorization, goal_authorization
+        )
+        from .console_automatic_submission import submission_scope
+    
+        scope = submission_scope(self, origin, session_id)
+        from .console_agent_sources import issuing_agent_sources
+    
+        try:
+            with scope, issuing_agent_sources(self):
+>               result = await self._submit_draft_body(
+                    draft,
+                    session_id=session_id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    queue_authorization=queue_authorization,
+                    wake_authorization=wake_authorization,
+                    goal_authorization=goal_authorization,
+                    chat_start_authorization=chat_start_authorization,
+                    preserve_composer=preserve_composer,
+                    configuration=configuration,
+                    accepted_attachments=accepted_attachments,
+                    captured_one_shot_prefill=captured_one_shot_prefill,
+                    captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
+                    staged_evidence_launch=staged_evidence_launch,
+                    staged_evidence_capture=staged_evidence_capture,
+                    staged_evidence_release=staged_evidence_release,
+                    custody_acceptance_hook=custody_acceptance_hook,
+                    _resume_preparation_id=_resume_preparation_id,
+                    _resume_resolution=_resume_resolution,
+                    _hook_read=_hook_read,
+                    _prompt_mixin_capture=_prompt_mixin_capture,
+                )
+
+tldw_chatbook/Chat/console_chat_controller.py:9729: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112bd3770>
+draft = 'first'
+
+    async def _submit_draft_body(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+        goal_authorization: GoalIterationAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
+        preserve_composer: bool = False,
+        configuration: ConsoleTurnConfigurationSnapshot | None = None,
+        accepted_attachments: tuple[PendingAttachment, ...] | None = None,
+        captured_one_shot_prefill: str | None = None,
+        captured_one_shot_prefill_revision: int | None = None,
+        staged_evidence_launch: Any | None = None,
+        staged_evidence_capture: (
+            Callable[[str, Any, Any], Awaitable[Any]] | None
+        ) = None,
+        staged_evidence_release: Callable[[Any, Any], None] | None = None,
+        custody_acceptance_hook: Callable[[], None] | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
+        _hook_read: Any = None,
+        _prompt_mixin_capture: tuple[Any, Any, Callable[[], None]] | None = None,
+    ) -> ConsoleSubmitResult:
+        """Submit a composer draft through native Console validation and provider resolution.
+    
+        PR3a-2 Task 5: ``origin=AGENT_WAKE`` (requires a coordinator-issued
+        ``wake_authorization``, the queue-token precedent) submits a
+        machine-injected auto-wake notice instead of a user draft. The
+        wake branch: no USER transcript row is echoed (a SYSTEM-class row
+        carrying ``MessageMetadata(origin="agent_wake")`` is appended at
+        the acceptance point instead); the composer hook is never invoked
+        (non-MANUAL); pending attachments and the one-shot prefill are
+        left untouched (they are the USER's staged state); auto-titling,
+        RAG capture and prompt history are skipped; and the notice
+        reaches the model as a payload-only trailing user-role entry
+        appended after every per-send transform (see
+        ``console_fleet_wake``'s module docstring for the delivery-path
+        decision record). Skill substitution and dictionary/world-info
+        transforms still run -- they are HISTORY transforms every send
+        re-applies, and the wake's own notice is appended after them, so
+        it is never itself substituted.
+    
+        F4 fix (Qodo wave, parallel-agents spec §2): sends are dispatched
+        per-session -- ``chat_screen._dispatch_console_draft_send`` captures
+        the target session at DISPATCH time and threads it through
+        ``run_worker``'s coroutine args (see ``_submit_console_native_
+        draft``). Before this fix, this method always re-resolved "the
+        session to submit into" via ``store.ensure_session()``/
+        ``store.active_session_id`` at EXECUTION time instead -- a session
+        switch during the scheduling gap between ``run_worker(...)`` and
+        this coroutine's body actually running could silently submit the
+        draft into whichever session the user switched TO, not the one
+        that was showing when Send was pressed.
+    
+        Args:
+            draft: The raw composer text to submit.
+            session_id: The session this draft was dispatched for, captured
+                by the caller at dispatch time. ``None`` (the default)
+                preserves the pre-fix behavior -- resolve/create the
+                CURRENTLY active session -- for direct-call test idioms and
+                other callers that have no per-session dispatch to capture.
+                An empty string is treated the same as ``None`` (the
+                dispatch-time sentinel for "no session existed yet").
+    
+        Returns:
+            The submission outcome: ``accepted`` False (with an explanatory
+            ``visible_copy``) when blocked before any provider call, or
+            when ``session_id`` names a session that no longer exists by
+            the time this runs (see ``_session_closed_result``); ``True``
+            once the turn actually proceeds.
+        """
+        from .console_automatic_submission import resolve_automatic_authorization
+    
+        coordinator, wake_authorization = resolve_automatic_authorization(
+            self, origin, session_id, wake_authorization, goal_authorization
+        )
+        if not isinstance(origin, ConsoleSubmissionOrigin):
+            raise ValueError("origin must be an explicit ConsoleSubmissionOrigin")
+        target_id = session_id or self.store.active_session_id or ""
+        if origin is ConsoleSubmissionOrigin.MANUAL and target_id:
+            await self._chat_start.withdraw_for_manual(target_id)
+            if not await self.store.drain_agent_handoff(target_id):
+                return ConsoleSubmitResult(
+                    False, False, "Draft custody is unconfirmed."
+                )
+        if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START:
+            if not self._chat_start.authorizes(chat_start_authorization, target_id):
+                raise PermissionError("agent chat start requires coordinator authority")
+        resumed_preparation = (
+            self._preparation_by_id(_resume_preparation_id)
+            if _resume_preparation_id is not None
+            else None
+        )
+        prepared_continuation = (
+            self._prepared_send_continuations.get(_resume_preparation_id)
+            if _resume_preparation_id is not None
+            else None
+        )
+        if prepared_continuation is not None:
+            preserve_composer = prepared_continuation.preserve_composer
+        if preserve_composer and not session_id:
+            return ConsoleSubmitResult(False, False, "Choose an explicit conversation.")
+        if preserve_composer and str(draft).lstrip().startswith(
+            (COMMAND_PREFIX, MENTION_SIGIL)
+        ):
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Use Console for slash commands and @ references.",
+                session_id=session_id,
+            )
+        if _resume_preparation_id is not None and resumed_preparation is None:
+            return ConsoleSubmitResult(
+                False, False, "Prepared turn is no longer available."
+            )
+        if _resume_preparation_id is not None and prepared_continuation is None:
+            return ConsoleSubmitResult(
+                False, False, "Prepared turn is no longer available."
+            )
+        if origin is ConsoleSubmissionOrigin.QUEUED:
+            if not queue_entry_id or (
+                _resume_preparation_id is None
+                and not self.prompt_queue_coordinator.authorizes(
+                    queue_authorization, target_id
+                )
+            ):
+                if self.prompt_queue_coordinator.owns_machine_claim(
+                    queue_authorization,
+                    target_id,
+                    queue_entry_id,
+                ):
+                    return self._block(
+                        target_id, "Hook continuation is no longer current."
+                    )
+                raise PermissionError(
+                    "queued sends require coordinator-issued generation authority"
+                )
+        elif origin in (
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.GOAL_ITERATION,
+        ):
+            # PR3a-2 Task 5: only the wake coordinator can mint the token
+            # (queue-token precedent) -- no other code path can fabricate
+            # a machine-origin send.
+            if not coordinator.authorizes(wake_authorization, target_id):
+                raise PermissionError(
+                    "agent-wake sends require coordinator-issued wake authority"
+                )
+            if target_id and self.prompt_queue_coordinator.controls_generation(
+                target_id
+            ):
+                # Defense-in-depth twin of the coordinator's own gate: a
+                # queue-owned session's next turn belongs to the queue.
+                # Refused WITHOUT a transcript row -- a machine deferral
+                # is not user-visible news; the wake retries later.
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Queued messages control the next turn.",
+                )
+        elif target_id and self.prompt_queue_coordinator.controls_generation(target_id):
+            visible_copy = "Queued messages control the next turn. Resume or manage the queue first."
+            if target_id and any(
+                session.id == target_id for session in self.store.sessions()
+            ):
+                self.store.append_message(
+                    target_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=visible_copy,
+                )
+            return ConsoleSubmitResult(False, False, visible_copy)
+    
+        active_rejection = self._active_run_rejection(
+            session_id=session_id,
+            # A raced wake refusal is machine-internal (retried later);
+            # only user-facing origins get the explanatory SYSTEM row.
+            append_row=origin
+            not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            ),
+            queue_authorization=queue_authorization,
+        )
+        if (
+            origin is ConsoleSubmissionOrigin.GOAL_ITERATION
+            and coordinator.authorizes(goal_authorization, target_id)
+        ):
+            from .console_received_turn import received_turn_claim_for
+    
+            bound_received = received_turn_claim_for(self.store, target_id)
+            if (
+                bound_received is None
+                and self.store.received_turn_for_session(target_id) is None
+            ) or (
+                bound_received is not None
+                and self.store.received_turn_is_current(bound_received)
+            ):
+                active_rejection = None
+        if active_rejection is not None and resumed_preparation is None:
+            return active_rejection
+    
+        if (
+            target_id
+            and resumed_preparation is None
+            and self.store.dispatch_recovery_blocks_submission(target_id)
+        ):
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Finish or discard the pending response before sending another "
+                "message.",
+                session_id=target_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+    
+        if session_id:
+            session = next(
+                (s for s in self.store.sessions() if s.id == session_id), None
+            )
+            if session is None:
+                # The dispatching session was closed during the gap between
+                # dispatch and this coroutine actually running -- there is
+                # nothing left to submit into. Stamp the (now-orphaned)
+                # session id, never whatever is active now (see
+                # `_session_closed_result`'s own docstring). `dispatch_gap`
+                # is what makes THIS call site (uniquely among ~19) toast --
+                # every other one fires mid-run, after the user already
+                # confirmed closing that session themselves.
+                return self._session_closed_result(
+                    session_id=session_id, dispatch_gap=True
+                )
+        else:
+            # Task 4 (D2 fix wave, "bonus race"): mirror the mount-time
+            # creator (`ConsoleSessionController._ensure_active_console_session_settings`),
+            # which always passes `settings=` -- without this, a session
+            # bootstrapped from THIS branch (no dispatch-captured session id
+            # at all) got `settings=None` while every other creator gave the
+            # first session a real snapshot, and whichever creator ran first
+            # decided the outcome.
+            session = self._ensure_default_session()
+        active_task = asyncio.current_task()
+        if active_task is not None:
+            self._rebind_submit_task(active_task, session.id)
+            if resumed_preparation is not None:
+                self._bind_submit_preparation(
+                    active_task, resumed_preparation.preparation_id
+                )
+        if preserve_composer and (
+            self.store.pending_attachments(session.id)
+            or self.store.session_one_shot_prefill(session.id)
+            or self._has_explicit_staged_evidence(session.id) is not False
+        ):
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "This conversation has staged Console attachments, evidence or prefill. "
+                "Review them in Console before sending from Buddy.",
+                session_id=session.id,
+            )
+        # PR3a-2 Task 5: a wake never touches the user's staged state --
+        # pending attachments belong to the USER's next send and must be
+        # neither embedded nor cleared by a machine turn.
+        custodied_inputs = configuration is not None
+        admitted_prefill: str | None = None
+        admitted_prefill_from_one_shot = False
+        admitted_prefill_revision: int | None = None
+        if (
+            not origin.automatic
+            and custodied_inputs
+        ):
+            if captured_one_shot_prefill:
+                admitted_prefill = captured_one_shot_prefill
+                admitted_prefill_from_one_shot = True
+                admitted_prefill_revision = captured_one_shot_prefill_revision
+            elif configuration.session_settings is not None:
+                admitted_prefill = configuration.session_settings.pinned_prefill
+        pendings = (
+            list(prepared_continuation.attachments)
+            if prepared_continuation is not None
+            else list(accepted_attachments or ())
+            if custodied_inputs
+            else self.store.pending_attachments(session.id)
+            if not origin.automatic
+            and not preserve_composer
+            else []
+        )
+        attachment_mode_pendings = [
+            pending
+            for pending in pendings
+            if pending.insert_mode == "attachment" and pending.data is not None
+        ]
+        has_pending_attachment = bool(attachment_mode_pendings)
+        machine_input = self.prompt_queue_coordinator.continuation_input(
+            session.id,
+            queue_entry_id,
+            draft,
+        )
+        if machine_input is not None:
+            clean_draft, validation_error = str(machine_input), None
+        elif origin.automatic:
+            # The notice is machine-composed from DB text and bounded by
+            # `compose_wake_notice`'s own result budget; `_validated_draft`
+            # exists to validate USER drafts (its length cap and markup
+            # rules are composer policy, not payload policy).
+            clean_draft = (
+                draft
+                if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START
+                else str(draft or "").strip()
+            )
+            validation_error = None if clean_draft else "Empty wake notice."
+        else:
+            clean_draft, validation_error = self._validated_draft(
+                draft, allow_empty=has_pending_attachment
+            )
+        if validation_error is not None:
+            return self._block(session.id, validation_error)
+        configuration = (
+            resumed_preparation.execution_context.configuration
+            if resumed_preparation is not None
+            else configuration
+            if configuration is not None
+            else self.resolve_turn_configuration_snapshot(session.id)
+        )
+        if _prompt_mixin_capture is not None:
+            mixins, witness, mixin_current = _prompt_mixin_capture
+            mixin_current()
+            preferences = session.prompt_mixin_preferences.preferences
+            if (session is not witness._session_ref() or session.incarnation_id != witness.incarnation_id
+                    or session.conversation_binding_revision != witness.conversation_binding_revision
+                    or preferences is None or witness.prompt_mixin_preferences is None
+                    or preferences.revision != witness.prompt_mixin_preferences.revision):
+                from .console_prompt_mixins import MixinPreferenceConflictError
+                raise MixinPreferenceConflictError("mixin_preference_conflict")
+            configuration = replace(configuration, prompt_mixins=mixins)
+        from . import console_plugin_context, console_references
+        from .console_ordinary_tree import _function_unchanged
+    
+        try:
+            parser, pattern, candidate_type, candidate_init = (
+                console_plugin_context._NATIVE_REFERENCE_PARSER
+            )
+            if (
+                any(
+                    vars(console_plugin_context).get(name) is not record[0]
+                    or not _function_unchanged(record)
+                    for name, record in console_plugin_context._NATIVE_WORKFLOW_RECEIVERS
+                )
+                or console_references._native_reference_candidates is not parser[0]
+                or not _function_unchanged(parser)
+                or console_references._REFERENCE_RE is not pattern
+                or console_references.ReferenceCandidate is not candidate_type
+                or candidate_type.__init__ is not candidate_init[0]
+                or not _function_unchanged(candidate_init)
+                or _split_skill_command_word is not _NATIVE_REFERENCE_SPLITTER[0]
+                or not _function_unchanged(_NATIVE_REFERENCE_SPLITTER)
+            ):
+                raise PermissionError("original reference metadata source changed")
+            (
+                clean_draft,
+                executed_draft_text,
+                reference_records,
+                reference_offsets,
+                reference_candidates,
+            ) = await console_plugin_context._prepare_native_references(
+                self,
+                clean_draft,
+                configuration,
+                origin=origin,
+                machine_input=machine_input,
+                resumed_preparation=resumed_preparation,
+                prepared_continuation=prepared_continuation,
+            )
+        except PermissionError as error:
+            copy = (
+                "Plugin agents run through child spawning; select an admitted agent there."
+                if str(error) == "plugin_agent_child_only"
+                else "Plugin selector is unavailable; review selected components."
+            )
+            return self._block(session.id, copy)
+        if configuration.skill_context_maximum.get(
+            "_plugin_requirement_ceiling"
+        ) or any(
+            row.get("plugin_owned")
+            for row in configuration.skill_context_maximum.get("available_skills", ())
+        ):
+            maximum = dict(configuration.skill_context_maximum)
+            maximum["plugin_run_id"] = "pending:" + str(uuid4())
+            configuration = replace(configuration, skill_context_maximum=maximum)
+            local = getattr(self._skills_service, "local_service", None)
+            service = getattr(local, "plugin_service", None)
+            pending = getattr(self, "_plugin_pending_submissions", None)
+            if pending is None:
+                pending = self._plugin_pending_submissions = {}
+            pending.setdefault(asyncio.current_task(), []).append(
+                (service, maximum["plugin_run_id"])
+            )
+        try:
+            configuration = await self._native_skill_configuration(
+                configuration, clean_draft
+            )
+        except (PermissionError, ValueError):
+            return self._block(
+                session.id,
+                "Plugin model constraints are unavailable; review and retry.",
+            )
+        if origin.automatic:
+            from .console_prompt_mixins import MixinAttemptSnapshot
+            configuration = replace(configuration, prompt_mixins=MixinAttemptSnapshot())
+        turn_selection = configuration.provider_selection
+        if has_pending_attachment:
+            vision_model = configuration.effective_model
+            # ONE capability check decides the gate AND the copy: this
+            # module's is_vision_capable (the documented monkeypatch seam) is
+            # injected into vision_block_reason instead of being re-checked
+            # around it — the two seams could otherwise disagree under test.
+            block_reason = vision_block_reason(
+                turn_selection.provider,
+                vision_model,
+                is_capable=lambda _provider, _model: bool(
+                    configuration.capabilities.get("vision", False)
+                ),
+            )
+            if block_reason is not None:
+                return self._block(session.id, block_reason)
+        if turn_selection.workspace_context.has_policy_blocks:
+            return self._block(
+                session.id, turn_selection.workspace_context.recovery_copy
+            )
+        if origin.automatic:
+            selected_prefill = (None, False, None)
+        elif prepared_continuation is not None:
+            selected_prefill = (
+                prepared_continuation.prefill,
+                prepared_continuation.prefill_from_one_shot,
+                prepared_continuation.one_shot_prefill_revision,
+            )
+        elif custodied_inputs:
+            selected_prefill = (
+                admitted_prefill,
+                admitted_prefill_from_one_shot,
+                admitted_prefill_revision,
+            )
+        elif preserve_composer:
+            selected_prefill = (
+                self._pinned_prefill_for_session(session.id),
+                False,
+                None,
+            )
+        else:
+            one_shot, revision = self.store.session_one_shot_prefill_snapshot(
+                session.id
+            )
+            selected_prefill = (
+                (one_shot, True, revision)
+                if one_shot
+                else (self._pinned_prefill_for_session(session.id), False, None)
+            )
+        from .console_agent_sources import prepare_agent_sources
+    
+        await prepare_agent_sources(self, session, configuration)
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+    
+        from .console_ordinary_tree import admit_ordinary_turn
+        try:
+>           ordinary_tree, configuration = await admit_ordinary_turn(
+                self,
+                session,
+                configuration,
+                origin,
+                clean_draft,
+                reference_candidates,
+                review_boundary=getattr(wake_authorization, "review_boundary", None),
+                agent_eligible=self._agent_dispatch_is_eligible(
+                    session, prefill=selected_prefill[0]
+                ),
+            )
+
+tldw_chatbook/Chat/console_chat_controller.py:10298: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+controller = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x112bd3770>
+session = ConsoleChatSession(incarnation_id='39fc230a-05ae-42ea-abef-c73abf32847f', agent_handoff_revision=None, agent_handoff_s... fork_trace_boundary=None, todo_store=<tldw_chatbook.Agents.session_todo_store.SessionTodoStore object at 0x112c0ea20>)
+configuration = ConsoleTurnConfigurationSnapshot(session_id='ae3c0318-2691-48e7-95d7-03d7623a30ce', persona_policy_rules=(), tool_policy_profile_id='default', mcp_definition_capture='composition')
+origin = <ConsoleSubmissionOrigin.MANUAL: 'manual'>, text = 'first'
+candidates = ()
+
+    async def admit_ordinary_turn(
+        controller, session, configuration, origin, text, candidates, *, agent_eligible,
+        review_boundary=None,
+    ):
+        """Select original sources before acquiring the complete ordinary footprint."""
+        from tldw_chatbook.Agents.activation import worker_guard
+    
+        from .console_agent_sources import current_agent_sources
+        from .console_preparation_reads import run_preparation_read
+        from .console_reference_preparation import _ReferenceRead
+        from .console_workflow_runs import native_workflow_qualified
+    
+        if controller._hooks_v2_runtime is None or not native_workflow_qualified():
+            return None, configuration
+        existing = current_ordinary_tree(controller)
+        if existing is not None:
+            existing.check()
+            return existing, configuration
+        source = current_agent_sources(controller)
+        tree = _OrdinaryTurn(
+            controller, session, configuration, origin, source, agent_eligible
+        )
+        from .console_configuration_preparation import (
+            original_mcp_capture_matches,
+            original_skill_capture_preparation,
+        )
+    
+        tree.mcp_metadata_witnessed = (
+            source is not None
+            and source.mcp is None
+            and getattr_static(tree.app, "unified_mcp_service", None) is None
+        ) or original_mcp_capture_matches(controller, session, configuration)
+        pending_mcp = configuration.mcp_capture_pending
+        pending_review = configuration.change_review_capture_pending
+        pending_skill = configuration.skill_capture_pending
+        original_configuration = configuration
+        if (
+            pending_mcp or pending_review or pending_skill
+        ) and not original_mcp_capture_matches(
+            controller, session, configuration, pending=pending_mcp
+        ):
+            raise RuntimeError("Original MCP capture source is unavailable; send again.")
+        tree.skill_preparation = (
+            original_skill_capture_preparation()
+            if original_mcp_capture_matches(
+                controller,
+                session,
+                configuration,
+                pending=pending_mcp,
+                require_complete=False,
+            )
+            else None
+        )
+    
+        def capture():
+            tree.check()
+            if any(
+                globals().get(name) is not record[0] or not _function_unchanged(record)
+                for name, record in _NATIVE_ORDINARY_REVIEW_HELPERS
+            ):
+                raise RuntimeError("original ordinary review helper changed")
+            _capture_review_input(tree, text, review_boundary)
+            if candidates:
+                tree.reference = _ReferenceRead(
+                    controller, session, origin, text, candidates
+                )
+                tree.reference.capture_authority()
+                tree.reference.ordinary_tree = tree
+            footprint = _capture_maximum(tree)
+            tree.check_local_sources()
+            tree.admit(footprint)
+            return tree
+    
+        try:
+            await run_preparation_read(
+                worker_guard(controller._agent_bridge)(capture),
+                creator=controller,
+                session_id=session.id,
+                reads=controller._preparation_reads,
+                observers=(tree.runtime._preparation_reads,),
+                require_current=tree.check,
+            )
+        finally:
+            # Cancellation is delivered after the real capture returns. Its genuine
+            # admission still belongs to this submission's original outer finally.
+            with tree.runtime._execution_capacity_lock:
+                admitted = tree in tree.runtime._ordinary_turns
+            if admitted:
+                if source is not None:
+                    source.ordinary_tree = tree
+                pending = getattr(controller, "_ordinary_submissions", None)
+                if pending is None:
+                    pending = controller._ordinary_submissions = {}
+                pending[asyncio.current_task()] = tree
+        _current.set(tree)
+        if pending_skill:
+            from contextlib import nullcontext
+            from dataclasses import replace
+    
+            from .console_configuration_preparation import (
+                capture_console_skill_catalog_owned,
+                finish_console_skill_catalog_owned,
+                pending_skill_capture,
+            )
+    
+            captured = pending_skill_capture(configuration)
+            if captured is None:
+                raise RuntimeError(
+                    "Original skill preparation source is unavailable; send again."
+                )
+            deferred, original_request_configuration = captured
+            task = asyncio.current_task()
+            records = [
+                record
+                for record in tree.runtime._turn_custody.values()
+                if record.task is task and record.request is not None
+            ]
+            if (
+                len(records) != 1
+                or records[0].request.configuration is not original_request_configuration
+            ):
+                raise RuntimeError(
+                    "Original skill preparation custody changed; send again."
+                )
+            record = records[0]
+    
+            def current_skill_source():
+                tree.check()
+                if (
+                    tree.runtime._turn_custody.get(record.turn_id) is not record
+                    or record.task is not task
+                    or record.request is None
+                    or record.request.configuration is not original_request_configuration
+                    or not original_mcp_capture_matches(
+                        controller,
+                        session,
+                        original_configuration,
+                        pending=pending_mcp,
+                        require_complete=False,
+                    )
+                ):
+                    raise RuntimeError(
+                        "Original skill preparation custody changed; send again."
+                    )
+    
+            operation = tree.borrow(tree.runtime).reserve_tool()
+            try:
+                with (
+                    tree.source.activate()
+                    if tree.source is not None
+                    else bind_ordinary_tree(tree)
+                ):
+                    current_skill_source()
+                    catalog = await capture_console_skill_catalog_owned(
+                        tree.app,
+                        tree.store,
+                        controller,
+                        session_id=session.id,
+                        turn_id=record.turn_id,
+                        skill_workspace_id=deferred.selection.skill_workspace_id,
+                        preparation=deferred.preparation,
+                        reads=controller._preparation_reads,
+                        observers=(tree.runtime._preparation_reads,),
+                        require_current=current_skill_source,
+                    )
+                    prepared = await finish_console_skill_catalog_owned(
+                        catalog,
+                        reads=controller._preparation_reads,
+                        observers=(tree.runtime._preparation_reads,),
+                        require_current=current_skill_source,
+                    )
+                    current_skill_source()
+                    maximum = dict(prepared.maximum)
+                    if "plugin_turn_id" in configuration.skill_context_maximum:
+                        maximum["plugin_turn_id"] = configuration.skill_context_maximum[
+                            "plugin_turn_id"
+                        ]
+                    configuration = replace(
+                        configuration,
+                        skill_context_maximum=maximum,
+                        skill_capture_pending=False,
+                    )
+                    tree.configuration = configuration
+                    if tree.source is not None:
+                        tree.source.configuration = configuration
+            finally:
+                with tree.source.activate() if tree.source is not None else nullcontext():
+                    operation.finish()
+        if pending_mcp:
+            from contextlib import nullcontext
+            from dataclasses import replace
+    
+            from tldw_chatbook.MCP.console_snapshot import (
+                _capture_console_definition_selection,
+                standard_console_sources,
+            )
+    
+            from .console_configuration_capture import (
+                CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+                _capture_mcp_definition_selection,
+            )
+    
+            operation = tree.borrow(tree.runtime).reserve_tool()
+            try:
+                with (
+                    tree.source.activate()
+                    if tree.source is not None
+                    else bind_ordinary_tree(tree)
+                ):
+                    service = getattr(tree.app, "unified_mcp_service", None)
+                    if not original_mcp_capture_matches(
+                        controller, session, original_configuration, pending=True
+                    ):
+                        raise RuntimeError("Original MCP capture source changed.")
+                    if standard_console_sources(service):
+                        selected = await _capture_console_definition_selection(
+                            service,
+                            CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+                            profile_id=configuration.tool_policy_profile_id,
+                            persona_policy_rules=configuration.persona_policy_rules,
+                            _admitted=True,
+                        )
+                    else:
+                        selected = _capture_mcp_definition_selection(
+                            tree.app,
+                            profile_id=configuration.tool_policy_profile_id,
+                            persona_policy_rules=configuration.persona_policy_rules,
+                            _admitted=True,
+                        )
+                    if tree.source is not None:
+                        from .console_configuration_preparation import (
+                            consume_native_mcp_permission_publication,
+                        )
+    
+                        consume_native_mcp_permission_publication(tree.source)
+                    if not original_mcp_capture_matches(
+                        controller, session, original_configuration, pending=True
+                    ):
+                        raise RuntimeError("Original MCP capture source changed.")
+                    tree.check_local_sources()
+>                   configuration = replace(
+                        configuration,
+                        mcp_tool_maximum=frozenset(selected.definitions),
+                        mcp_definition_maximum=selected.definitions,
+                        mcp_definition_sources=selected.sources,
+                        mcp_definition_complete=selected.complete,
+                        mcp_capture_pending=False,
+                    )
+
+tldw_chatbook/Chat/console_ordinary_tree.py:1221: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+obj = ConsoleTurnConfigurationSnapshot(session_id='ae3c0318-2691-48e7-95d7-03d7623a30ce', persona_policy_rules=(), tool_policy_profile_id='default', mcp_definition_capture='composition')
+changes = {'capabilities': mappingproxy({'vision': False, 'max_history_images': 10}), 'change_review_capture_pending': False, 'change_review_root_aliases': (), 'change_review_skipped_roots': (), ...}
+f = Field(name='recovery_user_origin',type='object | None',default=None,default_factory=<dataclasses._MISSING_TYPE object at 0x1048b3d10>,init=True,repr=False,hash=None,compare=False,metadata=mappingproxy({}),kw_only=False,_field_type=_FIELD)
+
+    def replace(obj, /, **changes):
+        """Return a new object replacing specified fields with new values.
+    
+        This is especially useful for frozen classes.  Example usage::
+    
+          @dataclass(frozen=True)
+          class C:
+              x: int
+              y: int
+    
+          c = C(1, 2)
+          c1 = replace(c, x=3)
+          assert c1.x == 3 and c1.y == 2
+        """
+    
+        # We're going to mutate 'changes', but that's okay because it's a
+        # new dict, even if called with 'replace(obj, **my_changes)'.
+    
+        if not _is_dataclass_instance(obj):
+            raise TypeError("replace() should be called on dataclass instances")
+    
+        # It's an error to have init=False fields in 'changes'.
+        # If a field is not in 'changes', read its value from the provided obj.
+    
+        for f in getattr(obj, _FIELDS).values():
+            # Only consider normal fields or InitVars.
+            if f._field_type is _FIELD_CLASSVAR:
+                continue
+    
+            if not f.init:
+                # Error if this field is specified in changes.
+                if f.name in changes:
+                    raise ValueError(f'field {f.name} is declared with '
+                                     'init=False, it cannot be specified with '
+                                     'replace()')
+                continue
+    
+            if f.name not in changes:
+                if f._field_type is _FIELD_INITVAR and f.default is MISSING:
+                    raise ValueError(f"InitVar {f.name!r} "
+                                     'must be specified with replace()')
+                changes[f.name] = getattr(obj, f.name)
+    
+        # Create the new object, which calls __init__() and
+        # __post_init__() (if defined), using all of the init fields we've
+        # added and/or left in 'changes'.  If there are values supplied in
+        # changes that aren't fields, this will correctly raise a
+        # TypeError.
+>       return obj.__class__(**changes)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/dataclasses.py:1588: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ConsoleTurnConfigurationSnapshot(session_id='ae3c0318-2691-48e7-95d7-03d7623a30ce', persona_policy_rules=(), tool_policy_profile_id='default', mcp_definition_capture='composition')
+session_id = 'ae3c0318-2691-48e7-95d7-03d7623a30ce'
+provider_selection = ConsoleProviderSelection(provider='llama_cpp', base_url=None, base_url_is_pinned=False, execution_provider='', configu...ConsoleWorkspaceContext(active_workspace_id='native-received', staged_sources=(), active_run_id=None, handoff_id=None))
+scratch_space = ConsoleScratchSnapshot(), session_settings = None
+workspace_roots = ()
+presentation_context = ConsolePresentationContext(user_name='User', assistant_kind='generic', character_name=None, assistant_name=None, revision=0, transcript_style=<ConsoleTranscriptStyle.ROLE_ACCENTS: 'role_accents'>)
+library_policy_maximum = ConsoleLibraryPolicySnapshot(auto_retrieve=<ConsoleAutoRetrieve.NEVER: 'never'>, assistant_access=<ConsoleAssistantLibraryAccess.BLOCKED: 'blocked'>, policy_revision=None, source='new_session', error_code=None)
+library_scope_maximum = ConsoleLibraryItemScopeSnapshot(note_ids=(), media_ids=(), conversations_allowed=True)
+project_authority = ConsoleProjectAuthoritySnapshot(workspace_id='native-received', enabled=True, working_folder_binding_id=None)
+character_authority = None, prompt_mixins = MixinAttemptSnapshot()
+prompt_transform_inputs = mappingproxy({'conversation_id': None, 'dictionary_entries': (), 'world_books': (), 'world_enabled': False})
+skill_context_maximum = mappingproxy({'backend': 'local', 'available_skills': (), 'blocked_skills': (), 'context_text': ''})
+mcp_tool_maximum = frozenset({'local:one::first'})
+mcp_definition_maximum = mappingproxy({'local:one::first': 'e2b7935b1d248cacf7a703e5fddaa4f630720f3c6de584c69dd45183c2e6b059'})
+mcp_definition_sources = (('local:one::first', 'local:one', 'first', 'mcp__one__first'),)
+mcp_definition_complete = True, mcp_capture_pending = False
+change_review_capture_pending = False, skill_capture_pending = False
+change_review_root_aliases = (), change_review_skipped_roots = ()
+capabilities = mappingproxy({'vision': False, 'max_history_images': 10})
+rag_defaults = mappingproxy({'top_k': 5})
+tool_configuration = mappingproxy({'agent_runtime_enabled': True, 'native_tool_calls_enabled': True, 'local_tools_enabled': True, 'direct_l...ct_instructions_startup_max_bytes': 32768, 'project_instructions_nested_max_bytes': 32768, 'session_ephemeral': False})
+provider_payload_settings = mappingproxy({'streaming': True, 'temperature': None, 'top_p': None, 'min_p': None, 'top_k': None, 'max_tokens': None,..._effort': None, 'reasoning_summary': None, 'verbosity': None, 'thinking_effort': None, 'thinking_budget_tokens': None})
+persona_policy_rules = (), tool_policy_profile_id = 'default'
+mcp_definition_capture = 'composition', recovery_user_origin = None
+
+>   ???
+
+<string>:33: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ConsoleTurnConfigurationSnapshot(session_id='ae3c0318-2691-48e7-95d7-03d7623a30ce', persona_policy_rules=(), tool_policy_profile_id='default', mcp_definition_capture='composition')
+
+    def __post_init__(self) -> None:
+        """Detach constructor inputs even when callers bypass ``capture``."""
+        if self.mcp_definition_capture not in ("captured", "composition"):
+            raise ValueError("invalid MCP definition capture mode")
+        if self.mcp_definition_capture == "composition" and (
+            self.mcp_tool_maximum is not None or self.mcp_definition_maximum
+        ):
+>           raise ValueError("composition mode requires an unresolved MCP maximum")
+E           ValueError: composition mode requires an unresolved MCP maximum
+
+tldw_chatbook/Chat/console_turn_context.py:422: ValueError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-05 13:27:43.585 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-05 13:27:43.625 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-05 13:27:43.643 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-05 13:27:43.646 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-11-05 13:27:43.780 | DEBUG    | tldw_chatbook.config:<module>:141 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-11-05 13:27:43.827 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4192 - Attempting to load CLI config from: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/pytest-newbase-queue-primary-error/test_pending_mcp_queue_edit_re0/config.toml
+2026-11-05 13:27:43.836 | INFO     | tldw_chatbook.config:_report_config_path_posture:356 - Hardened the effective config file to the private posture.
+2026-11-05 13:27:43.841 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4213 - Successfully loaded and merged CLI config from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/pytest-newbase-queue-primary-error/test_pending_mcp_queue_edit_re0/config.toml
+2026-11-05 13:27:43.843 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4297 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths']
+2026-11-05 13:27:43.845 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4301 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'strata', 'polystrata', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-11-05 13:27:43.880 | INFO     | tldw_chatbook.config:_load_settings_uncached:1991 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/tldw_chatbook
+2026-11-05 13:27:43.882 | INFO     | tldw_chatbook.config:_load_settings_uncached:1994 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/tldw_chatbook
+2026-11-05 13:27:43.887 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2017 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-05 13:27:43.890 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2337 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-05 13:27:43.943 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3582 - Ensured chat dictionaries folder exists: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/pytest-newbase-queue-primary-error/test_pending_mcp_queue_edit_re0/data/default_user/chat_dicts
+2026-11-05 13:27:43.944 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3613 - load_settings: Configuration cached for future use
+2026-11-05 13:27:43.945 | INFO     | tldw_chatbook.config:<module>:8670 - Default API Endpoint (from config.py global scope): openai
+2026-11-05 13:27:43.946 | DEBUG    | tldw_chatbook.config:<module>:8693 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-11-05 13:27:45.335 | INFO     | tldw_chatbook.DB.base_db:__init__:1070 - WorkspaceDB initialized with path: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/pytest-newbase-queue-primary-error/task8-native-project0/workspace.db [Client: default]
+2026-11-05 13:27:45.459 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2914 - Initializing CharactersRAGDB db_sha256=db181df51877 [Client ID: console-doubles]
+2026-11-05 13:27:45.519 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3166 - Opened/Reopened SQLite connection db_sha256=db181df51877 thread=8461753728
+2026-11-05 13:27:45.522 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25406 - Started outermost transaction on thread 8461753728.
+2026-11-05 13:27:45.523 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8604 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 86
+2026-11-05 13:27:45.524 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4138 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.525 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.538 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4179 - [rag_char_chat_schema V4] Full schema script executed.
+2026-11-05 13:27:45.539 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4186 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.541 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4450 - [task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.541 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4471 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.543 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.560 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4481 - [rag_char_chat_schema V4→V5] Migration script executed.
+2026-11-05 13:27:45.561 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4490 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.562 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4524 - Migrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.564 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.568 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4532 - [rag_char_chat_schema V5→V6] Migration script executed.
+2026-11-05 13:27:45.569 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4541 - [rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.570 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4575 - Migrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.571 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.574 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4583 - [rag_char_chat_schema V6→V7] Migration script executed.
+2026-11-05 13:27:45.575 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4592 - [rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.576 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8518 - Migrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.577 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.580 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8526 - [rag_char_chat_schema V7→V8] Migration script executed.
+2026-11-05 13:27:45.580 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8535 - [rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.581 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4626 - Migrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.582 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.586 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4634 - [rag_char_chat_schema V8→V9] Migration script executed.
+2026-11-05 13:27:45.587 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4643 - [rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.588 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4677 - Migrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.589 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.590 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4685 - [rag_char_chat_schema V9→V10] Migration script executed.
+2026-11-05 13:27:45.591 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4694 - [rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.592 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4728 - Migrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.593 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.598 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4736 - [rag_char_chat_schema V10→V11] Migration script executed.
+2026-11-05 13:27:45.599 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4745 - [rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.600 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4779 - Migrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.602 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.613 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4787 - [rag_char_chat_schema V11→V12] Migration script executed.
+2026-11-05 13:27:45.614 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4796 - [rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.615 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4822 - Migrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.616 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.656 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4830 - [rag_char_chat_schema V12→V13] Migration script executed.
+2026-11-05 13:27:45.657 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4838 - [rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.657 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4863 - Migrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.658 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.669 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4871 - [rag_char_chat_schema V13→V14] Migration script executed.
+2026-11-05 13:27:45.669 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4879 - [rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.670 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4904 - Migrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.671 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.673 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4912 - [rag_char_chat_schema V14→V15] Migration script executed.
+2026-11-05 13:27:45.674 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4920 - [rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.675 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4946 - Migrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.676 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.678 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4989 - [rag_char_chat_schema V15→V16] Migration script executed.
+2026-11-05 13:27:45.680 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4999 - [rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.682 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5025 - Migrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.683 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.685 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5040 - [rag_char_chat_schema V16→V17] Migration script executed.
+2026-11-05 13:27:45.687 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5048 - [rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.687 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5076 - Migrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.689 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.697 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5091 - [rag_char_chat_schema V17→V18] Migration script executed.
+2026-11-05 13:27:45.698 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5099 - [rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.699 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8461 - Migrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.701 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.703 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8476 - [rag_char_chat_schema V18→V19] Migration script executed.
+2026-11-05 13:27:45.704 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8484 - [rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.705 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5127 - Migrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.706 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.712 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5147 - [rag_char_chat_schema V19→V20] Migration script executed.
+2026-11-05 13:27:45.713 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5155 - [rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.714 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5183 - Migrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.715 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.716 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:4013 - [rag_char_chat_schema V20→V21] world_book_entries.priority already present; skipping the ADD COLUMN (idempotent replay).
+2026-11-05 13:27:45.718 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5203 - [rag_char_chat_schema V20→V21] Migration script executed.
+2026-11-05 13:27:45.719 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5211 - [rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.720 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5233 - Migrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.721 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.722 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:4013 - [rag_char_chat_schema V21→V22] world_book_entries.regex already present; skipping the ADD COLUMN (idempotent replay).
+2026-11-05 13:27:45.723 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5248 - [rag_char_chat_schema V21→V22] Migration script executed.
+2026-11-05 13:27:45.724 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5254 - [rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.725 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5276 - Migrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.726 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.728 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5291 - [rag_char_chat_schema V22→V23] Migration script executed.
+2026-11-05 13:27:45.729 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5297 - [rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.730 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5320 - Migrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.731 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.735 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5335 - [rag_char_chat_schema V23→V24] Migration script executed.
+2026-11-05 13:27:45.736 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5341 - [rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.737 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5364 - Migrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.738 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.740 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5379 - [rag_char_chat_schema V24→V25] Migration script executed.
+2026-11-05 13:27:45.741 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5385 - [rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.742 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5409 - Migrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.743 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.750 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5424 - [rag_char_chat_schema V25→V26] Migration script executed.
+2026-11-05 13:27:45.751 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5430 - [rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.753 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.763 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.765 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 3 on thread 8461753728.
+2026-11-05 13:27:45.772 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5617 - Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.774 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.775 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5632 - [rag_char_chat_schema V28→V29] Migration script executed.
+2026-11-05 13:27:45.776 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5640 - [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.778 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5667 - Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.780 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.785 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5687 - [rag_char_chat_schema V29→V30] Migration script executed.
+2026-11-05 13:27:45.786 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5711 - [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.787 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5738 - Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.788 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.793 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5758 - [rag_char_chat_schema V30→V31] Migration script executed.
+2026-11-05 13:27:45.793 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5782 - [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.794 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5815 - Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.795 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4450 - [task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.796 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5841 - [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.798 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.800 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.806 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.810 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.814 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.821 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.824 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.826 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.829 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.831 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6161 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.834 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6225 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-11-05 13:27:45.835 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6275 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.837 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.839 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6414 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.840 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6444 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.841 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.855 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6484 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.856 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6553 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-11-05 13:27:45.858 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.860 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6586 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-11-05 13:27:45.861 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6630 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.863 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.872 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6676 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=db181df51877. Purged 0 unreachable sync_log row(s) of 1.
+2026-11-05 13:27:45.873 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6718 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.874 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.876 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6753 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.879 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.888 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6909 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.890 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.892 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6944 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.893 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6992 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.894 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.896 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:7026 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=db181df51877.
+2026-11-05 13:27:45.897 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.905 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.920 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7151 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=db181df51877...
+2026-11-05 13:27:45.921 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.922 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7216 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=db181df51877 (examined 0, compacted 0, skipped 0 unreadable).
+2026-11-05 13:27:45.923 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.931 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.934 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.955 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.959 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.989 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.992 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.994 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:45.996 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.026 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.035 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.063 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.065 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.073 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 3 on thread 8461753728.
+2026-11-05 13:27:46.074 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 3 on thread 8461753728.
+2026-11-05 13:27:46.077 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.083 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.123 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.127 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.131 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.146 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.175 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.177 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.190 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.209 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.217 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.267 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.297 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.306 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.315 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.337 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.353 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:25375 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-05 13:27:46.383 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8747 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 86.
+2026-11-05 13:27:46.395 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:25471 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-11-05 13:27:46.396 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2937 - CharactersRAGDB initialization completed successfully db_sha256=db181df51877
+2026-11-05 13:27:46.413 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:347 - Recovered-media message source is unavailable.
+2026-11-05 13:27:46.616 | INFO     | tldw_chatbook.DB.base_db:__init__:1070 - AgentRunsDB initialized with path: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/pytest-newbase-queue-primary-error/task8-native-project0/runs.db [Client: received-native]
+----------------------------- Captured stderr call -----------------------------
+2026-11-05 13:27:46.855 | DEBUG    | tldw_chatbook.Library.library_rag_state:library_rag_profile_top_k:711 - Library Search/RAG could not read the active RAG profile's top_k (exception_category=RecoveryRequired); using the fallback.
+------------------------------ Captured log call -------------------------------
+ERROR    tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage app_version=0.2.3 attempt_id=7a15bcc1117a47669656354bc7e5371b component=console duration_ms=779 error_category=validation exception_type=ValueError phase=controller_submit python_version=3.12.11 sqlite_version=3.49.1 status=failed
+ERROR    tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage app_version=0.2.3 attempt_id=7a15bcc1117a47669656354bc7e5371b component=console duration_ms=779 phase=controller_submit python_version=3.12.11 sqlite_version=3.49.1 status=failed
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-05 13:27:48.756 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:7407 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-11-05 13:27:48.759 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3529 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=db181df51877 thread=8461753728.
+2026-11-05 13:27:48.764 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3535 - WAL checkpoint TRUNCATE executed db_sha256=db181df51877.
+2026-11-05 13:27:48.768 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3562 - Closed SQLite connection db_sha256=db181df51877 thread=8461753728.
+============================= slowest 25 durations =============================
+3.24s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_queue_edit_retains_original_source_until_dispatch[False]
+1.11s call     Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_queue_edit_retains_original_source_until_dispatch[False]
+
+(1 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_queue_edit_retains_original_source_until_dispatch[False]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 6.52s

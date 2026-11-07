@@ -373,6 +373,24 @@ def describe_local_mcp_capabilities() -> dict[str, Any]:
     }
 
 
+_CONSOLE_ORDINARY_MANIFEST_SOURCE = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in (
+        "_first_doc_line",
+        "_load_server_module_ast",
+        "_annotation_to_property",
+        "_signature_to_input_schema",
+        "_signature_to_prompt_arguments",
+        "_extract_registered_entries",
+        "_describe_local_resources",
+        "_describe_local_prompts",
+        "_describe_local_tools",
+        "_describe_local_library_tools",
+        "describe_local_mcp_capabilities",
+    )
+)
+
+
 def build_local_library_tool_service(
     *,
     chachanotes_db: Any,

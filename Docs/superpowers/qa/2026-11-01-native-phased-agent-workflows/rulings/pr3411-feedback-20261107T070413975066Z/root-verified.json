@@ -1,0 +1,38 @@
+{
+  "checked_utc": "2026-11-07T07:06:23.052633+00:00",
+  "records_verified": 39,
+  "literal_occurrences": 39,
+  "uncovered_occurrences": 0,
+  "prior38_exact": true,
+  "prior_root_artifacts_verified": 7,
+  "source_snapshot_bytes": 111417,
+  "complete_end_and_draft_bodies": true,
+  "artifacts": [
+    {
+      "path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-snapshot.txt",
+      "sha256": "2e41736c517a35b111fedf05db049e2951d69bd4cde10c4d7c4de498e9e2ffd2"
+    },
+    {
+      "path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-snapshot-meta.json",
+      "sha256": "c1f3af88a61220aa04811d504802ea82a41dbf136a57e9595e979863fc5cbc6b"
+    },
+    {
+      "path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-index.json",
+      "sha256": "c3b42568105395287ade36778636c5d0ff20ef3a9c73c00951c0eace473e06d2"
+    },
+    {
+      "path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-draft.md",
+      "sha256": "1e777028547fe8d7461e92ff94cb7fc018bf9e0d507cb271fe83b42ac5e448ef"
+    },
+    {
+      "path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-agent-verified.json",
+      "sha256": "6795a152159928c5e2718a7e3a3329d6efb65557a6d3400654287e036230f19f"
+    },
+    {
+      "path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-report.md",
+      "sha256": "5a0b8c685684bda473f8f9c6070f506cb9262b91b34deebec622ec8b089c26d8"
+    }
+  ],
+  "scope": "Root literal UTF8 offsets/lines/fullbodies/hash/prefix verification at OPENcutoff; original707untouched, noSourcepublicationorfulltaskclaim",
+  "prior_attempt": "system python3 rejected zip(strict=True) before any receipt/output mutation; rerun under absolute project Python3.12"
+}

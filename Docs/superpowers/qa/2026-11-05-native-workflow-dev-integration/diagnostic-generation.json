@@ -1,0 +1,13 @@
+{
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_persistent_diagnostic_inventory.py",
+    "--write"
+  ],
+  "cwd": "integration",
+  "exit_code": 0,
+  "output": "wrote Docs/security/production-diagnostic-inventory.json",
+  "generated_sha256": "d140088fe540294df8d03f35ce162fec81c3a2a8eefcbfa8e44901c517d88869",
+  "review": "diagnostic-review.md and stable13file statement receipt; writer reports no subsequent logger changes",
+  "qualification": "Generation after explicit statement review; final comparison pending."
+}

@@ -11,8 +11,12 @@ import pytest
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
+from Tests.Agents.test_hook_permissions import _approve
+from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.hooks_v2_process_support import child_argv
 from Tests.Plugins.test_native_components import install_components
+
+hook_file = _hook_file
 
 _REQUIRES_COMMAND_HOOKS = pytest.mark.skipif(
     "sys.platform == 'win32'",
@@ -525,7 +529,6 @@ async def _owned_peer(
         local = LocalMCPControlService(
             store=LocalMCPStore(tmp_path / "owned-mcp.json"),
             client=client,
-            manifest_provider=dict,
         )
         service = PluginService(
             tmp_path / "owned-profile",
@@ -1171,7 +1174,13 @@ async def _installed_compaction_case(
             for provider in providers.providers:
                 if hasattr(provider, "snapshot"):
                     await provider.connect("mcp:peer")
-            return providers
+                    await provider.compose_catalog()
+            connected = MCPProviderGroup(providers.providers)
+            owner = connected.provider_for(owned_case.name)
+            assert owner is not None and any(owner is item for item in providers.providers)
+            assert owner.snapshot.installation_id == owned_case.installed.installation_id
+            assert {entry.name for entry in owner.list_catalog()} == {owned_case.name}
+            return connected
 
         monkeypatch.setattr(controller, "_compose_mcp_provider", connect_owned)
     controller._agent_runtime_enabled = False
@@ -1239,7 +1248,20 @@ async def _installed_compaction_case(
     original_fence = controller._manual_runtime_fence
 
     def observe_fence(**kwargs):
-        captured_configurations.append(kwargs["configuration"])
+        configuration = kwargs["configuration"]
+        if owned_case is not None:
+            mapping = next(
+                row
+                for row in json.loads(owned_case.snapshot.mappings_json)
+                if row["kind"] == "tool"
+            )
+            assert configuration.mcp_definition_capture == "captured"
+            assert mapping["target_reference"] in configuration.mcp_tool_maximum
+            assert (
+                configuration.mcp_definition_maximum[mapping["target_reference"]]
+                == mapping["definition_digest"]
+            )
+        captured_configurations.append(configuration)
         value = original_fence(**kwargs)
         fences.append(value)
         return value
@@ -1563,28 +1585,35 @@ async def _installed_compaction_case(
     "mode", ["approved", "disconnected", "denied", "cancelled", "cyclic"]
 )
 async def test_installed_provisional_mcp_initialization(
-    native_console, native_package, tmp_path, monkeypatch, mode
+    native_console, native_package, tmp_path, monkeypatch, mode, hook_file
 ):
     from uuid import uuid4
 
-    from tldw_chatbook.Agents.run_hooks import HookOutcome
+    import toml
+
     from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 
     rig = native_console
-    accepted, terminal, stops, cards = [], [], [], []
-
-    class LegacyObserver:
-        async def fire_async(self, *_args, **_kwargs):
-            return HookOutcome()
-
-        def notify(self, event, **kwargs):
-            if event == "Stop":
-                stops.append(kwargs)
-
-    recorder = LegacyObserver()
-    rig.controller._ensure_run_hooks = lambda: recorder
+    accepted, terminal, cards = [], [], []
+    stop_marker = tmp_path / "legacy-stop-deliveries"
+    raw = toml.loads(hook_file.read_text())
+    raw["hooks"] = {
+        "enabled": True,
+        "hook": [
+            {
+                "id": "provisional-stop",
+                "event": "Stop",
+                "command": child_argv(
+                    "from pathlib import Path;"
+                    f"Path({str(stop_marker)!r}).open('a').write('Stop\\n')"
+                ),
+                "timeout_s": 5,
+            }
+        ],
+    }
+    hook_file.write_text(toml.dumps(raw))
     rig.controller.on_submission_accepted = lambda: accepted.append(rig.session.id)
     rig.controller.set_pending_approval = lambda payload: (
         cards.append(payload) if payload else None
@@ -1684,11 +1713,20 @@ async def test_installed_provisional_mcp_initialization(
                     providers = await compose(*args, **kwargs)
                     if not isinstance(providers, MCPProviderGroup):
                         return providers
-                    if mode != "disconnected":
-                        for provider in providers.providers:
-                            if hasattr(provider, "snapshot"):
-                                await provider.connect("mcp:peer")
-                    return providers
+                    if mode == "disconnected":
+                        return providers
+                    for provider in providers.providers:
+                        if hasattr(provider, "snapshot"):
+                            await provider.connect("mcp:peer")
+                            await provider.compose_catalog()
+                    connected = MCPProviderGroup(providers.providers)
+                    owner = connected.provider_for(case.name)
+                    assert owner is not None and any(
+                        owner is item for item in providers.providers
+                    )
+                    assert owner.snapshot.installation_id == case.installed.installation_id
+                    assert {entry.name for entry in owner.list_catalog()} == {case.name}
+                    return connected
 
                 monkeypatch.setattr(
                     rig.controller, "_compose_mcp_provider", explicit_connection
@@ -1740,12 +1778,20 @@ async def test_installed_provisional_mcp_initialization(
             )
             assert "independent body." in str(body)
             assert (
-                not accepted and not terminal and not stops and not rig.gateway.payloads
+                not accepted
+                and not terminal
+                and not stop_marker.exists()
+                and not rig.gateway.payloads
             )
             assert not case.service.live_runs()
             assert not case.launch_marker.exists()
             return
         async with _runtime(rig) as runtime:
+            rig.controller._ensure_run_hooks = runtime.ensure_run_hooks
+            rig.controller._hook_permissions_accessor = runtime.ensure_hook_permissions
+            assert _approve(runtime.ensure_hook_permissions()).ready
+            legacy_source = runtime.ensure_run_hooks()._native_source
+            assert legacy_source is runtime._legacy_hooks_source
             request = ConsoleTurnCustodyRequest(
                 turn_id=str(uuid4()),
                 session_id=rig.session.id,
@@ -1778,7 +1824,11 @@ async def test_installed_provisional_mcp_initialization(
                     assert rounds and not waiter.done(), (
                         waiter.result() if waiter.done() else None
                     )
-                    assert not accepted and not stops and not rig.gateway.payloads
+                    assert (
+                        not accepted
+                        and not stop_marker.exists()
+                        and not rig.gateway.payloads
+                    )
                     engine = runtime.get_hooks_v2(rig.session.id)
                     assert (
                         engine.native_plugins.snapshots[0].installation_id
@@ -1823,7 +1873,9 @@ async def test_installed_provisional_mcp_initialization(
                             and not case.service.live_runs()
                         )
                 await _wait(lambda: bool(terminal))
-                assert len(accepted) == len(stops) == (1 if mode == "approved" else 0)
+                assert len(accepted) == (1 if mode == "approved" else 0)
+                if mode == "approved":
+                    await _wait(stop_marker.exists)
                 assert bool(rig.gateway.payloads) is (mode == "approved")
                 assert (
                     "installed initializer context" in str(rig.gateway.payloads)
@@ -1848,6 +1900,10 @@ async def test_installed_provisional_mcp_initialization(
                 if not waiter.done():
                     waiter.cancel()
                 await asyncio.gather(waiter, return_exceptions=True)
+
+        assert not legacy_source.cleanup_pending
+        stops = stop_marker.read_text().splitlines() if stop_marker.exists() else []
+        assert stops == (["Stop"] if mode == "approved" else [])
 
 
 @_REQUIRES_COMMAND_HOOKS

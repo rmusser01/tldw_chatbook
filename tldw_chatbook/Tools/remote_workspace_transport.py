@@ -6,10 +6,12 @@ Spec: ``Docs/superpowers/specs/2026-09-24-ssh-remote-workspace-bindings-design.m
 "ControlMaster lifecycle — explicit, and the executor owns its health".
 The rules this module exists to enforce:
 
-- **Explicit masters.** The first need for a host starts one
+- **Explicit masters.** The first nonnative need for a host starts one
   ``ssh -MNf`` process (no remote command) under a per-host-key
   ``threading.Lock``; per-call clients ride the shared connection with
   ``ControlMaster=no`` and never become masters themselves.
+  Native managed calls verify an existing master or explicitly disable mux;
+  they never start a detached master (ADR-285).
 - **The master is a separate session.** ``start_new_session=True`` puts it
   outside any call's process group, so a deadline kill of one call cannot
   take the shared connection — or other in-flight calls — with it.
@@ -20,7 +22,7 @@ The rules this module exists to enforce:
   connection up. Per-call clients never run their own keepalives — they
   multiplex a connection the master already keeps alive, where
   ``ServerAlive`` does nothing.
-- **Health is failure-triggered.** With ``ControlMaster=no`` a client
+- **Nonnative health is failure-triggered.** With ``ControlMaster=no`` a client
   cannot transparently replace a dead master, so the executor detects
   death (a failed mux connection, Task 11) and calls
   :meth:`SshMasterManager.restart_if_dead` — never a proactive
@@ -244,6 +246,14 @@ def _unlink_quietly(path: Path) -> None:
         logger.debug(f"Could not remove control socket {path}: {exc}")
 
 
+@dataclass(frozen=True)
+class _ControlDirectorySource:
+    """Original manager directory selection only; never connection proof."""
+
+    directory: Path | None
+    configuration: tuple
+
+
 class SshMasterManager:
     """Owns the ControlMaster lifecycle for remote workspace bindings.
 
@@ -299,6 +309,9 @@ class SshMasterManager:
         #: afterwards, so a straggler call connects directly instead of
         #: leaving a detached master behind (TASK-33406).
         self._closed = False
+        self._native_acceptances = {}
+        self._native_checks = {}
+        self._native_control_directory = None
 
     @property
     def ssh_bin(self) -> str:
@@ -344,6 +357,20 @@ class SshMasterManager:
         with self._registry_lock:
             if self._control_dir is None and not self._mux_unusable:
                 self._control_dir = self._resolve_control_dir()
+                if (
+                    getattr(self._resolve_control_dir, "__func__", None)
+                    is _NATIVE_MASTER_METHODS["_resolve_control_dir"]
+                ):
+                    self._native_control_directory = _ControlDirectorySource(
+                        self._control_dir,
+                        (
+                            self._ssh_bin,
+                            self._control_persist,
+                            self._enabled,
+                            self._connect_timeout_s,
+                            self._state_dir,
+                        ),
+                    )
             return self._control_dir
 
     def _resolve_control_dir(self) -> Path | None:
@@ -416,13 +443,14 @@ class SshMasterManager:
     def client_options(self, loc: RemoteLocator) -> list[str]:
         """ssh options for one per-call client of the shared connection.
 
-        Deliberately NO ``ServerAlive*`` and NO ``ControlPersist``: the
+        Nonnative clients have NO ``ServerAlive*`` and NO ``ControlPersist``: the
         master owns the connection's keepalive and lifetime; a client only
         multiplexes it (see module docstring). When multiplexing is
         disabled — or no usable control dir fits sun_path, or
         :meth:`close_all` has run — there is no shared connection to name,
         so no ``ControlPath``/``ControlMaster`` options at all: per-call
-        direct connections.
+        direct connections. Native clients always disable master creation and
+        persistence, and name a control path only after this call's verification.
 
         Args:
             loc: A validated locator.
@@ -430,12 +458,46 @@ class SshMasterManager:
         Returns:
             Option tokens for :func:`build_ssh_argv`.
         """
+        from tldw_chatbook.Chat.console_ssh_custody import (
+            _master_configuration,
+            _MasterAcceptance,
+            current_ssh_call,
+        )
+
+        native = current_ssh_call()
+        if native is not None:
+            native.check()
         options = [
             "-o",
             "BatchMode=yes",
             "-o",
             f"ConnectTimeout={self._connect_timeout_s}",
         ]
+        if native is not None:
+            acceptance = native.master_acceptance
+            with self._registry_lock:
+                reuse = (
+                    type(acceptance) is _MasterAcceptance
+                    and acceptance.manager is self
+                    and acceptance.locator is loc
+                    and acceptance.configuration == _master_configuration(self)
+                    and acceptance.control_dir is self._control_dir
+                    and self._enabled
+                    and not self._closed
+                    and _host_key(loc) in self._registrations
+                    and self._native_acceptances.get(_host_key(loc)) is acceptance
+                )
+            # Explicit options also override mux/persistence inherited from ssh_config.
+            return options + [
+                "-o",
+                "ControlMaster=no",
+                "-o",
+                f"ControlPath={acceptance.control_dir.as_posix()}/%C"
+                if reuse
+                else "ControlPath=none",
+                "-o",
+                "ControlPersist=no",
+            ]
         control_path = None if self._closed else self._control_path_option(loc)
         if control_path is not None:
             options += [
@@ -460,11 +522,20 @@ class SshMasterManager:
         logged, not raised — the transport surfaces them as typed call
         errors and the next ``ensure_master`` retries.
 
+        Native managed calls instead verify existing masters on each ensure;
+        a failed check leaves explicit direct-client options, without a launch.
+
         No-op when multiplexing is disabled. After :meth:`close_all` this is a no-op.
 
         Args:
             loc: A validated locator.
         """
+        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            native.master_acceptance = None
+            native.check()
         if not self._enabled or self._closed:
             return
         key = _host_key(loc)
@@ -476,21 +547,42 @@ class SshMasterManager:
                 return
             try:
                 control_dir = self.control_path_for(loc)
+                if native is not None:
+                    native.control_directory(self, control_dir)
             except OSError as exc:
                 # An unusable state dir must degrade to direct connections
                 # (logged), not raise through the send path.
-                logger.warning(
-                    f"control dir for {loc.host} is unavailable: {exc!r}"
-                )
+                logger.warning(f"control dir for {loc.host} is unavailable: {exc!r}")
                 return
             if control_dir is None:
                 # No dir fits sun_path (logged at resolution): no masters,
                 # no ControlPath — per-call direct connections.
                 return
+            if native is not None:
+                from tldw_chatbook.Chat.console_ssh_custody import accept_master
+
+                with self._registry_lock:
+                    self._registrations.setdefault(key, loc)
+                try:
+                    if self._master_alive(loc):
+                        accept_master(self, loc, control_dir)
+                finally:
+                    with self._registry_lock:
+                        checked = self._native_checks.get(key)
+                        if (
+                            checked is not None
+                            and checked[0] is native
+                            and checked[1] is loc
+                        ):
+                            self._native_checks.pop(key)
+                return
             self._registrations.setdefault(key, loc)
             known = self._sockets.get(key)
             if known is not None:
                 if known.exists():
+                    from tldw_chatbook.Chat.console_ssh_custody import accept_master
+
+                    accept_master(self, loc, control_dir)
                     return
                 # Tracked socket vanished (crashed master cleaned up after
                 # itself, or a janitor): forget it and spawn fresh.
@@ -499,12 +591,18 @@ class SshMasterManager:
             elif self._master_alive(loc):
                 # A master from outside this process still owns the socket;
                 # starting ours would race for the same %C path.
+                from tldw_chatbook.Chat.console_ssh_custody import accept_master
+
+                accept_master(self, loc, control_dir)
                 return
             if self._closed:
                 # close_all began during the check above: skip the spawn so
                 # its barrier (and app quit) need not wait for a handshake.
                 return
             self._spawn_master(loc, key, control_dir)
+            from tldw_chatbook.Chat.console_ssh_custody import accept_master
+
+            accept_master(self, loc, control_dir)
 
     def restart_if_dead(self, loc: RemoteLocator) -> bool:
         """Failure-triggered health path: replace a dead master.
@@ -513,6 +611,7 @@ class SshMasterManager:
         stale socket file (so the fresh master cannot collide with it) and
         calls :meth:`ensure_master`. Called ONLY after a mux failure —
         never proactively per batch. After :meth:`close_all` this is a no-op.
+        Native managed calls only clear their selection and report no restart.
 
         Args:
             loc: A validated locator.
@@ -520,6 +619,13 @@ class SshMasterManager:
         Returns:
             True iff a restart was attempted (the check said dead).
         """
+        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            native.master_acceptance = None
+            native.check()
+            return False
         if not self._enabled or self._closed:
             return False
         if self.control_path_for(loc) is None:
@@ -622,12 +728,22 @@ class SshMasterManager:
             *build_ssh_argv(loc, ["-O", "check", "-o", option], []),
         ]
         try:
-            completed = subprocess.run(
-                argv,
-                capture_output=True,
-                timeout=_CHECK_TIMEOUT_SECONDS,
-                check=False,
+            from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+            native = current_ssh_call()
+            completed = (
+                native.finite_helper(argv, timeout=_CHECK_TIMEOUT_SECONDS)
+                if native is not None
+                else subprocess.run(
+                    argv,
+                    capture_output=True,
+                    timeout=_CHECK_TIMEOUT_SECONDS,
+                    check=False,
+                )
             )
+            if native is not None and completed.returncode == 0:
+                with self._registry_lock:
+                    self._native_checks[_host_key(loc)] = (native, loc, tuple(argv))
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.debug(f"ssh -O check could not run for {loc.host}: {exc!r}")
             return False
@@ -672,12 +788,13 @@ class SshMasterManager:
         ]
         argv = [self._ssh_bin, *build_ssh_argv(loc, options, [])]
         try:
-            completed = subprocess.run(
+            from tldw_chatbook.Chat.console_ssh_custody import run_master_launcher
+
+            completed = run_master_launcher(
+                self,
+                loc,
                 argv,
-                capture_output=True,
-                timeout=self._connect_timeout_s + _MASTER_SPAWN_GRACE_SECONDS,
-                check=False,
-                start_new_session=True,
+                self._connect_timeout_s + _MASTER_SPAWN_GRACE_SECONDS,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.warning(
@@ -1271,6 +1388,11 @@ class RemoteWorkspaceTransport:
             raise ValueError(
                 f"python must be a bare interpreter name: {python!r}"
             )
+        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            native.check()
         _bundle, compressed, bootstrap = _bundle_payload()
         # Spec ("Transport & executor"): each call logs the bundle hash
         # for audit — one debug line at spawn, endpoint label + stamp
@@ -1304,6 +1426,8 @@ class RemoteWorkspaceTransport:
                     f"ssh could not be run: {exc}",
                 ),
             )
+        if native is not None:
+            native.request.issued = True
         stderr_capture = _BoundedCapture(_STDERR_CAPTURE_CAP)
         stderr_thread = threading.Thread(
             target=_drain_stderr,
@@ -1342,6 +1466,9 @@ class RemoteWorkspaceTransport:
                 exit_code = proc.wait()
             stdin_thread.join(timeout=_THREAD_JOIN_SECONDS)
             stderr_thread.join(timeout=_THREAD_JOIN_SECONDS)
+            if native is not None:
+                native.retire_process(proc, (stdin_thread, stderr_thread))
+                native.request.local_returned = True
         stderr_bytes = stderr_capture.value()
 
         if local_error is not None:
@@ -1511,3 +1638,43 @@ class RemoteWorkspaceTransport:
             )
         except Exception as exc:  # noqa: BLE001 - janitor must not break the call
             logger.warning(f"mux master restart for {loc.host} failed: {exc!r}")
+
+
+_NATIVE_TRANSPORT_METHODS = {
+    name: getattr(RemoteWorkspaceTransport, name)
+    for name in (
+        "call",
+        "classify_exchange_failure",
+        "_classify_failure",
+        "_restart_master_after_mux_failure",
+    )
+}
+_NATIVE_MASTER_METHODS = {
+    name: getattr(SshMasterManager, name)
+    for name in (
+        "ensure_master",
+        "_spawn_master",
+        "_master_alive",
+        "client_options",
+        "restart_if_dead",
+        "control_path_for",
+        "_control_path_option",
+        "close_all",
+        "_resolve_control_dir",
+        "_dir_names",
+    )
+}
+_NATIVE_TRANSPORT_MANAGER = RemoteWorkspaceTransport.master_manager
+_NATIVE_TRANSPORT_FUNCTIONS = {
+    name: globals()[name]
+    for name in (
+        "_bundle_payload",
+        "_remote_command",
+        "build_ssh_argv",
+        "_feed_stdin",
+        "_drain_stderr",
+        "_watch_exchange",
+        "_settle_process",
+        "_kill_group",
+    )
+}

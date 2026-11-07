@@ -100,13 +100,7 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
             assert entered.is_set(), "the second send never reached the provider"
 
             # The live turn turns Send into Queue: queue through the screen.
-            console._console_composer_or_none().load_draft(_FOLLOW_UP)
-            await asyncio.wait_for(
-                console._send_console_message_from_visible_action(
-                    session_id=session.id
-                ),
-                10,
-            )
+            await _send(console, host, runtime_tasks, _FOLLOW_UP)
             queued = controller.prompt_queue_registry.snapshot(session.id)
             assert queued.total_count == 1, queued
             release.set()

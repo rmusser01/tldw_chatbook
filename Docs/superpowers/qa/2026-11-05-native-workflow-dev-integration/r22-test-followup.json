@@ -1,0 +1,6 @@
+{
+  "before": "4c2b54d655526795976ebf0caf9b6ac3a1e15f621d37d30b4134532c2a473fbe",
+  "after": "63d730b93ca958533483dc3c782878bb8cc83a61cb399adc50a8cc6362e90ad9",
+  "ast_valid": true,
+  "scope": "separate actual early-native and late-after-commit revocation; stage-aware foreign-read; native stage condition preserves nonnative platform"
+}

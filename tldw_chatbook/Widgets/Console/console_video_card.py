@@ -23,7 +23,6 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
-from tldw_chatbook.Widgets.Console.console_video_preview import ConsoleVideoPreview
 
 #: Same inline frame color as the rest of native Console's bordered panels
 #: (duplicated locally, same rationale as console_generation_card.py).
@@ -199,6 +198,9 @@ class ConsoleVideoCard(Vertical):
             # instead of a player -- never an exception.
             from tldw_chatbook.Media_Playback.preview_policy import (
                 check_preview_eligibility,
+            )
+            from tldw_chatbook.Widgets.Console.console_video_preview import (
+                ConsoleVideoPreview,
             )
 
             eligibility = check_preview_eligibility(

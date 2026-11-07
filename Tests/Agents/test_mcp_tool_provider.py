@@ -2422,3 +2422,57 @@ def test_explicit_session_approval_qualifies_history_but_reuse_does_not(running_
     provider._approval_callback = None
     assert provider.invoke(tool_id, {}).ok
     assert service.last_approval_definition_hash is None
+
+@pytest.mark.parametrize("state", ["allow", "ask", "deny"])
+def test_failed_persona_callback_preserves_state_without_private_diagnostic(
+    running_loop, state
+):
+    from loguru import logger
+
+    private_tool = "PRIVATE-PERSONA-TOOL-NAME"
+    private_error = "PRIVATE-PERSONA-CALLBACK-MESSAGE"
+    policy_calls = []
+
+    def unavailable_policy():
+        policy_calls.append(True)
+        raise RuntimeError(private_error)
+
+    service = FakeMCPService()
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        persona_policy_provider=unavailable_policy,
+    )
+    original_state = EffectiveToolState(state=state, origin="tool_override")
+    tool = HubTool(
+        server_key="local:private-policy-test",
+        server_label="Private policy test",
+        source="local",
+        name=private_tool,
+        description="",
+        input_schema=None,
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    records = []
+    sink = logger.add(lambda message: records.append(message.record))
+    try:
+        assert provider._persona_floor(original_state, tool) is original_state
+    finally:
+        logger.remove(sink)
+    assert policy_calls == [True]
+    failures = [
+        record
+        for record in records
+        if record["message"].startswith(
+            "MCPToolProvider: persona_policy_provider failed"
+        )
+    ]
+    assert len(failures) == 1
+    assert failures[0]["message"] == "MCPToolProvider: persona_policy_provider failed"
+    assert failures[0]["level"].name == "WARNING"
+    assert failures[0]["exception"] is None
+    assert private_tool not in failures[0]["message"]
+    assert private_error not in failures[0]["message"]
+    assert service.execute_calls == []

@@ -23,6 +23,18 @@ reductions apply to saved goals; increases cannot exceed their launch snapshots.
 Pauses and waits consume elapsed time. Environment overrides retain precedence.
 See [Goal runs](console/agent-runs-and-tools.md#goal-runs) for launch and review.
 
+## Workflow policy in Console behavior
+
+**F4 → Console behavior → Workflow runs** uses the existing **Save** and
+**Revert** controls. The feature starts off. Saved limits are eight accepted
+planning/execution attempts, twelve task launches, 32 provider calls including
+helpers, 500000 tokens, 8192 output tokens per call and 900 cumulative active
+seconds. Zero refuses admission. Limits intersect the run's original ceilings
+and live reductions. Physically drained review waits consume no active time.
+Each phase and any revision still needs its own approval.
+
+[Run a phased workflow](console/agent-runs-and-tools.md#run-a-phased-workflow-in-this-chat)
+
 ## What this screen is for
 
 Settings edits **saved defaults**. It is not a control room: nothing here starts

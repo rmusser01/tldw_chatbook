@@ -104,6 +104,7 @@ RESEARCH_COMMAND_HANDLER_ID = "research"
 GOAL_COMMAND_NAME = "goal"
 GOAL_COMMAND_ARGUMENT_HINT = "[task description]"
 GOAL_COMMAND_HANDLER_ID = "goal"
+WORKFLOW_COMMAND_HANDLER_ID = "workflow"
 HELP_COMMAND_NAME = "help"
 HELP_COMMAND_ARGUMENT_HINT = "[command]"
 HELP_COMMAND_HANDLER_ID = "help"
@@ -398,6 +399,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=GOAL_COMMAND_NAME,
             argument_hint=GOAL_COMMAND_ARGUMENT_HINT,
             handler_id=GOAL_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name="workflow",
+            argument_hint="[new]",
+            handler_id=WORKFLOW_COMMAND_HANDLER_ID,
         )
     )
     return registry

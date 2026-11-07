@@ -1,0 +1,72 @@
+{
+  "cutoff_status": "OPEN ongoing capture",
+  "literal_records": 39,
+  "prior38_exact": true,
+  "files": [
+    {
+      "file": "snapshot.txt",
+      "bytes": 111417,
+      "sha256": "2e41736c517a35b111fedf05db049e2951d69bd4cde10c4d7c4de498e9e2ffd2",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-snapshot.txt"
+    },
+    {
+      "file": "snapshot-meta.json",
+      "bytes": 622,
+      "sha256": "c1f3af88a61220aa04811d504802ea82a41dbf136a57e9595e979863fc5cbc6b",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-snapshot-meta.json"
+    },
+    {
+      "file": "index.json",
+      "bytes": 43577,
+      "sha256": "c3b42568105395287ade36778636c5d0ff20ef3a9c73c00951c0eace473e06d2",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-index.json"
+    },
+    {
+      "file": "draft.md",
+      "bytes": 28147,
+      "sha256": "2d1e0ea159c3eb11c24e78edb4e857a99404fe41fbb87f09c24f92644a1237e3",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-draft.md",
+      "capture_bytes": 28148,
+      "capture_sha256": "1e777028547fe8d7461e92ff94cb7fc018bf9e0d507cb271fe83b42ac5e448ef",
+      "exact_capture_archive": "draft.capture.md.gz",
+      "display_normalization": "EOF separator blank only"
+    },
+    {
+      "file": "agent-verified.json",
+      "bytes": 1983,
+      "sha256": "6795a152159928c5e2718a7e3a3329d6efb65557a6d3400654287e036230f19f",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-agent-verified.json"
+    },
+    {
+      "file": "report.md",
+      "bytes": 2695,
+      "sha256": "26055b75c856e29c94a85270aa22bff0a49f9fbc3993ddd7a6e7e61729665997",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-report.md",
+      "capture_bytes": 2701,
+      "capture_sha256": "5a0b8c685684bda473f8f9c6070f506cb9262b91b34deebec622ec8b089c26d8",
+      "exact_capture_archive": "report.capture.md.gz",
+      "display_normalization": "Markdown trailing spaces only"
+    },
+    {
+      "file": "root-verified.json",
+      "bytes": 2146,
+      "sha256": "0938cc2c431ead9eb0e58aa2defdb121c94ea8cf5689b4c31c80c8ae9b1f22e7",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-root-verified.json"
+    },
+    {
+      "file": "draft.capture.md.gz",
+      "bytes": 11408,
+      "sha256": "685518d54aba2d2919f58874c9f470b2c92f46208ee04460fb62ca4e8e6ab072",
+      "decompressed_capture_sha256": "1e777028547fe8d7461e92ff94cb7fc018bf9e0d507cb271fe83b42ac5e448ef",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-draft.md"
+    },
+    {
+      "file": "report.capture.md.gz",
+      "bytes": 1201,
+      "sha256": "e426597354c6aba4b3e3753d1ac8b15d5ec90a9f42222cf8179bed9a8f1cb53c",
+      "decompressed_capture_sha256": "5a0b8c685684bda473f8f9c6070f506cb9262b91b34deebec622ec8b089c26d8",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T070413975066Z-report.md"
+    }
+  ],
+  "publication_note": "Source text copies satisfy Git whitespace checks; exact raw Markdown captures are preserved in deterministic gzip alongside the unmodified snapshot/index and verification metadata."
+}

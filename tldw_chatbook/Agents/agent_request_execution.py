@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+# Capture the original tuple before other module initialization.
+# isort: split
+from tldw_chatbook.Chat.console_ordinary_tree import (
+    _NATIVE_CURRENTNESS_SOURCE as _ORIGINAL_CURRENTNESS_SOURCE,
+)
+
+# isort: split
+
 import contextlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
@@ -288,6 +296,9 @@ def make_call_model(
             ),
             continuation_owner_key=continuation_owner_key or "id",
         )
+        planning = getattr(self, "_workflow_planning_preparation", None)
+        if planning is not None:
+            planning.require_seed_in_payload(payload)
         if continuation_owner_key is not None and not gateway_prepares_continuation:
             payload = [
                 {
@@ -604,6 +615,35 @@ def make_invoke_tool(
     actor = run_actor or runtime.CurrentRunActor("primary", run_id, None)
 
     owner = current_execution_owner()
+    from .workflow_task_scope import current_task_authorization
+    from types import ModuleType as _currentness_module_type
+    from tldw_chatbook.Chat import console_runtime as _currentness_runtime
+    from tldw_chatbook.Chat import console_chat_controller as _currentness_controller
+
+    _currentness_source = _ORIGINAL_CURRENTNESS_SOURCE
+    if (
+        type(_currentness_runtime) is not _currentness_module_type
+        or type(_currentness_controller) is not _currentness_module_type
+        or _currentness_source is not vars(_currentness_runtime).get("_ORIGINAL_CURRENTNESS_SOURCE")
+        or _currentness_source is not vars(_currentness_controller).get("_ORIGINAL_CURRENTNESS_SOURCE")
+        or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_runtime") is not _currentness_runtime
+        or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_chat_controller") is not _currentness_controller
+    ):
+        raise RuntimeError("original native currentness consumer changed")
+    _currentness_record = _currentness_source[4][-1][1]
+    _currentness_reader, _currentness_code, _currentness_defaults, _currentness_kwdefaults, _currentness_entries, _currentness_closure, _currentness_cells = _currentness_record
+    if (
+        _currentness_reader.__code__ is not _currentness_code
+        or _currentness_reader.__defaults__ is not _currentness_defaults
+        or _currentness_reader.__kwdefaults__ is not _currentness_kwdefaults
+        or tuple((_currentness_kwdefaults or {}).items()) != _currentness_entries
+        or _currentness_reader.__closure__ is not _currentness_closure
+        or any(cell.cell_contents is not value for cell, value in _currentness_cells)
+    ):
+        raise RuntimeError("original native currentness dispatcher changed")
+
+    task_authorization = current_task_authorization()
+    planning = _currentness_reader(_currentness_source, 'planning')
 
     def invoke_tool(call: ToolCall) -> ToolResult:
         if config.review_binding is not None and call.name not in {
@@ -626,10 +666,36 @@ def make_invoke_tool(
         if refusal is not None:
             return refusal
 
+        from ..Chat.console_ssh_custody import capture_model_ssh
+
+        ssh_call = capture_model_ssh(self.registry, call.name)
+        raw_cli_call = None
+        if call.name == "shell_exec":
+            from ..Chat.console_raw_cli_custody import capture_model_raw_cli
+
+            raw_cli_call = capture_model_raw_cli(self.registry, call.name)
+
         def _invoke() -> ToolResult:
             from .automatic_work_runtime import current_automatic_work
 
-            with runtime.use_run_actor(actor), runtime.use_tool_call_id(call.call_id):
+            with (
+                runtime.use_run_actor(actor),
+                runtime.use_tool_call_id(call.call_id),
+                task_authorization.scope() if task_authorization else runtime.contextlib.nullcontext(),
+                planning.activate_source() if planning is not None else runtime.contextlib.nullcontext(),
+                owner.activate() if (task_authorization or planning is not None) and owner else runtime.contextlib.nullcontext(),
+            ):
+                from ..Chat.console_ordinary_tree import current_ordinary_tree
+
+                ordinary = current_ordinary_tree()
+                if ordinary is not None and self.registry in ordinary.catalogs:
+                    selected = self.registry.resolve_owner_for_name(call.name)
+                    try:
+                        if selected is None:
+                            raise RuntimeError("ordinary tool owner unavailable")
+                        ordinary.check_catalog_call(self.registry, call.name, selected[1])
+                    except RuntimeError as error:
+                        return runtime.ToolResult.blocked(str(error))
                 automatic_work = current_automatic_work()
                 if automatic_work is not None:
                     from .automatic_work_budget import AutomaticWorkRefused
@@ -691,40 +757,42 @@ def make_invoke_tool(
             result = runtime.ToolResult(
                 ok=False, error=f"tool call failed: {call.name}"
             )
-            try:
+            with ssh_call.activate(operation) if ssh_call else runtime.contextlib.nullcontext():
                 try:
-                    result = _invoke()
-                except BaseException:  # noqa: BLE001 - protocol boundary
-                    # This branch runs synchronously after the approved
-                    # mutation has started.  Every terminal -- including
-                    # control-flow BaseExceptions raised by a provider --
-                    # must collapse to one scrubbed result instead of
-                    # escaping the agent loop or being mistaken for the
-                    # pre-start cooperative-cancel outcome above.
-                    result = runtime.ToolResult(
-                        ok=False,
-                        error=f"tool call failed: {call.name}",
-                        dispatch_state="settled",
-                    )
-                return result
-            finally:
-                try:
-                    if install_post_checkpoint is not None:
-                        install_post_checkpoint(call, result)
+                    try:
+                        with raw_cli_call.activate(operation) if raw_cli_call else runtime.contextlib.nullcontext():
+                            result = _invoke()
+                    except BaseException:  # noqa: BLE001 - protocol boundary
+                        # This branch runs synchronously after the approved
+                        # mutation has started.  Every terminal -- including
+                        # control-flow BaseExceptions raised by a provider --
+                        # must collapse to one scrubbed result instead of
+                        # escaping the agent loop or being mistaken for the
+                        # pre-start cooperative-cancel outcome above.
+                        result = runtime.ToolResult(
+                            ok=False,
+                            error=f"tool call failed: {call.name}",
+                            dispatch_state="settled",
+                        )
+                    return result
                 finally:
-                    if operation is not None:
-                        operation.finish()
-                self._notify_tool_terminal(
-                    run_id,
-                    call.call_id or call.name,
-                    call.name,
-                )
-                self._notify_tool_result_terminal(
-                    run_id,
-                    call.call_id or call.name,
-                    call.name,
-                    result,
-                )
+                    try:
+                        if install_post_checkpoint is not None:
+                            install_post_checkpoint(call, result)
+                    finally:
+                        if operation is not None and ssh_call is None:
+                            operation.finish()
+                    self._notify_tool_terminal(
+                        run_id,
+                        call.call_id or call.name,
+                        call.name,
+                    )
+                    self._notify_tool_result_terminal(
+                        run_id,
+                        call.call_id or call.name,
+                        call.name,
+                        result,
+                    )
 
         timeout = self.registry.timeout_for(call.name) or (
             config.budget.max_tool_call_seconds
@@ -774,6 +842,8 @@ def make_invoke_tool(
                     execution_owner=self,
                     clamped_by_wall_budget=clamped_by_wall_budget,
                     owner=owner,
+                    raw_cli_call=raw_cli_call,
+                    ssh_call=ssh_call,
                 )
             finally:
                 runtime._clear_tool_call_inflight(run_id)
@@ -786,9 +856,13 @@ def make_invoke_tool(
                 dispatch_state="not_started",
             )
         try:
-            return _invoke()
+            with (
+                raw_cli_call.activate(operation) if raw_cli_call else runtime.contextlib.nullcontext(),
+                ssh_call.activate(operation) if ssh_call else runtime.contextlib.nullcontext(),
+            ):
+                return _invoke()
         finally:
-            if operation is not None:
+            if operation is not None and (ssh_call is None or not ssh_call.finished):
                 operation.finish()
 
     check_owner = self.registry.resolve_owner_for_name("code_review_read")
@@ -959,3 +1033,12 @@ def attach_review_launch(review_service, review_launch, run_id: str) -> None:
                 review_service.retire_unstarted_launch(review_launch, run_id)
                 review_launch.run_id = None
         raise
+
+
+# Definition-time records follow the actual extracted native receivers (ADR-285).
+from tldw_chatbook.Chat.console_ordinary_tree import _function_record as _native_record
+
+_NATIVE_WORKFLOW_RECEIVERS = tuple(
+    (name, _native_record(globals()[name]))
+    for name in ('make_call_model', 'make_invoke_tool')
+)

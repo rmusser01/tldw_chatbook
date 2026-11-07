@@ -93,7 +93,11 @@ def _normalize_sqlite(owner, source: Path, destination: Path, cancel: Event) -> 
     The acquired main/WAL/SHM set remains unchanged. SHM is rebuilt locally, never
     trusted as evidence. All imported SQL is restricted before the first query.
     """
-    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+    from tldw_chatbook.DB.private_sqlite import (
+        backup_connection_to_private,
+        connect_private_sqlite,
+        open_recovery_validation,
+    )
 
     from .native_files import create_private_directory, create_private_file
     from .sqlite_validation import _check as validate_connection
@@ -143,17 +147,37 @@ def _normalize_sqlite(owner, source: Path, destination: Path, cancel: Event) -> 
                 raise ValueError(issues[0])
             with create_private_file(destination):
                 pass
-            with closing(sqlite3.connect(destination)) as output:
+
+            def progress():
+                _check(cancel)
+                if restrictions.expired():
+                    raise ValueError("detached_sqlite_limit")
+
+            progress()
+            backup_connection_to_private(
+                "recovery.detached_normalization",
+                connection,
+                main,
+                destination,
+                progress_guard=progress,
+                operation_deadline=restrictions.deadline,
+            )
+            progress()
+            with closing(
+                connect_private_sqlite(
+                    "recovery.detached_normalization",
+                    destination,
+                    must_exist=True,
+                    timeout=0,
+                    operation_deadline=restrictions.deadline,
+                )
+            ) as output:
                 output.enable_load_extension(False)
                 output.execute("PRAGMA trusted_schema=OFF")
-
-                def progress(_status, _remaining, _total):
-                    _check(cancel)
-                    if restrictions.expired():
-                        raise ValueError("detached_sqlite_limit")
-
-                connection.backup(output, pages=64, progress=progress, sleep=0)
-                output.execute("PRAGMA journal_mode=DELETE")
+                if output.execute("PRAGMA journal_mode=DELETE").fetchone() != (
+                    "delete",
+                ):
+                    raise ValueError("detached_sqlite_invalid")
         return validated_schema_version(installed, destination, cancel)
     except sqlite3.Error:
         raise ValueError("detached_sqlite_invalid") from None

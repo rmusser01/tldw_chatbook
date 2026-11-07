@@ -1,7 +1,10 @@
 """Reserved Console-only recovery descriptors backed by app-issued authority."""
 
+import json
+import sys
 from copy import deepcopy
-from typing import Any
+from types import ModuleType
+from typing import Any, NamedTuple
 
 from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from tldw_chatbook.Agents.tool_catalog import (
@@ -13,6 +16,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 from tldw_chatbook.Agents.tool_catalog import (
     SEARCH_ARCHIVED_CONVERSATIONS as SEARCH_ARCHIVED_CONVERSATIONS,  # noqa: PLC0414 - public re-export
 )
+from tldw_chatbook.Chat import archive_recovery as _archive_origin
 from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveSearchRequest
 
 
@@ -138,3 +142,74 @@ class ArchiveRecoveryToolProvider:
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         """Generic/provider invocations cannot supply trusted native identity."""
         return ToolResult.blocked("Recovery requires native primary-run dispatch.")
+
+
+# The two closed descriptors and their receivers belong to this module.
+# Ordinary admission may only select a subset of these original definitions.
+_ORDINARY_PROVIDER = ArchiveRecoveryToolProvider
+_ORDINARY_SCHEMAS = tuple(
+    (
+        schema.name,
+        schema.id,
+        schema.description,
+        json.dumps(
+            schema.parameters, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ),
+    )
+    for schema in _schemas().values()
+)
+_ORDINARY_PROVIDER_METHODS = tuple(
+    (name, value, value.__code__)
+    for name, value in vars(ArchiveRecoveryToolProvider).items()
+    if callable(value) and hasattr(value, "__code__")
+)
+_ORDINARY_SCHEMA_SOURCE = (_schemas, _schemas.__code__)
+
+_ORDINARY_AUTHORITY_PROPERTY = ArchiveRecoveryToolProvider.authority
+
+
+from .tool_catalog import (
+    _ORDINARY_RECOVERY_REGISTRY,
+    _ORDINARY_RECOVERY_REGISTRY_METHODS,
+)
+
+
+class _ArchiveDeclarations(NamedTuple):
+    package: object
+    module: object
+    provider_class: type
+    authority_property: tuple
+    provider_methods: tuple
+    schema_source: tuple
+    schemas: tuple
+    registry_class: type
+    registry_methods: tuple
+
+
+_ORDINARY_DECLARATIONS = _ArchiveDeclarations(
+    sys.modules[__package__],
+    sys.modules[__name__],
+    _ORDINARY_PROVIDER,
+    (
+        _ORDINARY_AUTHORITY_PROPERTY,
+        _ORDINARY_AUTHORITY_PROPERTY.fget,
+        _ORDINARY_AUTHORITY_PROPERTY.fget.__code__,
+    ),
+    _ORDINARY_PROVIDER_METHODS,
+    _ORDINARY_SCHEMA_SOURCE,
+    _ORDINARY_SCHEMAS,
+    _ORDINARY_RECOVERY_REGISTRY,
+    _ORDINARY_RECOVERY_REGISTRY_METHODS,
+)
+
+if (
+    type(sys.modules.get(__name__)) is not ModuleType
+    or vars(sys.modules[__name__]) is not globals()
+    or type(_archive_origin) is not ModuleType
+    or sys.modules.get("tldw_chatbook.Chat.archive_recovery") is not _archive_origin
+    or type(parent := sys.modules.get("tldw_chatbook.Chat")) is not ModuleType
+    or vars(parent).get("_ordinary_archive_package") is not _archive_origin
+):
+    raise RuntimeError("ordinary archive definition changed")
+if _archive_origin._ordinary_declarations is None:
+    _archive_origin._ordinary_declarations = _ORDINARY_DECLARATIONS

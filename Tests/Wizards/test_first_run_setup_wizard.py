@@ -13621,6 +13621,8 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
     "Couldn't discover models". Every surface that reads the failed listing
     now says the server needs a key and none was set (a failed Test: see
     test_a_401_to_a_test_reads_as_a_key_problem_after_next)."""
+    import asyncio
+
     import tldw_chatbook.config as config_module
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 
@@ -13644,7 +13646,7 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
     app = _HostApp(wizard)
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0.2)
+        await pilot.pause()
         container = wizard.query_one(SetupWizardContainer)
         container.select_track(TRACK_QUICK)
         provider_index = container._step_index_for_id(STEP_PROVIDER)
@@ -13655,10 +13657,7 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
         provider_step.select_provider("llama_cpp")
         auth = provider_step.query_one("#setup-provider-auth-toggle", Collapsible)
         assert str(auth.title) == "Authentication (optional)"
-        for _ in range(40):
-            await pilot.pause(0.05)
-            if provider_step._selected_discovery_state == "failed":
-                break
+        await app.workers.wait_for_complete()
         status = provider_step.query_one("#setup-provider-probe-status", Static)
         # TASK-34100.6 (review provider-16): a failed check's line leads with ✗.
         assert str(status.render()) == (
@@ -13668,39 +13667,56 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
         # Capture 06b: the section that line points at is not optional now.
         assert str(auth.title) == "Authentication"
 
-        await container._advance()
-        # The line mounts before the step records the outcome, and the step's
-        # repeated show can re-render the list once more: wait for both.
-        for _ in range(40):
-            await pilot.pause(0.05)
-            if container.provider_probe_failure() and model_step.query(
-                "#setup-model-connection-failed"
-            ):
-                break
-        assert _model_status_line(model_step, "setup-model-connection-failed") == (
-            "llama.cpp needs an API key and none was set. Go Back to add one, or "
-            "enter a model ID below."
-        )
-        assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
-        assert model_step.confirm_before_advance() == (
-            "The server needs an API key and none was set, so this model setup "
-            "is unverified. Continue anyway?"
-        )
-        assert wizard_state.probe_failure_summary_detail(
-            container.provider_probe_failure()
-        ) == ("saved, but the server needs an API key and none was set")
+        failed_mounted = asyncio.Event()
+        release_mount = asyncio.Event()
+        radio_set = model_step.query_one("#setup-model-choice", RadioSet)
+        mount = radio_set.mount
 
-        # show_step pins the notice before it returns. No pause: Provider's
-        # show rebuilds widgets, and a pilot wait that lands on a removed one
-        # times out (Textual drops its call_later; the app is idle).
-        container.show_step(provider_index)
-        strip = wizard.query_one("#setup-step-error-pinned", Static)
-        # TASK-34100.6 (review provider-16): the pinned strip is prefixed '✗ '.
-        assert str(strip.render()) == (
-            "✗ The last connection check failed: the server needs an API key and "
-            "none was set. Add one under Authentication, or continue anyway."
-        )
-        assert str(auth.title) == "Authentication"
+        def hold_failed_mount(*widgets, **kwargs):
+            actual_mount = mount(*widgets, **kwargs)
+            if not any(widget.id == "setup-model-connection-failed" for widget in widgets):
+                return actual_mount
+
+            async def held_mount():
+                await actual_mount
+                failed_mounted.set()
+                await release_mount.wait()
+
+            return held_mount()
+
+        monkeypatch.setattr(radio_set, "mount", hold_failed_mount)
+        try:
+            await container._advance()
+            await asyncio.wait_for(failed_mounted.wait(), timeout=2)
+            assert model_step.query_one("#setup-model-connection-failed").is_attached
+            assert _model_status_line(model_step, "setup-model-connection-failed") == (
+                "llama.cpp needs an API key and none was set. Go Back to add one, or "
+                "enter a model ID below."
+            )
+            assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
+            assert model_step.confirm_before_advance() == (
+                "The server needs an API key and none was set, so this model setup "
+                "is unverified. Continue anyway?"
+            )
+            assert wizard_state.probe_failure_summary_detail(
+                container.provider_probe_failure()
+            ) == ("saved, but the server needs an API key and none was set")
+
+            # show_step pins the notice before it returns. No pause: Provider's
+            # show rebuilds widgets, and a pilot wait that lands on a removed one
+            # times out (Textual drops its call_later; the app is idle).
+            container.action_back()
+            assert container.current_step == provider_index
+            strip = wizard.query_one("#setup-step-error-pinned", Static)
+            # TASK-34100.6 (review provider-16): the pinned strip is prefixed '✗ '.
+            assert str(strip.render()) == (
+                "✗ The last connection check failed: the server needs an API key and "
+                "none was set. Add one under Authentication, or continue anyway."
+            )
+            assert str(auth.title) == "Authentication"
+
+        finally:
+            release_mount.set()
 
 
 @pytest.mark.asyncio

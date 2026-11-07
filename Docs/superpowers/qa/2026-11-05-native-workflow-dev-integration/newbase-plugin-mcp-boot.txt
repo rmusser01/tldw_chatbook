@@ -1,0 +1,7 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+15.53s call     Tests/Plugins/test_plugin_context.py::test_actual_console_composes_owned_mcp_hook_without_automatic_connection[native_hook]
+9.28s setup    Tests/Plugins/test_plugin_context.py::test_actual_console_composes_owned_mcp_hook_without_automatic_connection[native_hook]
+
+(1 durations < 1s hidden.)
+1 passed in 25.17s

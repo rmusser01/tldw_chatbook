@@ -1,0 +1,21 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Plugins/test_plugin_context.py::test_actual_console_composes_owned_mcp_hook_without_automatic_connection[native_hook]",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-newbase-plugin-mcp-boot"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 30.107195334043354,
+  "source_file_count": 9109,
+  "before_sha256": "6cec164c5471c167e2d23d29cadf1befbe931be251c4baeeb5d73771bc721555",
+  "after_sha256": "6cec164c5471c167e2d23d29cadf1befbe931be251c4baeeb5d73771bc721555",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-plugin-mcp-boot.log"
+}

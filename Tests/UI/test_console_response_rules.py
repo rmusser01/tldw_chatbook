@@ -16,6 +16,7 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_command_suggestions import _COMMAND_DESCRIPTIONS
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
@@ -152,27 +153,33 @@ async def test_fixture_failure_retires_held_transport(tmp_path, transport):
 
     entered, release = asyncio.Event(), ObservedRelease()
     failure = AssertionError("response-rule setup failed before its release block")
-    async with asyncio.timeout(10):
-        with pytest.raises(AssertionError) as caught:
-            async with mounted_rules_console(tmp_path) as case:
-                if transport == "helper":
-                    seed_answer(case)
-                    case.helper_entered, case.helper_release = entered, release
-                    draft = "/omfg Include evidence in the answer"
-                else:
-                    case.primary_entered, case.primary_release = entered, release
-                    draft = "Explain another result"
-                case.composer.load_draft(draft)
-                case.console.query_one("#console-send-message", Button).press()
-                async with asyncio.timeout(5):
-                    await entered.wait()
-                assert release.task is not None and not release.task.done()
-                assert not release.is_set()
-                raise failure
-        assert caught.value is failure
-        assert release.is_set()
-        assert release.task.done()
-        assert case.rules.helpers.unsettled_count == 0
+    from contextlib import AsyncExitStack
+
+    async with AsyncExitStack() as fixtures:
+        case = await fixtures.enter_async_context(mounted_rules_console(tmp_path))
+        # The original budget covers the held request and real fixture unwind;
+        # ordinary app/profile construction precedes the failure under test.
+        async with asyncio.timeout(10):
+            with pytest.raises(AssertionError) as caught:
+                async with fixtures.pop_all():
+                    if transport == "helper":
+                        seed_answer(case)
+                        case.helper_entered, case.helper_release = entered, release
+                        draft = "/omfg Include evidence in the answer"
+                    else:
+                        case.primary_entered, case.primary_release = entered, release
+                        draft = "Explain another result"
+                    case.composer.load_draft(draft)
+                    case.console.query_one("#console-send-message", Button).press()
+                    async with asyncio.timeout(5):
+                        await entered.wait()
+                    assert release.task is not None and not release.task.done()
+                    assert not release.is_set()
+                    raise failure
+            assert caught.value is failure
+            assert release.is_set()
+            assert release.task.done()
+            assert case.rules.helpers.unsettled_count == 0
 
 
 @pytest.mark.asyncio
@@ -294,10 +301,9 @@ async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_p
                 if entered.is_set():
                     break
             assert entered.is_set(), case.controller.run_state
-            assert (
-                case.console._console_active_run_copy()
-                == case.controller.run_state.visible_copy
-            )
+            assert case.controller.run_state.status is ConsoleRunStatus.STREAMING
+            assert not case.chats.has_live_reply_output(case.session_id)
+            assert case.console._console_active_run_copy() == "Waiting for reply…"
             helpers = len(case.transport.requests)
             primary_calls = len(case.requests)
             case.composer.load_draft("/omfg Add evidence")
@@ -419,12 +425,16 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
         console = ChatScreen(app)
         owner = console._console_runtime()
         assert owner.chat_controller is None
+        store = owner.chat_store
+        assert store is console._ensure_console_chat_store()
+        sessions = tuple(store.sessions())
         notices = []
         app.notify = lambda message, **kwargs: notices.append(message)
         try:
             await console.action_stop_console_run()
             assert owner.chat_controller is None
-            assert owner.chat_store is None
+            assert owner.chat_store is store
+            assert tuple(store.sessions()) == sessions
             assert notices == ["No active Console run to stop."]
         finally:
             await owner.dispose()
@@ -642,7 +652,9 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
     ("full-ui-held"), or before the recovery sync and a screen resume
     ("recovery-and-resume", one mount for both). Queued refreshes get loop
     turns inside the hold too. The watchdog records where the UI thread was
-    waiting.
+    waiting. The cold full-ui-held sync may await owned off-loop preparation:
+    its reader must admit a UI-loop heartbeat before release (or FULL must
+    defer), then the original FULL and row reconciliation finish after release.
     """
     import sys
     import threading
@@ -682,6 +694,7 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         holder = threading.Thread(target=hold_rebuild)
         watchdog = threading.Timer(2, expire)
         started = []  # when the hold began
+        full_sync = monitor = read_code = warm_code = None
         holder.start()
         try:
             if sync == "recovery-and-resume":
@@ -718,9 +731,74 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                     case.console, "_sync_native_console_transcript", rebuild_then_transcript
                 )
                 if sync == "full-ui-held":
+                    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+                        ConsoleReadinessConfigProjection,
+                    )
+
                     await settle(case.console)
+                    projection = ConsoleReadinessConfigProjection.for_screen(case.console)
+                    loop = asyncio.get_running_loop()
+                    reads, warm_entries, heartbeats = [], [], []
+                    progress = asyncio.Event()
+                    read_code = projection.read_current.__code__
+                    warm_code = projection.warm.__func__.__code__
+                    for candidate in range(5, 0, -1):
+                        try:
+                            sys.monitoring.use_tool_id(candidate, "console-cold-full-sync")
+                        except ValueError:
+                            continue
+                        monitor = candidate
+                        break
+                    assert monitor is not None
+
+                    def heartbeat():
+                        heartbeats.append((held.is_set(), release.is_set()))
+                        progress.set()
+
+                    def observe_read(code, _offset):
+                        frame = sys._getframe(1)
+                        if not held.is_set() or release.is_set():
+                            return
+                        if code is read_code and frame.f_locals.get("projection") is projection:
+                            reads.append(threading.get_ident())
+                            if warm_entries:
+                                loop.call_soon_threadsafe(heartbeat)
+                        elif (
+                            code is warm_code and frame.f_locals.get("self") is projection
+                            and asyncio.current_task() is full_sync
+                        ):
+                            warm_entries.append(True)
+                            if reads:
+                                loop.call_soon(heartbeat)
+
+                    entry_event = sys.monitoring.events.PY_START
+                    sys.monitoring.register_callback(monitor, entry_event, observe_read)
+                    for code in (read_code, warm_code):
+                        sys.monitoring.set_local_events(monitor, code, entry_event)
+                    # Reload through the real config owner: cache invalidation
+                    # alone preserves generation and can leave this display warm.
+                    identity = config.current_config_identity()
+                    refreshed = config.refresh_runtime_config_from_cli_config()
+                    assert refreshed.caches_reloaded and refreshed.failure_phase is None
+                    assert config.current_config_identity() != identity
+                    assert projection.key is None or projection.key[0] != config.current_config_identity()
                     start_rebuild()
-                    await case.console._sync_native_console_chat_ui()
+                    test_task = full_sync = asyncio.create_task(
+                        case.console._sync_native_console_chat_ui()
+                    )
+                    deferred = False
+                    while not progress.is_set() and not release.is_set():
+                        if full_sync.done():
+                            assert full_sync.result() is False
+                            assert case.console._console_control_bar_replay_whole_sync
+                            deferred = True
+                            loop.call_soon(heartbeat)
+                        await asyncio.sleep(0.01)
+                    assert heartbeats and all(
+                        in_hold and not released for in_hold, released in heartbeats
+                    )
+                    assert (reads and warm_entries) or deferred, "neither this FULL's cold warm-up nor deferral was observed"
+                    assert all(thread_id != threading.get_ident() for thread_id in reads)
                 else:
                     # Before the rebuild starts, an ordinary deferral (a cold
                     # display projection, say) can still end the sync ahead
@@ -746,10 +824,21 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
             watchdog.cancel()
             release.set()
             holder.join(3)
+            if monitor is not None:
+                for code in (read_code, warm_code):
+                    sys.monitoring.set_local_events(monitor, code, 0)
+                sys.monitoring.register_callback(monitor, sys.monitoring.events.PY_START, None)
+                sys.monitoring.free_tool_id(monitor)
+            if full_sync is not None:
+                # Join the actual cold FULL and its replay within settle's budget.
+                async with asyncio.timeout(5):
+                    await full_sync
+                    await settle(case.console)
         assert not holder.is_alive()
         if sync.startswith("full-ui"):
             # Deferred, not dropped: any whole-sync replay finishes after release.
-            await settle(case.console)
+            if full_sync is None:
+                await settle(case.console)
             await _wait_for_text(case.console, case.pilot, "Missing proof")
 
 

@@ -1,0 +1,11 @@
+{
+  "approved_owner_changes": [
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/console_plugin_context.py"
+  ],
+  "all_other_rows_and_sinks_unchanged": true,
+  "inventory_sha256": "9b7e31d8a7b0b5dc728a74163453ae1aae8bc218bee25e202b706af84b398d49",
+  "owner_files": 732,
+  "review": "postreview-diagnostic-review.md",
+  "source_statement_receipt": "postreview-diagnostic-statements-receipt.json"
+}

@@ -87,12 +87,9 @@ from ...Utils.input_validation import (
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
-    ConsoleWorkspaceRenameModal,
-    ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.glyph_fallback import resolve_glyph
-from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     DEFAULT_WORKSPACE_ID,
@@ -2124,8 +2121,10 @@ class ConsoleWorkspaceController:
         self._sync_console_chat_core_state()
         self._activate_console_session_for_workspace(target)
         self._sync_console_workspace_context()
-        native_sync = self._sync_native_console_chat_ui()
-        if inspect.isawaitable(native_sync):
+        native_sync = self._sync_native_console_chat_ui
+        if not inspect.iscoroutinefunction(native_sync):
+            native_sync = native_sync()
+        if inspect.iscoroutinefunction(native_sync) or inspect.isawaitable(native_sync):
             self.run_worker(
                 native_sync,
                 exclusive=True,
@@ -4906,6 +4905,8 @@ class ConsoleWorkspaceController:
 
     def _open_console_workspace_switcher(self, *, show_archived: bool = False) -> None:
         """Open the active Console workspace switcher."""
+        from ...Widgets.Console import ConsoleWorkspaceSwitcherModal
+
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -5017,6 +5018,8 @@ class ConsoleWorkspaceController:
         """Restore asynchronously without changing active workspace or session."""
         from tldw_chatbook.Chat.conversation_archive_actions import storage_call
 
+        from ...Widgets.Console import ConsoleWorkspaceRenameModal
+
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None:
             return
@@ -5063,7 +5066,7 @@ class ConsoleWorkspaceController:
                 if not _current():
                     return
                 self.run_worker(
-                    self._sync_native_console_chat_ui(),
+                    self._sync_native_console_chat_ui,
                     exclusive=True,
                     group="console-sync",
                 )
@@ -5131,6 +5134,8 @@ class ConsoleWorkspaceController:
 
     def _open_console_workspace_rename(self, workspace_id: str) -> None:
         """Prompt for and apply a new workspace name (TASK-714)."""
+        from ...Widgets.Console import ConsoleWorkspaceRenameModal
+
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -5163,7 +5168,7 @@ class ConsoleWorkspaceController:
             self._sync_console_chat_core_state()
             self._sync_console_workspace_context()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -5371,7 +5376,7 @@ class ConsoleWorkspaceController:
                         callback=_recovery,
                     )
                     self.run_worker(
-                        self._sync_native_console_chat_ui(),
+                        self._sync_native_console_chat_ui,
                         exclusive=True,
                         group="console-sync",
                     )
@@ -5466,6 +5471,9 @@ class ConsoleWorkspaceController:
 
     def _continue_workspace_create_result(self, result: WorkspaceCreateResult) -> None:
         """Run the established Console sync after the optional interview."""
+        from ...Widgets.project_skills_import_modal import (
+            maybe_offer_project_skills_import,
+        )
 
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
@@ -5500,7 +5508,7 @@ class ConsoleWorkspaceController:
         self._activate_console_session_for_workspace(result.workspace_id)
         self._sync_console_workspace_context()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
         )
         # TASK-713: the whole sequence is invisible when the Workspace status
         # row is scrolled out of view -- keep the toast even with the modal.
@@ -6067,7 +6075,7 @@ class ConsoleWorkspaceController:
             self._activate_console_session_for_workspace(active.workspace_id)
         self._sync_console_workspace_context()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
         )
 
     def _console_workspace_session_title(self, workspace_id: str) -> str:

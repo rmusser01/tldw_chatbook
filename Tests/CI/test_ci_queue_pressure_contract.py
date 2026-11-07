@@ -499,6 +499,8 @@ DREAMS_ADMISSION_TARGETS = (
 #: ``pr-fast-lane-admission`` (TASK-34916).
 ADMISSION_TARGETS = (
     "Tests/Chat/test_console_run_log_connection_ownership.py",
+    # TASK-38944: cold metadata and original native currentness source controls.
+    "Tests/Chat/test_console_native_currentness.py",
     "Tests/Chat/test_console_chat_create_connection_ownership.py",
     "Tests/DB/test_chachanotes_connection_quiescence.py",
     "Tests/DB/test_operation_owned_connection_retirement.py",
@@ -553,6 +555,33 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word",
     "Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule",
     "Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once",
+    # TASK-38944: source-bound first-use views retain the bootstrap profile.
+    "Tests/UI/test_stats_screen_render.py",
+    "Tests/UI/test_chatbooks_screen_server_actions.py",
+    "Tests/Chatbooks/test_chatbooks_smoke.py",
+    "Tests/Watchlists/test_watchlists_briefing_presets_ui.py",
+    # TASK-38944: exact new workflow modal geometry and resize cases.
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-200x50]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-120x40]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-211x44]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-235x52]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-149x44]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[ConsoleWorkflowSetup > .workflow-dialog-grow-past-threshold]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[ConsoleWorkflowSetup > .workflow-dialog-shrink-below-threshold]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-200x50]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-120x40]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-211x44]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-235x52]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-149x44]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[ConsoleWorkflowStatus > .workflow-dialog-grow-past-threshold]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[ConsoleWorkflowStatus > .workflow-dialog-shrink-below-threshold]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-200x50]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-120x40]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-211x44]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-235x52]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-149x44]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[#workflow-history-grow-past-threshold]",
+    "Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[#workflow-history-shrink-below-threshold]",
 )
 
 #: The second admission-sensitive job's invocation, exactly, in order
@@ -761,6 +790,10 @@ ADMISSION_3_TARGETS = (
     # typed text painted at AA on every measurable theme (bootstrap_profile;
     # 89 themes in one app, about 45 s).
     "Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme",
+    # TASK-38944 (ledger R11): real native-source navigation/send fixtures
+    # retain their collection-time profile; keep these out of the UI census.
+    "Tests/UI/test_console_turn_navigation_continuity.py::test_accepted_turn_survives_both_outer_navigation_races[during_stream-ordinary]",
+    "Tests/UI/test_console_store_continuity.py::test_manual_stream_completes_once_across_real_navigation",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
@@ -1872,10 +1905,10 @@ def test_exact_targets_and_invocation_reject_missing_executable_target(comment_o
     step = _named_step(workflow["jobs"][job], name)
     # The last target, and (review of #3106, W1) one from the middle.
     for target in (targets[-1], targets[len(targets) // 2]):
-        # A node id with brackets is single-quoted in the workflow.
+        # Targets may be bare, single-quoted, or double-quoted.
         step["run"] = step["run"].replace(target + " \\\n", "").replace(
             "'" + target + "' \\\n", ""
-        )
+        ).replace('"' + target + '" \\\n', "")
         assert target not in step["run"]
         if comment_only:
             step["run"] += "\n# " + target + "\n"
@@ -1884,12 +1917,15 @@ def test_exact_targets_and_invocation_reject_missing_executable_target(comment_o
         _assert_exact_step(workflow, which)
 
 
-def test_target_parser_preserves_quoted_hash_and_continuation():
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_target_parser_preserves_quoted_hash_and_continuation(quote):
     target = "Tests/example.py::test_value[hash#literal]"
     run = (
-        "pytest \\\n  '"
+        "pytest \\\n  "
+        + quote
         + target
-        + "' \\\n  --timeout=180 --tb=short\n# Tests/comment_only.py\n"
+        + quote
+        + " \\\n  --timeout=180 --tb=short\n# Tests/comment_only.py\n"
     )
     assert _pytest_targets(run) == (target,)
 

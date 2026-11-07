@@ -487,6 +487,7 @@ jobs:
         run: |
           pytest \
             Tests/Chat/test_console_run_log_connection_ownership.py \
+            Tests/Chat/test_console_native_currentness.py \
             Tests/Chat/test_console_chat_create_connection_ownership.py \
             Tests/DB/test_chachanotes_connection_quiescence.py \
             Tests/DB/test_operation_owned_connection_retirement.py \
@@ -528,6 +529,31 @@ jobs:
             Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word \
             Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule \
             Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once \
+            Tests/UI/test_stats_screen_render.py \
+            Tests/UI/test_chatbooks_screen_server_actions.py \
+            Tests/Chatbooks/test_chatbooks_smoke.py \
+            Tests/Watchlists/test_watchlists_briefing_presets_ui.py \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-200x50]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-120x40]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-211x44]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-235x52]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowSetup > .workflow-dialog-149x44]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[ConsoleWorkflowSetup > .workflow-dialog-grow-past-threshold]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[ConsoleWorkflowSetup > .workflow-dialog-shrink-below-threshold]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-200x50]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-120x40]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-211x44]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-235x52]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[onsoleWorkflowStatus > .workflow-dialog-149x44]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[ConsoleWorkflowStatus > .workflow-dialog-grow-past-threshold]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[ConsoleWorkflowStatus > .workflow-dialog-shrink-below-threshold]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-200x50]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-120x40]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-211x44]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-235x52]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_geometry[workflow-history-149x44]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[#workflow-history-grow-past-threshold]' \
+            'Tests/UI/test_modal_wide_tier.py::test_native_workflow_modal_resize[#workflow-history-shrink-below-threshold]' \
             --timeout=300 \
             --tb=short
 
@@ -781,6 +807,8 @@ jobs:
             Tests/UI/test_roleplay_import_app.py \
             Tests/UI/test_roleplay_item_list_app.py \
             Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme \
+            "Tests/UI/test_console_turn_navigation_continuity.py::test_accepted_turn_survives_both_outer_navigation_races[during_stream-ordinary]" \
+            "Tests/UI/test_console_store_continuity.py::test_manual_stream_completes_once_across_real_navigation" \
             --timeout=300 \
             --tb=short
 

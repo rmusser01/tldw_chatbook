@@ -245,9 +245,6 @@ from ...Widgets.Console.console_composer_bar import ComposerDraftSnapshot
 from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
     ConsoleProjectInstructionStatusRow,
-    ConsoleForkChatModal,
-    ConsoleForkDialogSummary,
-    ConsoleForkSubmitResult,
     ProjectInstructionBindingOption,
     ProjectInstructionNoticeModal,
     ProjectInstructionSetupModal,
@@ -277,6 +274,11 @@ if TYPE_CHECKING:
     from ...Chat.conversation_local_marks_service import (
         ConversationLocalMarksService,
         ManualUnreadToken,
+    )
+    from ...Widgets.Console import (
+        ConsoleForkChatModal,
+        ConsoleForkDialogSummary,
+        ConsoleForkSubmitResult,
     )
     from ...Widgets.Console.console_reaction_picker_modal import (
         ConsoleReactionPickerModal,
@@ -2565,7 +2567,7 @@ class ConsoleSessionController:
             # must appear in the browser on the very next sync.
             self._invalidate_console_persisted_rows_cache()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -2596,6 +2598,8 @@ class ConsoleSessionController:
         messages: Sequence[ConsoleChatMessage],
     ) -> ConsoleForkDialogSummary:
         """Build bounded presentation facts from one already-captured fence."""
+
+        from ...Widgets.Console import ConsoleForkDialogSummary
 
         boundary = fence.lineage[-1]
         role_label = "User" if boundary.role is ConsoleMessageRole.USER else "Assistant"
@@ -2651,6 +2655,8 @@ class ConsoleSessionController:
 
     def request_console_chat_fork(self, message_id: str) -> None:
         """Capture one boundary and open its presentation-only naming dialog."""
+
+        from ...Widgets.Console import ConsoleForkChatModal
 
         if self._active_fork_request is not None:
             self.app_instance.notify(
@@ -4396,6 +4402,15 @@ class ConsoleSessionController:
         ``turn_admission``: precaptured on a worker for the send being
         launched when its inputs still match, otherwise read here.
         """
+        from .turn_admission import prepared_configuration_for
+
+        prepared = prepared_configuration_for(self, session_id)
+        if prepared is not None:
+            if mcp_definition_maximum is not None and dict(
+                mcp_definition_maximum
+            ) != dict(prepared.mcp_definition_maximum):
+                raise RuntimeError("Console preparation selection changed; Send again.")
+            return prepared
         from ...Chat.console_configuration_capture import capture_console_turn_configuration
         from ...Chat.attachment_core import max_history_images  # noqa: F401 - preserve the existing first-use import boundary.
         from ...model_capabilities import is_vision_capable  # noqa: F401 - preserve the existing first-use import boundary.
@@ -4953,7 +4968,7 @@ class ConsoleSessionController:
         # showing "Temporary" on an already-saved conversation.
         self._sync_console_temporary_chip()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=False, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=False, group="console-sync"
         )
         self.app_instance.notify("Chat saved.", severity="information")
 

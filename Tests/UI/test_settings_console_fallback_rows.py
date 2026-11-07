@@ -809,6 +809,8 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
     app = _build_live_config_test_app()
 
     async with app.run_test(size=_SIZE) as pilot:
+        trust = await app.ensure_local_skill_trust_service()
+        assert app.local_skills_service.trust_service is trust
         app.providers_models = {"llama_cpp": ["model-a"]}
         app.post_message(NavigateToScreen("settings", {"category": CONSOLE_BEHAVIOR}))
         screen = await _wait_for_screen(app, pilot, "SettingsScreen")
@@ -920,6 +922,8 @@ async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_val
     app = _build_live_config_test_app()
 
     async with app.run_test(size=_SIZE) as pilot:
+        trust = await app.ensure_local_skill_trust_service()
+        assert app.local_skills_service.trust_service is trust
         app.providers_models = {"llama_cpp": ["model-a"]}
         app.post_message(NavigateToScreen("settings", {"category": CONSOLE_BEHAVIOR}))
         screen = await _wait_for_screen(app, pilot, "SettingsScreen")

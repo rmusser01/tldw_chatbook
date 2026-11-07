@@ -18,7 +18,7 @@ from tldw_chatbook.Agents.agent_models import (
     RunTerminationReason,
     ToolCatalogEntry,
 )
-from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused, GoalAttempt
+from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused, GoalAttempt, _policy_refusal
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 from tldw_chatbook.Agents.goal_models import (
     GoalIterationResult,
@@ -127,12 +127,12 @@ class GoalIterationAuthorization:
             identity is None or not _project_root_identity_matches(root, identity)
             for root, identity in self._source_root_identities
         ):
-            raise AutomaticWorkRefused("binding_changed")
+            raise _policy_refusal("binding_changed")
         reason = self._coordinator.service._binding_reason(self.goal.request)
         if reason:
-            raise AutomaticWorkRefused(reason)
+            raise _policy_refusal(reason)
         if not self._coordinator.authorizes(self, self.session_id):
-            raise AutomaticWorkRefused("goal_authority_expired")
+            raise _policy_refusal("goal_authority_expired")
         if self.project_state is not None:
             session = next(
                 (
@@ -146,7 +146,7 @@ class GoalIterationAuthorization:
                 session is None
                 or session.workspace_id != self.goal.request.binding.workspace_id
             ):
-                raise AutomaticWorkRefused("binding_changed")
+                raise _policy_refusal("binding_changed")
             state = session.project_instruction_state
             if (
                 state.project_instructions_enabled
@@ -156,11 +156,11 @@ class GoalIterationAuthorization:
                 or state.working_folder_locator_fingerprint
                 != self.project_state.working_folder_locator_fingerprint
             ):
-                raise AutomaticWorkRefused("binding_changed")
+                raise _policy_refusal("binding_changed")
         if self._coordinator._stop_requested:
-            raise AutomaticWorkRefused("cancelled")
+            raise _policy_refusal("cancelled")
         if self.started is not None and self.remaining_seconds() <= 0:
-            raise AutomaticWorkRefused("iteration_wall_budget")
+            raise _policy_refusal("iteration_wall_budget")
 
     @goal_authority_operation
     def capture_admitted_roots(self):
@@ -180,6 +180,7 @@ class GoalIterationAuthorization:
             candidates = capture_run_admitted_workspace_roots(
                 session=SimpleNamespace(workspace_id=reference.workspace_id),
                 registry=registry,
+                binding_ids=frozenset({reference.binding_id}),
             )
             root = next(
                 (
@@ -829,9 +830,9 @@ class ConsoleGoalCoordinator:
     def _check_admission_open(self) -> None:
         """Read the monotonic runtime fence, including from the ledger worker."""
         if self._closed or self.controller._disposed:
-            raise AutomaticWorkRefused("runtime_unavailable")
+            raise _policy_refusal("runtime_unavailable")
         if self._stop_requested:
-            raise AutomaticWorkRefused("cancelled")
+            raise _policy_refusal("cancelled")
 
     def authorizes(self, authorization: object, session_id: str | None) -> bool:
         return (

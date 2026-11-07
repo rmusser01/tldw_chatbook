@@ -110,6 +110,7 @@ class _PromptChain:
     logical_outcome_id: str | None = None
     request: ConsoleTurnCustodyRequest | None = None
     hook_parent: object | None = None
+    hook_execution: object | None = None
     pending_stop_key: tuple[str, str] | None = None
     hook_cancel_event: Event | None = None
     pending_stop_task: asyncio.Task | None = None
@@ -280,6 +281,15 @@ class ConsolePromptQueueCoordinator:
             turn_id=request.turn_id,
             initiator="continuation" if chain.continuation else chain.initiator,
         )
+        if chain.hook_execution not in (None, False):
+            chain.hook_execution.close()
+        try:
+            chain.hook_execution = lifecycle.engine.prehold_event(event)
+            if chain.hook_execution is not None:
+                lifecycle.engine.consume_preheld(chain.hook_execution, event)
+        except Exception:  # noqa: BLE001 - optional notification remains omitted
+            lifecycle.engine.notification_omissions += 1
+            chain.hook_execution = False
         chain.hook_parent = (lifecycle, scope, event, assistant_id, request)
 
     async def settle_hook_parent(self, session_id: str, scope: str) -> None:
@@ -292,6 +302,9 @@ class ConsolePromptQueueCoordinator:
             await parent[0].wait(scope)
         except BaseException:
             chain.hook_parent = None
+            if chain.hook_execution not in (None, False):
+                chain.hook_execution.close()
+            chain.hook_execution = None
             raise
 
     async def _stop_then_enqueue(self, session_id: str) -> None:
@@ -307,16 +320,30 @@ class ConsolePromptQueueCoordinator:
             return
         chain.hook_parent = None
         lifecycle, _scope, event, _assistant_id, request = parent
+        execution, chain.hook_execution = chain.hook_execution, None
+        if execution is False:
+            return
         # Stop has no context effect: execute under the live host session,
         # never resurrect an H4 retired operation/run owner.
         key = (request.turn_id, event.event_id)
         self._stop_parents[key] = (session_id, parent)
         chain.pending_stop_key = key
         self._changed(session_id)
+        from contextlib import ExitStack
+
+        original_scope = ExitStack()
         try:
+            if execution is not None:
+                source = execution._state.native.agent_sources
+                if source is not None:
+                    original_scope.enter_context(source.activate())
             if not lifecycle.live or not lifecycle.current():
                 return
-            stop_task = asyncio.create_task(lifecycle.engine.fire_async(event))
+            execution = execution or lifecycle.engine.begin_event(event)
+            execution.retain_host()
+            stop_task = asyncio.create_task(
+                lifecycle.engine.fire_async(event, _execution=execution)
+            )
             chain.pending_stop_task = stop_task
             try:
                 outcome = await stop_task
@@ -342,15 +369,21 @@ class ConsolePromptQueueCoordinator:
                     tuple(result for _, result in outcome.accepted),
                 )
         finally:
-            chain.pending_stop_key = None
-            chain.hook_cancel_event = None
-            chain.pending_stop_task = None
-            chain.pending_stop_cancelled = False
-            self._stop_parents.pop(key, None)
-            self._stop_outcomes.pop(key, None)
-            lifecycle.terminal_budgets.pop(request.turn_id, None)
-            lifecycle.terminal_budget_times.pop(request.turn_id, None)
-            self._changed(session_id)
+            try:
+                chain.pending_stop_key = None
+                chain.hook_cancel_event = None
+                chain.pending_stop_task = None
+                chain.pending_stop_cancelled = False
+                self._stop_parents.pop(key, None)
+                self._stop_outcomes.pop(key, None)
+                lifecycle.terminal_budgets.pop(request.turn_id, None)
+                lifecycle.terminal_budget_times.pop(request.turn_id, None)
+                self._changed(session_id)
+            finally:
+                if execution is not None:
+                    execution.close()
+                    execution.host_done()
+                original_scope.close()
 
     async def schedule_continuation(
         self, parent_turn_id: str, event_id: str, proposals: tuple[HookResult, ...]

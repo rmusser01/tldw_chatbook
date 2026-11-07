@@ -16,6 +16,11 @@ same commit. If you are here because CI failed, the fix is to put your new
 code somewhere else — a controller, a widget, a helper module — never to
 raise the number, which re-opens the hole this test exists to close.
 
+TASK-38944 (2026-11-07) makes one reviewed exception: the trace-maintenance
+runtime is pinned at its exact 228 lines to retain its recorded receiver and
+physical-return custody. ADR-285 records the cost and retirement condition;
+all other rows retain the downward-only rule.
+
 **Scope.** These are hand-picked god modules, not a directory family, so
 (unlike the Library controller ratchet) there is no glob that auto-adds new
 files. `settings_screen.py` joined on 2026-10-05 (TASK-33007.8, closing
@@ -62,7 +67,7 @@ from .test_screen_size_ratchet import _BUDGETS as _SCREEN_BUDGETS
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: path -> max line count. LOWER these when a module shrinks. Never raise
-#: them to silence a failure — see the module docstring.
+#: them to silence a failure — see the module docstring's one exception.
 # 2026-10-31: user waived size limits for the PR backlog. PR3148 rebase
 # pins changed owners at measured sizes without extra size-only moves.
 # 2026-10-31: user waived size limits for PR3156 backlog integration;
@@ -76,10 +81,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # owners pinned to exact measured sizes, with no spare budget.
 _BUDGETS: dict[str, int] = {
     # PR3346: extracted owners retain exact ceilings; no size-pin increases.
-    "tldw_chatbook/Chat/console_agent_reply.py": 1156,
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 1,169 against 1,156; the final reviewed owner measures 1,190.
+    # TASK-38944 archive first-use qualification: 1,190 -> 1,194, exact owner size.
+    "tldw_chatbook/Chat/console_agent_reply.py": 1194,
     "tldw_chatbook/Chat/console_settings_persistence.py": 788,
     "tldw_chatbook/Chat/console_memory_banner.py": 207,
-    "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": 193,
+    # TASK-38944: exact reviewed 228-line exception, with no spare lines.
+    "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": 228,
     "tldw_chatbook/DB/prompt_export.py": 241,
     # PR3346 pre-merge review: exact existing save and screen-derivation owners.
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
@@ -227,9 +236,12 @@ _BUDGETS: dict[str, int] = {
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 29,639 against 29,173; the final reviewed owner measures 29,725.
     # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
     # the chat's previous ordinary outcome id at acceptance.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29180,
+    # Integrated 2026-11-07: dev 29,180 plus the private change, exact 29,726.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29726,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -248,7 +260,9 @@ _BUDGETS: dict[str, int] = {
     # and takes late-joining owners without waiting, the managed seal runs
     # outside the owner scope with a recheck (a purge mid-seal refuses), and
     # the owner-scope nesting order is documented: 22,445, the exact measurement.
-    "tldw_chatbook/Chat/console_chat_store.py": 22445,
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 22,534 against 22,445; the final reviewed owner measures 22,557.
+    "tldw_chatbook/Chat/console_chat_store.py": 22557,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -309,7 +323,13 @@ _BUDGETS: dict[str, int] = {
     # TASK-33910.4, 2026-10-26: B2b changes it by +646 lines (16,859 -> 17,505).
     # The row rises to the measurement, never squeezed code; applied
     # 2026-10-30 after the final fix wave (B2b rows).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16829,
+    # 2026-11-05, TASK-38944 (existing owner rule: genuine fixes raise only to the measurement):
+    # The dictionary picker loads at its existing attach action; exact
+    # measurement, no spare budget.
+    # 2026-11-06, TASK-38944 (existing dated owner rule): category-only
+    # privacy logs; measured 16,830 -> 16,825; exact row, no spare budget.
+    # Integrated 2026-11-07: exact union 16,828, below dev's 16,829 cap.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16828,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -538,9 +558,15 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-23, TASK-36381 (owner decision 2026-10-04: "expand the limits,
     # don't modify other code to make it fit"): Tools & MCP gets the
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
+    # 2026-11-05, TASK-38944 (existing owner rule: genuine fixes raise only to the measurement):
+    # Workflow settings and operation-local Canvas policy imports retain
+    # existing validation and eager annotation behavior; exact, no spare budget.
+    # 2026-11-05, TASK-36516 (owner waiver): retain the additional 27 lines
+    # refusing a koboldcpp endpoint off /api/v1/generate after integration.
     # 2026-11-06, TASK-38964: 35,669 -> 35,654; the koboldcpp route refusal
     # wrapper is gone, the save reads Provider_Contract's rule directly.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35728,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
+    # Integrated 2026-11-07: dev 35,728 plus the private change, exact 35,770.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35770,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -680,7 +706,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/tldw_api/client.py": 16678,
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
-    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14283,
+    # 2026-11-05, TASK-38944 (one-way ratchet tightening):
+    # Lower the row to the actual measurement after deferring the three
+    # first-use briefing/snapshot modal imports; no spare budget.
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14273,
     # TASK-33921: 10,854 on dev 2026-10-03 (over by 450); the Voice step moved
     # to UI/Wizards/first_run_voice_step.py. TASK-34100.1: every other step
     # moved to its own module (9,866 -> 3,149), then the busy line and the
@@ -758,7 +787,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-27, review v3r1 G6-BV3-03: Model keeps the rendered failure
     # category beside its rendered probe failure, so a 403 still marks
     # Provider '!' after Model hides -> 975.
-    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 975,
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Original metadata/receiving-owner correction: 975 -> 973.
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 973,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5143,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4216,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of
@@ -789,11 +820,22 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/config.py": 8983,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12092,
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 12,720 against 12,092; the final reviewed owner measures 12,806.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 12806,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
-    "tldw_chatbook/Agents/agent_service.py": 9720,
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 12,310 against 9,720; the final reviewed owner measures 12,427.
+    # Remeasure this exact row after the separately reviewed Task6 changes and formatting.
+    # 2026-11-06, TASK-38944 (existing dated owner rule): Task6 annotations/correlation; 12,427 -> 12,430, exact final size, no spare budget.
+    # 2026-11-06, TASK-38944 (existing dated owner rule): child-handshake/pre-dispatch correction; 12,430 -> 12,458, exact final size, no spare budget.
+    # 2026-11-06, TASK-38944 (existing dated owner rule): Task8 round1 child-handshake/pre-dispatch correction; 12,458 -> 12,696, exact final size, no spare budget.
+    # 2026-11-06, TASK-38944 (existing dated owner rule): Task8 round2 original custody/settlement correction; 12,696 -> 12,809, exact final size, no spare budget.
+    # 2026-11-06, TASK-38944 round3: scoped ROOT review exception for original constructor and preparation handoff, exact +63; 12,809 -> 12,872, no spare.
+    # 2026-11-06, TASK-38944 round4: scoped ROOT review exception for interrupted installation and entered-child retirement, exact +4, no spare.
+    "tldw_chatbook/Agents/agent_service.py": 12876,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -853,12 +895,20 @@ _BUDGETS: dict[str, int] = {
     # Three scope docstrings name the control-bar syncs as openers (+7 lines).
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 8942 -> 8961 (+19).
     # The control-bar syncs' shared build reads the registry live.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8961,
+    # 2026-11-05, TASK-38944 (existing owner rule: genuine fixes raise only to the measurement):
+    # Project-skills import UI loads at the existing create-result action;
+    # exact measurement, no spare budget.
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Original metadata/receiving-owner correction: 8,965 -> 8,969.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8969,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8493,  # 2026-11-06: +6, QwenCloud reads a schemeless loopback session endpoint as http:// (TASK-39042 review C1) and aphrodite, koboldcpp, oobabooga and tabbyapi get the pinned base (review r11g-rev2) (owner waiver)
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 8,598 against 8,487; the final reviewed owner measures 8,627.
+    # Integrated 2026-11-07: dev 8,493 plus the private change, exact 8,633.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8633,  # 2026-11-06: +6, QwenCloud reads a schemeless loopback session endpoint as http:// (TASK-39042 review C1) and aphrodite, koboldcpp, oobabooga and tabbyapi get the pinned base (review r11g-rev2) (owner waiver)
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
@@ -911,13 +961,22 @@ _BUDGETS: dict[str, int] = {
     # TASK-36534, 2026-11-03: size waiver (owner rule: a fix over a size ratchet
     # raises the row with a dated comment); 6973 -> 7009, settings_revision_held
     # and the convergence span it reads. Exact measurement.
-    "tldw_chatbook/UI/Console_Modules/session.py": 7009,
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 7,018 against 7,009; the final reviewed owner measures 7,024.
+    "tldw_chatbook/UI/Console_Modules/session.py": 7024,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
-    "tldw_chatbook/Media/local_media_reading_service.py": 6911,
+    "tldw_chatbook/Media/local_media_reading_service.py": 6821,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7069,
+    # 2026-11-05, TASK-38944 (existing owner rule: genuine fixes raise only to the measurement):
+    # Native workflow integration retains the original eager source records
+    # and sticky owners plus the earlier receipt-helper tuple anchor;
+    # exact combined measurement, no spare budget.
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Original metadata/receiving-owner correction: 7,636 -> 7,873.
+    # TASK-38944 archive first-use qualification: 7,873 -> 7,927, exact owner size.
+    "tldw_chatbook/Chat/console_runtime.py": 7927,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
@@ -937,7 +996,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-02, TASK-37655 (owner rule: a fix over a size ratchet raises the
     # row with a dated comment): dev 88af9f9379's 5,851 + 3 = 5,854. The remote
     # preflight mirror folds Unicode normalization like the worker.
-    "tldw_chatbook/Agents/local_tool_provider.py": 5854,
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 6,152 against 5,854; the final reviewed owner measures 6,250.
+    # 2026-11-06, TASK-38944 round3: scoped ROOT review exception for atomic original route admit/retire seam, exact +33; 6,250 -> 6,283, no spare.
+    "tldw_chatbook/Agents/local_tool_provider.py": 6283,
     # 2026-11-02, TASK-37655 (owner rule: a fix over a size ratchet raises the
     # row with a dated comment): dev 88af9f9379's bundle measures 5,705 (its row says
     # 5,706); this branch's fold changes -- the bundled fold_path_part, git
@@ -951,11 +1013,15 @@ _BUDGETS: dict[str, int] = {
     # git exclusion fixes (stored-byte brackets, one neutral refusal, a
     # scope-limited scan, one rule snapshot per call) measure 5,810, the exact
     # measurement of a fresh build.
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5810,
+    # 2026-11-05, TASK-38944 (existing owner rule: genuine fixes raise only to the measurement):
+    # Fresh deterministic worker build preserves bounded reads, no-follow,
+    # version/digest checks and partial-effect errors; exact, no spare budget.
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5862,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
-    "tldw_chatbook/Personal_Context/repository.py": 4997,
+    # TASK-38944: the SQL declarations move to models; exact union 4,908.
+    "tldw_chatbook/Personal_Context/repository.py": 4908,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
     # fix rounds 2 and 3, 4968 -> 5138 (+170) -- a clip handed to the default
     # app is kept for the hand-off bound instead of deleted on Stop (the
@@ -982,6 +1048,14 @@ _BUDGETS: dict[str, int] = {
     # TASK-38981 re-review 3, 2026-11-06 (owner size waiver): 4738 -> 4742
     # (+4). The list's resize reshape keeps the user's focused control.
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
+    # 2026-11-05, TASK-38944: native workflow preparation is born governed
+    # at its exact current measurement; no spare budget.
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Original metadata/receiving-owner correction: 4,614 -> 4,604.
+    # Remeasure this exact row after the separately reviewed Task6 changes and formatting.
+    # 2026-11-06, TASK-38944 (existing dated owner rule): Task6 annotations/correlation; 4,604 -> 4,625, exact final size, no spare budget.
+    # 2026-11-06, TASK-38944 round3: scoped ROOT review exception for original physical worker join/pre-ident veto, exact +9; 4,625 -> 4,634, no spare.
+    "tldw_chatbook/Chat/console_workflow_preparation.py": 4634,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4516,
@@ -992,12 +1066,19 @@ _BUDGETS: dict[str, int] = {
     # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
     # a legacy/imported chat's missing Library-policy row (the safe
     # Never/Blocked default its turn ran under) instead of refusing it.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4239,
+    # 2026-11-05, TASK-38944 (existing dated owner rule): final Task5/style measurement; no spare budget.
+    # Task4 already measured 4,253 against 4,239; the final reviewed owner measures 4,263.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The
     # exclusion dedupe/remove import the shared fold_path_part.
-    "tldw_chatbook/Workspaces/registry_service.py": 4305,
+    # 2026-11-06, TASK-38944 (existing dated owner rule): privacy logs
+    # shrink 4,315 -> 4,306; previous row 4,305; exact final row, no spare budget.
+    # 2026-11-07 union: private measured 4,306, one above its prior 4,305
+    # pin; three structured, body-free logging resolutions add 3 + 2 + 3.
+    # Exact 4,314; no spare budget (Root ruling 56).
+    "tldw_chatbook/Workspaces/registry_service.py": 4314,
     # 2026-11-03, TASK-36527 review round 3, under the owner's 2026-10-31 size
     # waiver: each workspace-reachable entry point and call_after_refresh
     # target opens with the two-line `_going_away()` guard: 4207 -> 4253.

@@ -21,6 +21,9 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import database_path, user_data_dir
 from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
+from tldw_chatbook.DB.recovery_workflow_schema import (
+    WORKFLOW_MIGRATION,
+)
 
 
 def _sqlite_inventory_status(
@@ -325,7 +328,9 @@ _AGENT_RUNS_MIGRATION_18_21 = (
 class _AgentRunsAdapter(_SQLiteDeclaration):
     def _validate_connection(self, connection):
         from .recovery_goal_schema import validate_goal_rows
-        return validate_goal_rows(connection)
+        from .recovery_workflow_schema import validate_workflow_rows
+
+        return validate_goal_rows(connection) + validate_workflow_rows(connection)
 
     def schema_policy(self) -> SchemaPolicy:
         return SchemaPolicy(
@@ -338,32 +343,54 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (22, 23, _AGENT_RUNS_MIGRATION_22_23),
                 (23, 24, GOAL_MIGRATION),
                 (24, 25, REVIEW_BOUNDARY_MIGRATION),
+                (25, 26, WORKFLOW_MIGRATION),
+                (26, 27, WORKFLOW_ADMISSION_MIGRATION),
+                (27, 28, WORKFLOW_CHECKPOINT_MIGRATION),
+                (28, 29, WORKFLOW_WINDOW_MIGRATION),
+                (29, 30, WORKFLOW_REPAIR_INPUT_MIGRATION),
             ),
         )
 
-    def validate(self, candidate: Path) -> tuple[str, ...]:
+    def validate(self, candidate: Path, cancel: Event | None = None) -> tuple[str, ...]:
+        from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+            _check,
+            _installed_owner,
+            _recovery_restriction_scope,
+            _restrict_connection,
+        )
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
+        restrictions = None
         try:
+            installed = _installed_owner("db.agent_runs")
+            policy = installed.schema_policy()
+            if self.schema_policy() != policy:
+                return ("unsupported_schema_policy",)
+            if cancel is not None and cancel.is_set():
+                return ("cancelled",)
             with closing(
                 connect_private_sqlite(
                     "recovery.operations.agent_runs", candidate, read_only=True
                 )
             ) as connection:
-                return _validate_sqlite(
-                    connection,
-                    self.versions,
-                    self.schemas,
-                    version_query="SELECT MAX(version) FROM schema_version",
-                )
-        except (OSError, ValueError, sqlite3.Error):
+                # No candidate read precedes the restrictions. Closing the owned
+                # connection releases the read transaction on every exit.
+                connection.execute("BEGIN DEFERRED")
+                restrictions = _restrict_connection(connection, cancel)
+                with _recovery_restriction_scope(connection, restrictions):
+                    return _check(connection, installed, policy, restrictions)[0]
+        except (OSError, ValueError, sqlite3.Error, TypeError, MemoryError, InterruptedError):
+            if cancel is not None and cancel.is_set():
+                return ("cancelled",)
+            if restrictions is not None and restrictions.expired():
+                return ("sqlite_resource_limit",)
             return ("operational_validation_unavailable",)
 
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
         from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
 
         with _checked_capture(
-            self.owner_id, item, destination, cancel, self.validate
+            self.owner_id, item, destination, cancel, lambda path: self.validate(path, cancel)
         ) as guard:
             copy_private_sqlite(
                 "recovery.operations.agent_runs",
@@ -1380,7 +1407,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23, 24, 25),
+            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1738,18 +1765,28 @@ _AGENT_RUNS_SCHEMA += tuple(
 
 from .recovery_review_boundary_schema import (
     REVIEW_BOUNDARY_MIGRATION,
-    review_boundary_catalogs,
 )
+from .recovery_workflow_profiles import CANONICAL_SCHEMAS as _CANONICAL_WORKFLOW_SCHEMAS
+from .recovery_workflow_profiles import HISTORICAL_SCHEMAS, REVIEW_SCHEMAS
 
-_AGENT_RUNS_SCHEMA += tuple(
-    (25, variant)
-    for version, catalog in _AGENT_RUNS_SCHEMA
-    if version == 24
-    for variant in dict.fromkeys(review_boundary_catalogs(catalog))
-)
+_AGENT_RUNS_SCHEMA += REVIEW_SCHEMAS
 
 
 # ADR-207: v3 is an atomic provenance data migration, with unchanged exact DDL.
 # Keep every previously qualified physical lineage at both supported versions.
 _SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
                               if version == 2) + _SUBSCRIPTIONS_SCHEMA
+
+
+
+# ADR-285: canonical stages follow shipped review-boundary v25. Exact old
+# local catalogs remain recognizable only as bridge sources, never successors.
+from .recovery_workflow_legacy_schema import LEGACY_WORKFLOW_SCHEMAS
+from .recovery_workflow_schema import (
+    WORKFLOW_ADMISSION_MIGRATION,
+    WORKFLOW_CHECKPOINT_MIGRATION,
+    WORKFLOW_REPAIR_INPUT_MIGRATION,
+    WORKFLOW_WINDOW_MIGRATION,
+)
+
+_AGENT_RUNS_SCHEMA += LEGACY_WORKFLOW_SCHEMAS + _CANONICAL_WORKFLOW_SCHEMAS + HISTORICAL_SCHEMAS

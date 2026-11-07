@@ -138,6 +138,7 @@ def test_read_file_refuses_sensitive_file_even_when_sandbox_root_contains_it(
     assert "super-secret" not in str(result)
 
 
+@pytest.mark.bootstrap_profile
 def test_write_file_refuses_to_overwrite_sensitive_file(monkeypatch):
     """CRITICAL fix: write_file must not overwrite mcp_permissions.json --
     that would be a one-step bypass of the whole permission gate -- just
@@ -189,6 +190,7 @@ def test_list_directory_refuses_sensitive_directory_as_its_own_target(monkeypatc
     assert "credentials.db" not in str(result)
 
 
+@pytest.mark.bootstrap_profile
 def test_read_file_refuses_this_apps_own_sqlite_db(monkeypatch):
     """Finding 2: this app's SQLite DBs live under ``get_user_data_dir()``,
     a SIBLING of ``~/.config/tldw_cli`` (not beneath it), so the static
@@ -211,6 +213,7 @@ def test_read_file_refuses_this_apps_own_sqlite_db(monkeypatch):
     assert "marker" not in str(result)
 
 
+@pytest.mark.bootstrap_profile
 def test_list_directory_filters_sensitive_entries_from_recursive_listing(monkeypatch):
     """Finding 5 (pre-merge review): a recursive listing correctly refuses to
     DESCEND into a sensitive directory (~/.ssh, ~/.aws), but individual
@@ -257,6 +260,7 @@ def test_list_directory_filters_sensitive_entries_from_recursive_listing(monkeyp
     assert "ordinary.toml" in names  # non-sensitive sibling still listed
 
 
+@pytest.mark.bootstrap_profile
 def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
     """The gap this task closes: WAL mode writes ``<name>.db-wal`` next to
     the database, carrying the same class of recent data, but exact-path
@@ -284,6 +288,7 @@ def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
     assert "recent-uncommitted-row-marker" not in str(result)
 
 
+@pytest.mark.bootstrap_profile
 def test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_contains_it(
     monkeypatch,
 ):
@@ -310,6 +315,7 @@ def test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_conta
     assert "plaintext vector chunk marker" not in str(result)
 
 
+@pytest.mark.bootstrap_profile
 def test_write_file_refuses_to_plant_a_directory_shadowing_a_state_file(monkeypatch):
     """TASK-849: an agent must not be able to create a directory named
     after a state file this app has not created yet -- verified before this
@@ -342,6 +348,7 @@ def test_write_file_refuses_to_plant_a_directory_shadowing_a_state_file(monkeypa
     assert not (user_data_dir / "search_history.db").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_write_file_still_creates_legitimate_new_nested_directories(monkeypatch):
     """The TASK-849 fix must not block ordinary nested directory creation:
     an agent creating a brand-new subdirectory INSIDE an EXISTING container
@@ -378,6 +385,7 @@ def test_write_file_still_creates_legitimate_new_nested_directories(monkeypatch)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_default_sandbox_configuration_still_works_end_to_end():
     """No monkeypatching of the sandbox root/config at all -- proves the
     real shipped default (``get_user_data_dir() / "tool_sandbox"``) is
@@ -469,3 +477,72 @@ def test_is_git_metadata_write_predicate_is_exact_on_components():
 
 
 # -- task-32804.12: bound the recursive ListDirectory walk --------------------
+
+
+@pytest.mark.parametrize("configured", ["bad\x00root", 7, False, [], {}])
+def test_sandbox_config_path_rejects_invalid_spelling(
+    monkeypatch, tmp_path, configured
+):
+    from tldw_chatbook.Backup_Recovery import profile_paths
+
+    profile = tmp_path / "profile"
+    monkeypatch.setattr(profile_paths, "user_data_dir", lambda settings: profile)
+    with pytest.raises(ValueError):
+        fot._sandbox_config_path({"tools": {"file_sandbox_root": configured}})
+    assert not profile.exists()
+
+
+@pytest.mark.parametrize("configured", [None, ""])
+def test_sandbox_config_path_preserves_default_without_provisioning(
+    monkeypatch, tmp_path, configured
+):
+    from tldw_chatbook.Backup_Recovery import profile_paths
+
+    profile = tmp_path / "profile"
+    monkeypatch.setattr(profile_paths, "user_data_dir", lambda settings: profile)
+    assert fot._sandbox_config_path({"tools": {"file_sandbox_root": configured}}) == (
+        profile / "tool_sandbox"
+    )
+    assert not profile.exists()
+
+
+@pytest.mark.parametrize(
+    "spelling", ["absolute", "relative", "tilde", "parents", "hidden"]
+)
+def test_sandbox_config_path_preserves_lexical_spelling(
+    monkeypatch, tmp_path, spelling
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    configured, expected = {
+        "absolute": (
+            tmp_path / "missing" / "sandbox",
+            tmp_path / "missing" / "sandbox",
+        ),
+        "relative": ("missing/sandbox", tmp_path / "missing" / "sandbox"),
+        "tilde": ("~/missing/sandbox", tmp_path / "missing" / "sandbox"),
+        "parents": ("missing/../sandbox", tmp_path / "missing" / ".." / "sandbox"),
+        "hidden": (".hidden/sandbox", tmp_path / ".hidden" / "sandbox"),
+    }[spelling]
+    existing_paths = set(tmp_path.rglob("*"))
+    result = fot._sandbox_config_path({"tools": {"file_sandbox_root": configured}})
+    assert result == expected
+    assert result.is_absolute()
+    assert set(tmp_path.rglob("*")) == existing_paths
+
+
+def test_sandbox_config_path_preserves_symlink_alias(monkeypatch, tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows host does not grant directory-symlink creation")
+        raise
+    monkeypatch.chdir(tmp_path)
+    result = fot._sandbox_config_path({"tools": {"file_sandbox_root": "alias/sandbox"}})
+    assert result == alias / "sandbox"
+    assert result != target / "sandbox"
+    assert not (target / "sandbox").exists()

@@ -124,6 +124,7 @@ def replacement_case(
         "profile:profile:config",
         "profile:profile:research.local",
     ]
+    extra_roots = {}
     if extra_items:
         from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
 
@@ -167,8 +168,9 @@ def replacement_case(
                 ),
                 "root",
             )
-            if item.shared_group:
+            if item.shared_group or (extra_root == "root" and item.path.parent != live):
                 extra_root = "root-" + item.logical_id
+                extra_roots[extra_root] = item.path.parent
                 doc["directories"].append(
                     {
                         "logical_id": extra_root,
@@ -262,6 +264,7 @@ def replacement_case(
         mode="replace",
         destinations={
             **{row["root_id"]: live for row in doc["directories"]},
+            **extra_roots,
             **{
                 item.logical_id: item.path
                 for item in extra_items

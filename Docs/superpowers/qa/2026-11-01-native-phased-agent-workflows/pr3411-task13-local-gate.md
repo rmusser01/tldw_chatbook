@@ -1,0 +1,15 @@
+# PR3411 Task13 local gate
+
+Task13 is locally approved at02163c4f7e4dd179d943357511e36698078aa456. It preserves original source/receiving/physical-return owners while repairing the selected architecture, lookup, module-size and declaration-placement gates. The one Undo extraction live-binding defect was fixed and independently re-reviewed. Existing ADR285 and the architecture owner maps describe the boundaries. This is not full-branch or merge readiness.
+
+The final Source inventory is core7b4b865fa987f7c81170f2524b67cc3a6242894e9b16500dedc638e5e45fb1e8 (9128Python/SQL files,218277038bytes), production8ed71e67e69e403793f52fb6d6141b2186772f250f66cf03d47d36f76b27c6bc (3100files,88318695bytes). Final manifest8811bb08b3dc78adee22412dc10b623a6e9a1b6b680b2ab92a9ffc5b34c6ccd4 is an evidence snapshot, including both failures and passes. Root checked41224baseline blobs/modes and all65whole-task changes. The private checkpoint contains59newpath changes beyond prerequisite documents.
+
+The actual alias refusal, wrong-current-owner anchor, unrelated overlap and held-tool-return controls have successful original-cap native runs, with real worker/owner return and retirement/reopen. The final positive held run took38.329seconds and observed both normalfinish returns and no unwind. Earlier Source and PREP diagnostic held timeouts remain unresolved timing risks. The snapshot's admission-file frames are instantaneous evidence, not duration or a proven deadlock/cause. A direct Python foreign continuation counterexample remains explicit; the native owner refusal prevents direct anchor transaction entry, not allSQL.
+
+The qualified native epoch was2ef8fe8feb9ab9db9485a6f5f05bd60848b978e26b955ba2affee0b995d33676/0233d9235f9cb16c914cc31af5a9a41267bc8822207849c71bf7371d4f4a471a. The sole later correction removed two surplus EOF newline bytes from app.py; the full AST with locations is identical. No tests were rerun or relabeled for that whitespace-only delta. Targeted Undo/native/architecture/cold evidence remains attributed to its exact earlier maps.
+
+The source-free observer fault controls qualify cooperative trusted private-child instrumentation, not hostile in-process monitoring/audit/C-thread discovery. The dated193→228 trace-size exception accepts35lines of explicit debt without changing its runtime bytes. The original Chat recorder and three Tool projection copies remain after the proposed relocation failed its mandatory pre-consumer proof; optional duplication cleanup is unmet. One inherited formatter blank is retained. No fullsuite, provider, nativeWindows or hostedCI/currentQodo pass is claimed.
+
+Task14 and final dev synchronization, whole-branch review, hostedCI/currentQodo/thread and queue gates remain open. The shared dev checkout, staged index and294protected identities were unchanged at07:49:49UTC.
+
+The frozen feedback39 ruling archive is in [this subdirectory](rulings/pr3411-feedback-20261107T070413975066Z/README.md); the original707 archive remains separate and unchanged. Exact PREP reports, receipts and logs are retained in the shared worktree for further review.

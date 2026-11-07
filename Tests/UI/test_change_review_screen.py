@@ -1256,6 +1256,34 @@ async def test_initial_snapshot_id_disambiguates_two_windows_on_same_path(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("available", [True, False])
+async def test_workflow_snapshot_link_selects_only_its_recorded_window(
+    same_root_windows_fixture, available
+):
+    provider, _root, run_id, ids = same_root_windows_fixture
+    selected = ids[1] if available else max(ids) + 1
+    app = _Harness(provider, initial_run_id=run_id, initial_snapshot_id=selected)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await _wait_for(
+            pilot,
+            lambda: isinstance(app.screen, ChangeReviewScreen) and app.screen._leaves,
+            "original recorded windows",
+        )
+        screen = app.screen
+        if available:
+            await _wait_for(
+                pilot,
+                lambda: "BRAVO_ONLY_MARKER" in screen.diff_pane_text(),
+                "second snapshot",
+            )
+            assert screen._leaves[screen._focused_leaf][0]["id"] == selected
+        else:
+            assert screen._focused_leaf == -1
+            assert "selected snapshot is unavailable" in screen.diff_pane_text()
+        assert screen._initial_snapshot_id is None
+
+
+@pytest.mark.asyncio
 async def test_undo_all_refuses_same_root_windows_before_preflight(
     same_root_windows_fixture, monkeypatch
 ):
@@ -2827,3 +2855,454 @@ def test_file_count_noun_is_singular_for_one_file():
     # Negative control: the repeated-root wording is untouched.
     assert _file_count_noun(1, repeated_root=True) == "file change"
     assert _file_count_noun(2, repeated_root=True) == "file changes"
+
+
+@pytest.mark.asyncio
+async def test_undo_preflight_error_renders_literal_path(review_fixture):
+    from textual.widgets._toast import Toast
+
+    provider, _, _, _ = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48), notifications=True) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+
+        def fail(*_args):
+            raise RuntimeError("Cannot revert docs/[draft]/a.md")
+
+        provider.preflight_revert = fail
+        await screen._prepare_revert_selection([({}, ["docs/[draft]/a.md"])], "Undo?")
+        await pilot.pause(0.1)
+        toast = app.screen.query_one(Toast)
+        rendered = toast.render()
+        assert "docs/[draft]/a.md" in rendered.plain
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["confirm", "publish", "apply", "legacy", "outcome"])
+async def test_undo_error_paths_render_literal_toast(
+    review_fixture, monkeypatch, stage
+):
+    from textual.widgets._toast import Toast
+
+    from tldw_chatbook.Workspaces import change_revert_ownership
+    from tldw_chatbook.Workspaces.change_revert import RevertOutcome, RevertRefusedError
+
+    provider, _, _, _ = review_fixture
+    app = _Harness(provider)
+    path = "docs/[draft]/a.md"
+
+    class Undo:
+        async def prepare(self, *_args, **_kwargs):
+            return []
+
+        def confirm(self):
+            raise RuntimeError(path)
+
+        async def apply(self, *_args, **kwargs):
+            if stage == "publish":
+                kwargs["publish"]([], RuntimeError(path))
+            else:
+                raise RuntimeError(path)
+
+    async with app.run_test(size=(160, 48), notifications=True) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        if stage == "confirm":
+            monkeypatch.setattr(
+                change_revert_ownership, "capture_undo", lambda _provider: Undo()
+            )
+            await screen._prepare_revert_selection([({}, [path])], "Undo?")
+            await _wait_for(
+                pilot, lambda: app.screen.query("#change-revert-yes"), "confirmation"
+            )
+            await pilot.click("#change-revert-yes")
+        elif stage in {"publish", "apply"}:
+            await screen._revert_rows([({}, [path])], Undo())
+        elif stage == "legacy":
+
+            def refuse(*_args):
+                raise RevertRefusedError(path)
+
+            monkeypatch.setattr(provider, "revert", refuse)
+            await screen._run_revert({}, [path])
+        else:
+            screen._report_outcomes([RevertOutcome(path, False, "failed")])
+        await pilot.pause(0.1)
+        toast = app.screen.query_one(Toast)
+        assert path in toast.render().plain
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_review_undo_during_real_publication_shows_neutral_refusal(
+    review_fixture,
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from textual.widgets._toast import Toast
+
+    from Tests.windows_private_fixture_runner import user_fixture_default_owner
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    provider, root, _, _ = review_fixture
+    app_owner = SimpleNamespace(app_config={"console": {"onboarding": {}}})
+    runtime = ConsoleRuntime(app_owner)
+    app_owner.console_runtime = runtime
+    source = (
+        config.current_config_identity(),
+        app_owner.app_config,
+        runtime._chat_controller,
+        runtime._chat_store,
+        app_owner,
+        config,
+    )
+    entered, release = threading.Event(), threading.Event()
+    code = config.apply_literal_settings_transaction_to_cli_config.__code__
+    preflight = []
+    provider._undo_native = SimpleNamespace(runtime=runtime)
+    provider.preflight_revert = lambda *_args: preflight.append(True)
+    before = (root / "edit.txt").read_bytes()
+
+    def observe(frame, event, _arg):
+        if event == "call" and frame.f_code is code:
+            entered.set()
+            release.wait(15)
+
+    with user_fixture_default_owner():
+        threading.setprofile_all_threads(observe)
+        try:
+            await runtime._record_successful_first_send(source)
+            assert await asyncio.to_thread(entered.wait, 10)
+            host = _Harness(provider)
+            async with host.run_test(size=(160, 48), notifications=True) as pilot:
+                screen = await _wait_for(
+                    pilot,
+                    lambda: (
+                        host.screen
+                        if isinstance(host.screen, ChangeReviewScreen)
+                        else None
+                    ),
+                    "review screen",
+                )
+                await _wait_for(pilot, lambda: screen._leaves or None, "leaves loaded")
+                screen.action_undo_all()
+                await _wait_for(
+                    pilot, lambda: list(host._notifications) or None, "refusal"
+                )
+                assert host.screen is screen and not preflight
+                assert (root / "edit.txt").read_bytes() == before
+                assert host.screen.query_one(Toast).render().plain == (
+                    "Console configuration is being saved; try again."
+                )
+        finally:
+            release.set()
+            if runtime._first_send_task is not None:
+                await runtime._first_send_task
+            threading.setprofile_all_threads(None)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["ambiguous", "unavailable", "general", "confirm"])
+async def test_chat_undo_error_renders_literal_toast(tmp_path, monkeypatch, stage):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from textual.widgets._toast import Toast
+
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_turn_undo_all import _record_real_turn
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.UI.Screens import chat_screen
+    from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
+    from tldw_chatbook.Workspaces import change_revert_ownership
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "edited.txt").write_text("before\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="toast")
+    run_id = db.create_run(conversation_id="toast-chat", agent_kind="primary")
+    _record_real_turn(db, tracker, root, run_id)
+    path = "docs/[draft]/a.md"
+
+    class Undo:
+        async def prepare(self, *_args, **_kwargs):
+            if stage == "ambiguous":
+                raise chat_screen._ConsoleTurnUndoAmbiguousError(path)
+            if stage == "unavailable":
+                raise chat_screen._ConsoleTurnUndoUnavailableError(path)
+            if stage == "general":
+                raise RuntimeError(path)
+            return SimpleNamespace(total_files=1, edited_since=[])
+
+        def confirm(self):
+            raise RuntimeError(path)
+
+    monkeypatch.setattr(
+        change_revert_ownership, "capture_undo", lambda _provider: Undo()
+    )
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    app.notify = host.notify
+    async with host.run_test(size=(160, 48), notifications=True) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        store = screen._ensure_console_chat_store()
+        session = store.create_session(session_id="toast-chat")
+        session.persisted_conversation_id = "toast-chat"
+        screen._ensure_console_chat_controller()
+        screen._console_agent_bridge = ConsoleAgentBridge(
+            agent_runs_db=db,
+            store=store,
+            provider_gateway=MagicMock(),
+            change_tracker=SimpleNamespace(service=service),
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content="edited",
+            change_review_run_id=run_id,
+        )
+        await screen._sync_native_console_chat_ui()
+        card = await _wait_for(
+            pilot, lambda: next(iter(screen.query(ConsoleTurnFileCard)), None), "card"
+        )
+        button = card.query_one(".console-turn-file-undo-all-btn", Button)
+        await _wait_for(
+            pilot, lambda: button if not button.disabled else None, "enabled Undo"
+        )
+        monkeypatch.setattr(screen, "_open_change_review", lambda *_args: None)
+        button.press()
+        if stage == "confirm":
+            await _wait_for(
+                pilot, lambda: host.screen.query("#change-revert-yes"), "confirmation"
+            )
+            await pilot.click("#change-revert-yes")
+        await _wait_for(pilot, lambda: list(host._notifications) or None, "Toast")
+        assert path in host.screen.query_one(Toast).render().plain
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_mounted_raw_send_keeps_segments_during_real_publication(monkeypatch):
+    import asyncio
+    from contextlib import contextmanager
+
+    from textual.events import Key
+    from textual.widgets._toast import Toast
+
+    from Tests.UI.test_console_native_chat_flow import (
+        _build_console_send_test_app,
+        _select_llamacpp_console,
+        _wait_for_selector,
+    )
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.windows_private_fixture_runner import user_fixture_default_owner
+    from tldw_chatbook import config
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+
+    app = _build_console_send_test_app()
+    app.app_config.setdefault("console", {})["onboarding"] = {}
+    host = ConsoleHarness(app)
+    app.notify = host.notify
+    entered, release = threading.Event(), threading.Event()
+    code = config.apply_literal_settings_transaction_to_cli_config.__code__
+
+    def observe(frame, event, _arg):
+        if event == "call" and frame.f_code is code:
+            entered.set()
+            release.wait(30)
+
+    with user_fixture_default_owner():
+        async with host.run_test(size=(160, 48), notifications=True) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_selector(screen, pilot, "#console-native-composer")
+            await _select_llamacpp_console(screen)
+            runtime = screen._console_runtime()
+            source = (
+                config.current_config_identity(),
+                app.app_config,
+                runtime._chat_controller,
+                runtime._chat_store,
+                app,
+                config,
+            )
+            threading.setprofile_all_threads(observe)
+            try:
+                await runtime._record_successful_first_send(source)
+                assert await asyncio.to_thread(entered.wait, 10)
+                composer = screen.query_one(
+                    "#console-native-composer", ConsoleComposerBar
+                )
+                assert composer.handle_console_key(Key("exclamation_mark", "!"))
+                assert composer.handle_console_key(Key("space", " "))
+                composer.insert_pasted_text("printf preserved")
+                before = composer.capture_draft_for_send()
+                assert before.raw_cli_prefix_typed and before.has_paste
+                screen.query_one("#console-send-message", Button).press()
+                await _wait_for(
+                    pilot, lambda: list(host._notifications) or None, "refusal"
+                )
+                after = composer.capture_draft_for_send()
+                assert after.text == before.text and after.segments == before.segments
+                assert after.raw_cli_prefix_typed
+                assert not runtime._turn_custody
+                assert not runtime.raw_cli_source.pending
+                assert not runtime.execution_capacity.snapshot().executions
+                assert host.screen.query_one(Toast).render().plain == (
+                    "Console configuration is being saved; try again."
+                )
+                release.set()
+                await runtime._first_send_task
+
+                @contextmanager
+                def different_error():
+                    raise RuntimeError("different failure")
+                    yield
+
+                monkeypatch.setattr(
+                    runtime, "_first_send_source_scope", different_error
+                )
+                with pytest.raises(RuntimeError, match="different failure"):
+                    await screen._send_console_message_from_visible_action()
+                assert composer.capture_draft_for_send().segments == before.segments
+            finally:
+                release.set()
+                if runtime._first_send_task is not None:
+                    await runtime._first_send_task
+                threading.setprofile_all_threads(None)
+
+
+@pytest.mark.asyncio
+async def test_undo_uses_screen_modal_binding_after_held_preflight(
+    review_fixture, monkeypatch
+):
+    import tldw_chatbook.UI.Screens.change_review_screen as screen_module
+
+    provider, _root, _run1, _run2 = review_fixture
+    original_preflight = provider.preflight_revert
+    original_modal = screen_module.ChangeRevertConfirmModal
+    entered, release = threading.Event(), threading.Event()
+
+    def held_preflight(row, paths):
+        entered.set()
+        assert release.wait(5)
+        return original_preflight(row, paths)
+
+    class ReboundModal(original_modal):
+        pass
+
+    monkeypatch.setattr(provider, "preflight_revert", held_preflight)
+    app = _Harness(provider)
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _wait_for(
+                pilot,
+                lambda: (
+                    app.screen if isinstance(app.screen, ChangeReviewScreen) else None
+                ),
+                "review screen",
+            )
+            await _wait_for(
+                pilot, lambda: (screen.query(Tree) and screen._leaves) or None, "leaves"
+            )
+            screen.select_file("edit.txt")
+            await pilot.press("u")
+            await _wait_for(pilot, entered.is_set, "held real preflight")
+            monkeypatch.setattr(screen_module, "ChangeRevertConfirmModal", ReboundModal)
+            release.set()
+            modal = await _wait_for(
+                pilot,
+                lambda: app.screen if isinstance(app.screen, original_modal) else None,
+                "confirm modal",
+            )
+            assert type(modal) is ReboundModal
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_legacy_undo_reads_screen_asyncio_binding_at_preflight(
+    review_fixture, monkeypatch
+):
+    import asyncio
+
+    import tldw_chatbook.UI.Screens.change_review_screen as screen_module
+
+    provider, _root, _run1, _run2 = review_fixture
+    original_asyncio = screen_module.asyncio
+    original_modal = screen_module.ChangeRevertConfirmModal
+    calls = []
+
+    class AsyncioBinding:
+        def __getattr__(self, name):
+            return getattr(original_asyncio, name)
+
+        async def to_thread(self, function, *args, **kwargs):
+            calls.append(function.__name__)
+            return await asyncio.to_thread(function, *args, **kwargs)
+
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: (screen.query(Tree) and screen._leaves) or None, "leaves"
+        )
+        screen.select_file("edit.txt")
+        monkeypatch.setattr(screen_module, "asyncio", AsyncioBinding())
+        await pilot.press("u")
+        await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, original_modal) else None,
+            "confirm modal",
+        )
+    assert calls == ["prepare"]
+
+
+@pytest.mark.asyncio
+async def test_failed_undo_preflight_does_not_read_screen_modal_binding(
+    review_fixture, monkeypatch
+):
+    from textual.widgets._toast import Toast
+
+    import tldw_chatbook.UI.Screens.change_review_screen as screen_module
+
+    provider, _root, _run1, _run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48), notifications=True) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+
+        def fail(*_args):
+            raise RuntimeError("preflight refused")
+
+        monkeypatch.setattr(provider, "preflight_revert", fail)
+        monkeypatch.delattr(screen_module, "ChangeRevertConfirmModal")
+        await screen._prepare_revert_selection([({}, ["file.txt"])], "Undo?")
+        await _wait_for(pilot, lambda: app.screen.query(Toast) or None, "warning")
+        assert "preflight refused" in app.screen.query_one(Toast).render().plain

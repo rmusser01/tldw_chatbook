@@ -51,6 +51,7 @@ Deliberately NOT gated here
 
 from __future__ import annotations
 
+import os
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
@@ -372,3 +373,22 @@ def describe_policy(specs: Sequence[BootWorkerSpec] = BOOT_WORKER_POLICY) -> str
         f"{spec.tier.value:<10} {spec.key:<28} ({spec.name}, {spec.group})"
         for spec in specs
     )
+
+
+def _usable_cpu_count() -> int:
+    """How many CPUs this process may actually run on.
+
+    Prefers the scheduler affinity mask where the platform has one (a
+    container pinned to one core reports the host's core count from
+    ``os.cpu_count()``), and falls back to ``os.cpu_count()``. Returns 1 when
+    neither will answer -- the conservative direction here, since the only
+    consequence of guessing low is that a background pass nothing waits on
+    paces itself more politely.
+    """
+    affinity = getattr(os, "sched_getaffinity", None)
+    if affinity is not None:
+        try:
+            return max(1, len(affinity(0)))
+        except OSError:
+            pass
+    return max(1, os.cpu_count() or 1)

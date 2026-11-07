@@ -197,8 +197,10 @@ def test_enabling_consent_starts_background_preparation(request, tmp_path) -> No
 
 
 @private_profile_test
-def test_admission_and_disable_linearize_on_one_lock(request, tmp_path) -> None:
-    """A toggle waits for an admission already holding the consent lock."""
+def test_disable_fences_admission_while_capability_read_is_in_flight(
+    request, tmp_path
+) -> None:
+    """A blocked source callback cannot hold the bookkeeping lock or admit stale work."""
     registry = _registry(tmp_path)
     root = tmp_path / "root"
     root.mkdir()
@@ -231,19 +233,19 @@ def test_admission_and_disable_linearize_on_one_lock(request, tmp_path) -> None:
         admission_thread, admission_errors = _start_thread(
             lambda: admissions.append(service.admit_turn("ws-review"))
         )
-        assert entered.wait(1.0), "admission did not acquire the service lock"
+        assert entered.wait(1.0), "admission did not enter its source callback"
 
         def disable() -> None:
             service.toggle("ws-review", expected=expected, enabled=False)
             toggle_done.set()
 
         toggle_thread, toggle_errors = _start_thread(disable)
-        assert not toggle_done.wait(0.05), "disable bypassed admission lock"
+        assert toggle_done.wait(1.0), "source callback held the bookkeeping lock"
         release.set()
         _join_thread(admission_thread, admission_errors)
         _join_thread(toggle_thread, toggle_errors)
 
-        assert admissions[0].skipped_roots
+        assert admissions[0] == consent_module.ChangeReviewAdmission()
         assert service.admit_turn("ws-review") == consent_module.ChangeReviewAdmission()
     finally:
         release.set()

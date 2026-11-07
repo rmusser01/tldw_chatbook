@@ -180,7 +180,9 @@ def persist_seeded_config(app, *sections: str) -> None:
     assert save_settings_to_cli_config(values, delete_keys=deletes)
 
 
-def attach_chachanotes_db(app, *, client_id: str = "test-client"):
+def attach_chachanotes_db(
+    app, *, client_id: str = "test-client", db_path: str | Path = ":memory:"
+):
     """Give a factory-built app the durable ChaChaNotes DB a real send needs.
 
     TASK-21590. `_build_test_app` patches `get_chachanotes_db_lazy` to `None`,
@@ -194,14 +196,10 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     toast: 26 mounted send tests kept pressing Send and asserting against a
     transcript production had silently refused to write.
 
-    ``:memory:`` is load-bearing, not a shortcut. `ConsoleRuntime.
-    ensure_agent_bridge` deliberately refuses to build an agent bridge for a
-    `:memory:` DB ("an in-memory harness still builds neither"), so this
-    restores exactly the precondition the send path lost -- a durable-capable
-    persistence adapter -- without also switching the caller onto the agent
-    loop, which a file-backed DB does and which these tests were never written
-    against. A test that is *about* the agent runtime must attach a
-    file-backed DB itself.
+    The default memory DB preserves existing lightweight harness behavior.
+    Real native sends supply a private file path and explicitly save direct
+    provider mode when they do not exercise the agent loop. File-backed DBs
+    attached here retire through the factory's existing exact-owner cleanup.
 
     Attach BEFORE mounting: the store is built lazily on first use and caches
     its persistence adapter.
@@ -209,13 +207,16 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     Args:
         app: A `_build_test_app` product, not yet mounted.
         client_id: Client id recorded on the DB's rows.
+        db_path: Private database file, or the existing memory default.
 
     Returns:
         The `CharactersRAGDB` now assigned to ``app.chachanotes_db``.
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
-    db = CharactersRAGDB(":memory:", client_id)
+    db = CharactersRAGDB(db_path, client_id)
+    if not db.is_memory_db:
+        _created_databases.append(db)
     app.chachanotes_db = db
     return db
 
@@ -242,7 +243,12 @@ def drain_created_dirs() -> int:
     """
     while _created_databases:
         database = _created_databases[-1]
-        database.close()
+        quiesce = getattr(database, "quiesce_connections", None)
+        if callable(quiesce):
+            with quiesce(timeout_seconds=2.0):
+                pass
+        else:
+            database.close()
         _created_databases.pop()
 
     while _created_instance_locks:
@@ -286,6 +292,7 @@ def _build_test_app(
     preserve_profile_admission: bool = False,
     config_overrides: Mapping[str, Any] | None = None,
     user_data_dir: Path | None = None,
+    isolate_databases: bool = False,
 ) -> TldwCli:
     """Build a TldwCli instance with every real I/O seam faked out.
 
@@ -299,6 +306,9 @@ def _build_test_app(
         user_data_dir: Existing private test profile directory. Factory-created
             handles still retire through exact-owner cleanup; the caller owns
             directory deletion. Defaults to a fresh factory-owned directory.
+        isolate_databases: Keep SQL files in a separate factory-owned directory
+            while user_data_dir retains the selected native MCP profile.
+            Defaults to False, preserving existing factory paths.
         preserve_profile_admission: Defaults to False, which clears
             ``library_new_profile_admission``. `app.py` sets that flag from
             `first_profile_created_this_session()`, and the per-test config
@@ -352,6 +362,13 @@ def _build_test_app(
         if not user_data_dir.is_dir():
             raise NotADirectoryError(user_data_dir)
 
+    database_dir = user_data_dir
+    if isolate_databases:
+        database_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-")).resolve(
+            strict=True
+        )
+        _created_dirs.append(database_dir)
+
     # task-1631: started (not entered via the `with ExitStack()` below) and
     # left running -- `LocalWatchlistsService.db_factory` (wired inside
     # `TldwCli._wire_watchlists_and_notifications_services`) is a lambda that
@@ -366,7 +383,7 @@ def _build_test_app(
     # conftest's autouse teardown) stops it once the test ends.
     subscriptions_patcher = patch_app_global(
         "get_subscriptions_db_path",
-        return_value=user_data_dir / "subscriptions.sqlite",
+        return_value=database_dir / "subscriptions.sqlite",
     )
     subscriptions_patcher.start()
     _active_service_patches.append(subscriptions_patcher)
@@ -406,6 +423,13 @@ def _build_test_app(
     )
 
     with ExitStack() as stack:
+        if isolate_databases:
+            stack.enter_context(
+                patch(
+                    "tldw_chatbook.config.get_evals_db_path",
+                    return_value=database_dir / "evals.sqlite",
+                )
+            )
         for ctx in (
             patch_app_global("load_settings", return_value=fake_app_config),
             patch_app_global("get_cli_setting", side_effect=fake_cli_setting),
@@ -466,17 +490,17 @@ def _build_test_app(
             ),
             patch(
                 "tldw_chatbook.app_service_wiring.get_research_db_path",
-                return_value=user_data_dir / "research.sqlite",
+                return_value=database_dir / "research.sqlite",
             ),
             patch(
                 "tldw_chatbook.app_service_wiring.get_writing_db_path",
-                return_value=user_data_dir / "writing.sqlite",
+                return_value=database_dir / "writing.sqlite",
             ),
             # TASK-33665: this path calls config's own get_user_data_dir, which
             # the app-module patch below does not reach.
             patch(
                 "tldw_chatbook.app_service_wiring.get_library_collections_db_path",
-                return_value=user_data_dir / "library_collections.sqlite",
+                return_value=database_dir / "library_collections.sqlite",
             ),
             patch_app_global(
                 "get_user_data_dir",
@@ -485,7 +509,7 @@ def _build_test_app(
             # TASK-33665: read in `__init__`, opened lazily on first TTS use.
             patch_app_global(
                 "get_tts_profiles_db_path",
-                return_value=user_data_dir / "tts_profiles.sqlite",
+                return_value=database_dir / "tts_profiles.sqlite",
             ),
             patch(
                 "tldw_chatbook.Video_Generation.video_store.get_user_data_dir",
@@ -501,11 +525,11 @@ def _build_test_app(
             ),
             patch(
                 "tldw_chatbook.app_service_wiring.get_workspaces_db_path",
-                return_value=user_data_dir / "workspaces.sqlite",
+                return_value=database_dir / "workspaces.sqlite",
             ),
             patch(
                 "tldw_chatbook.app_service_wiring.get_scheduled_tasks_db_path",
-                return_value=user_data_dir / "scheduled_tasks.sqlite",
+                return_value=database_dir / "scheduled_tasks.sqlite",
             ),
         ):
             stack.enter_context(ctx)

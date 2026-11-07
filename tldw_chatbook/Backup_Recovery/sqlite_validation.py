@@ -12,12 +12,16 @@ from threading import Event
 from time import monotonic
 
 from .models import OwnerAdapter
+from tldw_chatbook.DB.recovery_sqlite import (
+    _CATALOG_BYTES,
+    _CATALOG_LIMIT,
+    _catalog,
+    _metadata,
+)
 
 _PROGRESS_INTERVAL = 1000
 _STEP_BUDGET = 5_000_000
 _SECONDS = 30.0
-_CATALOG_LIMIT = 10_000
-_CATALOG_BYTES = 8 * 1024**2
 
 
 _active_restrictions = ContextVar("recovery_sqlite_restrictions", default=None)
@@ -106,6 +110,8 @@ class _Restrictions:
         self.prompt_mixins_migration = False
         self.canvas_sibling_migration = False
         self.portrait_migration = None
+        self.workflow_statistics = ()
+        self.dropping_workflow_phase = False
         self.archive_chronology_migration = False
         self.preparing_response_rules = False
         self.sargable_migration = False
@@ -249,6 +255,36 @@ class _Restrictions:
             and second in {"type", "name", "tbl_name", "sql"}
         ):
             return sqlite3.SQLITE_OK
+        if (
+            self.migrating
+            and self.migration_owner == "db.agent_runs"
+            and source is None
+        ):
+            if (
+                self.dropping_workflow_phase
+                and action == sqlite3.SQLITE_DELETE
+                and first in self.workflow_statistics
+                and second is None
+                and database == "main"
+            ):
+                return sqlite3.SQLITE_OK
+            if (
+                database == "temp"
+                and first == "sqlite_temp_master"
+                and (
+                    action == sqlite3.SQLITE_READ
+                    and second in {"type", "name", "sql", "tbl_name"}
+                    or action == sqlite3.SQLITE_UPDATE
+                    and second in {"sql", "tbl_name"}
+                )
+            ):
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_ALTER_TABLE and (first, second, database) == (
+                "main",
+                "automatic_wake_attempts",
+                "old_attempt_kind",
+            ):
+                return sqlite3.SQLITE_OK
         if database not in (None, "main"):
             return sqlite3.SQLITE_DENY
         if action in (
@@ -298,6 +334,12 @@ class _Restrictions:
                     allowed |= {"json_valid", "json_type", "json_extract", "json_set"}
                 if self.migration_owner == "db.dreams":
                     allowed |= {"sqlite_rename_table", "sqlite_rename_column"}
+                if self.migration_owner == "db.agent_runs":
+                    allowed |= {
+                        "sqlite_rename_table",
+                        "sqlite_rename_column",
+                        "sqlite_drop_column",
+                    }
                 if self.migration_owner == "db.evals":
                     allowed.add("sqlite_drop_column")
                 # ADR-224 v78->v79: normalization UPDATEs (julianday/strftime),
@@ -338,8 +380,10 @@ class _Restrictions:
             permitted |= self.migrating and first == "user_version"
             # SQLite validates existing rows when ADD COLUMN adds a CHECK.
             permitted |= (
-                self.migrating and self.migration_owner == "db.agent_runs"
-                and first == "quick_check" and second == "automatic_wake_attempts"
+                self.migrating
+                and self.migration_owner == "db.agent_runs"
+                and first == "quick_check"
+                and second in {"automatic_wake_attempts", "workflow_phase_attempts"}
             )
             permitted |= (
                 self.migrating and self.migration_owner == "db.library_collections"
@@ -747,10 +791,121 @@ class _Restrictions:
             ):
                 return sqlite3.SQLITE_OK
             if self.migration_owner == "db.agent_runs":
+                if (
+                    database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first
+                        in {
+                            "workflow_checkpoints",
+                            "workflow_resume_commands",
+                            "workflow_change_windows",
+                            "workflow_change_window_refs",
+                        }
+                        or action
+                        in {sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_REINDEX}
+                        and (first, second)
+                        in {
+                            (
+                                "sqlite_autoindex_workflow_change_windows_1",
+                                "workflow_change_windows",
+                            ),
+                            (
+                                "sqlite_autoindex_workflow_change_windows_2",
+                                "workflow_change_windows",
+                            ),
+                            (
+                                "sqlite_autoindex_workflow_change_window_refs_1",
+                                "workflow_change_window_refs",
+                            ),
+                            (
+                                "sqlite_autoindex_workflow_change_window_refs_2",
+                                "workflow_change_window_refs",
+                            ),
+                            (
+                                "sqlite_autoindex_workflow_checkpoints_1",
+                                "workflow_checkpoints",
+                            ),
+                            (
+                                "sqlite_autoindex_workflow_resume_commands_1",
+                                "workflow_resume_commands",
+                            ),
+                        }
+                        or action == sqlite3.SQLITE_CREATE_TRIGGER
+                        and (first, second)
+                        in {
+                            ("workflow_checkpoint_immutable", "workflow_checkpoints"),
+                            (
+                                "workflow_repair_input_immutable",
+                                "workflow_phase_attempts",
+                            ),
+                            (
+                                "workflow_change_window_identity",
+                                "workflow_change_windows",
+                            ),
+                            (
+                                "workflow_change_window_anchor",
+                                "workflow_change_windows",
+                            ),
+                        }
+                    )
+                ):
+                    return sqlite3.SQLITE_OK
+                allowed_workflow_admission = source is None and (
+                    database == "main"
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in {"workflow_phase_attempts", "workflow_task_claims"}
+                        or action == sqlite3.SQLITE_DROP_TABLE
+                        and first == "workflow_phase_attempts_v25"
+                        or action == sqlite3.SQLITE_INSERT
+                        and first in {"workflow_phase_attempts", "sqlite_master"}
+                        or action == sqlite3.SQLITE_DELETE
+                        and first in {"workflow_phase_attempts_v25", "sqlite_master"}
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_sequence"
+                        and second == "name"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "automatic_wake_attempts"
+                        and second == "attempt_kind"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        or action
+                        in {sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_REINDEX}
+                        and first
+                        in {
+                            "idx_workflow_open_interval",
+                            "idx_workflow_task_phase",
+                            "sqlite_autoindex_workflow_phase_attempts_4",
+                            "sqlite_autoindex_workflow_task_claims_1",
+                            "sqlite_autoindex_workflow_task_claims_2",
+                            "sqlite_autoindex_workflow_task_claims_3",
+                        }
+                    )
+                    or action == sqlite3.SQLITE_ALTER_TABLE
+                    and first == "main"
+                    and second
+                    in {"workflow_phase_attempts", "workflow_active_intervals"}
+                )
+                if allowed_workflow_admission:
+                    return sqlite3.SQLITE_OK
                 from tldw_chatbook.DB.recovery_goal_schema import GOAL_AUTO_INDEXES, GOAL_TABLES
                 from tldw_chatbook.DB.recovery_review_boundary_schema import (
                     REVIEW_BOUNDARY_AUTO_INDEXES,
                 )
+                from tldw_chatbook.DB.recovery_workflow_schema import (
+                    WORKFLOW_INDEXES, WORKFLOW_TABLES, WORKFLOW_TRIGGERS,
+                )
+
+                if database == "main" and source is None and (
+                    action == sqlite3.SQLITE_CREATE_TABLE and first in WORKFLOW_TABLES
+                    or action == sqlite3.SQLITE_CREATE_INDEX and (first, second) in WORKFLOW_INDEXES
+                    or action == sqlite3.SQLITE_CREATE_TRIGGER and (first, second) in WORKFLOW_TRIGGERS
+                    or action == sqlite3.SQLITE_REINDEX and first in {name for name, _ in WORKFLOW_INDEXES}
+                ):
+                    return sqlite3.SQLITE_OK
 
                 if database == "main" and source is None and (
                     action == sqlite3.SQLITE_CREATE_TABLE and first in GOAL_TABLES
@@ -950,55 +1105,6 @@ def _restrict_connection(connection, cancel=None):
         raise ValueError("sqlite_security_unavailable") from error
 
 
-def _catalog(connection):
-    rows = []
-    size = 0
-    for row in connection.execute(
-        "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
-    ):
-        size += sum(len(value.encode("utf-8")) for value in row if value is not None)
-        if len(rows) >= _CATALOG_LIMIT or size > _CATALOG_BYTES:
-            raise ValueError("sqlite_resource_limit")
-        rows.append(row)
-    return tuple(rows)
-
-
-def _metadata(connection, catalog, restrictions=None):
-    def quote(name):
-        return '"' + name.replace('"', '""') + '"'
-
-    result = []
-    for kind, name, _, sql in catalog:
-        if kind in ("table", "view"):
-            if restrictions is not None:
-                restrictions.reading_fts_metadata = (
-                    kind == "table"
-                    and sql is not None
-                    and sql.startswith("CREATE VIRTUAL TABLE")
-                    and "USING fts5(" in sql
-                )
-            try:
-                columns = tuple(
-                    connection.execute(f"PRAGMA table_xinfo({quote(name)})")
-                )
-            finally:
-                if restrictions is not None:
-                    restrictions.reading_fts_metadata = False
-            # Sequence reflects creation order, not index semantics.
-            indexes = tuple(
-                sorted(
-                    row[1:]
-                    for row in connection.execute(f"PRAGMA index_list({quote(name)})")
-                )
-            )
-            result.append((name, columns, indexes))
-        elif kind == "index":
-            result.append(
-                (name, tuple(connection.execute(f"PRAGMA index_xinfo({quote(name)})")))
-            )
-    return tuple(result)
-
-
 @contextmanager
 def _canvas_schema_access(connection, schema, restrictions=None):
     """Run the shipped pure CHECK only for an exact installed Canvas catalog.
@@ -1193,12 +1299,23 @@ def _check(connection, owner, policy, restrictions):
     if restrictions.expired():
         raise ValueError("sqlite_resource_limit")
     actual = _catalog(connection)
-    actual_sql = tuple(row[3] for row in actual if row[3] is not None)
-    matched = tuple(
-        (version, schema)
-        for version, schema in policy.schema_sql
-        if schema == actual_sql
-    )
+    base, stats, profile = actual, (), None
+    if owner.owner_id == "db.agent_runs":
+        from tldw_chatbook.DB.recovery_workflow_profiles import (
+            expected_metadata,
+            identify,
+            split_statistics,
+        )
+
+        try:
+            base, stats = split_statistics(actual)
+            profile = identify(connection, base)
+        except ValueError as error:
+            return (("unsupported_schema_version" if str(error).endswith("version") else "unsupported_schema"),), None
+    actual_sql = tuple(row[3] for row in base if row[3] is not None)
+    if profile is not None:
+        actual_sql = profile.schema
+    matched = tuple((v, schema) for v, schema in policy.schema_sql if schema == actual_sql)
     if not matched:
         return ("unsupported_schema",), None
     # Only after exact catalog match may metadata/version/domain queries prepare
@@ -1207,9 +1324,14 @@ def _check(connection, owner, policy, restrictions):
     if version not in policy.versions or not any(v == version for v, _ in matched):
         return ("unsupported_schema_version",), None
     with _canvas_schema_access(connection, matched[0][1], restrictions):
-        reference_catalog, metadata = _reference(matched[0][1])
+        if profile is None:
+            reference_catalog, metadata = _reference(matched[0][1])
+        else:
+            reference_catalog, metadata = base, profile.metadata
+        if stats:
+            metadata = expected_metadata(metadata, stats)
         if (
-            actual != reference_catalog
+            base != reference_catalog
             or _metadata(connection, actual, restrictions) != metadata
         ):
             return ("unsupported_schema",), None
@@ -1242,6 +1364,8 @@ def _check(connection, owner, policy, restrictions):
                 return issues, None
         if restrictions.expired():
             raise ValueError("sqlite_resource_limit")
+        if owner.owner_id == "db.agent_runs":
+            restrictions.workflow_statistics = tuple(row[1] for row in stats)
         return (), version
 
 
@@ -1321,6 +1445,20 @@ def _validate_candidate(
                 restrictions.migration_owner = installed.owner_id
                 try:
                     connection.execute("BEGIN IMMEDIATE")
+                    if installed.owner_id == "db.agent_runs":
+                        from tldw_chatbook.DB.recovery_workflow_schema import (
+                            bridge_legacy_workflow,
+                            legacy_workflow_version,
+                        )
+
+                        legacy = legacy_workflow_version(connection)
+                        if legacy is not None:
+                            version = bridge_legacy_workflow(connection, legacy)
+                            restrictions.migrating = False
+                            issues, verified = _check(connection, installed, policy, restrictions)
+                            if issues or verified != version:
+                                return (issues or ("unsupported_schema_migration",), None)
+                            restrictions.migrating = True
                     while version != max(policy.versions):
                         choices = [
                             (end, sql)
@@ -1424,7 +1562,15 @@ def _validate_candidate(
                                 for statement in statements:
                                     if restrictions.expired():
                                         raise InterruptedError
-                                    connection.execute(statement)
+                                    restrictions.dropping_workflow_phase = (
+                                        installed.owner_id == "db.agent_runs"
+                                        and (version, expected) == (26, 27)
+                                        and statement == "DROP TABLE workflow_phase_attempts_v25"
+                                    )
+                                    try:
+                                        connection.execute(statement)
+                                    finally:
+                                        restrictions.dropping_workflow_phase = False
                             finally:
                                 restrictions.portrait_migration = None
                         restrictions.migrating = False

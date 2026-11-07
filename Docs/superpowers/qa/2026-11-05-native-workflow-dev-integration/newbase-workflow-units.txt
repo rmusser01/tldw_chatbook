@@ -1,0 +1,47 @@
+.................F
+=================================== FAILURES ===================================
+_ test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff[stale] _
+Tests/Agents/test_workflow_run_service.py:551: in test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff
+    _join(host)
+Tests/Agents/test_workflow_child_launch.py:135: in _join
+    assert not thread.is_alive()
+E   assert not True
+E    +  where True = is_alive()
+E    +    where is_alive = <Thread(fleet-c754a7db, started daemon 6157758464)>.is_alive
+----------------------------- Captured stderr call -----------------------------
+2026-11-05 13:12:04.777 | INFO     | tldw_chatbook.DB.base_db:__init__:1070 - AgentRunsDB initialized with path: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/pytest-newbase-workflow-units/test_same_phase_outputs_defer_3/runs-0.db [Client: default]
+2026-11-05 13:12:05.092 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4192 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_r4jvhcwm/config/config.toml
+2026-11-05 13:12:05.108 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4213 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_r4jvhcwm/config/config.toml
+2026-11-05 13:12:05.109 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4297 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server']
+2026-11-05 13:12:05.110 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4301 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'strata', 'polystrata', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-11-05 13:12:07.955 | INFO     | tldw_chatbook.Agents.agent_request_execution:call_model:123 - agent schema request active=2 runtime=0 find_tools=0 load_tools=0 native=0 run=b0da6d15032c4a2d9ac931d85ff69a31
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-05 13:12:14.499 | INFO     | tldw_chatbook.Agents.agent_request_execution:call_model:123 - agent schema request active=2 runtime=0 find_tools=0 load_tools=0 native=0 run=b0da6d15032c4a2d9ac931d85ff69a31
+2026-11-05 13:12:14.926 | INFO     | tldw_chatbook.config:_load_settings_uncached:1991 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/tldw_chatbook
+2026-11-05 13:12:14.952 | INFO     | tldw_chatbook.config:_load_settings_uncached:1994 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/tldw_chatbook
+2026-11-05 13:12:14.960 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2017 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-05 13:12:14.988 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2337 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-05 13:12:15.013 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3582 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_r4jvhcwm/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-05 13:12:15.019 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3613 - load_settings: Configuration cached for future use
+============================= slowest 25 durations =============================
+7.03s call     Tests/Agents/test_workflow_run_service.py::test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff[stale]
+6.61s call     Tests/Agents/test_workflow_run_service.py::test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff[model_only]
+5.87s call     Tests/Agents/test_workflow_run_service.py::test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff[failed]
+5.79s call     Tests/Agents/test_workflow_run_service.py::test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff[completed]
+5.45s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[0-40000-False]
+4.29s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-150000-True]
+3.97s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-150000-False]
+3.79s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[0-40000-True]
+3.55s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-True]
+3.42s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-False]
+2.73s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_capture_ignores_log_cap_and_honors_own_cap[40000-True]
+2.51s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_capture_ignores_log_cap_and_honors_own_cap[100000-False]
+1.94s call     Tests/Agents/test_workflow_run_service.py::test_real_native_checkpoint_is_atomic_idempotent_and_retains_claim_on_failure
+1.41s call     Tests/Agents/test_workflow_run_service.py::test_last_phase_approval_and_completed_quality_are_distinct
+1.27s setup    Tests/Agents/test_workflow_run_service.py::test_real_thread_start_failure_retains_original_receipt_until_checkpoint
+
+(10 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Agents/test_workflow_run_service.py::test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff[stale]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 17 passed, 3 deselected in 68.78s (0:01:08)

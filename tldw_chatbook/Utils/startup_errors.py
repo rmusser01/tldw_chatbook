@@ -19,6 +19,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 from .private_paths import PrivatePathError, PrivatePathResult
 
@@ -428,3 +429,26 @@ __all__: Sequence[str] = (
     "format_private_path_error",
     "reset_emit_guard_for_tests",
 )
+
+
+class ConfigLoadFailure(NamedTuple):
+    """The most recent config parse failure -- TASK-13157.
+
+    ``_load_cli_config_bootstrap_unlocked`` already logs a TOMLDecodeError
+    via loguru, but both of its callers (``load_cli_config_and_ensure_
+    existence`` and ``load_settings``) discard the ``_ConfigBootstrapResult.
+    succeeded`` flag and hand back bare in-memory defaults with no signal a
+    caller can act on. A live-verification incident found this produces a
+    silent, user-invisible fallback to the ``default_user`` profile -- the
+    loaded config simply has no ``[general] users_name`` because the file
+    that would have carried it never parsed. This module-level record is the
+    "user-visible path" half of the fix: ``app.py`` reads it once at boot
+    (mirroring the existing ``_instance_lock_status``/``_maybe_warn_second_
+    instance`` pattern) and surfaces a persistent notification naming the
+    file and the parse error, instead of leaving the degradation invisible.
+    """
+
+    __module__ = "tldw_chatbook.config"
+
+    path: Path
+    message: str

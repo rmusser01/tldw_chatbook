@@ -415,6 +415,10 @@ def run_script_subprocess(
         raise SandboxUnsupportedError(_SANDBOX_UNSUPPORTED_MESSAGE)
     if not target_argv or not isinstance(target_argv[0], str) or not target_argv[0]:
         raise ValueError("target_argv must start with a non-empty executable path")
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.workflow_task_scope import check_current_task_call
+
+    check_current_task_call(ToolCall("run_skill_script", {}))
 
     warnings: list[str] = []
     if not memory_limit_enforced():

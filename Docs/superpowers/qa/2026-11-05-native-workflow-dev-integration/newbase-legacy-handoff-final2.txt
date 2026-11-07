@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+4.08s call     Tests/Chat/test_native_legacy_hook_handoff.py::test_failed_required_native_commit_never_settles_hook_as_empty_obligation
+2.09s call     Tests/Chat/test_native_legacy_hook_handoff.py::test_original_failed_publication_retains_hook_until_retry_or_shutdown[retry]
+1.42s call     Tests/Chat/test_native_legacy_hook_handoff.py::test_original_failed_publication_retains_hook_until_retry_or_shutdown[discard]
+1.39s call     Tests/Chat/test_native_legacy_hook_handoff.py::test_original_failed_publication_retains_hook_until_retry_or_shutdown[close]
+1.38s call     Tests/Chat/test_native_legacy_hook_handoff.py::test_unpublished_continuation_does_not_orphan_original_hook_handoff
+1.16s call     Tests/Chat/test_native_legacy_hook_handoff.py::test_empty_original_prompt_outcome_retires_before_host_scope_exits
+
+(12 durations < 1s hidden.)
+6 passed in 14.09s

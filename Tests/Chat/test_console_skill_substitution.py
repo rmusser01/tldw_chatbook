@@ -17,7 +17,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from Tests.console_provider_doubles import persisted_console_store
-from Tests.console_provider_doubles import provider_resolution
+from Tests.console_provider_doubles import provider_resolution, with_destination
 from Tests.Skills.test_canvas_skill import _import_canvas_skill
 
 
@@ -112,10 +112,13 @@ class _RecordingGateway:
         self.payloads = []
 
     async def resolve_for_send(self, selection):
-        # `provider_resolution` rather than `_ReadyResolution()`: a26cdafd8
-        # made the typed `resolved_destination` mandatory on a ready
-        # resolution, and a bare attribute-class cannot carry one.
-        return provider_resolution(provider="llama_cpp", model="m")
+        # Native child dispatch reads the complete current resolution contract.
+        from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+
+        return with_destination(ConsoleProviderResolution(
+            provider="llama_cpp", base_url="", model="m", ready=True,
+            execution_key="llama_cpp",
+        ))
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append(messages)
@@ -1016,3 +1019,56 @@ def test_evidence_prefix_preserves_host_plugin_budget_without_markers(multimodal
         [{"role": "user", "content": str(block) * 5}], "retrieved evidence"
     )
     assert check_send_context(ordinary) == ordinary
+
+
+def test_skill_implementation_helpers_are_private_unannotated_plugin_functions():
+    import inspect
+    import typing
+
+    from tldw_chatbook.Chat import console_plugin_context
+
+    for name in (
+        "_render_skill_bundle_block",
+        "_skill_candidates_from_context",
+        "_skill_blocked_candidates_from_context",
+        "_substitute_skills",
+    ):
+        function = getattr(console_plugin_context, name, None)
+        assert inspect.isfunction(function), name
+        assert function.__globals__ is vars(console_plugin_context)
+        assert typing.get_type_hints(function) == {}
+
+
+@pytest.mark.asyncio
+async def test_skill_render_reads_controller_formatter_after_execution_returns(
+    monkeypatch,
+):
+    from tldw_chatbook.Chat import console_chat_controller as controller_source
+
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class HeldSkills(_Skills):
+        async def execute_skill(self, name, *, mode="local", args=None):
+            entered.set()
+            await release.wait()
+            return await super().execute_skill(name, mode=mode, args=args)
+
+    controller, _store = _controller(HeldSkills())
+    task = asyncio.create_task(
+        controller._apply_skill_substitution(
+            [{"role": "user", "content": "$code-review fix"}]
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        monkeypatch.setattr(
+            controller_source,
+            "_render_skill_bundle_block",
+            lambda _rows: "new formatter",
+        )
+        release.set()
+        result = await task
+        assert result[4] == "new formatter"
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

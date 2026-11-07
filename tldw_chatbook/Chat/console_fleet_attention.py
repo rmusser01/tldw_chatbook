@@ -35,10 +35,23 @@ read it BEFORE switching the session to active.
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections import Counter
+from contextlib import ExitStack, nullcontext
 from typing import Any
 
 from loguru import logger
+
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+from . import console_attention_preparation as _attention_preparation
+
+_ORIGINAL_RECEIPT_STORAGE = _attention_preparation._RECEIPT_STORAGE_SOURCE
+_ReceiptStorageFailure = _ORIGINAL_RECEIPT_STORAGE[5]
 
 #: App attribute bumped on every durable mark write/clear, so screen-side
 #: caches of the unseen set can re-read only when something changed rather
@@ -309,18 +322,53 @@ class ConsoleFleetAttentionConsumer:
         if not statuses:
             return
         if self._receipt_service is not None:
-            publication = self._receipt_service.publish_fleet_drain(event)
-            if not getattr(publication, "complete", False):
-                try:
-                    written = self._receipt_service.ensure_fleet_mark(conversation_id)
-                except Exception as exc:  # noqa: BLE001 - retain the fallback path
-                    logger.warning(
-                        "fleet receipt fallback failed (exception_type={})",
-                        type(exc).__name__,
-                    )
-                    written = False
-                if not written:
-                    self._write_mark(conversation_id)
+            from .console_runtime import _LazyConsoleActivityReceiptService
+
+            with ExitStack() as storage:
+                # The direct native child has no ordinary-tree storage stack.
+                # Own only native handles this complete callback newly opens;
+                # do not resolve app/custom/lazy getters to discover storage.
+                if type(self._receipt_service) is _LazyConsoleActivityReceiptService:
+                    source = _ORIGINAL_RECEIPT_STORAGE
+                    helper = source[0]
+                    runtime = sys.modules.get("tldw_chatbook.Chat.console_runtime")
+                    parent = sys.modules.get("tldw_chatbook.Chat")
+                    if (
+                        sys.modules.get("tldw_chatbook.Chat.console_attention_preparation")
+                        is not _attention_preparation
+                        or parent is None
+                        or vars(parent).get("console_attention_preparation") is not _attention_preparation
+                        or vars(_attention_preparation).get("_RECEIPT_STORAGE_SOURCE") is not source
+                        or vars(_attention_preparation).get("_enter_receipt_storage") is not helper
+                        or helper.__code__ is not source[1]
+                        or helper.__defaults__ is not source[2]
+                        or helper.__kwdefaults__ is not source[3]
+                        or helper.__closure__ is not source[4]
+                        or runtime is not None
+                        and (
+                            vars(runtime).get("_attention_preparation") is not _attention_preparation
+                            or vars(runtime).get("_ORIGINAL_RECEIPT_STORAGE") is not source
+                        )
+                    ):
+                        raise _ReceiptStorageFailure("console_attention_storage_source_changed")
+                    values = vars(self._receipt_service)
+                    helper(storage, values["_runs_db"], values["_marks"])
+                publication = self._receipt_service.publish_fleet_drain(event)
+                if not getattr(publication, "complete", False):
+                    try:
+                        written = self._receipt_service.ensure_fleet_mark(
+                            conversation_id
+                        )
+                    except _ReceiptStorageFailure:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - retain the fallback path
+                        logger.warning(
+                            "fleet receipt fallback failed (exception_type={})",
+                            type(exc).__name__,
+                        )
+                        written = False
+                    if not written:
+                        self._write_mark(conversation_id)
         else:
             self._write_mark(conversation_id)
         session_id = str(getattr(survivors[-1], "session_id", "") or "")
@@ -343,7 +391,17 @@ class ConsoleFleetAttentionConsumer:
         if service is None:
             return
         try:
-            service.set_mark(conversation_id, service.FLEET_UNSEEN)
+            database = (
+                vars(service)["db"]
+                if type(service) is ConversationLocalMarksService
+                else None
+            )
+            with (
+                operation_owned_connection(database)
+                if type(database) is CharactersRAGDB and not database.is_memory_db
+                else nullcontext()
+            ):
+                service.set_mark(conversation_id, service.FLEET_UNSEEN)
         except Exception as exc:  # noqa: BLE001 -- a lost mark is a missing badge, not a broken settle
             logger.warning(
                 "fleet unseen mark write failed (exception_type={})",
@@ -383,7 +441,12 @@ class ConsoleFleetAttentionConsumer:
         get_conversation = getattr(db, "get_conversation_by_id", None)
         if callable(get_conversation):
             try:
-                row = get_conversation(conversation_id)
+                with (
+                    operation_owned_connection(db)
+                    if type(db) is CharactersRAGDB and not db.is_memory_db
+                    else nullcontext()
+                ):
+                    row = get_conversation(conversation_id)
                 title = str((row or {}).get("title") or "").strip()
                 if title:
                     return title

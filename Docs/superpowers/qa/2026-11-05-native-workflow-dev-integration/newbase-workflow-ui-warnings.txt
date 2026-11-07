@@ -1,0 +1,51 @@
+.....................F
+=================================== FAILURES ===================================
+_____ test_detach_preserves_planning_and_background_link_identifies_owner ______
+Tests/UI/test_console_workflow_navigation.py:15: in test_detach_preserves_planning_and_background_link_identifies_owner
+    run_workflow_ui(tmp_path, "detach")
+Tests/UI/test_console_workflow_command.py:50: in run_workflow_ui
+    _run(tmp_path, "workflow-ui", mode, script=script, timeout=60)
+Tests/Backup_Recovery/test_home_citation_retirement.py:332: in _run
+    assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E   AssertionError: dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/tldw_chatbook/Chat/console_runtime.py", line 6916, in dispose
+E         workflow_cancellation = await coordinator.close(_runtime_disposal=self)
+E                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/tldw_chatbook/Chat/console_workflow_runs.py", line 3478, in close
+E         raise RuntimeError("workflow_original_shutdown_unresolved")
+E     RuntimeError: workflow_original_shutdown_unresolved
+E     WORKFLOW_UI_CLICK_TRUE #console-send-message Region(x=106, y=39, width=14, height=1)
+E     WORKFLOW_UI_CLICK_TRUE #workflow-plan Region(x=70, y=36, width=43, height=1)
+E     G_RUNTIME_SNAPSHOT planning 2145522.5787065
+E     G_PROVIDER_WAIT_START planning 2145523.225709125
+E     G_PROVIDER_ENTRY planning 2145523.812622458
+E     G_PROVIDER_WAIT_END planning 2145523.819832 {'planning': 2145523.812622458}
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12', '-X', 'utf8', '-c', '...un(mounted_workflow(Path(os.environ["XDG_DATA_HOME"]).parent, sys.argv[2]))\n', 'workflow-ui', 'detach'], returncode=1).returncode
+============================= slowest 25 durations =============================
+30.39s call     Tests/UI/test_console_workflow_controls.py::test_approve_then_accept_real_phase_from_its_detail
+25.36s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[mixed-failure]
+24.00s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[two-phase]
+22.09s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[capture]
+21.09s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[stale]
+18.52s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[metadata]
+18.02s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[pause]
+17.97s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[pending]
+17.84s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[clean-failure]
+17.43s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[revise]
+15.54s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[unknown-task]
+15.38s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[preset]
+12.64s call     Tests/UI/test_console_workflow_navigation.py::test_narrow_history_reopens_same_run_after_detach
+12.22s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[detail-storage-error]
+10.93s call     Tests/UI/test_console_workflow_navigation.py::test_detach_preserves_planning_and_background_link_identifies_owner
+10.71s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[malformed]
+9.29s call     Tests/UI/test_console_workflow_controls.py::test_native_workflow_control_boundaries[selection]
+5.62s call     Tests/UI/test_console_sync_worker_admission.py::test_context_snapshot_native_publication_owns_deferred_refresh[False]
+5.46s call     Tests/UI/test_console_sync_worker_admission.py::test_native_refresh_survives_worker_replacement_and_pre_entry_cancel
+4.02s call     Tests/UI/test_console_sync_worker_admission.py::test_context_snapshot_native_publication_owns_deferred_refresh[True]
+
+(5 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_workflow_navigation.py::test_detach_preserves_planning_and_background_link_identifies_owner
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 21 passed in 324.11s (0:05:24)

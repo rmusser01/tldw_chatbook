@@ -1,0 +1,26 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_console_ordinary_tree.py::test_deferred_native_mcp_permission_lazy_publication_keeps_original_source",
+    "Tests/Chat/test_console_ordinary_tree.py::test_direct_native_mcp_publication_replacement_refuses_before_provider",
+    "--tb=short",
+    "-x",
+    "-W",
+    "error::RuntimeWarning",
+    "-W",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "--basetemp=../pytest-newbase-mcp-publication-controls"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 15.604574457742274,
+  "source_file_count": 9109,
+  "before_sha256": "b314516461ac05b1d23494cb65fcf87813662a04ebedef7899baafa3f56c0a83",
+  "after_sha256": "b314516461ac05b1d23494cb65fcf87813662a04ebedef7899baafa3f56c0a83",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-mcp-publication-controls.log"
+}

@@ -305,7 +305,14 @@ def test_app_pass_prunes_both_stores(
         "UPDATE sync_log SET timestamp = ?", (OLD_TS,), commit=True
     )
 
+    original_handles = {
+        db: set(db._maintenance_participant.connections) for db in (chacha_db, media_db)
+    }
     _run_pass(monkeypatch, _fake_app(chachanotes_db=chacha_db, media_db=media_db), 90)
+    for db, handles in original_handles.items():
+        assert set(db._maintenance_participant.connections) == handles, (
+            "retention left a worker-owned native connection after executor join"
+        )
 
     # The contract: NOTHING older than the window survives in either store.
     # (A fresh profile's per-thread connection may legitimately seed new
@@ -357,6 +364,178 @@ def test_app_pass_retires_the_handles_it_opens_on_its_worker_thread(
 
     # (registered before, registered after, new live leases)
     assert (connections_before, connections_after, len(new_leases)) == (1, 1, 0)
+
+
+def test_cancelled_app_pass_keeps_native_handle_until_delete_returns(
+    chacha_db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+):
+    """Cancellation must not retire the real delete's still-running handle."""
+    import sqlite3
+    import sys
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook import app_lifecycle as lifecycle
+    from tldw_chatbook.Backup_Recovery import participants, storage_admission
+
+    chacha_db.add_conversation({"title": "held retention", "character_id": 1})
+    chacha_db.execute_query("UPDATE sync_log SET timestamp = ?", (OLD_TS,), commit=True)
+    monkeypatch.setattr(lifecycle, "get_cli_setting", lambda *a, **k: 90)
+    entered, check, checked, release = (threading.Event() for _ in range(4))
+    observed = {}
+    order = []
+    delete_code = type(chacha_db).delete_sync_log_entries_older_than.__code__
+    worker_code = participants.run_finite_local_worker.__code__
+    pool = ThreadPoolExecutor(max_workers=1)
+
+    def install():
+        previous = sys.getprofile()
+
+        def observe(frame, event, _arg):
+            if event != "return":
+                return
+            if frame.f_code is delete_code and frame.f_locals.get("self") is chacha_db:
+                connection = chacha_db._local.conn
+                with storage_admission._lock:
+                    lease = chacha_db._maintenance_participant.connections[connection]
+                observed.update(
+                    connection=connection,
+                    lease=lease,
+                    thread=threading.current_thread(),
+                )
+                entered.set()
+                try:
+                    assert check.wait(10)
+                    observed["usable"] = (
+                        connection.execute("SELECT 1").fetchone()[0] == 1
+                    )
+                    checked.set()
+                    assert release.wait(10)
+                except Exception as exc:  # noqa: BLE001 -- report observer failures on the test thread
+                    observed["error"] = exc
+                    checked.set()
+                order.append("delete-return-boundary")
+            elif (
+                frame.f_code.co_name == "prune"
+                and frame.f_code.co_filename == lifecycle.__file__
+            ):
+                try:
+                    observed["connection"].execute("SELECT 1")
+                    observed["closed_at_prune"] = False
+                except sqlite3.ProgrammingError:
+                    observed["closed_at_prune"] = True
+                order.append("prune-return-boundary")
+            elif frame.f_code is worker_code:
+                order.append("finite-return-boundary")
+
+        sys.setprofile(observe)
+        return previous
+
+    previous = pool.submit(install).result(timeout=10)
+
+    async def exercise():
+        asyncio.get_running_loop().set_default_executor(pool)
+        task = asyncio.create_task(
+            lifecycle.LifecycleMixin._perform_sync_log_retention(
+                _fake_app(chachanotes_db=chacha_db)
+            )
+        )
+        try:
+            for _ in range(1000):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert entered.is_set()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            check.set()
+            for _ in range(1000):
+                if checked.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert checked.is_set() and observed.get("usable")
+            with storage_admission._lock:
+                assert observed["lease"] in storage_admission._live_leases
+            release.set()
+
+            def settled():
+                sys.setprofile(previous)
+                assert threading.current_thread() is observed["thread"]
+                with pytest.raises(sqlite3.ProgrammingError):
+                    observed["connection"].execute("SELECT 1")
+
+            await asyncio.wait_for(asyncio.wrap_future(pool.submit(settled)), 10)
+            assert "error" not in observed
+            assert observed["closed_at_prune"]
+            assert order == [
+                "delete-return-boundary",
+                "prune-return-boundary",
+                "finite-return-boundary",
+            ]
+            with storage_admission._lock:
+                assert observed["lease"] not in storage_admission._live_leases
+        finally:
+            check.set()
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.wait_for(
+                asyncio.wrap_future(pool.submit(sys.setprofile, previous)), 10
+            )
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        check.set()
+        release.set()
+        pool.shutdown(wait=True)
+    assert (
+        chacha_db.execute_query(
+            "SELECT COUNT(*) FROM sync_log WHERE timestamp = ?", (OLD_TS,)
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_app_pass_preserves_borrowed_worker_handle(
+    chacha_db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+):
+    """A registered handle acquired before the pass stays with its owner."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook import app_lifecycle as lifecycle
+
+    monkeypatch.setattr(lifecycle, "get_cli_setting", lambda *a, **k: 90)
+    pool = ThreadPoolExecutor(max_workers=1)
+
+    async def exercise():
+        asyncio.get_running_loop().set_default_executor(pool)
+        borrowed = await asyncio.wait_for(
+            asyncio.wrap_future(pool.submit(chacha_db.get_connection)), 10
+        )
+        try:
+            await asyncio.wait_for(
+                lifecycle.LifecycleMixin._perform_sync_log_retention(
+                    _fake_app(chachanotes_db=chacha_db)
+                ),
+                10,
+            )
+
+            def inspect():
+                assert chacha_db.get_connection() is borrowed
+                assert borrowed in chacha_db._maintenance_participant.connections
+                assert borrowed.execute("SELECT 1").fetchone()[0] == 1
+
+            await asyncio.wait_for(asyncio.wrap_future(pool.submit(inspect)), 10)
+        finally:
+            await asyncio.wait_for(
+                asyncio.wrap_future(pool.submit(chacha_db.close_connection)), 10
+            )
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        pool.shutdown(wait=True)
 
 
 def _unmount_owner(

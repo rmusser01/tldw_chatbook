@@ -39,6 +39,7 @@ SNAPSHOT = REPO_ROOT / "Tests/Performance/boot_budget_snapshots/ui_ready_modules
 #: the send imported on the UI loop between Enter and the provider call,
 #: reconciled with current send seams. console_received_dispatch is now
 #: resident through console_spend_projection and is no longer a lazy step.
+#: Hook preparation is resident through the Chat-route plugin preparation.
 LIVE_FIRST_SEND_IMPORTS = (
     "UI.Console_Modules.send_acknowledgement",
     "UI.Console_Modules.sent_draft",
@@ -47,7 +48,6 @@ LIVE_FIRST_SEND_IMPORTS = (
     "MCP.console_snapshot",
     "Chat.console_send_diagnostics",
     "Chat.console_plugin_context",  # current native invocation projection
-    "Chat.console_hook_preparation",
     "Agents.hook_permissions",  # current prepare_hooks_v2 lazy consent owner
     "Agents.automatic_work_runtime",
     "Chat.console_references",
@@ -1013,8 +1013,8 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
         ConsoleLibraryPolicyCandidate,
     )
 
+    from Tests.UI.app_factory import attach_chachanotes_db
     from tldw_chatbook import config as config_module
-    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     private_root = Path(os.environ["TLDW_TEST_CONFIG_ROOT"]).resolve(strict=True)
     assert config_module.get_cli_config_path().resolve().is_relative_to(private_root)
@@ -1024,9 +1024,9 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
     host, gateway, _timeline = build()
     app = host.app_instance
     app.app_config.setdefault("console", {})["agent_runtime"] = False
-    db = CharactersRAGDB(tmp_path / "notes.sqlite", client_id="first-send-imports")
-    request.addfinalizer(db.close_connection)
-    app.chachanotes_db = db
+    db = attach_chachanotes_db(
+        app, db_path=tmp_path / "notes.sqlite", client_id="first-send-imports"
+    )
     app._wire_chat_conversation_services()
     note_id = db.add_note(title="Lighthouse keeping notes", content=_EVIDENCE)
     library = _EvidenceLibrary(note_id)

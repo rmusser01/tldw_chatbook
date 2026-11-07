@@ -4111,26 +4111,7 @@ def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
         return None
 
 
-class ConfigLoadFailure(NamedTuple):
-    """The most recent config parse failure -- TASK-13157.
-
-    ``_load_cli_config_bootstrap_unlocked`` already logs a TOMLDecodeError
-    via loguru, but both of its callers (``load_cli_config_and_ensure_
-    existence`` and ``load_settings``) discard the ``_ConfigBootstrapResult.
-    succeeded`` flag and hand back bare in-memory defaults with no signal a
-    caller can act on. A live-verification incident found this produces a
-    silent, user-invisible fallback to the ``default_user`` profile -- the
-    loaded config simply has no ``[general] users_name`` because the file
-    that would have carried it never parsed. This module-level record is the
-    "user-visible path" half of the fix: ``app.py`` reads it once at boot
-    (mirroring the existing ``_instance_lock_status``/``_maybe_warn_second_
-    instance`` pattern) and surfaces a persistent notification naming the
-    file and the parse error, instead of leaving the degradation invisible.
-    """
-
-    path: Path
-    message: str
-
+from tldw_chatbook.Utils.startup_errors import ConfigLoadFailure
 
 #: Set inside the TOMLDecodeError branch below, cleared on the next
 #: successful bootstrap. See ``ConfigLoadFailure`` and ``get_config_load_
@@ -8914,6 +8895,37 @@ _COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
         (globals(), "get_user_data_dir"),
         (globals(), "_get_custom_database_path"),
         (globals(), "_get_effective_config_path"),
+    )
+)
+_FIRST_SEND_PERSISTENCE_SOURCE = _record_collections_setup_source(
+    tuple(
+        (globals(), name)
+        for name in (
+            "current_config_identity",
+            "save_setting_to_cli_config",
+            "save_settings_to_cli_config",
+            "apply_settings_mutation_to_cli_config",
+            "apply_literal_settings_transaction_to_cli_config",
+            "_validate_literal_config_mutation_targets",
+            "_validate_literal_config_path",
+            "_detach_literal_settings_mutation",
+            "_apply_literal_settings_transaction_locked",
+            "_config_write_lock",
+            "_read_raw_cli_config_unlocked",
+            "_atomic_config_values_from_raw",
+            "_apply_literal_mutation_unlocked",
+            "_config_data_for_persistence",
+            "_write_raw_cli_config_unlocked",
+            "_publish_runtime_config_unlocked",
+            "_install_bootstrap_cache_from_raw",
+            "load_settings",
+            "_current_settings_view",
+            "_load_cli_config_bootstrap_unlocked",
+            "create_private_text",
+            "_get_effective_config_path",
+            "_settings_rebuild_lock",
+            "_config_file_lock",
+        )
     )
 )
 del _record_collections_setup_source

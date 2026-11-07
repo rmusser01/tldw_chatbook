@@ -45,6 +45,16 @@ class ConsoleCommandProvider(Provider):
 
         return (
             (
+                "Console: Workflow runs…",
+                lambda: screen._workflows.open_history(),
+                "Review this chat’s phased workflows",
+            ),
+            (
+                "Console: New workflow…",
+                lambda: screen._workflows.open_setup(),
+                "Prepare a plan in this chat’s selected workspace",
+            ),
+            (
                 "Console: Goal runs…",
                 lambda: screen._goals.open_history(),
                 "Start, inspect, pause or review a finite goal",

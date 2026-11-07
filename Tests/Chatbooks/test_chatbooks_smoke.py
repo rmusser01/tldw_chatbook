@@ -5,6 +5,8 @@ import pytest
 
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.unit
 def test_chatbook_creator_minimal_archive_creation():

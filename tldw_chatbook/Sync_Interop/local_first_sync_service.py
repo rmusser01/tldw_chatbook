@@ -9,7 +9,6 @@ from typing import Any, Mapping, Sequence, TYPE_CHECKING
 from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
     ProducerLifetime,
 )
-from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 from tldw_chatbook.Sync_Interop.validation import (
@@ -99,6 +98,8 @@ class LocalFirstSyncService:
             Exception: Propagates server transport and local apply failures after recording
                 sync state.
         """
+        from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from tldw_chatbook.tldw_api import SyncV2Envelope
 
@@ -550,7 +551,7 @@ class LocalFirstSyncService:
         after_page: Any | None = None,
     ) -> dict[str, Any]:
         """Pull and apply bootstrap/history pages without opening a push path."""
-
+        from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
         from tldw_chatbook.tldw_api import SyncV2Envelope
 
         if self.notes_organization_repository is None:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.DB.fixtures.agent_runs_history import install_historical
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -39,75 +40,23 @@ db.close()
 
 
 def _upstream_v15_database(path):
-    db = AgentRunsDB(path)
-    run_id = db.create_run(
-        conversation_id="conversation",
-        agent_kind="subagent",
-        spawn_event_id="spawn-event",
-        run_id="stable-child",
-    )
-    db.append_steps(run_id, [{"index": 0, "kind": "note", "summary": "saved step"}])
-    db.set_status(run_id, "done", "saved result")
-    receipt_id, _ = db.publish_console_activity(
-        origin="fleet_survivor",
-        logical_outcome_id="outcome",
-        status="done",
-        session_id=None,
-        conversation_id="conversation",
-        run_id=run_id,
-    )
-    with db.transaction() as conn:
-        # Remove later feature shape as well as version rows: this fixture
-        # must actually enter the v19/v20 upgrade path when reopened.
-        # v24 Goal triggers depend on wake tables that this v15 fixture removes.
-        conn.execute("DROP TRIGGER goal_launch_immutable")
-        for table in (
-            "goal_payload_reservations",
-            "goal_evidence",
-            "goal_checkpoints",
-            "goal_reports",
-            "goal_iterations",
-            "goal_waits",
-            "goal_runs",
-        ):
-            conn.execute(f"DROP TABLE {table}")
-        assert (
-            conn.execute(
-                "SELECT name FROM sqlite_master WHERE name GLOB 'goal_*'"
-            ).fetchall()
-            == []
+    run_id, receipt_id = "stable-child", "stable-receipt"
+    with sqlite3.connect(path) as conn:
+        install_historical(conn, 15)
+        conn.execute(
+            "INSERT INTO agent_runs(id,conversation_id,agent_kind,spawn_event_id,status,result,created_at,updated_at) "
+            "VALUES (?, 'conversation', 'subagent', 'spawn-event', 'done', 'saved result', 'then', 'then')",
+            (run_id,),
         )
-        conn.execute("DROP TABLE agent_worktrees")
-        conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
-        names = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'automatic_%'"
-        ).fetchall()
-        for (name,) in names:
-            conn.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
-        for table in (
-            "automatic_chat_start_attempts",
-            "automatic_wake_claims",
-            "automatic_wake_attempts",
-            "automatic_work_reservations",
-            "automatic_work_runtime_owner",
-        ):
-            conn.execute(f"DROP TABLE {table}")
-        conn.execute("ALTER TABLE agent_runs DROP COLUMN work_chain_id")
-        conn.execute("ALTER TABLE agent_runs DROP COLUMN budget_tokens")
-        # v21 (agent routing, ADR-344) columns -- dropped so the standalone
-        # route can genuinely apply agent_runs_v20_to_v21_agent_routing.sql
-        # (task-19565; the file is only runnable against tables lacking
-        # these columns, per its header note).
-        conn.execute("ALTER TABLE agent_definitions DROP COLUMN provider")
-        conn.execute("ALTER TABLE agent_definitions DROP COLUMN params_json")
-        conn.execute("ALTER TABLE agent_runs DROP COLUMN resolved_provider")
-        conn.execute("ALTER TABLE agent_runs DROP COLUMN resolved_model")
-        conn.execute("ALTER TABLE agent_runs DROP COLUMN resolved_base_url")
-        conn.execute("ALTER TABLE agent_runs DROP COLUMN resolved_params_json")
-        conn.execute("DROP TABLE automatic_work_chains")
-        conn.execute("DELETE FROM schema_version WHERE version > 15")
-    db.close()
+        conn.execute(
+            "INSERT INTO agent_run_steps(run_id,seq,payload,created_at) VALUES (?,0,?,'then')",
+            (run_id, '{"index":0,"kind":"note","summary":"saved step"}'),
+        )
+        conn.execute(
+            "INSERT INTO console_activity_receipts(activity_id,origin,logical_outcome_id,transition_revision,conversation_id,run_id,status,created_at) "
+            "VALUES (?, 'fleet_survivor', 'outcome', 1, 'conversation', ?, 'done', 'then')",
+            (receipt_id, run_id),
+        )
     return run_id, receipt_id
 
 

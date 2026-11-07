@@ -320,7 +320,10 @@ async def test_goal_binding_controls_actual_instructions_and_file_read_after_nav
     controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
     task = asyncio.create_task(coordinator.dispatch_once(goal.id))
     try:
-        assert await asyncio.to_thread(entered.wait, 3)
+        reached = await asyncio.to_thread(entered.wait, 3)
+        if not reached and task.done():
+            assert reached, task.result()
+        assert reached
         foreground = store.create_session(workspace_id="other-workspace")
         store.switch_session(foreground.id)
         release.set()

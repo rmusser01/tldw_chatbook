@@ -31,10 +31,13 @@ with stale-lock takeover so a crashed process cannot starve snapshots.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import locale
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -204,6 +207,18 @@ class ShadowRepoService:
                 "change tracking needs git — install git to enable"
             )
         canonical = Path(root).expanduser().resolve()
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            native_snapshot_source,
+        )
+
+        source = native_snapshot_source()
+        if source is not None:
+            source.validate_root(canonical)
+        from .change_revert_ownership import native_undo_call
+
+        undo = native_undo_call()
+        if undo is not None:
+            undo.validate_root(canonical)
         if not canonical.is_dir():
             # Roots come from the workspace registry, not from agent input,
             # so this is a sanity guard rather than a security boundary --
@@ -278,22 +293,37 @@ class ShadowRepo:
                 str(self.root),
                 *args,
             ]
+            from tldw_chatbook.Workspaces.change_review_ownership import (
+                native_snapshot_source,
+            )
+
+            source = native_snapshot_source()
+            from .change_revert_ownership import native_undo_call
+
+            undo = native_undo_call()
+            if undo is not None:
+                undo.validate_root(self.root)
+            env = self._env()
+            if source is not None:
+                source.validate_root(self.root)
+                cmd = self._native_command(args, env)
             try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    env=self._env(),
-                    input=input_data,
-                    timeout=_GIT_TIMEOUT_SECONDS,
-                    text=not binary,
-                )
+                proc = self._run_process(cmd, env, input_data=input_data, binary=binary)
             except subprocess.TimeoutExpired as exc:
                 raise ChangeTrackingError(
                     f"git {args[0]} timed out after {_GIT_TIMEOUT_SECONDS:.0f}s"
                 ) from exc
             except OSError as exc:
+                if source is not None:
+                    raise ChangeTrackingUnavailableError(
+                        "native change-review Git unavailable"
+                    ) from exc
                 raise ChangeTrackingUnavailableError(str(exc)) from exc
             if check and proc.returncode != 0:
+                if source is not None:
+                    raise ChangeTrackingError(
+                        "native change-review Git operation failed"
+                    )
                 stderr = (
                     proc.stderr
                     if isinstance(proc.stderr, str)
@@ -304,6 +334,75 @@ class ShadowRepo:
                     f"{stderr.strip()[:_TRACKING_ERROR_MAX_CHARS]}"
                 )
             return proc
+
+    def _run_process(self, cmd, env, *, input_data=None, binary=False):
+        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            native_snapshot_source,
+            native_snapshot_ticket,
+        )
+
+        source = native_snapshot_source()
+        from .change_revert_ownership import native_undo_call
+
+        undo = native_undo_call()
+        if source is None and undo is None:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                env=env,
+                input=input_data,
+                timeout=_GIT_TIMEOUT_SECONDS,
+                text=not binary,
+                check=False,
+            )
+        ticket = undo if undo is not None else native_snapshot_ticket()
+        if (
+            ticket is None
+            or undo is None
+            and ticket.source is not source
+            or current_execution_owner() is not ticket.owner
+        ):
+            raise ChangeTrackingUnavailableError(
+                "native change-review Git custody unavailable"
+            )
+        encoding = "utf-8" if sys.flags.utf8_mode else locale.getencoding()
+        payload = (
+            input_data.encode(encoding) if isinstance(input_data, str) else input_data
+        )
+        # Only process transport enters this loop; guarded storage stays synchronous.
+        from .native_git import run_native_git
+
+        with asyncio.Runner() as runner:
+            returncode, stdout, stderr = runner.run(
+                run_native_git(
+                    ticket,
+                    cmd,
+                    env,
+                    payload,
+                    cwd=os.getcwd(),
+                    timeout=_GIT_TIMEOUT_SECONDS,
+                )
+            )
+        if not binary:
+            stdout, stderr = (
+                data.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+                for data in (stdout, stderr)
+            )
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+    def _native_command(self, args, env):
+        """Apply the shared native policy to this actual shadow repository."""
+        from .native_git import qualified_git_command
+
+        return qualified_git_command(
+            self._git,
+            ["--git-dir", str(self.git_dir), "--work-tree", str(self.root)],
+            args,
+            env,
+            self._run_process,
+            ChangeTrackingUnavailableError,
+        )
 
     def _locked(self):
         """Context manager: in-process lock + portable cross-process lockdir."""

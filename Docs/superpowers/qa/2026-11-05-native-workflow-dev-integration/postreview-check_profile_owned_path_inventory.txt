@@ -1,0 +1,1 @@
+profile-owned path census verified: 47 executable occurrence(s) across 23 file(s), all matched by 42 approved exceptions.

@@ -1,0 +1,27 @@
+...............                                                          [100%]
+============================= slowest 25 durations =============================
+9.13s call     Tests/Chat/test_console_ordinary_tree.py::test_actual_ordinary_change_review_baseline_and_end_borrow_same_tree[True]
+8.45s call     Tests/Chat/test_console_ordinary_tree.py::test_actual_ordinary_change_review_baseline_and_end_borrow_same_tree[False]
+5.51s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_capture_is_opaque_even_when_prefill_skips_agent
+5.48s call     Tests/Chat/test_console_ordinary_tree.py::test_accepted_voice_uses_original_pending_mcp_source
+5.21s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_original_path_or_factory_replacement_refuses[manifest]
+5.07s setup    Tests/Chat/test_console_ordinary_tree.py::test_deferred_native_mcp_permission_lazy_publication_keeps_original_source
+5.03s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_manifest_changed_defaults_refuses_before_callback
+4.90s call     Tests/Chat/test_console_ordinary_tree.py::test_deferred_native_mcp_permission_lazy_publication_keeps_original_source
+4.79s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_original_path_or_factory_replacement_refuses[path]
+4.67s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_cold_mcp_receiver_replacement_refuses_before_callback
+4.59s setup    Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_without_original_task_context_refuses_before_effects
+4.58s setup    Tests/Chat/test_console_ordinary_tree.py::test_accepted_voice_uses_original_pending_mcp_source
+3.67s call     Tests/Chat/test_console_ordinary_tree.py::test_unwitnessed_permission_reader_never_runs_before_ordinary_claim
+3.02s call     Tests/Chat/test_console_ordinary_tree.py::test_actual_change_review_initializer_borrows_original_ordinary_tree
+2.88s call     Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_capture_is_opaque_even_when_prefill_skips_agent
+2.60s setup    Tests/Chat/test_console_ordinary_tree.py::test_stale_managed_mcp_runtime_never_falls_back_to_standalone
+2.51s setup    Tests/Chat/test_console_ordinary_tree.py::test_unwitnessed_permission_reader_never_runs_before_ordinary_claim
+2.16s setup    Tests/Chat/test_console_ordinary_tree.py::test_public_mcp_maximum_still_returns_original_custom_hashes
+1.85s setup    Tests/Chat/test_console_ordinary_tree.py::test_actual_change_review_initializer_borrows_original_ordinary_tree
+1.70s setup    Tests/Chat/test_console_ordinary_tree.py::test_standalone_mcp_capture_refuses_runtime_attachment_during_original_read
+1.15s setup    Tests/Chat/test_console_ordinary_tree.py::test_actual_ordinary_change_review_baseline_and_end_borrow_same_tree[True]
+1.04s setup    Tests/Chat/test_console_ordinary_tree.py::test_actual_ordinary_change_review_baseline_and_end_borrow_same_tree[False]
+
+(3 durations < 1s hidden.)
+15 passed in 97.58s (0:01:37)

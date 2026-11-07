@@ -1,0 +1,104 @@
+{
+  "base_head": "f4e72e54078413c35e01ea52607afe76283cc972",
+  "qualification": "Frozen production fix plus current test fixture delta; final test receipts and any later test delta remain separate. Source writer declared production frozen.",
+  "changes": [
+    {
+      "path": "Tests/Agents/test_workflow_run_service.py",
+      "base_blob": "c5278dfddd6657a0cc100dc865846c6ed52cd473",
+      "sha256": "d8e58410df5cb7f752c8713278cf16dfd235d27708cea1c57ab03fb9e24e2f74",
+      "blob": "2fa930fd10242e98bebca3912c669d276a9554fb",
+      "kind": "test"
+    },
+    {
+      "path": "Tests/Backup_Recovery/test_workflow_dev_integration.py",
+      "base_blob": "778dcc79bb667cba7c44987c1b67f47dabe5bef0",
+      "sha256": "c3aad13fafa4694f4b7c06a603b2360c98b449709d2ba58d73aff1d1f8a6d150",
+      "blob": "3d0a0a3379e8bf007e451e0469e8cd9229ac9a54",
+      "kind": "test"
+    },
+    {
+      "path": "Tests/Chat/test_console_ordinary_tree.py",
+      "base_blob": "2b5070e101eb1c75c5a1e2da50cb67eb74b45558",
+      "sha256": "59ed82eb76fd6d641100cf177d7240550fffa1f8344e0d26b556b5e829bd2902",
+      "blob": "10a2ef8ab8357ea872e3f6bd0988b562971fed98",
+      "kind": "test"
+    },
+    {
+      "path": "Tests/Chat/test_console_reference_custody.py",
+      "base_blob": "338ed22a54d52b39532fc3c2f9949707bec7b57a",
+      "sha256": "e3a1b9e3bc1ec4df2fe58d757a79efe843f054f9adeefe73c77e0013821a318e",
+      "blob": "908bb726886411e4d7edc723f7e0ae27782aee9d",
+      "kind": "test"
+    },
+    {
+      "path": "Tests/Chat/test_console_skill_substitution.py",
+      "base_blob": "355b14b8f69294eefc39061afb19282abe1b0c43",
+      "sha256": "806897c97938e93f70ab1592aa05da2bebc4ca124db40f225b5b8cd92551a375",
+      "blob": "54dd08c6f3adea3978b4a6ead0ea2b5ac6993544",
+      "kind": "test"
+    },
+    {
+      "path": "Tests/Plugins/test_plugin_context.py",
+      "base_blob": "3187fa36785235d172c2ce2fc320fd0a4dc9cfec",
+      "sha256": "cd4cae996cfd8f46f63e35bf03c1221b839f4795385ccc27c39d96e343e51c23",
+      "blob": "0888bfaf21b3fadb4c37d044c014b6f0c6be636d",
+      "kind": "test"
+    },
+    {
+      "path": "tldw_chatbook/Agents/hooks_v2/command_executor.py",
+      "base_blob": "2f3ad9c1f85819045c6706677a08874b6438e871",
+      "sha256": "5ef0c549b253b7c11f3c62708dde3825a5daa66833dac374a473eb9eabd8156d",
+      "blob": "150c27f524d3a06974d3400bb614b34f0349681e",
+      "kind": "production"
+    },
+    {
+      "path": "tldw_chatbook/Agents/workflow_run_service.py",
+      "base_blob": "70738b43d9192c8ff4b28218ddd9456601a2ec3c",
+      "sha256": "7a2ab650fdae4f45c95f4a7ca9dcdf985bafa7c2505996ff4fabdb396d7726bb",
+      "blob": "0b23a2e2083b4fad32bbf55f085577ad1966bb38",
+      "kind": "production"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_sources.py",
+      "base_blob": "e89fb1441e99ba308c498abd39c4b10ccfb0d1d2",
+      "sha256": "f616a586a0d62367d99bf9afd1c116305f44f7a1a8da291ff4431b75af27536c",
+      "blob": "448bd628d987caeb560866209989e0c43324790b",
+      "kind": "production"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "base_blob": "bd4ad5fbb50599ef9214d663f68b84bc2feaea37",
+      "sha256": "0c9583d2510717cc03f6ee10fabc8166fd11f1cbf117b82425b51661fa02b978",
+      "blob": "a1c785c44c4510cd9fe21f71b60feb90f7010a3f",
+      "kind": "production"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_plugin_context.py",
+      "base_blob": "f7ca7f5d3f8f4946b0d37f400ae723022714c1b5",
+      "sha256": "f45d8320935bc2140ae930ba37e8ac06a017d12626297930df1e5f48fe9840f8",
+      "blob": "15c4c93ba89ab935b3d34bafd4fcfdccb9451e39",
+      "kind": "production"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_reference_preparation.py",
+      "base_blob": "7c312dad3ac73045c868795871b18128825a9e07",
+      "sha256": "14d386a0ab20dc931b72f42c6572b324a1f63a787e94693fae6a1b394e72aad4",
+      "blob": "4326730fdfe60ce300c0d027e4b1581fcbc33ea0",
+      "kind": "production"
+    },
+    {
+      "path": "tldw_chatbook/DB/private_sqlite.py",
+      "base_blob": "a3c39c9c254d9044bdddcb6853dad0fa5dc27a60",
+      "sha256": "0cb314ed6cf3ecce4c5a94d9448a79b512e9d277ce7073a58edf87559e7af103",
+      "blob": "c79901ae036ba28736c3f63fa5f7292f177b9e6e",
+      "kind": "production"
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_workflow_schema.py",
+      "base_blob": "b315056a668c8183186e9d20c2e3ffd0796ee15b",
+      "sha256": "8acdf04fb95566b0185812020bc7a361a5e34a54699abbd28cad23a6b8f71dc1",
+      "blob": "f2d3bae2f3eb8f5784ec5274056c8654e491a011",
+      "kind": "production"
+    }
+  ]
+}

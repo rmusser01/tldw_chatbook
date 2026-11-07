@@ -1,0 +1,21 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Agents/test_workflow_run_service.py::test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff[stale]",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-newbase-workflow-stale-isolated"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 18.825143999885768,
+  "source_file_count": 9109,
+  "before_sha256": "69dbbe0cf762c493cc35449ce2095c73415e41c24885ad9ac2b945b51d78ad72",
+  "after_sha256": "69dbbe0cf762c493cc35449ce2095c73415e41c24885ad9ac2b945b51d78ad72",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-workflow-stale-isolated.log"
+}

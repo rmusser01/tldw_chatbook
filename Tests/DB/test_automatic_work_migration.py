@@ -8,11 +8,23 @@ import pytest
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+def _drop_later_history(conn):
+    """Remove additive Goal/workflow fixtures before rebuilding an older schema."""
+    from tldw_chatbook.DB.recovery_goal_schema import GOAL_TABLES
+    from tldw_chatbook.DB.recovery_workflow_schema import WORKFLOW_TABLES
+
+    conn.execute("DROP TRIGGER IF EXISTS goal_launch_immutable")
+    for table in sorted(GOAL_TABLES | WORKFLOW_TABLES):
+        conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+    conn.execute("DROP TABLE IF EXISTS automatic_progress_wake_claims")
+
+
 def v16_database(path):
     db = AgentRunsDB(path)
     run_id = db.create_run(conversation_id="legacy", agent_kind="primary")
     db.set_status(run_id, "done", "original result", budget_tokens=23)
     with db.transaction() as conn:
+        _drop_later_history(conn)
         triggers = [
             row[0]
             for row in conn.execute(
@@ -105,6 +117,7 @@ def v21_database(path):
             "INSERT INTO agent_worktrees(run_id,workspace_id,binding_id,locator_fingerprint,repo_root,repo_identity,git_common_dir,git_common_identity,child_path,child_identity,branch,base_sha,execution_id,created_at,updated_at) VALUES (?, 'workspace','binding','locator','repo','repo-identity','common','common-identity','child','child-identity','branch','base','execution','then','then')",
             (run_id,),
         )
+        _drop_later_history(conn)
         conn.execute("DROP TRIGGER automatic_chat_start_identity_immutable")
         conn.execute("DROP TABLE automatic_chat_start_attempts")
         conn.execute("DROP TRIGGER automatic_chain_root_insert")
@@ -114,7 +127,7 @@ def v21_database(path):
         conn.execute(
             "ALTER TABLE automatic_work_chains DROP COLUMN allowance_root_chain_id"
         )
-        conn.execute("DELETE FROM schema_version WHERE version=22")
+        conn.execute("DELETE FROM schema_version WHERE version>=22")
         assert (
             conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 21
         )

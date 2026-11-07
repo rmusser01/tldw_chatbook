@@ -69,6 +69,7 @@ OWNER_KIND_CASES = tuple(
     for target_kind in sorted(policy.allowed_target_kinds, key=lambda kind: kind.value)
 )
 CONNECTION_BACKUP_OWNER_IDS = (
+    "recovery.detached_normalization",
     "db.chachanotes.backup",
     "db.media.backup",
     "db.prompts.backup",
@@ -77,6 +78,8 @@ COPY_BACKUP_OWNER_IDS = (
     "recovery.rag_indexing",
     "recovery.recovered_media",
     "recovery.files.tts",
+    "recovery.operations.guardian",
+    "recovery.operations.dreams",
     "recovery.operations.workspaces",
     "recovery.operations.agent_runs",
     "recovery.operations.subscriptions",
@@ -94,7 +97,6 @@ COPY_BACKUP_OWNER_IDS = (
     "recovery.core.prompts",
     "recovery.core.library_collections",
     "recovery.core.library_ingest_jobs",
-    "settings.bulk_backup",
     "tts.profile_restore_stage",
 )
 OPEN_CONNECTION_BACKUP_OWNER_IDS = (
