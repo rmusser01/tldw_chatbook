@@ -13,6 +13,10 @@ and the quit inventory is that same projection over every open tab, summed by
 ``ConsoleLossTotals.of``. One renderer writes both dialogs' lists, so they
 cannot drift apart again.
 
+Console's own SYSTEM rows (/help and /doctor output, error notices) are
+never saved, but they are not work: neither dialog counts them, and they
+never raise either question on their own (TASK-33628.16).
+
 Only counts and positional tab labels leave this module, never titles, draft,
 message or file content (TASK-14806 AC#7). It is imported lazily from the close and quit
 paths, which keeps it off the boot path (ADR-097 UI-ready census).
@@ -31,6 +35,7 @@ from ...Chat.console_chat_models import (
     CONSOLE_PENDING_SKILL_INSTALL_KIND,
     CONSOLE_PENDING_SKILL_SCRIPT_KIND,
     CONSOLE_PENDING_WORKTREE_MERGE_KIND,
+    ConsoleMessageRole,
 )
 from .session import ConsoleSessionCloseImpact
 
@@ -134,6 +139,21 @@ def visible_composer_draft(owner: Any) -> tuple[str, str] | None:
     return None if session_id is None else (session_id, composer.draft_text())
 
 
+def _is_unsaved_message(message: Any) -> bool:
+    """Whether closing or quitting would lose this transcript node.
+
+    TASK-33628.16, owner decision 2026-10-29: Console's own SYSTEM rows --
+    command output such as /help and /doctor, and error notices -- are not
+    loss, saved or not. They never raise the close or quit question on their
+    own and are never counted beside real loss. Fork leaves the same rows out
+    of a copied lineage (``console_fork_skips``, ADR-334 §2).
+    """
+    return (
+        message.persisted_message_id is None
+        and message.role is not ConsoleMessageRole.SYSTEM
+    )
+
+
 def session_close_impact(
     store: Any,
     controller: Any,
@@ -158,7 +178,7 @@ def session_close_impact(
     return ConsoleSessionCloseImpact(
         session_id=session_id,
         transcript_message_count=sum(
-            message.persisted_message_id is None for message in messages
+            _is_unsaved_message(message) for message in messages
         ),
         lifecycle=controller.lifecycle_impact(session_id=session_id),
         has_draft=bool(draft),
