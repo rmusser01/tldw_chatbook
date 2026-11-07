@@ -24,6 +24,7 @@ OWNER_TARGETS = {
     "Tests/Chat/test_approval_display_controls.py",
     "Tests/Chat/test_console_approval_scope_journeys.py",
     "Tests/Chat/test_console_approval_feedback.py::test_host_final_arbitration_wins_after_controller_receipt",
+    "Tests/RAG/test_metadata_import_boundary.py",
 }
 
 

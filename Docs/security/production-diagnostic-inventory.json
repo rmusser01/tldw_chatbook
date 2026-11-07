@@ -183,8 +183,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 55,
-      "diagnostic_digest": "617caa36179b7727b5e3",
+      "call_count": 54,
+      "diagnostic_digest": "be1c615b4f9e9671c759",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/dictation_service_lazy.py",
       "reason": "remaining Chatbook production diagnostic owner"

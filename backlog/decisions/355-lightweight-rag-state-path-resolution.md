@@ -20,6 +20,18 @@ Preserve the current Chroma priority exactly: RAG_PERSIST_DIR, vector_store.pers
 
 Do not change sensitive-path memo keys, failure caching, exclusions, binding validation, permission decisions, storage admission, recovery or worker authority. This decision changes dependency loading, not data locations or permission scope. Keep configuration access live rather than caching directory results.
 
+## Profile-metadata extension (TASK-34569 AC10)
+
+A later genuine received-send diagnostic on 7cf51a captured the preparation worker at console_configuration_preparation.capture -> library_rag_profile_top_k -> simplified.active_config, with the eager simplified facade loading embeddings_wrapper and NumPy. The same instant showed a credential-status thread-start wait on the UI thread and a separate screen-preimport terminal query. It establishes the metadata import edge, not the full wait duration or a deadlock diagnosis; physical timing qualification remains zero.
+
+The depth-only resolver continues to use the SAME active profile manager, profile pointer, storage admission, CRUD, built-in/custom loading, environment override and invalid/missing fallback. Make the simplified facade lazy, preserving its existing exported names and aliases as references to the original objects. Runtime exports load their real modules only when requested; absent optional dependencies still surface at that access. No runtime export is fabricated or made a metadata dependency.
+
+RerankingConfig and ProcessingConfig are plain dataclasses with no post-init/device behavior. Their unchanged definitions belong in lightweight RAG_Search/config_metadata.py; reranker.py and parallel_processor.py reexport those exact class objects, and active_config/config_profiles import the canonical metadata classes. Public names, constructor signatures/defaults, mutable dataclass behavior, asdict and isinstance identity are preserved. The class __module__ intentionally becomes the canonical metadata module so new pickles resolve without loading engines; historical old-module/name pickle references remain loadable through the identical aliases. This is a type-ownership relocation, not a new profile serialization format.
+
+Do not replace or narrow full resolve_active_rag_config. Its existing auto-device probe, optional-dependency decisions, environment and explicit-argument precedence stay as written; depth-only reads continue to avoid that full device layer. Do not add profile/config caches, parallel JSON readers, new defaults or policy/admission paths. Existing patch seams remain live.
+
+Validate the actual Library depth read and original received-configuration capture in fresh protected processes with heavy import-attempt guards before any engine preload or package stub. Test real profile creation/update/resolution, default15, custom/missing/invalid/env cases and full resolution parity, plus all facade aliases, legacy type aliases and old/new pickle paths. Preserve existing import-order, missing-optional-dependency and profile/admission tests. Root regenerates the diagnostic inventory after final code; renewed live qualification follows a reviewed source freeze.
+
 ## Alternatives
 
 - Lazily exporting only simplified.__init__ is insufficient: config_profiles also imports NumPy-dependent modules.

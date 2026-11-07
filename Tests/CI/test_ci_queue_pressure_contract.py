@@ -344,6 +344,7 @@ FAST_LANE_TARGETS = (
     "Tests/RAG/test_state_paths.py",
     # TASK-34569 AC9: Speech preimport avoids optional meter runtime.
     "Tests/Audio/test_dictation_meter_import_contract.py",
+    "Tests/RAG/test_metadata_import_boundary.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

@@ -443,6 +443,7 @@ jobs:
             Tests/Chat/test_console_semantic_mutation_inventory.py \
             Tests/RAG/test_state_paths.py \
             Tests/Audio/test_dictation_meter_import_contract.py \
+            Tests/RAG/test_metadata_import_boundary.py \
             --timeout=180 \
             --tb=short
 

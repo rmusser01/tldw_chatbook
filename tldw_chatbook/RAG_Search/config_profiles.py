@@ -19,8 +19,7 @@ import hashlib
 from loguru import logger
 
 from .simplified.config import RAGConfig
-from .reranker import RerankingConfig
-from .parallel_processor import ProcessingConfig
+from .config_metadata import ProcessingConfig, RerankingConfig
 from .state_paths import _resolve_rag_profiles_dir
 from ..Backup_Recovery.storage_admission import acquire_storage
 from ..Utils.atomic_file_ops import atomic_write_text
