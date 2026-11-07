@@ -227,6 +227,25 @@ def resolve_active_rag_search_mode() -> str:
     return normalize_rag_search_mode(os.getenv("RAG_SEARCH_MODE") or base)
 
 
+def resolve_active_rag_profile_name() -> Optional[str]:
+    """Name the active profile without building a config or a runtime.
+
+    TASK-33620.15.41: the Library's keyword-only route names the profile in
+    its disclosure ("Profile 'BM25 Only': keyword search (no vectors)").
+    That name used to be read off the built RAG runtime, so a BM25 Only
+    search built one -- torch, transformers and an embedding model -- just
+    to label a keyword search. This reads the same profile
+    ``resolve_active_rag_search_mode`` and ``resolve_active_rag_config``
+    read, and imports nothing optional.
+
+    Returns:
+        The active profile's display name, or ``None`` when no profile
+        resolves.
+    """
+    name = getattr(_resolved_active_profile(), "name", None)
+    return name if isinstance(name, str) else None
+
+
 def _apply_env_overrides(
     config: RAGConfig,
     override_embedding_model: Optional[str] = None,

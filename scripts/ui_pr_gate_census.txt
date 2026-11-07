@@ -2614,3 +2614,16 @@ Tests/UI/test_portrait_region_editor.py::test_held_save_rejects_retired_authorit
 Tests/UI/test_portrait_region_editor.py::test_held_save_rejects_retired_authority_and_stale_revision[settings]
 Tests/UI/test_portrait_region_editor.py::test_open_dialog_retires_after_another_editor_changes_saved_artwork[review-source-False]
 Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_over_the_video_replace_confirmation_asks_first
+# TASK-33620.15.41 review (2026-11-05): the run chip's "Searching Library…"
+# copy (TASK-33621.20) went red on dev with neither file in any PR lane. The
+# activity-copy file runs whole (16 tests, 4.6 s serially at load 30). The
+# Library Auto outcome file ran 93 s serially at load 38-41, over the 30 s
+# per-file budget, so it enters as its six cases, 12-15 s each. Appended at
+# the tail, so no slot moves.
+Tests/UI/test_console_send_activity_copy.py
+Tests/UI/test_console_library_auto_outcome.py::test_a_slow_library_search_is_shown_and_stop_pauses_the_send
+Tests/UI/test_console_library_auto_outcome.py::test_shelf_action_on_a_timed_out_preparation_lets_the_next_send_through[Discard]
+Tests/UI/test_console_library_auto_outcome.py::test_shelf_action_on_a_timed_out_preparation_lets_the_next_send_through[Restore]
+Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[retry-library-search]
+Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[send-once-without-library]
+Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[cancel-send]

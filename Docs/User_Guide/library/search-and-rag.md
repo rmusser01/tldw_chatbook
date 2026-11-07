@@ -98,7 +98,8 @@ keeping your query and Recent searches. It does not start a new search.
 - **RAG Answer** — retrieval driven by your active RAG profile (see
   [Retrieval mode follows your RAG profile](#retrieval-mode-follows-your-rag-profile)
   below), then a generated answer. If embeddings support isn't
-  installed, the run blocks as "RAG unavailable" with the next step
+  installed and your profile needs vectors (Semantic or Hybrid), the run
+  blocks as "RAG unavailable" with the next step
   `Install RAG support: pip install "tldw_chatbook[embeddings_rag]", then
   restart, or switch mode to Search.` and the recovery pointer
   "Settings > RAG". Installed but nothing indexed yet? The block is
@@ -116,7 +117,9 @@ follows whichever **search mode** your active RAG profile
   query through the same keyword search Search mode uses, honestly
   labeled — no vector index required, and no `match: strong`-style
   similarity band on the resulting rows (they read `| keyword match`
-  instead — see [Evidence rows](#evidence-rows) below).
+  instead — see [Evidence rows](#evidence-rows) below). They also need no
+  embedding model: the first query starts at once instead of waiting for
+  one to load, and it works without embeddings support installed.
 - **Semantic** profiles run vector retrieval, same as before.
 - **Hybrid** profiles blend keyword and vector retrieval whenever at least
   one **keyword-indexed source** is selected — which is now all four of

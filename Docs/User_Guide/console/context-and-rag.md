@@ -1036,11 +1036,21 @@ the manual path shows, rather than searching everything.
 
 While a send is retrieving, the run chip reads **Run: Searching Library…** and
 **Stop** is offered. The search itself is capped at a **5-second timeout**.
-The first automatic send after launch also has to start the Library's search
-service (it loads the embedding model: a few seconds, or about 20 seconds the
-very first time, while the model downloads). That start-up has its own,
-longer 60-second limit and does not count against the 5 seconds, so the first
-send after launch no longer times out just because the service was cold.
+How long the first automatic send after launch waits depends on your active
+RAG profile ([Settings ▸ RAG](../settings/rag.md)):
+
+- A keyword-only profile, such as the built-in **BM25 Only**, searches at
+  once. It needs no embedding model, so nothing is loaded first, and it works
+  without embeddings support installed.
+- A profile that uses vectors (Semantic or Hybrid) first has to start the
+  Library's search service, which loads the embedding libraries and model.
+  That takes several seconds (about 6 on an otherwise idle machine), much
+  longer on a busy one, and longer again the very first time, while the model
+  downloads. The run chip reads **Searching Library…** for the whole wait.
+  That start-up has its own, longer 60-second limit and does not count
+  against the 5 seconds, so the first send after launch does not time out
+  just because the service was cold.
+
 Successful evidence is staged and then consumed by that send. **Zero results**
 is a completed retrieval, so the send continues without evidence.
 

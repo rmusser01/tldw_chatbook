@@ -263,6 +263,11 @@ class LibraryLocalRagSearchService:
         #: every caller joins (see `_shared_runtime_build`), with the shared
         #: service generation it was started under.
         self._runtime_build: tuple[int, asyncio.Future[tuple[Any, Any]]] | None = None
+        #: TASK-33620.15.41: the active-profile route read (see
+        #: `_shared_route_read`), with the generation it was started under.
+        self._route_read: tuple[int, asyncio.Future[tuple[str, str]]] | None = None
+        #: The generation whose failed route read was last warned about.
+        self._route_read_warned: int | None = None
 
     async def prewarm(self) -> bool:
         """Build the shared RAG runtime now, ahead of a time-boxed search.
@@ -273,12 +278,86 @@ class LibraryLocalRagSearchService:
         this first, under its own bound, so that build no longer spends the
         turn's short search budget. Cheap once the runtime is cached.
 
+        TASK-33620.15.41: a keyword-only ("plain", e.g. BM25 Only) profile
+        searches the Library's FTS seams and needs no runtime, so nothing is
+        built for it. The build it used to wait for (7.7 s of a first
+        Automatic Console send's 10.1 s live, 26-29 s on a loaded host) was
+        mostly importing sentence-transformers, torch, transformers and
+        chromadb, only so `_search_rag` could read the profile's mode.
+
         Returns:
-            True when a usable runtime is available; False when it is not
-            (missing deps or a failed build), which the next `search`
-            reports through its usual recovery state.
+            True when the active profile can search: it is keyword-only, or a
+            usable runtime is available. False when it needs a runtime that
+            is not available (missing deps or a failed build), which the next
+            `search` reports through its usual recovery state.
         """
+        route = await self._runtime_free_route()
+        if route is not None and route[0] == "plain":
+            return True
         return await self._resolve_rag_runtime() is not None
+
+    async def _runtime_free_route(self) -> tuple[str, str] | None:
+        """Read the active profile's route without building a RAG runtime.
+
+        TASK-33620.15.41 / TASK-3601. A runtime already cached on the app is
+        cheap and stays authoritative (it is what `_search_rag` searches), so
+        this answers only when there is none. The answer is trusted only for
+        the keyword-only route: any other mode needs the runtime anyway, and
+        the runtime built for it then decides (it reads the same active
+        profile, after the first-run settings import that may re-point it).
+
+        Returns:
+            ``(mode, disclosure label)`` read from the active profile, or
+            ``None`` when a runtime is cached or the profile could not be
+            read -- the caller then resolves the runtime as before, so an
+            unreadable profile never turns into a guessed keyword search.
+        """
+        if current_app_rag_service(self._app) is not None:
+            return None
+        try:
+            return await asyncio.shield(self._shared_route_read())
+        except Exception as exc:  # noqa: BLE001 -- fall back to the runtime
+            # Retried on every search, but warned once per generation: a
+            # profile that stays unreadable would otherwise log per search.
+            generation = shared_rag_service_generation()
+            if getattr(self, "_route_read_warned", None) == generation:
+                return None
+            self._route_read_warned = generation
+            logger.warning(
+                "Library RAG: active profile route unreadable; resolving the "
+                "runtime instead | exception_type={}",
+                type(exc).__name__,
+            )
+            return None
+
+    def _shared_route_read(self) -> asyncio.Future[tuple[str, str]]:
+        """Return the active-profile route read, starting one if needed.
+
+        One read per shared-service generation, joined by every caller and
+        kept once it succeeds: the same staleness rule as the cached runtime
+        (`current_app_rag_service`), since a profile switch or an in-place
+        profile save resets the shared service and so bumps the generation.
+        Joined, not repeated, for the reason `_shared_runtime_build` is: a
+        Console prewarm that gives up (timeout, Stop) must not leave one more
+        executor thread behind for each retry. A failed read is not kept.
+
+        Returns:
+            A future resolving to ``(mode, disclosure label)``.
+        """
+        generation = shared_rag_service_generation()
+        started, read = getattr(self, "_route_read", None) or (None, None)
+        if (
+            read is None
+            or started != generation
+            or read.get_loop() is not asyncio.get_running_loop()
+            or (read.done() and (read.cancelled() or read.exception() is not None))
+        ):
+            # Off the event loop: the first read imports the RAG profile tree
+            # (never torch -- see `_active_profile_route`).
+            read = asyncio.ensure_future(asyncio.to_thread(_active_profile_route))
+            read.add_done_callback(lambda done: done.cancelled() or done.exception())
+            self._route_read = (generation, read)
+        return read
 
     async def search(
         self,
@@ -396,6 +475,15 @@ class LibraryLocalRagSearchService:
             `LibraryRagSearchOutcome`), with any routing disclosure attached
             under `diagnostics[LIBRARY_RAG_ROUTE_NOTES_KEY]`.
         """
+        # TASK-33620.15.41 / TASK-3601: the keyword-only route needs no
+        # runtime, so read the profile first and build nothing for it -- not
+        # the embedding stack, and not the `embeddings_rag` extras gate.
+        route = await self._runtime_free_route()
+        if route is not None and route[0] == "plain":
+            return await self._search_plain_profile(
+                query, source_types, top_k, scope=scope, profile_label=route[1]
+            )
+
         rag_service = await self._resolve_rag_runtime()
         if rag_service is None:
             return LibraryRagSearchOutcome(
@@ -405,14 +493,12 @@ class LibraryLocalRagSearchService:
         profile_mode = _resolve_profile_search_mode(rag_service)
 
         if profile_mode == "plain":
-            result = await self._search_keyword(query, source_types, top_k, scope=scope)
-            return _with_route_notes(
-                result,
-                (
-                    ROUTE_NOTE_PLAIN_PROFILE_TEMPLATE.format(
-                        profile=_profile_disclosure_label(rag_service)
-                    ),
-                ),
+            return await self._search_plain_profile(
+                query,
+                source_types,
+                top_k,
+                scope=scope,
+                profile_label=_profile_disclosure_label(rag_service),
             )
 
         if profile_mode == "hybrid":
@@ -437,6 +523,22 @@ class LibraryLocalRagSearchService:
 
         return await self._search_semantic(
             query, source_types, top_k, kwargs, scope=scope, rag_service=rag_service
+        )
+
+    async def _search_plain_profile(
+        self,
+        query: str,
+        source_types: tuple[str, ...],
+        top_k: int,
+        *,
+        scope: Optional[EffectiveScope],
+        profile_label: str,
+    ) -> Any:
+        """Run a keyword-only profile's search: the four seams, disclosed."""
+        result = await self._search_keyword(query, source_types, top_k, scope=scope)
+        return _with_route_notes(
+            result,
+            (ROUTE_NOTE_PLAIN_PROFILE_TEMPLATE.format(profile=profile_label),),
         )
 
     async def _search_keyword(
@@ -1237,10 +1339,41 @@ def _profile_disclosure_label(rag_service: Any) -> str:
         `"Profile '<name>'"`, or `"Active RAG profile"` when the runtime
         exposes no usable profile name.
     """
-    name = getattr(getattr(rag_service, "profile", None), "name", None)
+    return _profile_label(getattr(getattr(rag_service, "profile", None), "name", None))
+
+
+def _profile_label(name: Any) -> str:
+    """`"Profile '<name>'"`, or `"Active RAG profile"` for no usable name."""
     if isinstance(name, str) and name.strip():
         return f"Profile '{name.strip()}'"
     return "Active RAG profile"
+
+
+def _active_profile_route() -> tuple[str, str]:
+    """The active profile's search mode and disclosure label, runtime-free.
+
+    TASK-33620.15.41 / TASK-3601. Reads the same active profile the shared
+    runtime would be built from (pointer, builtin fallback, ``RAG_SEARCH_MODE``
+    override), without building a config or a runtime. Imported lazily: the
+    ``simplified`` package executes its whole service tree on import
+    (TASK-21731), which must stay off the app's import path, and this runs
+    on a worker thread. It never imports torch
+    (``Tests/RAG/test_active_config_resolution.py`` pins that for the mode
+    read; ``resolve_active_rag_config``'s ``device == "auto"`` probe is
+    exactly what this avoids).
+
+    Returns:
+        ``(mode, label)``: the normalized search mode (``plain``,
+        ``semantic`` or ``hybrid``) and the disclosure label.
+    """
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        resolve_active_rag_profile_name,
+        resolve_active_rag_search_mode,
+    )
+
+    return resolve_active_rag_search_mode(), _profile_label(
+        resolve_active_rag_profile_name()
+    )
 
 
 def _with_route_notes(result: Any, notes: Sequence[str]) -> Any:

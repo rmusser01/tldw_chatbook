@@ -148,6 +148,12 @@ The first fix warmed the display after the evidence settle, just before the poll
 
 **What to do.** When a test waits for work on a worker thread (a config write, SQLite, file I/O), await an event the worker sets, or poll with `asyncio.sleep`. Use `pilot.pause()` only to wait for layout. When such a wait times out, compare the event loop's CPU since the wait began with the wall time. If they are close and the thread is partway through its write, the thread was short of the GIL; it was not queued or blocked on a lock. `Tests/UI/test_llamacpp_snapshot_settings.py` (`_SaveTimeline`) reports both. Also, `pilot.press()` and `wait_for_scheduled_animations()` end in `wait_for_idle()`, which measures the whole process's `process_time()`. So while any thread uses CPU, each call can take up to 1 s.
 
+## A projection that collapses one status's copy hides every named step that shares the status (TASK-33620.15.41, 2026-11-05)
+
+**Incident.** TASK-33621.20 named the Library wait by giving the VALIDATING run state the copy "Searching Library…", and pinned it with `Tests/UI/test_console_library_auto_outcome.py::test_a_slow_library_search_is_shown_and_stop_pauses_the_send`. On 2026-10-31, 077e5bfa09 (TASK-34601.1) made `console_send_activity_copy` return "Sending…" for every VALIDATING state, whatever its copy said. That pinning test has been red on dev since then, at its "Run: Searching Library…" wait (line 186). Nobody noticed: the full Tests/UI tree runs only on main pushes and nightly, and the file is not in the PR census. Live on dev 29592ecc9b, the run chip read "Run: Sending…" for the whole 26-36 s Library runtime build of a first Automatic send under load (8.8 s unloaded).
+
+**What to do.** Before a projection maps a status to one fixed string, grep for every producer of that status's `visible_copy` and for the tests that pin those strings, and run those tests. They are often outside the projection's own test file and outside every PR lane.
+
 ## A worker-thread SQLite handle can be proven closed from the test thread with the `in_transaction` getter (TASK-38714, 2026-11-05)
 
 **Incident.** Four TASK-38714 tests had to show that a connection a store opened on a pool thread was closed after the owner's close ran elsewhere. The thread-local slot belongs to a thread that has already exited, and TASK-31993's lesson says SQLite's thread check fires before its closed check. So the first plan was to probe on each opening thread. The kernel stores (`AgentRunsDB`) use `check_same_thread=True`, but `sqlite3.Connection.in_transaction.__get__(conn)` only checks that the connection is open, not which thread asks. Called from the test thread, it returned normally for the leaked handles at base (`DID NOT RAISE`, red) and raised "Cannot operate on a closed database" after the fix (green). Statements such as `execute` are the calls that check the thread first.
@@ -24803,3 +24809,12 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - For a timing window, act with the action itself (`screen.action_focus_previous()`) and plain `asyncio` polling, not `pilot.press`.
 - Pass a diagnostic as a callable (`message=lambda: ...`), so it reports the state at the timeout.
 - Show each case red on the buggy tree before trusting it green.
+
+## A flake's failure rate swings with the host, so compare it only in interleaved pairs (TASK-33620.15.41, 2026-11-05)
+
+**Incident.** In TASK-33620.15.41's branch-against-dev comparison, `test_console_library_pause_recovery.py::test_the_shelf_never_offers_a_send_the_card_is_sending[stream]` failed on the branch and passed on dev. Further runs seemed to confirm it: six alternating pairs gave 5 failures on the branch against 2 on dev, and a dev-only batch failed 1 of 8. Then dev with only the branch's Library changes applied failed 8 of 8, although the test uses a stub search service and a probe in the real one never fired. Ten more alternating pairs, at a higher load, failed once on dev and never on the branch: over all sixteen pairs, 3 failures on dev and 5 on the branch. The rate followed the host, which other sessions loaded and unloaded every few minutes, and not the tree. The test was already red on dev: its [search] case failed every run (TASK-33621.143).
+
+**What to do.**
+- Before blaming a branch for a flake, run the two trees in strictly alternating pairs and count failures per arm, and run enough of them: six pairs still read 5 against 2. Sequential batches confound the tree with whatever the host was doing at the time.
+- Check whether the test can reach the changed code at all: a probe in the changed function settles it faster than more samples.
+- Record the dev rate in the follow-up task, so the next reader does not rediscover it as a regression.

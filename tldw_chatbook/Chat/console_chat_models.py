@@ -1057,6 +1057,13 @@ class ConsoleProviderSelection:
     )
 
 
+#: The run copy while an automatic Library search (or the Library's first-use
+#: build ahead of it) holds a preparing send (TASK-33621.20). Lives beside the
+#: run state so the run chip's projection can keep it without importing the
+#: lazily loaded `console_library_search` (TASK-33620.15.41).
+CONSOLE_LIBRARY_SEARCHING_COPY = "Searching Library…"
+
+
 @dataclass(frozen=True)
 class ConsoleRunState:
     """Visible run state surfaced in Console controls and inspector."""

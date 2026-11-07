@@ -71,6 +71,12 @@ Enter and the POST than dev: the profiles' history, not their code.
   so that each arm meets each profile equally often. Swapping pairs of profiles
   between halves is not enough.
 
+## Another session's load bursts last 25 minutes each: check for quiet before every launch, not every batch (TASK-33620.15.41, 2026-11-05)
+
+**Incident.** TASK-33620.15.41's paired first-send rounds (dev 29592ecc9b against the fix, BM25 Only and Hybrid Basic, one launch at a time) began at host load 4. Within minutes another session started 88 `python -I -S -c "...while time.monotonic()<e: x+=1" 1500.0` busy loops, which held the 1-minute load at 105-117 on 14 cores. The batches ran back to back with gaps of a few minutes, three in the first hour. The same dev build's first Automatic BM25 Only send took 10.1 s Enter-to-POST at load 11 and 33.6-36.4 s at load 98-110. The seeded template from the last attempt, kept under `/private/tmp`, had been emptied by the macOS cleaner and had to be rebuilt through the app.
+
+**What to do.** Gate each launch on its own check: no such generator in `ps`, and a 1-minute load below about 8. A check at the start of a batch is not enough, because a burst can start between launches. Record the load at Enter for every launch, and report loaded rounds apart from quiet ones rather than taking a median across them. Keep seeded profile templates outside `/private/tmp`.
+
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
 **Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:
