@@ -194,9 +194,21 @@ def test_console_transition_and_send_stashes_are_not_reconciled(location):
     assert composer.draft_text() == ("visible draft" if location == "visible" else "")
 
 
-@pytest.mark.parametrize("shape", ["transition", "pending", "stash", "text"])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "no-composer",
+        "two-composers",
+        "subclass",
+        "composer-text",
+        "transition",
+        "pending",
+        "stash",
+        "text",
+    ],
+)
 def test_console_unknown_draft_shape_refuses_instead_of_clean(shape):
-    """Every value here would read as clean; ChatScreen must refuse instead."""
+    """Each shape is unknown; ChatScreen must refuse it, never read it as clean."""
     from tldw_chatbook.Backup_Recovery.unsaved_editors import (
         UnsavedEditor,
         probe_unsaved_editors,
@@ -207,9 +219,19 @@ def test_console_unknown_draft_shape_refuses_instead_of_clean(shape):
         ConsoleDraftStash,
     )
 
+    class Subclass(ConsoleComposerBar):
+        pass
+
     composer = ConsoleComposerBar()
+    if shape == "composer-text":
+        composer.draft_text = lambda: b""
+    composers = {
+        "no-composer": [],
+        "two-composers": [composer, ConsoleComposerBar()],
+        "subclass": [Subclass()],
+    }.get(shape, [composer])
     view = ChatScreen(SimpleNamespace(app_config={}))
-    view.query = lambda kind: [composer]
+    view.query = lambda kind: composers
     if shape == "transition":
         view._session._console_draft_switch_snapshot = ("session", "", 1, None)
     stash = {
