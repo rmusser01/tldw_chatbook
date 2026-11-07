@@ -558,6 +558,10 @@ def get_app() -> TldwCli:
     Returns:
         The TldwCli app instance, not yet running.
     """
+    from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+
+    install_semantic_coordination()  # DB-layer port; composition root
+
     # Configure logging to suppress verbose debug messages early
 
     # Suppress various verbose loggers

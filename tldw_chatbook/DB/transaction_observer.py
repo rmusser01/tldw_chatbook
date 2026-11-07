@@ -124,10 +124,11 @@ def install_semantic_coordinator_factory(factory: Callable[[Any], Any]) -> None:
 
 def semantic_coordinator_for(db: Any) -> Any:
     """Return the coordinator for ``db`` or raise if nothing was installed."""
-    if _factory is None:
+    factory = _factory  # read once: a concurrent clear must not become a TypeError
+    if factory is None:
         raise SemanticCoordinationNotInstalledError(
             "Semantic-revision coordination is not installed. Call "
             "tldw_chatbook.Chat.console_semantic_revision.install_semantic_coordination() "
             "once at process startup (the composition root) before writing messages."
         )
-    return _factory(db)
+    return factory(db)

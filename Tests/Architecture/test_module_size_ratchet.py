@@ -831,6 +831,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
     # TASK-36949.3: 25870 -> 25863 (-7) -- semantic-revision coordination reached through the DB-layer port.
+    # 2026-11-03, TASK-36949.5: +3 shared store-error import.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 23512,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
