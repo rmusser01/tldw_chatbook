@@ -77,7 +77,6 @@ from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
-from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.startup_errors import private_path_repair_hint
 from tldw_chatbook.Utils.private_paths import (
@@ -6136,8 +6135,20 @@ def _apply_literal_mutation_unlocked(
 _CONFIG_WRITE_SWITCH_INTERVAL = 0.0001
 
 
-@switch_interval_at_most(_CONFIG_WRITE_SWITCH_INTERVAL)
 def _apply_literal_settings_transaction_locked(
+    *args: Any, **kwargs: Any
+) -> LiteralConfigMutationResult:
+    """Run one config transaction with a short switch interval (TASK-38987).
+
+    Imported here, not at module level: no config write runs at boot.
+    """
+    from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
+
+    with switch_interval_at_most(_CONFIG_WRITE_SWITCH_INTERVAL):
+        return _apply_literal_settings_transaction_unscoped(*args, **kwargs)
+
+
+def _apply_literal_settings_transaction_unscoped(
     mutation_builder: Callable[
         [AtomicLiteralMutationSnapshot], LiteralSettingsMutation
     ],

@@ -10,8 +10,6 @@ from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from typing import Any
 
-from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
-
 
 @dataclass(slots=True, eq=False)
 class ConsolePreparationRead:
@@ -37,8 +35,10 @@ def _preparation_handoffs():
     """Limit GIL convoys only while original finite callback bodies run.
 
     TASK-38987: the shared owner, so a config write overlapping a read
-    cannot leave the interval lowered.
+    cannot leave the interval lowered. Imported on first use (boot budget).
     """
+    from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
+
     return switch_interval_at_most(_READ_HANDOFF_LIMIT)
 
 
