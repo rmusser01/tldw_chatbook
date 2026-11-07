@@ -1988,36 +1988,10 @@ class LocalToolProvider:
         Args:
             run_id: The run whose slice is cleared, then restored.
         """
-        from .approval_observation import provider_observation_scope
+        from .local_approval_state import local_stamp_scope
 
-        with provider_observation_scope(self, run_id, clear=True):
-            with self._stamps_lock:
-                self._index_call_stamps = {
-                    key: value
-                    for key, value in self._index_call_stamps.items()
-                    if key[0] != run_id
-                }
-                saved = {
-                    key: value for key, value in self._stamps.items() if key[0] == run_id
-                }
-                self._stamps = {
-                    key: value for key, value in self._stamps.items() if key[0] != run_id
-                }
-            try:
-                yield
-            finally:
-                with self._stamps_lock:
-                    self._index_call_stamps = {
-                        key: value
-                        for key, value in self._index_call_stamps.items()
-                        if key[0] != run_id
-                    }
-                    self._stamps = {
-                        key: value
-                        for key, value in self._stamps.items()
-                        if key[0] != run_id
-                    }
-                    self._stamps.update(saved)
+        with local_stamp_scope(self, run_id):
+            yield
 
     def pending_gate_for(
         self,
@@ -3817,23 +3791,9 @@ class LocalToolProvider:
 
     def _persist_approval_safe(self, hub: HubTool, decision: str) -> None:
         """Observe a real writer while preserving best-effort current-call execution."""
-        from .approval_observation import (
-            approval_contexts_scope,
-            provider_approval_contexts,
-            publish_grant_application,
-        )
+        from .local_approval_state import persist_local_approval
 
-        with approval_contexts_scope(provider_approval_contexts(self, hub.name)):
-            if self._persist_approval is None:
-                publish_grant_application("not_applied", error_code="writer_unavailable")
-                return
-            try:
-                self._persist_approval(hub, decision)
-            except Exception as exc:  # noqa: BLE001 - current call survives optional grant write failure
-                publish_grant_application("failed", error_code="writer_failed")
-                logger.warning(
-                    f"LocalToolProvider: persist_approval ({decision}) failed for {hub.name}: {exc}"
-                )
+        persist_local_approval(self, hub, decision, log=logger)
 
     def _record_decision_safe(self, hub: HubTool, decision: str) -> None:
         """Never-raise audit side effect; a failure must not break invoke()."""

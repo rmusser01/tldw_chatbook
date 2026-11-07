@@ -44,6 +44,7 @@ for name, relative in {
 }.items():
     os.environ[name] = str(root / relative)
 os.environ.update(
+    PYTHONPATH=os.pathsep.join((str(repo), str(core))),
     PYTHONUTF8="1",
     PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
     HF_HUB_OFFLINE="1",
@@ -171,6 +172,13 @@ assert target in {
     "Tests/Architecture/test_backup_owner_inventory.py",
     "Tests/Architecture/test_console_realtime_controller_boundary.py",
     "Tests/Architecture/test_console_review_selection_controller_boundary.py",
+    "Tests/Architecture/test_layer_direction.py",
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "Tests/Chat/test_console_runtime_lifetime.py",
+    "Tests/UI/test_console_projection_reads_off_loop.py",
+    "Tests/MCP/test_unified_control_plane_service.py",
+    "Tests/Chat/test_approval_constants.py",
+    "Tests/Architecture/test_console_approval_owner_extraction.py",
 }
 selection = sys.argv[2:]
 assert not selection or (len(selection) == 2 and selection[0] == "-k")

@@ -1658,3 +1658,29 @@ class ConsoleForkTitleInput(BaseModel):
     @classmethod
     def _normalize_title(cls, value: object) -> str:
         return validate_console_fork_title(value)
+
+
+@dataclass(frozen=True)
+class ConsoleViewHookSlot:
+    """One runtime-object attribute a mounted Console view owns.
+
+    Args:
+        name: The attribute name on the target object.
+        target: Which runtime object holds it — ``"controller"``,
+            ``"store"`` or ``"wake"`` (the controller's
+            ``fleet_wake`` coordinator).
+        viewless_default: What `detach_view` restores. Almost always
+            `None`, which is every one of these slots' documented
+            "no UI wired" value.
+    """
+
+    name: str
+    target: str
+    viewless_default: Any = None
+    #: WHY this slot's viewless default is correct — i.e. what the
+    #: production read site does with it. Task 4's rule: a `None` default
+    #: is only allowed where the read site's own guard makes `None` mean
+    #: the semantically right thing (inert, or fail-closed); anywhere the
+    #: guard's fallback is a WRONG answer, the default must be an explicit
+    #: callable. Kept next to the value so the two cannot drift.
+    why: str = ""

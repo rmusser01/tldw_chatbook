@@ -7,6 +7,31 @@ import pytest
 pytestmark = pytest.mark.bootstrap_profile
 
 
+def test_store_observers_have_domain_identity_and_ui_compatibility_aliases():
+    from tldw_chatbook.Chat import console_approval_feedback as domain
+    from tldw_chatbook.UI.Console_Modules import approval_feedback as ui
+
+    for name in (
+        "bind_round_observations",
+        "settle_round_observations",
+        "receive_round_observations",
+        "publish_approval_observation",
+    ):
+        assert getattr(ui, name) is getattr(domain, name)
+
+
+def test_interrupt_provenance_helpers_keep_original_host_aliases():
+    from tldw_chatbook.Agents import approval_provenance as domain
+    from tldw_chatbook.Chat import console_interrupt_rounds as host
+
+    for name in (
+        "_approval_decision_fact",
+        "_review_decision",
+        "_stamp_answer_provenance",
+    ):
+        assert getattr(host, name) is getattr(domain, name)
+
+
 def captured(round_id="r", revision=1):
     from tldw_chatbook.Chat.approval_presentation import (
         ApprovalAuthority,

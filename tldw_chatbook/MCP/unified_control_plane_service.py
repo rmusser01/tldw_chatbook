@@ -5293,61 +5293,21 @@ class UnifiedMCPControlPlaneService:
         expected_profile_digest: str | None = None,
         expected_revision: int | None = None,
     ) -> None:
-        """Grant a session-scoped approval for one profile/server/tool triple.
+        """Grant one session triple through the unchanged fenced session-grant owner."""
+        from .session_approval import apply_session_approval
 
-        Session approvals are held in memory only, for the lifetime of
-        this service instance (an app-run singleton) -- they are never
-        persisted to disk and do not survive an app restart or a fresh
-        instance of this service.
-
-        Args:
-            server_key: Prefixed server key the tool belongs to.
-            tool_name: Name of the tool being approved.
-            profile_id: Exact permission profile receiving the approval.
-            expected_profile_digest: Captured policy digest to revalidate
-                under the permission-store fence.
-            expected_revision: Captured imported-profile revision, when
-                applicable.
-        """
-        if expected_profile_digest is None and expected_revision is None:
-            # Compatibility seam for non-UI callers. Captured UI approvals
-            # always supply the digest (and imported revision) below.
-            with self._session_approvals_lock:
-                self._session_approvals.add((profile_id, server_key, tool_name))
-            _publish_grant_application("applied", actual_scope="approve_session")
-            return
-        store = self.permission_store
-        if store is None:
-            if expected_profile_digest is not None or expected_revision is not None:
-                raise ProfileMutationError("stale_profile")
-            with self._session_approvals_lock:
-                self._session_approvals.add((profile_id, server_key, tool_name))
-            _publish_grant_application("applied", actual_scope="approve_session")
-            return
-        with store.mutation_fence():
-            snapshot = store.read_snapshot_strict()
-            profile = snapshot.payload["profiles"].get(profile_id)
-            if not isinstance(profile, Mapping):
-                raise ProfileMutationError("stale_profile")
-            disposition = profile_lifecycle_disposition(profile)
-            if disposition in {"invalid", "tombstone"}:
-                raise ProfileMutationError("lifecycle_invalid")
-            digest = profile_policy_digest(profile)
-            if (
-                expected_profile_digest is not None
-                and digest != expected_profile_digest
-            ):
-                raise ProfileMutationError("stale_profile")
-            revision = (
-                profile["tool_pack_lifecycle"]["revision"]
-                if disposition == "imported"
-                else None
-            )
-            if expected_revision is not None and revision != expected_revision:
-                raise ProfileMutationError("stale_revision")
-            with self._session_approvals_lock:
-                self._session_approvals.add((profile_id, server_key, tool_name))
-        _publish_grant_application("applied", actual_scope="approve_session")
+        return apply_session_approval(
+            self,
+            server_key,
+            tool_name,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+            publish=_publish_grant_application,
+            lifecycle=profile_lifecycle_disposition,
+            policy_digest=profile_policy_digest,
+            mutation_error=ProfileMutationError,
+        )
 
     def is_session_approved(
         self,

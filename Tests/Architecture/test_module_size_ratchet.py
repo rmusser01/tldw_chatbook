@@ -235,9 +235,9 @@ _BUDGETS: dict[str, int] = {
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
     # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
     # the chat's previous ordinary outcome id at acceptance.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29180,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29167,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
     "tldw_chatbook/Chat/console_context_compaction.py": 4217,
@@ -621,7 +621,7 @@ _BUDGETS: dict[str, int] = {
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
     # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8556,
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8534,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -795,7 +795,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/config.py": 8983,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12092,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 12076,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -925,7 +925,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7069,
+    "tldw_chatbook/Chat/console_runtime.py": 7050,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
@@ -940,12 +940,12 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_trace_service.py": 6587,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
-    "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
+    "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # 2026-11-02, TASK-37655 (owner rule: a fix over a size ratchet raises the
     # row with a dated comment): dev 88af9f9379's 5,851 + 3 = 5,854. The remote
     # preflight mirror folds Unicode normalization like the worker.
-    "tldw_chatbook/Agents/local_tool_provider.py": 5854,
+    "tldw_chatbook/Agents/local_tool_provider.py": 5846,
     # 2026-11-02, TASK-37655 (owner rule: a fix over a size ratchet raises the
     # row with a dated comment): dev 88af9f9379's bundle measures 5,705 (its row says
     # 5,706); this branch's fold changes -- the bundled fold_path_part, git

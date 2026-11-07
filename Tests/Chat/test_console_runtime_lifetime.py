@@ -42,6 +42,40 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
 
+def test_view_hook_slot_keeps_canonical_model_and_historical_runtime_identity() -> None:
+    from dataclasses import FrozenInstanceError, fields
+    import pickle
+
+    from tldw_chatbook.Chat import console_chat_models as models
+    from tldw_chatbook.Chat import console_runtime as runtime
+
+    canonical = models.ConsoleViewHookSlot
+    assert runtime.ConsoleViewHookSlot is canonical
+    assert [field.name for field in fields(canonical)] == [
+        "name",
+        "target",
+        "viewless_default",
+        "why",
+    ]
+    slot = runtime.ConsoleViewHookSlot("qa_hook", "controller")
+    assert (slot.name, slot.target, slot.viewless_default, slot.why) == (
+        "qa_hook",
+        "controller",
+        None,
+        "",
+    )
+    assert all(
+        isinstance(value, canonical) for value in runtime.CONSOLE_VIEW_HOOK_SLOTS
+    )
+    assert (
+        pickle.loads(b"ctldw_chatbook.Chat.console_runtime\nConsoleViewHookSlot\n.")
+        is canonical
+    )
+    assert pickle.loads(pickle.dumps(slot)) == slot
+    with pytest.raises(FrozenInstanceError):
+        slot.name = "changed"
+
+
 def test_runtime_composes_one_shared_canvas_owner_into_real_store(tmp_path) -> None:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 

@@ -88,7 +88,17 @@ print("PROTECTED_RAG_PATHS_WITHOUT_RUNTIME_OK")
 """
 
 
-def test_real_protected_getter_resolves_paths_with_optional_runtime_blocked(tmp_path):
+@pytest.mark.parametrize("block_rag_package", [False, True])
+def test_real_protected_getter_resolves_paths_with_optional_runtime_blocked(
+    tmp_path, block_rag_package
+):
+    code = _COLD_PROTECTED_GETTER
+    if block_rag_package:
+        code = code.replace(
+            'blocked = ("numpy",',
+            'blocked = ("tldw_chatbook.RAG_Search", "numpy",',
+            1,
+        )
     result = subprocess.run(
         [
             sys.executable,
@@ -96,7 +106,7 @@ def test_real_protected_getter_resolves_paths_with_optional_runtime_blocked(tmp_
             "utf8",
             "-B",
             "-c",
-            _COLD_PROTECTED_GETTER,
+            code,
             str(ROOT),
             str(tmp_path),
         ],

@@ -35,8 +35,6 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.hook_permissions import HookPermissions
     from tldw_chatbook.Chat.console_chat_controller import (
-        ApprovalDecision,
-        ApprovalDecisions,
         BuiltinToolGate,
         BuiltinToolProvider,
         ManagedSkillProposalGate,
@@ -44,7 +42,6 @@ if TYPE_CHECKING:
         MCPToolProvider,
         RawShellToolProvider,
         ToolCall,
-        ToolReviewDecision,
         ToolReviewValue,
         VirtualCliProvider,
     )
@@ -52,6 +49,9 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Agents.approval_provenance import (
+    _approval_decision_fact as _approval_decision_fact,
+    _review_decision as _review_decision,
+    _stamp_answer_provenance as _stamp_answer_provenance,
     approval_was_unanswered as approval_was_unanswered,  # noqa: PLC0414 - retained public seam
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
@@ -4002,7 +4002,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             timeout_seconds,
             deadline,
         )
-        from tldw_chatbook.UI.Console_Modules.approval_feedback import (
+        from tldw_chatbook.Chat.console_approval_feedback import (
             bind_round_observations,
         )
 
@@ -4080,7 +4080,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     list(unique_keys), call_by_key
                 )
 
-            from tldw_chatbook.UI.Console_Modules.approval_feedback import (
+            from tldw_chatbook.Chat.console_approval_feedback import (
                 settle_round_observations,
             )
 
@@ -4791,7 +4791,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 }
             approval_event = round_state["event"]
         approval_event.set()
-        from tldw_chatbook.UI.Console_Modules.approval_feedback import (
+        from tldw_chatbook.Chat.console_approval_feedback import (
             receive_round_observations,
         )
 
@@ -5193,22 +5193,6 @@ class InterruptRoundHost(InitialHookReviewMixin):
         )
 
 
-def _approval_decision_fact(
-    decision: object, *, unanswered: bool
-) -> ApprovalDecision | None:
-    if unanswered:
-        return None
-    if decision == "deny":
-        return "denied"
-    if isinstance(decision, str) and decision in {
-        "approve_once",
-        "approve_session",
-        "always_allow",
-    }:
-        return "approved"
-    return None
-
-
 def _collect_mcp_pending(
     provider: MCPToolProvider, calls: list["ToolCall"]
 ) -> list["MCPPendingCall"]:
@@ -5234,37 +5218,6 @@ def _collect_mcp_pending(
         if gate is not None:
             pending.append(gate)
     return pending
-
-
-def _review_decision(
-    row: MCPPendingCall,
-    decisions: Mapping[str, str],
-    verdict: str,
-    *,
-    allowing: tuple[str, ...],
-    name_fallback: bool,
-    read_global_ToolReviewDecision: Callable[[], Any],
-    read_global__approval_decision_fact: Callable[[], Any],
-    read_global_append_denial_reason: Callable[[], Any],
-    read_global_approval_key_unanswered: Callable[[], Any],
-    read_global_selected_approval_key: Callable[[], Any],
-) -> ToolReviewDecision:
-    """Attach an answered raw choice to the owner's unchanged verdict."""
-    key = (
-        read_global_selected_approval_key()(decisions, row.call_id, row.llm_name)
-        if name_fallback
-        else row.call_id or row.llm_name
-    )
-    decision = decisions.get(key)
-    unanswered = read_global_approval_key_unanswered()(decisions, key)
-    fact = read_global__approval_decision_fact()(decision, unanswered=unanswered)
-    if fact == "approved" and decision not in allowing:
-        fact = None
-    if decision == "allow_matching" and decision in allowing and not unanswered:
-        fact = "approved"
-    return read_global_ToolReviewDecision()(
-        read_global_append_denial_reason()(verdict, decisions, key), fact
-    )
 
 
 def _sibling_approval_refusals(
@@ -5320,35 +5273,6 @@ def _sibling_approval_refusals(
         )
         record_refusal(row, timed_out)
     return refusals
-
-
-def _stamp_answer_provenance(
-    stamps: dict[str, str],
-    rows: Sequence[MCPPendingCall],
-    decisions: Mapping[str, str],
-    *,
-    read_global_ApprovalDecisions: Callable[[], Any],
-    read_global_approval_was_unanswered: Callable[[], Any],
-    read_global_selected_approval_key: Callable[[], Any],
-) -> ApprovalDecisions:
-    """Keep unresolved denies attached to the selected name-scoped stamp."""
-    result = read_global_ApprovalDecisions()(stamps)
-    result.observation_contexts = dict(getattr(decisions, "observation_contexts", {}))
-    result.observation_aliases = dict(getattr(decisions, "observation_aliases", {}))
-    result.observation_legacy_keys = frozenset(
-        getattr(decisions, "observation_legacy_keys", ())
-    )
-    result.unresolved_keys = frozenset(
-        row.llm_name
-        for row in rows
-        if stamps.get(row.llm_name) == "deny"
-        and decisions.get(
-            read_global_selected_approval_key()(decisions, row.call_id, row.llm_name)
-        )
-        == "deny"
-        and read_global_approval_was_unanswered()(row, decisions)
-    )
-    return result
 
 
 def _stamp_approval_round_closed(state: dict[str, Any]) -> None:

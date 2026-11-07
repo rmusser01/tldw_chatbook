@@ -8222,28 +8222,14 @@ class ConsoleAgentBridge:
             if callable(unbind_promotion_context):
                 unbind_promotion_context()
             run_cancelled = "outcome" in locals() and outcome.status == RUN_CANCELLED
-            for activity_run_id in tool_activity_run_ids | raw_shell_progress_run_ids:
-                self.project_approval_feedback(session_id, activity_run_id)
-            self._clear_raw_shell_progress(
-                raw_shell_progress_run_ids, cancelled=run_cancelled
-            )
-            try:
-                tool_activity.finish(run_cancelled)
-            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
-                logger.warning(
-                    "Console tool activity display could not be settled ({})",
-                    type(exc).__name__,
-                )
-            from tldw_chatbook.Agents.approval_observation import (
-                forget_approval_contexts,
-            )
+            from .console_tool_activity import finish_approval_activity
 
-            for activity_run_id in tool_activity_run_ids | raw_shell_progress_run_ids:
-                self._tool_activity_runs.pop(activity_run_id, None)
-                if self.approval_feedback_store is not None:
-                    self.approval_feedback_store.retire_run(activity_run_id)
-                for provider in (mcp_provider, local_provider, virtual_cli_provider, raw_shell_provider):
-                    forget_approval_contexts(provider, activity_run_id)
+            finish_approval_activity(
+                self, session_id, tool_activity, tool_activity_run_ids,
+                raw_shell_progress_run_ids, run_cancelled,
+                (mcp_provider, local_provider, virtual_cli_provider, raw_shell_provider),
+                log=logger,
+            )
             if self._buddy_sink is not None:
                 for buddy_run_id in primary_buddy_run_ids:
                     self._buddy_sink.release_run(buddy_run_id)
@@ -10020,20 +10006,9 @@ class ConsoleAgentBridge:
         with self._live_usage_lock:
             self._live_usage_owners.pop(run_id, None)
             self._live_turn_usage.pop(run_id, None)
-        # Primary rows transfer their final facts in run_reply's existing finally.
-        # Children have no primary tool projection and retire at THEIR terminal.
-        if run_id not in self._tool_activity_runs:
-            try:
-                from tldw_chatbook.Agents.approval_observation import (
-                    forget_approval_contexts,
-                )
+        from .console_tool_activity import retire_child_approval_feedback
 
-                if self.approval_feedback_store is not None:
-                    self.approval_feedback_store.retire_run(run_id)
-                for owner in observation_owners:
-                    forget_approval_contexts(owner, run_id)
-            except Exception:  # noqa: BLE001, S110 - optional display cleanup
-                pass  # Display cleanup cannot suppress the terminal callback.
+        retire_child_approval_feedback(self, run_id, observation_owners)
         if callback is not None:
             callback(run_id)
 
@@ -11453,143 +11428,36 @@ class ConsoleAgentBridge:
         event: RawCliStreamEvent | RawCliResult,
     ) -> None:
         """Apply bounded progress to the exact app-owned raw-shell marker."""
-        key = (run_id, call_id)
-        with self._raw_shell_marker_lock:
-            state = self._raw_shell_markers.get(key)
-            if state is None:
-                return
-            if isinstance(event, RawCliResult):
-                state.result = event
-                return
-            if not isinstance(event, RawCliStreamEvent):
-                return
-            try:
-                state.stdout, state.stderr, clipped = self._append_raw_shell_preview(
-                    state.stdout,
-                    state.stderr,
-                    event,
-                )
-            except UnicodeError:
-                return
-            state.truncated = state.truncated or event.truncated or clipped
-            started_at = state.presentation.started_at_monotonic
-            if started_at is None:
-                started_at = self._clock()
-            state.presentation = dataclass_replace(
-                state.presentation,
-                lifecycle_state="running",
-                started_at_monotonic=started_at,
-                elapsed_seconds=max(0.0, self._clock() - started_at),
-                truncated=state.truncated,
-            )
-            self._update_raw_shell_marker(state)
-        # A real child stream is backend evidence; early dispatch is not.
-        # This local projection step is never appended to a runtime trace.
-        self._observe_approval_step(
-            state.session_id,
-            run_id,
-            AgentStep(index=0, kind="tool_output", tool_name="shell_exec", call_id=call_id),
-        )
+        from .console_tool_activity import apply_raw_shell_progress
 
+        apply_raw_shell_progress(
+            self, run_id, call_id, event,
+            result_type=RawCliResult,
+            stream_type=RawCliStreamEvent,
+            replace_presentation=dataclass_replace,
+            step_factory=AgentStep,
+        )
 
     def _clear_raw_shell_progress(
         self, run_ids: AbstractSet[str], *, cancelled: bool = False
     ) -> None:
         """Detach ended runs before settling rows so late worker events are ignored."""
-        if not run_ids:
-            return
-        with self._raw_shell_marker_lock:
-            states = [
-                self._raw_shell_markers.pop(key)
-                for key in tuple(self._raw_shell_markers)
-                if key[0] in run_ids
-            ]
-        for state in states:
-            try:
-                self._settle_raw_shell_marker(
-                    state,
-                    outcome="cancelled" if cancelled else "failure",
-                    message=(f"{state.stderr}\n\n" if state.stderr else "")
-                    + "Run ended before a result was received. Process cleanup is unknown.",
-                )
-            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
-                logger.warning(
-                    "Console shell activity display could not be settled ({})",
-                    type(exc).__name__,
-                )
+        from .console_tool_activity import clear_raw_shell_progress
+
+        clear_raw_shell_progress(self, run_ids, cancelled=cancelled, log=logger)
 
     def project_approval_feedback(self, session_id: str, run_id: str) -> None:
         """Keep the latest facts on the owning tool before its run maps retire."""
-        try:
-            feedback = getattr(self, "approval_feedback_store", None)
-            if feedback is None:
-                return
-            facts = feedback.snapshot(session_id, run_id)
-            activity = self._tool_activity_runs.get(run_id)
-            if activity is not None and activity.session_id == session_id:
-                try:
-                    activity.feedback(facts, call_keys=feedback.projection_call_keys)
-                except Exception:  # noqa: BLE001, S110 - optional display projection
-                    pass  # Optional projection cannot change tool or teardown behavior.
-            raw_updates = []
-            with self._raw_shell_marker_lock:
-                for fact in facts:
-                    for call_key in feedback.projection_call_keys(fact.identity):
-                        state = self._raw_shell_markers.get((run_id, call_key))
-                        if (
-                            state is not None
-                            and state.session_id == session_id
-                            and state.tool_presentation is not None
-                        ):
-                            state.tool_presentation = dataclass_replace(
-                                state.tool_presentation, approval_feedback=fact
-                            )
-                            raw_updates.append(state)
-            for state in raw_updates:
-                try:
-                    self._update_raw_shell_marker(state)
-                except Exception:  # noqa: BLE001, S110 - optional display projection
-                    pass  # A missing display consumer cannot affect execution.
-        except Exception:  # noqa: BLE001, S110 - optional display observation
-            pass  # Optional observations never interrupt execution or retirement.
+        from .console_tool_activity import project_approval_feedback
+
+        project_approval_feedback(
+            self, session_id, run_id, replace_presentation=dataclass_replace
+        )
 
     def _observe_approval_step(self, session_id: str, run_id: str, step: AgentStep) -> None:
-        try:
-            from tldw_chatbook.Agents.approval_observation import ApprovalObservation
+        from .console_tool_activity import observe_approval_step
 
-            feedback = getattr(self, "approval_feedback_store", None)
-            if feedback is None:
-                return
-            identity = feedback.context_for_call(
-                run_id, step.call_id, fallback_tool_name=step.tool_name
-            )
-            if identity is not None and identity.session_id == session_id:
-                kind = {
-                    "tool_execution_started": "dispatch_started",
-                    "tool_output": "backend_started",
-                    "tool_result": "tool_completed",
-                }.get(step.kind)
-                if kind:
-                    outcome = {
-                        "dispatch_started": "starting",
-                        "backend_started": "running",
-                    }.get(
-                        kind,
-                        step.tool_outcome
-                        if step.tool_outcome
-                        in {"success", "failure", "blocked", "timeout", "cancelled"}
-                        else "unknown",
-                    )
-                    feedback.publish(ApprovalObservation(identity, kind, outcome))
-            elif step.kind == "model_request_started":
-                for fact in feedback.snapshot(session_id, run_id):
-                    if fact.execution_state == "tool_completed":
-                        feedback.publish(
-                            ApprovalObservation(fact.identity, "model_wait", "waiting")
-                        )
-            self.project_approval_feedback(session_id, run_id)
-        except Exception:  # noqa: BLE001, S110 - optional display observation
-            pass  # Optional observations never interrupt execution or retirement.
+        observe_approval_step(self, session_id, run_id, step)
 
     def set_tool_approval_pending(
         self,

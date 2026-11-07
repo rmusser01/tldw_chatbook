@@ -137,6 +137,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleLifecycleRevisionChanged,
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
+    ConsoleViewHookSlot as ConsoleViewHookSlot,
 )
 from tldw_chatbook.Chat.console_display_state import console_sent_source_count
 from tldw_chatbook.Chat.console_hook_review import HookReviewResult
@@ -856,32 +857,6 @@ def viewless_user_priority_probe(session_id: str) -> bool:
         False, always.
     """
     return False
-
-
-@dataclass(frozen=True)
-class ConsoleViewHookSlot:
-    """One runtime-object attribute a mounted Console view owns.
-
-    Args:
-        name: The attribute name on the target object.
-        target: Which runtime object holds it — ``"controller"``,
-            ``"store"`` or ``"wake"`` (the controller's
-            ``fleet_wake`` coordinator).
-        viewless_default: What `detach_view` restores. Almost always
-            `None`, which is every one of these slots' documented
-            "no UI wired" value.
-    """
-
-    name: str
-    target: str
-    viewless_default: Any = None
-    #: WHY this slot's viewless default is correct — i.e. what the
-    #: production read site does with it. Task 4's rule: a `None` default
-    #: is only allowed where the read site's own guard makes `None` mean
-    #: the semantically right thing (inert, or fail-closed); anywhere the
-    #: guard's fallback is a WRONG answer, the default must be an explicit
-    #: callable. Kept next to the value so the two cannot drift.
-    why: str = ""
 
 
 @dataclass(frozen=True)

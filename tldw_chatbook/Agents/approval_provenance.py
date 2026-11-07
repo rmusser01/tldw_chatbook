@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.agent_models import ToolReviewDecision
     from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 
 from tldw_chatbook.Agents.agent_models import ApprovalDecision
@@ -162,3 +163,79 @@ def approval_was_unanswered(
         decisions, str(getattr(row, "call_id", "") or ""), row.llm_name
     )
     return read_global_approval_key_unanswered()(decisions, key)
+
+
+def _approval_decision_fact(
+    decision: object, *, unanswered: bool
+) -> ApprovalDecision | None:
+    if unanswered:
+        return None
+    if decision == "deny":
+        return "denied"
+    if isinstance(decision, str) and decision in {
+        "approve_once",
+        "approve_session",
+        "always_allow",
+    }:
+        return "approved"
+    return None
+
+
+def _review_decision(
+    row: MCPPendingCall,
+    decisions: Mapping[str, str],
+    verdict: str,
+    *,
+    allowing: tuple[str, ...],
+    name_fallback: bool,
+    read_global_ToolReviewDecision: Callable[[], Any],
+    read_global__approval_decision_fact: Callable[[], Any],
+    read_global_append_denial_reason: Callable[[], Any],
+    read_global_approval_key_unanswered: Callable[[], Any],
+    read_global_selected_approval_key: Callable[[], Any],
+) -> ToolReviewDecision:
+    """Attach an answered raw choice to the owner's unchanged verdict."""
+    key = (
+        read_global_selected_approval_key()(decisions, row.call_id, row.llm_name)
+        if name_fallback
+        else row.call_id or row.llm_name
+    )
+    decision = decisions.get(key)
+    unanswered = read_global_approval_key_unanswered()(decisions, key)
+    fact = read_global__approval_decision_fact()(decision, unanswered=unanswered)
+    if fact == "approved" and decision not in allowing:
+        fact = None
+    if decision == "allow_matching" and decision in allowing and not unanswered:
+        fact = "approved"
+    return read_global_ToolReviewDecision()(
+        read_global_append_denial_reason()(verdict, decisions, key), fact
+    )
+
+
+def _stamp_answer_provenance(
+    stamps: dict[str, str],
+    rows: Sequence[MCPPendingCall],
+    decisions: Mapping[str, str],
+    *,
+    read_global_ApprovalDecisions: Callable[[], Any],
+    read_global_approval_was_unanswered: Callable[[], Any],
+    read_global_selected_approval_key: Callable[[], Any],
+) -> ApprovalDecisions:
+    """Keep unresolved denies attached to the selected name-scoped stamp."""
+    result = read_global_ApprovalDecisions()(stamps)
+    result.observation_contexts = dict(getattr(decisions, "observation_contexts", {}))
+    result.observation_aliases = dict(getattr(decisions, "observation_aliases", {}))
+    result.observation_legacy_keys = frozenset(
+        getattr(decisions, "observation_legacy_keys", ())
+    )
+    result.unresolved_keys = frozenset(
+        row.llm_name
+        for row in rows
+        if stamps.get(row.llm_name) == "deny"
+        and decisions.get(
+            read_global_selected_approval_key()(decisions, row.call_id, row.llm_name)
+        )
+        == "deny"
+        and read_global_approval_was_unanswered()(row, decisions)
+    )
+    return result

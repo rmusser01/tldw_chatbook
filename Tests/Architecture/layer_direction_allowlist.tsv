@@ -134,8 +134,6 @@ tldw_chatbook.Utils.file_handlers	tldw_chatbook.Event_Handlers.Chat_Events.chat_
 tldw_chatbook.Utils.file_handlers	tldw_chatbook.Local_Ingestion.local_file_ingestion	lazy
 tldw_chatbook.Utils.launch_options	tldw_chatbook.Backup_Recovery.profile_paths	top
 tldw_chatbook.Utils.private_paths	tldw_chatbook.Backup_Recovery.storage_admission	lazy
-tldw_chatbook.Utils.sensitive_paths	tldw_chatbook.RAG_Search.config_profiles	lazy
-tldw_chatbook.Utils.sensitive_paths	tldw_chatbook.RAG_Search.simplified.config	lazy
 tldw_chatbook.Utils.sensitive_paths	tldw_chatbook.Skills_Interop.local_skills_service	lazy
 tldw_chatbook.Utils.sensitive_paths	tldw_chatbook.Skills_Interop.skill_trust_store	lazy
 tldw_chatbook.Utils.token_counter	tldw_chatbook.model_capabilities	lazy

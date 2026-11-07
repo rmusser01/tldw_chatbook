@@ -537,7 +537,7 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
         check, as elsewhere in this module.
     """
     from .. import config as _config
-    from ..RAG_Search.state_paths import (
+    from .rag_state_paths import (
         default_chroma_persist_directory,
         default_rag_profiles_dir,
     )

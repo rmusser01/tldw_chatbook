@@ -56,10 +56,13 @@ def _run_isolated_python(
     env = {
         **os.environ,
         "TLDW_TEST_MODE": "1",
+        "PYTHONIOENCODING": "utf-8",
         "XDG_DATA_HOME": str(data_home),
         "XDG_CONFIG_HOME": str(config_home),
         "HOME": str(home),
-        "PYTHONPATH": str(REPO_ROOT),
+        "PYTHONPATH": os.pathsep.join(
+            (str(REPO_ROOT), str(REPO_ROOT / "packages/tldw_profile_core/src"))
+        ),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     if extra_env:
@@ -70,6 +73,7 @@ def _run_isolated_python(
         cwd=REPO_ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
     )

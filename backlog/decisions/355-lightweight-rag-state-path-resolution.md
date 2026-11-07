@@ -42,3 +42,7 @@ Validate the actual Library depth read and original received-configuration captu
 ## Validation
 
 Add a fresh-process regression proving real protected-directory resolution returns the correct paths while optional RAG/ML imports are blocked. Test all existing environment/config precedence and dynamic user-data behavior, including legacy public entry points. Preserve the sensitive-path and file-tool refusal tests, canonical remote-worker closure/artifact, diagnostic inventory and boot limits. Repeat the same bounded isolated probe after the change, then qualify the real Console; report the full-app wait separately unless independently attributed.
+
+## Lower-layer ownership correction (TASK-34569 AC12)
+
+The layer-direction gate exposed Utils.sensitive_paths importing the higher RAG_Search package. Canonical directory policy therefore moves to Utils/rag_state_paths.py, below both consumers; RAG_Search/state_paths.py retains the compatible public and patchable wrapper surface. Keep exactly one policy implementation and the same live configuration callbacks, precedence, coercion, failure fallback, privacy and directory choices. This corrects source ownership only; it creates no permission, storage, provider, cache or runtime policy. Validate both public compatibility and low-level protection before renewed qualification.
