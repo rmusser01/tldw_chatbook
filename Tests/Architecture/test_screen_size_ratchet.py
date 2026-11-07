@@ -333,7 +333,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # TASK-36511.2, 2026-11-05: same waiver. The control-bar sync opens the
     # tick's workspace-build scope so one sync builds the context once: +9 lines
     # (one module helper, no methods).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24616, 741),
+    # TASK-39044, 2026-11-06: same waiver. ChatScreen.on_unmount releases the
+    # kept fleet rows with the historical read (+1 line, no methods). On the
+    # round-11 stacked tree, after TASK-38950/38967 used the last of the
+    # headroom; exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24617, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
