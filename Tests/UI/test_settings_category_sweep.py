@@ -197,3 +197,165 @@ async def test_narrow_settings_categories_lay_out_at_every_width_60_to_40(
             await pilot.pause()
             assert host._exception is None, (category, width, host._exception)
         assert pilot.app.screen.active_category == category
+
+
+#: TASK-38953: the narrowest content an open category may get. The compact
+#: layout's 32-cell rail left it 19 cells at 60 columns and 0 at 40.
+_SINGLE_PANE_MIN_CONTENT = 30
+#: TASK-38953 AC#3: rail, open category and Scope Inspector widths at the
+#: full-screen sizes, measured on dev 2684e5453f before one-pane mode.
+_FULL_SCREEN_PANE_WIDTHS = {(211, 44): (32, 126, 43), (235, 52): (32, 144, 49)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("height", (24, 30))
+@pytest.mark.parametrize("category", ("overview", "providers-models"))
+@private_profile_test
+async def test_the_open_category_keeps_30_cells_from_60_down_to_40_columns(
+    category, height, request
+):
+    """TASK-38953 AC#1: below the width where the rail beside the open
+    category leaves it 30 cells, Settings shows one pane at a time: the open
+    category, with a labelled way back to the category list."""
+    app = _build_test_app()
+    host = _BundledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=(100, height)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, category)
+        screen = pilot.app.screen
+        screen.set_focus(None)  # reading the open category, not the rail
+        for width in range(60, 39, -1):
+            await pilot.resize_terminal(width, height)
+            await pilot.pause()
+            await pilot.pause()
+            detail = screen.query_one("#settings-detail-pane")
+            assert detail.content_region.width >= _SINGLE_PANE_MIN_CONTENT, (
+                width,
+                detail.content_region.width,
+            )
+            back = screen.query_one("#settings-single-pane-back", Button)
+            assert back.display and back.region.width > 0, width
+            assert "Categories" in str(back.label)
+            assert not screen.query_one("#settings-category-pane").display, width
+        assert screen.active_category == category
+        # Narrowed with focus on a rail row, the rail is the pane shown.
+        await pilot.resize_terminal(100, height)
+        await pilot.pause()
+        screen.query_one(f"#settings-category-{category}", Button).focus()
+        await pilot.pause()
+        await pilot.resize_terminal(50, height)
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one("#settings-category-pane").display
+        assert not screen.query_one("#settings-detail-pane").display
+
+
+async def _until_focused(pilot, widget, key: str, limit: int = 6) -> None:
+    """Press ``key`` until ``widget`` holds focus, as a keyboard user would."""
+    for _ in range(limit):
+        if pilot.app.focused is widget:
+            return
+        await pilot.press(key)
+        await pilot.pause()
+    assert pilot.app.focused is widget, pilot.app.focused
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", (60, 40))
+@pytest.mark.parametrize("group", _GROUPS)
+@private_profile_test
+async def test_every_category_is_reachable_by_keyboard_one_pane_at_a_time(
+    width, group, request
+):
+    """TASK-38953 AC#2: with one pane at a time, the way back to the category
+    list and every category in it are reached with keys alone. Each node
+    walks one third of the rail, as the sweep above does."""
+    app = _build_test_app()
+    host = _BundledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=(width, 24)) as pilot:
+        await _settle_settings(pilot)
+        screen = pilot.app.screen
+        rail = screen.query_one("#settings-category-pane")
+        detail = screen.query_one("#settings-detail-pane")
+        back = screen.query_one("#settings-single-pane-back", Button)
+        screen.set_focus(None)
+        await pilot.press("tab")
+        await pilot.pause()
+        assert pilot.app.focused is back
+        categories = screen._filtered_category_values()
+        assert sorted(categories) == sorted(ALL_CATEGORY_IDS)
+        for category in _category_group(group):
+            current = screen.active_category
+            if category != current:
+                await _until_focused(pilot, back, "shift+tab")
+                await pilot.press("enter")
+                await pilot.pause()
+                assert rail.display and not detail.display, category
+                assert pilot.app.focused is screen.query_one(
+                    f"#settings-category-{current}", Button
+                )
+                steps = categories.index(category) - categories.index(current)
+                await pilot.press(*(["down"] * steps or ["up"] * -steps))
+                await pilot.press("enter")
+                switched = await _wait_for(
+                    pilot,
+                    lambda category=category: (
+                        screen.active_category == category
+                        and not screen._category_pane_swap_pending
+                    ),
+                )
+                assert switched, category
+                await pilot.pause()
+            assert detail.display and not rail.display, category
+            assert back.display, category
+            assert pilot.app.focused is not None, category
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((211, 44), (235, 52)), ids=("211x44", "235x52"))
+@private_profile_test
+async def test_full_screen_settings_keeps_all_three_panes(size, request):
+    """TASK-38953 AC#3: at full-screen sizes the layout is the one dev had."""
+    app = _build_test_app()
+    host = _BundledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=size) as pilot:
+        await _settle_settings(pilot)
+        screen = pilot.app.screen
+        widths = tuple(
+            screen.query_one(pane_id).region.width
+            for pane_id in (
+                "#settings-category-pane",
+                "#settings-detail-pane",
+                "#settings-impact-pane",
+            )
+        )
+        assert widths == _FULL_SCREEN_PANE_WIDTHS[size], widths
+        assert not screen.query_one("#settings-single-pane-back", Button).display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_slash_in_one_pane_mode_opens_the_rail_with_its_filter(request):
+    """TASK-38953 review r11g-rev1 I2: "/" focused the hidden category
+    filter, so typing filtered a rail nobody could see."""
+    app = _build_test_app()
+    host = _BundledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=(60, 24)) as pilot:
+        await _settle_settings(pilot)
+        screen = pilot.app.screen
+        rail = screen.query_one("#settings-category-pane")
+        search = screen.query_one("#settings-category-search")
+        screen.set_focus(None)
+        await pilot.pause()
+        assert not rail.display  # the open category is the pane shown
+        await pilot.press("slash")
+        await pilot.pause()
+        await pilot.pause()
+        assert rail.display
+        assert not screen.query_one("#settings-detail-pane").display
+        assert pilot.app.focused is search
+        assert search.region.width > 0

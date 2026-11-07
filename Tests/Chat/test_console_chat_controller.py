@@ -11783,17 +11783,26 @@ def test_a_wedged_bootstrap_does_not_park_a_second_worker(monkeypatch):
     loop = asyncio.new_event_loop()
     try:
         assert loop.run_until_complete(controller._personal_context_service()) is None
+        # TASK-39046: the second call gets a budget far above its bound, so
+        # host load cannot reach the bound (it failed at 11 ms against 10),
+        # while a second call that waits the budget out still fails it.
+        monkeypatch.setattr(
+            controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 2.0
+        )
         started = time.monotonic()
         second = loop.run_until_complete(controller._personal_context_service())
         second_elapsed = time.monotonic() - started
     finally:
         released.set()
+        # Join the wedged worker while the patched guard is still in place:
+        # its ``finally`` clears whichever guard is patched in when it ends.
+        loop.run_until_complete(loop.shutdown_default_executor())
         loop.close()
     assert second is None
     # One submission, not two: the wedged worker is still holding the lock.
     assert calls == [1], calls
     # And the second send did not even wait out the (patched) budget.
-    assert second_elapsed < 0.01, second_elapsed
+    assert second_elapsed < 1.0, second_elapsed
 
 
 def test_a_finished_bootstrap_clears_the_in_flight_guard(monkeypatch):

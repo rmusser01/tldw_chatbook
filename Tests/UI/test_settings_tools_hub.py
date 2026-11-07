@@ -810,3 +810,54 @@ async def test_tools_category_gate_rows_carry_the_shared_effect_scope_suffix(
             if label.startswith("Deep web research (web_deep_search)")
         ]
         assert deep and "(restart to apply)" in deep[0], labels
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size", ((120, 30), (100, 30), (80, 30)), ids=("120x30", "100x30", "80x30")
+)
+@private_profile_test
+async def test_scrolled_mcp_rail_rows_paint_inside_their_rows(size, request, tmp_path):
+    """TASK-38952 AC#2: with the rail's scrollbar showing, the built-in row's
+    text (glyph, name, count: 10 cells) was cut to its 10-cell box and then
+    given Button's line-pad, so it painted 12 cells and pushed the pane's
+    right border over the scrollbar."""
+    from rich.cells import cell_len
+
+    from Tests.UI.test_settings_category_sweep import (
+        _BundledSettingsHarness,
+        _click_settings_category,
+        _settle_settings,
+    )
+    from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+
+    app = _build_test_app()
+    app.unified_mcp_service = PermissionsHubService(tmp_path / "mcp_permissions.json")
+    host = _BundledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=size) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, SettingsCategoryId.TOOLS.value)
+        pane = host.screen.query_one("#settings-tools-hub", ToolsHubPanel)
+        rail = pane.query_one(MCPRail)
+        # The built-in source's row arrives with the first snapshot load.
+        deadline = time.monotonic() + 20.0
+        while (
+            time.monotonic() < deadline
+            and len(rail.query("Button.mcp-rail-row")) < 2
+        ):
+            await pilot.pause(0.05)
+        await pilot.pause()
+        rows = list(rail.query("Button.mcp-rail-row"))
+        assert len(rows) >= 2, rows
+        for row in rows:
+            rail.scroll_to_widget(row, animate=False, immediate=True)
+            await pilot.pause()
+            lines = [line.text for line in row.render_lines(row.region.reset_offset)]
+            assert max(cell_len(line) for line in lines) <= row.region.width, (
+                row.id,
+                row.region.width,
+                lines,
+            )
+            screen_line = host.screen._compositor.render_strips()[row.region.y].text
+            assert cell_len(screen_line) == size[0], (row.id, screen_line)

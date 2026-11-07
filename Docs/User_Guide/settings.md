@@ -69,6 +69,7 @@ you touch them; some are read-only and point you elsewhere.
 | **Header line** | "Settings \| Global preferences, appearance, storage, and app behavior \| Local". |
 | **Plugins button** | "Plugins — installation and marketplaces", under the header line. It opens the Plugins screen (**F8**). |
 | **Mode strip** | "Mode: \<category\>" — on Overview only, it adds "\| Runtime controls are in Tools & MCP and ACP". |
+| **‹ Categories** (70 columns or fewer) | On a window 70 columns wide or narrower, Settings shows one pane at a time: the open category, with **‹ Categories** above it (**< Categories** in ASCII glyph mode), or the category rail at the full width. **‹ Categories** shows the rail with the open category's row focused; choosing a row (**Enter** or a click) opens that category and puts focus on **‹ Categories** (on **Theme**, on its theme list, as at any width). While the open category is shown, Tab from the navigation bar lands on **‹ Categories**, and **/** shows the rail with its filter focused. The Scope Inspector is hidden at these widths, as at every width of 100 columns or fewer. |
 | **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (12)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its twelve rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. The row with keyboard focus also shows a thick bar at its left edge, in the theme's primary text colour. |
 | **Detail pane** (middle, untitled) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |
 | **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the seven draft categories — Overview shows **Open Theme picker** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows, one after another with no blank line between them (Providers & Models has no "Owns" row: each field's config key is in its **config key** disclosure). "▼ more — scroll the inspector" appears when there is more below, "▲ more above — scroll the inspector" when the rest is above, and "▲ more above · ▼ more below" for both. Focusing a field scrolls the inspector no further than it takes to show that field's whole Focused field guide, heading included, so the sections above it (on Providers & Models, **Applies to** and **Next new chat will use**) stay in view when they fit; resizing the window or a **Revert** does the same, so the inspector starts at its top or at a heading, never in the middle of a section. From 134 columns wide the inspector is at least 36 columns (below about 186 columns the detail pane gives up the width); on a narrower window the detail pane keeps its width first, and at 100 columns or fewer the inspector is hidden. |
@@ -323,15 +324,15 @@ was for, such as "OpenAI: Could not save discovered models to the providers list
 Changing provider, endpoint or credentials clears the old results, and a model
 chosen from them no longer joins the list on **s**; a delayed operation cannot
 replace the new form’s results or Model value.
-**Discover models** reads the endpoint's host as **s** does: a host such as
-`-kobold`, `kob*old` or `1.2.3`, or a remote address typed without `http://`
-or `https://`, is refused by both, and a Docker Compose service name such as
-`http://kobold_cpp:5001` is accepted by both. When the address is one **s**
-would refuse, the line beside **Discover models** gives the reason **s** gives,
-such as "Endpoint URL must include a valid host and port." One exception: for
-providers other than KoboldCpp and QwenCloud, an IPv6 address with a zone ID,
-such as `http://[fe80::1%25en0]:5001/v1`, is listed from, though **s** refuses
-it.
+**Discover models** reads the endpoint's host as **s** does, for every
+provider: a host such as `-kobold`, `kob*old` or `1.2.3`, an IPv6 address with
+a zone ID such as `http://[fe80::1%25en0]:5001/v1`, or a remote address typed
+without `http://` or `https://`, is refused by both; a Docker Compose service
+name such as `http://kobold_cpp:5001` is accepted by both; and `localhost`,
+`127.0.0.1` or `[::1]` typed without a scheme, such as `localhost:5001/v1`, is
+read as `http://` by both. When the address is one **s** would refuse, the line
+beside **Discover models** gives the reason **s** gives, such as "Endpoint URL
+must include a valid host and port."
 For koboldcpp at its shipped endpoint, KoboldAI's native
 `http://localhost:5001/api/v1/generate`, **Discover models** lists what the
 server serves at `http://localhost:5001/v1/models`, the list Switch model

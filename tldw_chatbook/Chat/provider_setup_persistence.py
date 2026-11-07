@@ -907,12 +907,8 @@ def build_provider_setup_mutation(
 
     endpoint = draft.endpoint.strip()
     if endpoint:
-        resolution = resolve_provider_endpoint(ownership.provider_key, endpoint)
-        persisted_endpoint = _persisted_endpoint_for_owner(
-            ownership.provider_key,
-            endpoint_key,
-            resolution.persisted_endpoint,
-            resolution.chat_url,
+        persisted_endpoint = persisted_endpoint_for_key(
+            ownership.provider_key, endpoint_key, endpoint
         )
         if persisted_endpoint is None:
             raise ValueError("Endpoint is invalid.")
@@ -1538,6 +1534,28 @@ def _persisted_endpoint_for_owner(
     if endpoint_key in _API_BASE_ENDPOINT_KEYS:
         return _api_base_from_chat_url(chat_url)
     return chat_url
+
+
+def persisted_endpoint_for_key(
+    provider_key: str, endpoint_key: str, endpoint: str
+) -> str | None:
+    """The value **s** writes under ``endpoint_key`` for a typed endpoint.
+
+    TASK-39042: Console's Save endpoint & use model wrote the typed value
+    (``localhost:8080``, with no scheme); it writes this, as **s** does.
+
+    Args:
+        provider_key: The endpoint contract's provider key.
+        endpoint_key: The config key the endpoint is written under.
+        endpoint: The endpoint as typed.
+
+    Returns:
+        The value to write, or ``None`` when the contract refuses it.
+    """
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    return _persisted_endpoint_for_owner(
+        provider_key, endpoint_key, resolution.persisted_endpoint, resolution.chat_url
+    )
 
 
 def api_base_from_chat_url(chat_url: str | None) -> str | None:

@@ -469,6 +469,16 @@ def test_final_value_reconstructor_matches_real_gateway_builder(
         ),
         ("openai", "https://api.openai.com/v1", None),
         ("openai", "https://proxy.invalid/v1/", "https://proxy.invalid/v1/"),
+        # TASK-39042 review r11g-rev3: the gateway pins these four, so the
+        # verifier's reconstruction must too.
+        ("aphrodite", "http://127.0.0.1:8080/v1", "http://127.0.0.1:8080/v1"),
+        (
+            "koboldcpp",
+            "http://127.0.0.1:5001/api/v1/generate",
+            "http://127.0.0.1:5001/api/v1/generate",
+        ),
+        ("oobabooga", "http://127.0.0.1:5000/v1", "http://127.0.0.1:5000/v1"),
+        ("tabbyapi", "http://127.0.0.1:5000/v1", "http://127.0.0.1:5000/v1"),
     ],
 )
 def test_final_value_reconstructor_preserves_adapter_endpoint_projection(
@@ -683,6 +693,53 @@ async def test_ephemeral_vllm_capture_on_keeps_live_target_out_of_durable_shadow
     assert "api_base_url" not in capture.request
     assert {"api_base_url", "endpoint"}.issubset(capture.omitted_keys)
     assert target not in json.dumps(capture.request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution_key", ["aphrodite", "koboldcpp", "oobabooga", "tabbyapi"])
+async def test_capture_on_send_aligns_for_the_config_reading_local_adapters(
+    execution_key: str,
+) -> None:
+    """TASK-39042 review r11g-rev3: the gateway pins ``api_base_url`` for these
+    four, and the verifier's reconstruction did not, so with capture on the
+    shadow failed alignment (and with no trace boundary the send raised)."""
+
+    target = "http://127.0.0.1:9099/v1"
+    calls: list[dict] = []
+    shadows: list[ProviderRequestShadowBundle] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider=execution_key,
+        base_url=target,
+        model="local-model",
+        ready=True,
+        execution_key=execution_key,
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_shadow_sink=shadows.append,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+
+    assert [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            signals=signals,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == target
+    assert len(shadows) == 1 and shadows[0].available is True, shadows[0].omission_reason
 
 
 @pytest.mark.asyncio

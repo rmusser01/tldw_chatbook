@@ -10,6 +10,7 @@ from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
     canonical_endpoint_host,
+    read_schemeless_loopback,
     resolve_provider_endpoint,
 )
 
@@ -217,6 +218,13 @@ CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
         "openrouter",
     }
 )
+#: TASK-39042 review r11g-rev2: local adapters that otherwise read their own
+#: config raw, so a schemeless endpoint readiness reads as http:// went as
+#: typed. Every primary send pins the resolved base for them; shared by the
+#: gateway kwargs builders and the trace verifier's reconstruction (r11g-rev3).
+CONFIG_READING_LOCAL_EXECUTION_KEYS = frozenset(
+    {"aphrodite", "koboldcpp", "oobabooga", "tabbyapi"}
+)
 
 
 def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None:
@@ -343,11 +351,15 @@ def safe_endpoint_display(url: str | None) -> str:
     parsed_endpoint = _parse_http_endpoint(url)
     if parsed_endpoint is None:
         return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
+    has_scheme, _scheme, hostname, port, _path = parsed_endpoint
+    if not (has_scheme or port is not None or _is_loopback_name(hostname)):
+        # TASK-39042: typed without a scheme or a port, a remote value may be
+        # a pasted key, such as ZAI's ``<32 hex>.<16>``.
+        return _INVALID_ENDPOINT_DISPLAY
     resolution = _display_resolution(url)
     if resolution.persisted_endpoint is not None:
         return resolution.normalized_input
     legacy_display = _format_endpoint(parsed_endpoint, drop_default_port=False)
-    has_scheme = parsed_endpoint[0]
     legacy_resolution = _display_resolution(legacy_display)
     if legacy_resolution.persisted_endpoint is not None:
         return legacy_resolution.normalized_input if has_scheme else legacy_display
@@ -357,6 +369,15 @@ def safe_endpoint_display(url: str | None) -> str:
         if explicit_legacy_resolution.persisted_endpoint is not None:
             return legacy_display
     return _INVALID_ENDPOINT_DISPLAY
+
+
+def _is_loopback_name(hostname: str) -> bool:
+    if hostname == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def _display_resolution(value: str):
@@ -384,6 +405,7 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
     """
     if not str(url or "").strip():
         return ""
+    url = read_schemeless_loopback(str(url))  # TASK-39042: as the send reads it
     # TASK-38963 review: the contract's identity comes before the display
     # rule, so two different endpoints that display alike (``http://kobold``,
     # ``http://other``) never compare as the one sentinel.
@@ -397,7 +419,13 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
 
 
 def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
-    """Resolve endpoint forms only for adapters governed by the new contract."""
+    """Resolve endpoint forms only for adapters governed by the new contract.
+
+    Every provider reads a loopback endpoint typed without a scheme as
+    ``http://`` (TASK-39042 review: readiness took ``localhost:8080`` and the
+    adapter got it schemeless).
+    """
+    endpoint = read_schemeless_loopback(endpoint)
     if provider_key not in {"custom", "custom_2", "llama_cpp", "local_llamacpp"}:
         return endpoint
     resolution = resolve_provider_endpoint(provider_key, endpoint)
@@ -443,8 +471,8 @@ def _is_allowed_endpoint_host(hostname: str, *, port: int | None, path: str) -> 
     TASK-38963: a host the contract accepts displays as itself. A single
     label other than localhost also needs a port, or a path after a typed
     scheme (review r10e-rev2: a key such as ``sk-abc/def`` has a "path"), so
-    a key pasted into the endpoint field is never echoed. An IPv6 zone id,
-    which the contract refuses, still compares as itself.
+    a key pasted into the endpoint field is never echoed. TASK-39041: an IPv6
+    zone id, which the contract refuses, no longer compares as itself.
 
     Args:
         hostname: The lower-cased host.
@@ -452,13 +480,15 @@ def _is_allowed_endpoint_host(hostname: str, *, port: int | None, path: str) -> 
         path: The typed path without its trailing "/"; "" when no scheme
             was typed.
     """
+    host = canonical_endpoint_host(hostname)
+    if host is None:
+        return False
     try:
-        ip_address(hostname)
+        ip_address(host)
         return True
     except ValueError:
         pass
-    host = canonical_endpoint_host(hostname)
-    return host is not None and (
+    return (
         "." in host or host == "localhost" or port is not None or bool(path)
     )
 

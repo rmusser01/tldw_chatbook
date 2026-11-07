@@ -129,11 +129,15 @@ def _install_zero_width_fold_guard() -> None:
     that exits the app, and no stylesheet rule can rule the width out: a
     grid's auto row ignores ``min-width`` and ``max-width: 100%`` follows a
     2-cell parent. Every height and paint of a ``Content`` goes through this
-    one method, so only that exact width changes: it renders as
+    one method, so the guard lives here: at that width the text renders as
     ``text-wrap: nowrap; text-overflow: clip``, one line cropped to the box.
     ``text-overflow: ellipsis`` everywhere would also stop the raise, but in
     this Textual a wrapped line then paints two cells wider than its widget
     and shifts the rest of the row.
+
+    TASK-38952: that over-paint is cut here too. A wrapped box at or below
+    its line-pad renders the same cropped line, and a wrapped line wider
+    than the box minus its line-pad is cut to fit before the pad.
     """
     from textual.content import Content
 
@@ -151,12 +155,28 @@ def _install_zero_width_fold_guard() -> None:
         *args,
         **kwargs,
     ):
-        if overflow == "fold" and width == (0 if no_wrap else 2 * line_pad):
+        zero = 0 if no_wrap else 2 * line_pad
+        if (overflow == "fold" and width == zero) or (
+            # TASK-38952: below the line-pad too (a 1-cell Button painted 3).
+            not no_wrap and line_pad and 0 <= width <= zero
+        ):
             # One cropped line: a wrapped crop would add the line-pad on top.
             overflow, no_wrap = "clip", True
-        return upstream(
+        lines = upstream(
             self, width, align, overflow, no_wrap, line_pad, *args, **kwargs
         )
+        if not no_wrap and line_pad and width > zero:
+            # TASK-38952: upstream cuts a wrapped line to the full width and
+            # then pads it, so a line wider than the box minus its line-pad
+            # (an unbreakable word, trailing spaces) painted 2 cells past it.
+            for line in lines:
+                content = line.content
+                if content.cell_length > width:
+                    core = content[line_pad : len(content) - line_pad]
+                    line.content = core.truncate(
+                        width - 2 * line_pad, ellipsis=overflow == "ellipsis"
+                    ).pad(line_pad, line_pad)
+        return lines
 
     setattr(_wrap_and_format, ZERO_WIDTH_FOLD_GUARD, True)
     _wrap_and_format.__wrapped__ = upstream  # type: ignore[attr-defined]

@@ -10,11 +10,13 @@ toolbar in a 4-cell grid column); an OptionList option when its box is 0
 package's Textual shims guard the one method every height and paint calls.
 
 These tests pin that guard: it is installed, nothing raises at any width in
-either wrap mode, the zero width renders one line inside the box, every other
-width renders exactly as upstream does, and the upstream methods still route
-through it (an upgrade that stops
-calling ``_wrap_and_format`` fails here instead of quietly dropping the
-guard). Gate-free: no app boots.
+either wrap mode, the zero fold width renders one line inside the box, and
+the upstream methods still route through it (an upgrade that stops calling
+``_wrap_and_format`` fails here instead of quietly dropping the guard).
+TASK-38952 widened it: a wrapped box at or below its line-pad (0 to
+``2 * line_pad``) renders the same cropped line, and a wrapped ``ellipsis`` or
+``clip`` line wider than the box is cut to fit before its pad. Widths whose
+lines already fit render exactly as upstream does. Gate-free: no app boots.
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ def test_every_height_and_paint_goes_through_the_guard():
 
 @pytest.mark.parametrize("no_wrap", (False, True), ids=("wrap", "nowrap"))
 @pytest.mark.parametrize("line_pad", (0, 1), ids=("pad0", "button-pad1"))
-def test_no_width_raises_and_only_the_zero_fold_width_changes(no_wrap, line_pad):
+def test_no_width_raises_and_lines_that_fit_render_as_upstream(no_wrap, line_pad):
     guarded = Content._wrap_and_format
     upstream = getattr(guarded, "__wrapped__", guarded)
     zero = 0 if no_wrap else 2 * line_pad
@@ -53,8 +55,10 @@ def test_no_width_raises_and_only_the_zero_fold_width_changes(no_wrap, line_pad)
         for width in range(-1, 7):
             Content(label).get_height(rules, width)  # layout: a grid's auto row
             got = _lines(guarded, label, width, no_wrap=no_wrap, line_pad=line_pad)
-            if width == zero:
-                if label:
+            # TASK-38952, rewritten on purpose: a wrapped box narrower than its
+            # line-pad crops the same way (it painted the pad past the box).
+            if width == zero or (not no_wrap and line_pad and 0 <= width < zero):
+                if label and width == zero:
                     with pytest.raises(ValueError):
                         _lines(
                             upstream, label, width, no_wrap=no_wrap, line_pad=line_pad
@@ -64,3 +68,56 @@ def test_no_width_raises_and_only_the_zero_fold_width_changes(no_wrap, line_pad)
                 continue
             want = _lines(upstream, label, width, no_wrap=no_wrap, line_pad=line_pad)
             assert got == want, (label, width)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("button_css", "box"), (("width: 1; padding: 0;", 1), ("width: 3; padding: 0 1;", 3))
+)
+async def test_a_one_cell_label_paints_inside_its_button(button_css, box):
+    """TASK-38952 AC#1: at a 1-cell content box the wrapped label was cut to 1
+    cell and then given its line-pad, so ``Save`` painted 3 cells (5 with
+    ``padding: 0 1``) and pushed the widget beside it 2 cells right."""
+    from textual.app import App
+    from textual.containers import Horizontal
+    from textual.widgets import Button, Static
+
+    class _Row(App):
+        CSS = f"""
+        Horizontal {{ height: 1; }}
+        Button {{ {button_css} min-width: 0; height: 1; border: none; }}
+        Static {{ width: 1fr; }}
+        """
+
+        def compose(self):
+            with Horizontal():
+                yield Button("Save")
+                yield Static("XXXX")
+
+    app = _Row()
+    async with app.run_test(size=(40, 6)) as pilot:
+        await pilot.pause()
+        button = app.query_one(Button)
+        static = app.query_one(Static)
+        assert button.region.width == box
+        painted = [
+            cell_len(strip.text)
+            for strip in button.render_lines(button.region.reset_offset)
+        ]
+        assert max(painted) <= box, painted
+        row = app.screen._compositor.render_strips()[static.region.y].text
+        assert row[static.region.x : static.region.x + 4] == "XXXX", row
+
+
+@pytest.mark.parametrize("overflow", ("ellipsis", "clip"))
+def test_a_wrapped_line_never_paints_past_its_box(overflow):
+    """TASK-38952: an unbreakable word was cut to the full width and then
+    padded, so it painted 2 cells past its box (``<---`` in 4 cells)."""
+    for label in ("<---", "Refresh", "Back to session", "a  b"):
+        for width in range(12):
+            lines = Content(label)._wrap_and_format(
+                width, overflow=overflow, line_pad=1
+            )
+            assert all(
+                line.content.cell_length <= width for line in lines
+            ), (label, width, [line.content.plain for line in lines])
