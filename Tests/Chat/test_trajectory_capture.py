@@ -561,6 +561,8 @@ async def test_regenerate_replacement_identity_resolves_after_persistence(tmp_pa
         assert payload["field_states"]["replacement_event_id"] == "observed"
         active_leaf_message_id = db.get_conversation_active_leaf(conversation_id)
         assert active_leaf_message_id is not None
+        # TASK-39139: the durable cursor is the replacement itself.
+        assert payload["replacement_event_id"] == f"message:{active_leaf_message_id}"
         snapshot = derive_trajectory(
             db.get_messages_for_conversation(conversation_id),
             {},

@@ -254,7 +254,9 @@ _BUDGETS: dict[str, int] = {
     # and takes late-joining owners without waiting, the managed seal runs
     # outside the owner scope with a recheck (a purge mid-seal refuses), and
     # the owner-scope nesting order is documented: 22,445, the exact measurement.
-    "tldw_chatbook/Chat/console_chat_store.py": 22445,
+    # 2026-11-07, TASK-39139 (owner size waiver): +4, a prompt mix-in attempt
+    # that creates the active leaf's row writes the durable cursor through.
+    "tldw_chatbook/Chat/console_chat_store.py": 22449,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).

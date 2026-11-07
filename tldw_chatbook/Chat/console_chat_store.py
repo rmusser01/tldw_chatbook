@@ -9052,6 +9052,10 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 message.parent_message_id = self.durable_parent_for_message(message.id)
                 message.provider_continuation_message_version = 1
                 self._pending_persistence_message_ids.discard(message.id)
+                # TASK-39139: this attempt created the row; write the cursor
+                # through as ``_persist_new_message`` does for the active leaf.
+                if message.id == self._active_leaf_by_session.get(session_id):
+                    self._persist_active_leaf(session_id, message.id)
             message.mixin_usage_count = len(batch.snapshot.items)
             message.mixin_replay_status = "recorded"
             message.metadata = replace(
