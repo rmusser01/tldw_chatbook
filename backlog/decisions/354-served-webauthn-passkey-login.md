@@ -1,4 +1,4 @@
-# ADR-235: Served WebAuthn passkey login (amends ADR-233)
+# ADR-354: Served WebAuthn passkey login (amends ADR-233)
 
 Date: 2026-10-15
 Status: Accepted (spec 2026-10-15 §3.5; ADR-233 remains authoritative for
@@ -50,3 +50,7 @@ survive restarts because only public keys are stored server-side.
 - OTP/TOTP apps: typing codes on a phone — the friction passkeys remove.
 - mTLS client certificates: browser UX is poor on phones and management
   is heavier for a single operator.
+
+## Renumbering provenance
+
+Renumbered ADR235 to ADR354 in PR3036 resync on 2026-11-06. The 2026-10-25 owner rule retains the older Console approval decision (Date2026-10-05) at235; this passkey decision is dated2026-10-15. The fresh all-ref scan covered524 refs and highest353. This is a reference correction only; authentication behavior is unchanged.

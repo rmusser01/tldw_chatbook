@@ -1,0 +1,80 @@
+{
+  "scope": "Actual private parent loop extracted as source; synthetic clocks/event metadata only, no App, product import, native API, network or UI/input.",
+  "qualified": false,
+  "product_samples": 0,
+  "status": "GREEN",
+  "source_sha256": "fd38994f999431636ea472fdc93a196f24254c8de2285a30e47bdb8b541fc608",
+  "results": {
+    "within_bounds": {
+      "accepted": true,
+      "reason": null,
+      "poll_calls": 1,
+      "elapsed": 1,
+      "expected_accepted": true
+    },
+    "owner_phase_exact60": {
+      "accepted": true,
+      "reason": null,
+      "poll_calls": 1,
+      "elapsed": 60,
+      "expected_accepted": true
+    },
+    "timely_actual_progress_to_total299": {
+      "accepted": true,
+      "reason": null,
+      "poll_calls": 6,
+      "elapsed": 299,
+      "expected_accepted": true
+    },
+    "late_normal_candidate_total301": {
+      "accepted": false,
+      "reason": "Actual preflight returned after original finite300s bound",
+      "poll_calls": 6,
+      "elapsed": 301,
+      "expected_accepted": false
+    },
+    "late_normal_candidate_prior_owner_phase61": {
+      "accepted": false,
+      "reason": "Actual preflight poll returned after prior finite60s owner-phase bound",
+      "poll_calls": 1,
+      "elapsed": 61,
+      "expected_accepted": false
+    },
+    "late_poll_with_fresh_returned_stage_masks_prior_phase": {
+      "accepted": false,
+      "reason": "Actual preflight poll returned after prior finite60s owner-phase bound",
+      "poll_calls": 1,
+      "elapsed": 61,
+      "expected_accepted": false
+    },
+    "future_source_timestamp_cannot_extend_phase": {
+      "accepted": false,
+      "reason": "Invalid or future actual stage timestamp; no deadline extension",
+      "poll_calls": 1,
+      "elapsed": 50,
+      "expected_accepted": false
+    },
+    "nonfinite_source_timestamp_cannot_mask_phase": {
+      "accepted": false,
+      "reason": "Invalid or future actual stage timestamp; no deadline extension",
+      "poll_calls": 1,
+      "elapsed": 50,
+      "expected_accepted": false
+    },
+    "late_during_eligibility_total301": {
+      "accepted": false,
+      "reason": "Actual candidate validation exceeded original preflight bounds",
+      "poll_calls": 6,
+      "elapsed": 301,
+      "expected_accepted": false
+    },
+    "late_during_eligibility_current_phase72": {
+      "accepted": false,
+      "reason": "Actual candidate validation exceeded original preflight bounds",
+      "poll_calls": 1,
+      "elapsed": 122,
+      "expected_accepted": false
+    }
+  },
+  "failures": []
+}

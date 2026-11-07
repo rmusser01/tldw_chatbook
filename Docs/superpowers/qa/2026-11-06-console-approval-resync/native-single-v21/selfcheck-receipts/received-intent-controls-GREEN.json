@@ -1,0 +1,45 @@
+{
+  "scope": "Pure actual fixture delegation and stock-owner source contracts only; no App/product import/GUI/dispatch/timing qualification",
+  "workload_SHA256": "065b32f8b491741170b5e1c9d79d0cd00382d2d27e87047bb1b016b1cb899987",
+  "results": {
+    "admitted_selection_proof_observed_without_legacy_selector": true,
+    "real_release_clears_handles_without_observer_failure": true,
+    "timer_observation_does_not_force_lazy_active_event": true,
+    "passive_screen_attachment_change_reported_without_reset": true,
+    "captured_task_survives_controlled_record_retirement": true,
+    "actual_boundary_calls_receive_once_and_captures_exact_task": true,
+    "none": true,
+    "empty": true,
+    "false": true,
+    "missing_record": true,
+    "wrong_turn": true,
+    "wrong_session": true,
+    "wrong_store": true,
+    "wrong_intent_turn": true,
+    "wrong_intent_session": true,
+    "missing_task": true,
+    "wrong_controller": true,
+    "wrong_visible_session": true,
+    "receive_error": true,
+    "load_error": true,
+    "capture_error": true,
+    "selection_observer_error": true,
+    "no_await_or_task_substitution_in_receive_boundary": true,
+    "stock_settings_and_binding_owners_precede_send": true,
+    "actual_setup_delegates_settings_capture_create_bind_once": true,
+    "original_stock_owner_chain_remains_source_bound": true,
+    "fixture_never_manually_paints_or_starts_timer": true,
+    "invalid_round_partial_stages_retained_without_cross_round_rows": true
+  },
+  "details": {
+    "original_boundary": {
+      "receive_calls": 1,
+      "direct_submit_calls": 0,
+      "captured_exact_custody_task": true
+    }
+  },
+  "passed": 28,
+  "failed": 0,
+  "qualified": false,
+  "product_samples": 0
+}

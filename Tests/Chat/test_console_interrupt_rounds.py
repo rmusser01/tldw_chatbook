@@ -397,3 +397,24 @@ def test_late_host_registration_respects_per_kind_tombstones(kind, check_revoked
         assert seams.mounted[kind] == [] and seams.badges == []
     else:
         assert any(seams.mounted[kind])
+
+
+def test_approval_presentation_is_shared_by_head_snapshot_and_retired_on_unpark(host):
+    state = {"draft": {"choices": {"call": "deny"}, "reviewed": ["call"]}}
+    payload = _payload(
+        "r1", presentation_state=state, deadline_monotonic=time.monotonic() + 10
+    )
+    host.park_round_payload("approval", "r1", payload)
+    assert host.head_round_payload("approval", "sess-A")["presentation_state"] is state
+    host.unpark_round_payload("approval", "r1")
+    assert state == {"retired": True}
+
+
+def test_replaced_round_retires_old_presentation_without_touching_next_head(host):
+    old = {"draft": {"choices": {"call": "approve_session"}}}
+    fresh = {}
+    host.park_round_payload("approval", "r1", _payload("r1", presentation_state=old))
+    host.park_round_payload("approval", "r2", _payload("r2"))
+    host.park_round_payload("approval", "r1", _payload("r1", presentation_state=fresh))
+    assert old == {"retired": True} and fresh == {}
+    assert host.head_round_payload("approval", "sess-A")["round_id"] == "r1"

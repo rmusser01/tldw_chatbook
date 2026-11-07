@@ -267,6 +267,10 @@ class BuiltinToolGate:
         # Outside the lock on purpose: a session approval calls into the
         # control-plane service, and no gate lock is ever held across a
         # call into foreign code.
+        from .approval_observation import publish_grant_application
+
+        if decision == "approve_session" and (self._service is None or getattr(self._service, "approve_for_session", None) is None):
+            publish_grant_application("not_applied", error_code="writer_unavailable")
         if decision == "approve_session" and self._service is not None:
             approve = getattr(self._service, "approve_for_session", None)
             if approve is not None:
@@ -277,6 +281,7 @@ class BuiltinToolGate:
                         profile_id=self._profile_id,
                     )
                 except Exception as exc:  # noqa: BLE001 — best effort
+                    publish_grant_application("failed", error_code="writer_failed")
                     logger.warning(f"builtin session approval failed: {exc}")
 
     def _load_payload(self) -> dict:

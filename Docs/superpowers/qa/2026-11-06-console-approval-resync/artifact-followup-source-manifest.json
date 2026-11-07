@@ -1,0 +1,39 @@
+{
+  "scope": "worker-bundle identity CI follow-up",
+  "qualified_product_presentation_samples": 0,
+  "unchanged_worker_denylist_protocol_inputs": [
+    "tldw_chatbook/Utils/filesystem_identity.py",
+    "tldw_chatbook/Utils/path_validation.py",
+    "tldw_chatbook/Utils/sensitive_paths.py",
+    "tldw_chatbook/Tools/workspace_wire_decode.py",
+    "tldw_chatbook/Tools/worker_watchdog.py",
+    "tldw_chatbook/Tools/local_tool_impls.py",
+    "tldw_chatbook/Tools/workspace_root_pin.py",
+    "tldw_chatbook/Tools/git_tool_impls.py",
+    "tldw_chatbook/Tools/patch_tool_impls.py",
+    "tldw_chatbook/Tools/workspace_tool_dispatch.py",
+    "tldw_chatbook/Tools/remote_session_frames.py",
+    "tldw_chatbook/Tools/remote_session_serve.py",
+    "tldw_chatbook/Tools/workspace_tool_worker.py",
+    "tldw_chatbook/Tools/remote_sensitive_paths.py",
+    "tldw_chatbook/Tools/workspace_tool_protocol.py"
+  ],
+  "old_launcher_targets_retained": 56,
+  "finite_added_targets": [
+    "Tests/Tools/test_remote_worker_bundle.py::test_cli_regeneration_writes_canonical_utf8_lf_bytes",
+    "Tests/Tools/test_remote_worker_bundle.py::test_bundle_rebuild_matches_committed_artifact",
+    "Tests/Tools/test_remote_executor_loopback.py::test_committed_bundle_stamp_matches_artifact_prefix",
+    "Tests/Tools/test_remote_executor_loopback.py::test_stamp_covers_the_executable_entry_guard",
+    "Tests/Tools/test_remote_executor_loopback.py::test_ping_bundle_sha256_matches_the_artifact_stamp",
+    "Tests/Tools/test_remote_executor_loopback.py::test_executor_ping_returns_verified_payload",
+    "Tests/Tools/test_remote_executor_loopback.py::test_executor_ping_rejects_a_bundle_mismatch",
+    "Tests/Tools/test_remote_executor_loopback.py::test_fs_list_long_roundtrip_retains_exclusions_and_plain_output"
+  ],
+  "sha256": {
+    ".gitattributes": "0092714ef3d054bdf580fb3fbd5bfe2f15ee89b846585e3f722375866cae1286",
+    "Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py": "952615b2cd8f1c4be7d3ce21b2d553ff247c0743663866a8e81314d226025cc3",
+    "Tests/Tools/test_remote_worker_bundle.py": "c9a3d115a0c975fa6606b0e24598d95a00bf1610b5c85968353f03358e064105",
+    "tldw_chatbook/Tools/build_remote_worker_bundle.py": "dd91f4514c45510a140aea9f3747bcc2f299aa1c2a6b0e0bd48fff1e3379c256",
+    "tldw_chatbook/Tools/remote_worker_bundle.py": "ebbe3a29149df827209a85fc9d7058191b48c4ad2d082b79903d1a31a4b851c2"
+  }
+}

@@ -76,3 +76,7 @@ already-running terminal child.
   path): rejected for this phase — it buys process management cost that
   relaying from the existing terminal child does not need; revisit only
   if v2 wants phone-originated desktop sessions.
+
+## Related approval presentation
+
+[ADR235](235-console-approval-interaction-and-feedback.md) governs the Console card and observed decision feedback. The relay keeps its existing wire fields and host authority; publication narrows producer options to captured supported choices, and either origin retires the same desktop round through host settlement.

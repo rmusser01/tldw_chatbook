@@ -235,3 +235,10 @@ Do not reuse numbers.
 
 | [ADR-282: Opt-in Console OS notification dispatch](282-console-os-notification-dispatch.md) | Accepted | Separate default-off desktop channel with fixed argv, bounded literal identity, content-free diagnostics, and timeout ownership through orderly process exit. |
 | [ADR-286](286-console-prompt-mix-ins.md) | Accepted | Add literal Before/After Mix-in library artifacts through the existing composer Prompts button, with chat-owned selections, exact retry snapshots and current-send-only caching semantics. |
+
+### Console approval resync references
+
+| Decision | Status | Scope |
+| --- | --- | --- |
+| [ADR-235](235-console-approval-interaction-and-feedback.md) | Accepted | Captured Console approval actions, supported choices, lazy Details and observed decision feedback; existing grant authority/lifetimes preserved. |
+| [ADR-354](354-served-webauthn-passkey-login.md) | Accepted | Served WebAuthn passkeys; younger decision renumbered from235 under the oldest-Date ownership rule, with authentication behavior unchanged. |

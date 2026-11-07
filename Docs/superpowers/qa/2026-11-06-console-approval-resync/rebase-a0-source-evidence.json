@@ -1,0 +1,140 @@
+{
+  "scope": "Clean rebase source equivalence only; no physical timing qualification",
+  "old_base": "8b762b52fa9c38be8c978f2b2175d9f070bc829a",
+  "old_verified_head": "fc1ad3cde5444a2d59bbbba08ae8b37a198a69ad",
+  "new_base": "a0ae30b7ed9c313fe19cb3a0da5d95ebde182385",
+  "rebased_head_before_evidence": "0078632afb3c886b70817b0a3d917298971f02aa",
+  "preserved_ref": "codex/pr3036-before-dev-a0-20261107",
+  "all_20_range_diff_equal": true,
+  "commit_mapping": [
+    {
+      "old": "c25d6c4803",
+      "new": "fa5b88e4fa",
+      "title": "docs: plan current approval UX and preserve remapped decision"
+    },
+    {
+      "old": "a00822d35b",
+      "new": "b0b27c6dca",
+      "title": "docs: close PR3036 dispatch verification gaps"
+    },
+    {
+      "old": "af902564fd",
+      "new": "edb226f506",
+      "title": "docs: prepare approval planning against current reviewed owners"
+    },
+    {
+      "old": "f13bbf9c82",
+      "new": "f24827600b",
+      "title": "docs: bind approval review to current dev after predecessor deferral"
+    },
+    {
+      "old": "c18f51e9a5",
+      "new": "f6def53e11",
+      "title": "Integrate captured approval controls with current Console owners"
+    },
+    {
+      "old": "8979144ba5",
+      "new": "7bdcd1fd3f",
+      "title": "fix(console): complete approval presentation lifecycle"
+    },
+    {
+      "old": "13e29e4190",
+      "new": "6a65971cea",
+      "title": "fix(console): fence restored Details scroll and pin UI census"
+    },
+    {
+      "old": "8f8dc9c5e9",
+      "new": "1619b09167",
+      "title": "fix(console): narrow approval action CSS candidates"
+    },
+    {
+      "old": "72d1629747",
+      "new": "b5ff6e33e3",
+      "title": "test(ci): align approval fast-lane target pins"
+    },
+    {
+      "old": "9fd28b448d",
+      "new": "4b282b12b0",
+      "title": "fix(console): keep counted approval labels literal"
+    },
+    {
+      "old": "6d943f0d42",
+      "new": "4b67227a36",
+      "title": "test(console): wait for the learning command in Stop regression"
+    },
+    {
+      "old": "7eb7b07eaa",
+      "new": "b4e255af27",
+      "title": "fix(console): resolve approval resync findings and record dispatch evidence"
+    },
+    {
+      "old": "335275b210",
+      "new": "cccea9a01e",
+      "title": "fix(console): defer approval helpers and preserve Details restoration"
+    },
+    {
+      "old": "f3cfffd9dd",
+      "new": "08c0099796",
+      "title": "fix(tools): preserve generated worker bundle identity on Windows"
+    },
+    {
+      "old": "c09ad73385",
+      "new": "576e3e5516",
+      "title": "fix(ci): preserve Windows CSS pin exemptions and record dev rebase"
+    },
+    {
+      "old": "c1833ae9e9",
+      "new": "1f508ff139",
+      "title": "perf(console): avoid loading RAG runtime for protected paths"
+    },
+    {
+      "old": "08bbbb74b8",
+      "new": "02789117a5",
+      "title": "Avoid optional NumPy during Speech screen preloading"
+    },
+    {
+      "old": "f66a2b49ff",
+      "new": "43b1fd0bb2",
+      "title": "Add reviewed native approval qualification capture method"
+    },
+    {
+      "old": "7cf51a723f",
+      "new": "5d9f33d3b8",
+      "title": "Use genuine visible-send custody in native approval qualification"
+    },
+    {
+      "old": "fc1ad3cde5",
+      "new": "0078632afb",
+      "title": "Keep RAG profile metadata free of optional engine imports"
+    }
+  ],
+  "six_RAG_product_Git_text_SHA256_unchanged": {
+    "tldw_chatbook/RAG_Search/config_metadata.py": "1011c53d669b52ba2da372dc0377df5119d1dcea4d9e905fe6c62100519b8d8a",
+    "tldw_chatbook/RAG_Search/simplified/__init__.py": "f166934307fdf247ba799732763187742e994937fa4651853ddddd69d8489993",
+    "tldw_chatbook/RAG_Search/simplified/active_config.py": "35968f036d36d93306329c96442e3c816ad49d1231c4cac5d54890468c863a71",
+    "tldw_chatbook/RAG_Search/config_profiles.py": "9fa2e5b53ccadc754e9c9752c7f0422557b39eca4060b721d6222751307e8546",
+    "tldw_chatbook/RAG_Search/reranker.py": "255b11b998fed07e1636da4a4e19ce35ba84ee4e50d011145efb69d9b1506e2d",
+    "tldw_chatbook/RAG_Search/parallel_processor.py": "533bbb8ff031545326907566d4c95d6d956e8d2a52b2a857b384931f01834700"
+  },
+  "physical_qualified_samples": 0,
+  "incoming": "20 Windows TTS playback/security/ratchet paths; all19 non-inventory paths equal newdev; disjoint inventory owner changes compose731owners, policies/sinks matchincoming per independent review",
+  "verified_on_rebased_revision": "0078632afb3c886b70817b0a3d917298971f02aa",
+  "canonical_inventory": {
+    "status": "PASS --diff, no regeneration needed after auto-merge",
+    "owners": 731,
+    "TASK_492_calls": 1080,
+    "TASK_31551_calls": 56,
+    "TASK_494_calls": 7805,
+    "persistent_sink_files": 16
+  },
+  "preimport_payload_budget": {
+    "status": "PASS unchanged incoming pins/limits",
+    "modules": 556,
+    "module_limit": 558,
+    "LOC": 426554,
+    "LOC_limit": 426575,
+    "fattest_route": "library",
+    "fattest_route_LOC": 132542,
+    "fattest_route_limit": 135111
+  }
+}

@@ -876,6 +876,12 @@ MINIMUM_FILES = 1761
 # five heaviest tests) at the tail, split so they spread over consecutive
 # shards. The floor is the measured entry count.
 MINIMUM_FILES = 1809
+# PR3036 resync: retain all 1809 current entries and append 4 approval contracts.
+MINIMUM_FILES = 1813
+# PR3036 whole-branch review: append two bounded literal-Details regressions.
+MINIMUM_FILES = 1815
+# TASK-34569: preserve actual feedback MessagePump dispatch without eager helpers.
+MINIMUM_FILES = 1816
 
 
 def read_census(path: Path) -> list[str]:

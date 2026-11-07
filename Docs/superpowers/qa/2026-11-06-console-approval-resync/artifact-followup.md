@@ -1,0 +1,11 @@
+# Worker-bundle CI follow-up
+
+The published `7cfdb2bd` head failed Tool Recovery on Python 3.12 and 3.14: each job had one bundle-drift failure, 200 passes and six skips. Exact `dev` `5ca7ec6a` contains the same defect. All renderer inputs and the committed artifact have identical Git blobs on that base and the PR; the committed bundle prefix hashes to `d891995d…1122e`, but its final assignment contains `d89080f8…d8e85`.
+
+The repair regenerates the final stamp through the unchanged canonical renderer. It also makes the existing CLI emit UTF8/LF and pins this one byte-sensitive artifact to LF on checkout. A real CLI-to-temporary-output test failed on Windows at the first converted newline before that change and passes afterward. All 15 executable worker, denylist and protocol inputs are unchanged; the builder changes only its output newline argument. No transport, policy or resource limit changes.
+
+Seven focused checks pass: canonical drift, prefix stamp, entry-guard coverage, actual worker ping hash, real list roundtrip, CLI byte identity and refused private-launch admission. Two executor-ping checks fail at the existing POSIX absolute-path requirement when the fixture supplies Windows paths, before bundle comparison. Those platform failures remain recorded. Ruff and whitespace checks pass; existing formatter debt is unchanged. Fresh hosted Linux confirmation is pending.
+
+The private test launcher now pins both shipped packages and Tests to their exact selected checkout origins. It retains all 56 prior target entries and adds eight exact nodes. Original-home protection still precedes home redirection and startup admission.
+
+Private originals are retained under `.superpowers/pr3036-resync-20261106/bundle-repair-prep-20261107T044500Z-e318/`. The adjacent source manifest binds the five tested files. Root independently checked those hashes, actual result logs and the complete delta. This is source verification, with zero qualified product presentation samples; the mandatory timing gate remains open.

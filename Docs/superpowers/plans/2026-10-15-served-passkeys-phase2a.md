@@ -9,7 +9,7 @@
 **Tech Stack:** `python-fido2 >=1.1,<2` (new, `web` extra only; pulls `cryptography` which is already a dependency), aiohttp (existing), vanilla JS.
 
 **Spec:** `Docs/superpowers/specs/2026-10-15-served-mode-auth-and-mobile-surface-design.md` §3.5 (binding) + §3.4 posture
-**ADR:** Task 1 creates `backlog/decisions/235-served-webauthn-passkey-login.md` (amends ADR-233 per spec §3.5: "Amends the same ADR when it lands").
+**ADR:** Task 1 creates `backlog/decisions/354-served-webauthn-passkey-login.md` (amends ADR-233 per spec §3.5: "Amends the same ADR when it lands").
 
 ## Global Constraints
 
@@ -26,10 +26,10 @@
 
 ---
 
-### Task 1: ADR-235, dependency, Backlog task
+### Task 1: ADR-354, dependency, Backlog task
 
 **Files:**
-- Create: `backlog/decisions/235-served-webauthn-passkey-login.md`
+- Create: `backlog/decisions/354-served-webauthn-passkey-login.md`
 - Modify: `pyproject.toml` (both dependency blocks that list `textual-serve` — web extra ~line 365 and all-tools ~line 479: add `"python-fido2>=1.1,<2"`)
 - Create via CLI: Backlog task (binary `~/.local/bin/backlog-py`; commits the task markdown too)
 
@@ -37,10 +37,10 @@
 - Consumes: nothing.
 - Produces: ADR path + task id for later commits; the fido2 import available after `pip install -e ".[web]"` in the worktree venv (controller installs).
 
-- [ ] **Step 1: ADR-235** (amends ADR-233 — link it, don't duplicate):
+- [ ] **Step 1: ADR-354** (amends ADR-233 — link it, don't duplicate):
 
 ```markdown
-# ADR-235: Served WebAuthn passkey login (amends ADR-233)
+# ADR-354: Served WebAuthn passkey login (amends ADR-233)
 
 Date: 2026-10-15
 Status: Accepted (spec 2026-10-15 §3.5; ADR-233 remains authoritative for
@@ -90,7 +90,7 @@ survive restarts because only public keys are stored server-side.
 
 - [ ] **Step 2: Backlog task** — `backlog-py task create "Served WebAuthn passkey login (Phase 2a, amends ADR-233)" -d "Spec 2026-10-15 §3.5: fido2 ceremonies, credential file store, /auth/passkeys routes, login+devices UI" -s "In Progress"`; link the ADR in notes.
 - [ ] **Step 3: pyproject** — add `"python-fido2>=1.1,<2"` to BOTH textual-serve blocks; controller runs `.venv/bin/pip install -q -e ".[web]"` and verifies `import fido2; fido2.__version__`.
-- [ ] **Step 4: Commit** — `docs(adr): ADR-235 served WebAuthn passkey login (amends ADR-233)` (ADR + task file + pyproject).
+- [ ] **Step 4: Commit** — `docs(adr): ADR-354 served WebAuthn passkey login (amends ADR-233)` (ADR + task file + pyproject).
 
 ---
 
@@ -187,7 +187,7 @@ Test cases (each with a fake clock for TTL; service built with
 6. `test_remove_credential` — remove → login_complete for that id → AuthenticationError.
 7. `test_store_fail_safe` — corrupt/non-object JSON → load() == {}.
 
-- [ ] **Step 2: Verify failure** (module missing), **Step 3: Implement** both modules (store mirrors `session_store.py` byte-for-byte in discipline; service holds `self._states: dict[str, _ChallengeState]` digest-keyed with expiry + prune-on-use, cap 64, mirroring `WebAuthManager._bootstraps`), **Step 4: Verify pass**, **Step 5: Commit** — `feat(web-auth): WebAuthn credential store + ceremony service (ADR-235)`.
+- [ ] **Step 2: Verify failure** (module missing), **Step 3: Implement** both modules (store mirrors `session_store.py` byte-for-byte in discipline; service holds `self._states: dict[str, _ChallengeState]` digest-keyed with expiry + prune-on-use, cap 64, mirroring `WebAuthManager._bootstraps`), **Step 4: Verify pass**, **Step 5: Commit** — `feat(web-auth): WebAuthn credential store + ceremony service (ADR-354)`.
 
 ---
 
@@ -215,26 +215,26 @@ All `Cache-Control: no-store`. Login-complete uses `manager.login_device(device_
 
 - [ ] **Step 1: Failing tests** (integration idiom, config-free paths only): register-begin without session → 401; with session but no CSRF header → 401; register-begin under a `public_url="https://chatbook.example"` service → 200 + challenge_id + publicKey containing the rpId; same under IP public_url → 503 passkeys_unavailable; login-begin public → 200; login-complete with garbage → 401; **full browser-less round-trip**: drive the Task-2 in-process ceremony helpers against the SERVER's routes (register via the authed client with the built attestation; then a fresh client login via the built assertion → 303 + `Set-Cookie` + `WebSessionStore(...).load()` gains one persistent record); devices page shows "Add a passkey" (domain) vs the notice (IP); login page contains "Use passkey" only when available.
 - [ ] **Step 2/3/4:** verify failure → implement (mirror handler shapes from the devices/mobile routes; JSON bodies via `_read_device_json`) → verify green + baselines (integration 11 name-identical; Canvas 80; mobile suites untouched-green).
-- [ ] **Step 5: Commit** — `feat(web-auth): /auth/passkeys routes, login + devices UI (ADR-235)`.
+- [ ] **Step 5: Commit** — `feat(web-auth): /auth/passkeys routes, login + devices UI (ADR-354)`.
 
 ---
 
 ### Task 4: Docs, close-out, live-check procedure
 
 **Files:**
-- Modify: `tldw_chatbook/Web_Server/README.md` (auth section: passkey paragraph — registration from /auth/devices, "Use passkey" on /auth/login, domain-origin requirement, what losing the credentials file means, sign_count clone detection; incident response: removing all passkeys = delete the file or per-credential Remove), `backlog/tasks/<TASK-ID> - ....md`, ADR-233 (add one line under Consequences: "Amended by ADR-235 (passkey login).")
+- Modify: `tldw_chatbook/Web_Server/README.md` (auth section: passkey paragraph — registration from /auth/devices, "Use passkey" on /auth/login, domain-origin requirement, what losing the credentials file means, sign_count clone detection; incident response: removing all passkeys = delete the file or per-credential Remove), `backlog/tasks/<TASK-ID> - ....md`, ADR-233 (add one line under Consequences: "Amended by ADR-354 (passkey login).")
 - Test: none new (Task 3's set is the coverage); re-run the full targeted matrix.
 
 - [ ] **Step 1: README + ADR-233 amendment line + task file close-out** (ACs checked, Implementation Notes, status Done via backlog-py).
 - [ ] **Step 2: Targeted regression matrix** — webauthn_service suite + integration (baseline 11) + Canvas 80 + session_store 5 + cli_pair 3 + approval_constants 2 + mobile 7/23/16 + dep-gate 4 name-identical.
 - [ ] **Step 3: Live-check procedure** — real-passkey verification cannot be automated here (no authenticator): document the 6-step operator procedure in the task file (serve with an HTTPS public_url, register from /auth/devices with the phone/laptop platform passkey, sign out, sign in via "Use passkey", restart the process and sign in again — persistence — then Remove the credential and confirm login now fails). Note that ceremonies are covered by the in-process tests; the live check validates platform integration only. Lessons check per DoD.
-- [ ] **Step 4: Commit** — `docs(web-auth): passkey README + ADR-233 amendment + close-out (ADR-235)`.
+- [ ] **Step 4: Commit** — `docs(web-auth): passkey README + ADR-233 amendment + close-out (ADR-354)`.
 
 ---
 
 ## Self-Review
 
-**Spec §3.5 coverage:** fido2 in web extra (T1); discoverable creds + RP-ID-from-public_url + IP refusal (T2 service + T3 503/notice/UI gating); registration from authed /auth/devices (T3); "Use passkey" on login (T3); persistent session on login-complete (T3 login_device + cookie via existing path); QR remains fallback — untouched (global constraint; no route changes to /auth/bootstrap); ADR amendment (T1 ADR-235 + T4 line in 233). Conditional-UI autofill deliberately excluded and recorded as a possible follow-up in ADR-235 — spec does not require it.
+**Spec §3.5 coverage:** fido2 in web extra (T1); discoverable creds + RP-ID-from-public_url + IP refusal (T2 service + T3 503/notice/UI gating); registration from authed /auth/devices (T3); "Use passkey" on login (T3); persistent session on login-complete (T3 login_device + cookie via existing path); QR remains fallback — untouched (global constraint; no route changes to /auth/bootstrap); ADR amendment (T1 ADR-354 + T4 line in 233). Conditional-UI autofill deliberately excluded and recorded as a possible follow-up in ADR-354 — spec does not require it.
 
 **Placeholder scan:** the two API-shape risks are anchored, not vague — (a) exact fido2 ≥1.1 method signatures (`register_begin/register_complete/authenticate_complete`, options-JSON encoding) must be read from the installed library at implementation time (Task 2 Step 3 says so; the test recipe's helper names are marked adaptable); (b) WebAuthn dictionary base64url conversions in passkeys.js follow the standard encoding rules and must round-trip the server's JSON — the round-trip test covers them server-side, the operator live check covers the browser side.
 

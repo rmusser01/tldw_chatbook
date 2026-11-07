@@ -445,3 +445,96 @@ async def test_app_approval_wrapper_with_publisher_keeps_original_and_relay() ->
         assert [frame[0] for frame in client.frames] == ["relay.approval.raised"]
     finally:
         await publisher.aclose()
+
+
+def _captured_repeated_tool_payload(*, grouped: bool = False):
+    """Capture real owner rows, including the tool-name stamp limitation."""
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+    from tldw_chatbook.Chat.console_chat_controller import _build_approval_payload
+
+    pending = [
+        MCPPendingCall(
+            llm_name="mcp__srv__read",
+            server_key="local:srv",
+            tool_name="read",
+            server_label="Private test server",
+            arguments={"query": value, "url": "https://example.test/?token=original"},
+            reason="ask",
+            options=(
+                "approve_once",
+                "approve_session",
+                "allow_matching",
+                "always_allow",
+                "deny",
+            ),
+            call_id="" if grouped else f"call-{index}",
+            presentation_authority=profile_authority(
+                "mcp", "Writer", "Private test server", "tool_name"
+            ),
+        )
+        for index, value in enumerate(("first", "second"))
+    ]
+    return _build_approval_payload("captured-round", "chat", "run", pending, 0, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grouped", [False, True])
+async def test_relay_preserves_captured_effective_choices_and_original_arguments(
+    grouped,
+):
+    payload = _captured_repeated_tool_payload(grouped=grouped)
+    client = FakeRelayClient()
+    publisher = ServedRelayPublisher(client)
+    publisher.attach()
+    original_choices = [list(call["options"]) for call in payload["calls"]]
+    try:
+        publisher.approval_raised(payload)
+        await _drain(publisher)
+        expected = ["approve_once", "approve_session", "always_allow", "deny"]
+        if grouped:
+            expected.insert(2, "allow_matching")
+        calls = client.frames[0][1]["calls"]
+        assert [call["options"] for call in calls] == [expected, expected]
+        assert [call["arguments"] for call in calls] == [
+            {"query": "first", "url": "https://example.test/?token=original"},
+            {"query": "second", "url": "https://example.test/?token=original"},
+        ]
+        assert all(
+            set(call) == {"llm_name", "call_id", "options", "arguments"}
+            for call in calls
+        )
+        assert [call["options"] for call in payload["calls"]] == original_choices
+        assert (
+            payload["view"].rows[0].argument_sets[0]["url"].endswith("token=original")
+        )
+    finally:
+        await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_relay_view_can_only_narrow_original_owner_choices():
+    from dataclasses import replace
+
+    payload = _captured_repeated_tool_payload()
+    for call in payload["calls"]:
+        call["options"] = ["approve_once", "deny"]
+    payload["view"] = replace(
+        payload["view"],
+        rows=tuple(
+            replace(row, legal_decisions=("approve_once", "always_allow", "deny"))
+            for row in payload["view"].rows
+        ),
+    )
+    client = FakeRelayClient()
+    publisher = ServedRelayPublisher(client)
+    publisher.attach()
+    try:
+        publisher.approval_raised(payload)
+        await _drain(publisher)
+        assert [call["options"] for call in client.frames[0][1]["calls"]] == [
+            ["approve_once", "deny"],
+            ["approve_once", "deny"],
+        ]
+    finally:
+        await publisher.aclose()

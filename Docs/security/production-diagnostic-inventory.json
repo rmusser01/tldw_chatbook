@@ -93,7 +93,7 @@
     },
     {
       "call_count": 9,
-      "diagnostic_digest": "e6ecb5e65e00b39cd2ac",
+      "diagnostic_digest": "317d8ab588a295b29645",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/local_tool_provider.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -163,7 +163,7 @@
     },
     {
       "call_count": 4,
-      "diagnostic_digest": "4bcd1383751e636050cf",
+      "diagnostic_digest": "8b2d6f50fe653f059407",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/virtual_cli_provider.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -183,8 +183,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 55,
-      "diagnostic_digest": "617caa36179b7727b5e3",
+      "call_count": 54,
+      "diagnostic_digest": "be1c615b4f9e9671c759",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/dictation_service_lazy.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2199,8 +2199,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "c2cf25dbd924cc45d5dc",
+      "call_count": 3,
+      "diagnostic_digest": "5b6f07aa6a279c6d45ad",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/config.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2287,6 +2287,13 @@
       "diagnostic_digest": "6abff4e1f1524cf81260",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/vector_store.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "4869a396b31f39e8aa7f",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/RAG_Search/state_paths.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -4454,7 +4461,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "1d50037687d77d447205",
+      "diagnostic_digest": "606f560a122afcfbb3e9",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/served_relay_publisher.py",
       "reason": "remaining Chatbook production diagnostic owner"

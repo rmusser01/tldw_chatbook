@@ -10,7 +10,6 @@ import time
 import multiprocessing as mp
 from multiprocessing import Pool
 from typing import List, Dict, Any, Optional, Callable, Tuple, Union
-from dataclasses import dataclass
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import threading
 from loguru import logger
@@ -26,36 +25,7 @@ except ImportError:
 
 from ..Metrics.metrics_logger import log_counter, log_gauge, log_histogram, timeit
 from .simplified.data_models import IndexingResult
-
-
-@dataclass
-class ProcessingConfig:
-    """Configuration for parallel processing."""
-
-    # Worker settings
-    num_workers: Optional[int] = None  # None = use CPU count
-    max_workers: int = 16  # Maximum workers to prevent resource exhaustion
-    min_workers: int = 2  # Minimum workers
-
-    # Batch settings
-    batch_size: int = 32
-    max_batch_size: int = 256
-    dynamic_batching: bool = True
-
-    # Performance settings
-    prefetch_factor: int = 2  # Number of batches to prefetch
-    timeout_seconds: float = 300.0  # 5 minutes default
-    show_progress: bool = True
-    progress_interval: int = 10  # Report every N items
-
-    # Memory management
-    max_memory_per_worker_mb: float = 1024.0  # 1GB per worker
-    monitor_memory: bool = True
-
-    # Error handling
-    continue_on_error: bool = True
-    max_retries: int = 2
-    retry_delay: float = 1.0
+from .config_metadata import ProcessingConfig
 
 
 class ProgressTracker:

@@ -1331,3 +1331,23 @@ def test_save_one_writes_atomically_and_content_is_unchanged(tmp_path, monkeypat
     assert path.read_text() == json.dumps(profile.to_dict(), indent=2, default=str)
     # Atomic write leaves no temp/partial file behind.
     assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+def test_default_rag_profiles_dir_keeps_live_userdata_accessor(monkeypatch, tmp_path):
+    """The compatibility API keeps its original live getter and failure seam."""
+    import tldw_chatbook.RAG_Search.config_profiles as cp
+
+    state = {"data": tmp_path / "first"}
+    monkeypatch.setattr(cp, "get_user_data_dir", lambda: state["data"])
+    assert cp.default_rag_profiles_dir() == state["data"] / "rag_profiles"
+    state["data"] = tmp_path / "second"
+    assert cp.default_rag_profiles_dir() == state["data"] / "rag_profiles"
+    failure = RuntimeError("private userdata read refused")
+
+    def refuse():
+        raise failure
+
+    monkeypatch.setattr(cp, "get_user_data_dir", refuse)
+    with pytest.raises(RuntimeError) as raised:
+        cp.default_rag_profiles_dir()
+    assert raised.value is failure

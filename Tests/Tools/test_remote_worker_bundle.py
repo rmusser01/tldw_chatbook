@@ -43,6 +43,7 @@ from typing import Any
 
 import pytest
 
+import tldw_chatbook.Tools.build_remote_worker_bundle as bundle_builder
 import tldw_chatbook.Tools.local_tool_impls as local_tool_impls
 from tldw_chatbook.Tools.build_remote_worker_bundle import build_bundle_text
 from tldw_chatbook.Tools.remote_sensitive_paths import REMOTE_SENSITIVE_PATHS
@@ -100,6 +101,18 @@ def test_bundle_rebuild_matches_committed_artifact() -> None:
         "remote_worker_bundle.py is stale relative to its source modules; "
         "regenerate with: python -m tldw_chatbook.Tools.build_remote_worker_bundle"
     )
+
+
+def test_cli_regeneration_writes_canonical_utf8_lf_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real CLI must preserve the artifact's byte identity on Windows."""
+    destination = tmp_path / "remote_worker_bundle.py"
+    canonical = build_bundle_text().encode("utf-8")
+    monkeypatch.setattr(bundle_builder, "_BUNDLE_PATH", destination)
+
+    assert bundle_builder.main([]) == 0
+    assert destination.read_bytes() == canonical
 
 
 def test_bundle_imports_are_stdlib_only() -> None:

@@ -30,6 +30,12 @@ FAST_LANE_TARGETS = (
     "Tests/test_smoke.py",
     "Tests/Canvas/test_gateway.py::test_navigation_completion_preserves_independently_current_selection",
     "Tests/MCP/test_approval_timeout_policy.py",
+    "Tests/Chat/test_console_approval_scope_journeys.py",
+    "Tests/Chat/test_console_relay_approval_integration.py",
+    "Tests/Web_Server/test_served_relay_publisher.py",
+    "Tests/Chat/test_approval_display_controls.py",
+    "Tests/Chat/test_console_approval_feedback.py::test_host_final_arbitration_wins_after_controller_receipt",
+    "Tests/Chat/test_console_approval_feedback.py::test_feedback_first_access_is_single_and_binds_only_existing_bridge",
     "Tests/MCP/test_control_plane_bridge.py",
     "Tests/MCP/test_live_server_request_wiring.py",
     "Tests/MCP/test_mcp_import_shapes.py",
@@ -334,6 +340,11 @@ FAST_LANE_TARGETS = (
     # (pure AST, whole files). They were red on dev for weeks in no PR lane.
     "Tests/Chat/test_console_fork_transition_census.py",
     "Tests/Chat/test_console_semantic_mutation_inventory.py",
+    # TASK-34564 / ADR-355: real protected RAG paths without optional runtime.
+    "Tests/RAG/test_state_paths.py",
+    # TASK-34569 AC9: Speech preimport avoids optional meter runtime.
+    "Tests/Audio/test_dictation_meter_import_contract.py",
+    "Tests/RAG/test_metadata_import_boundary.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
