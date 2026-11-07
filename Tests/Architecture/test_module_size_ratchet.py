@@ -1408,6 +1408,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-25 (TASK-42551): dev 692acb43dc measures 7,103; +5 to make
     # ConsoleRuntime's two received-dispatch methods lazy again, so that
     # module and console_preparation_reads leave the boot path: 7,108.
+    # 2026-11-06, TASK-33620.8.3 (owner rule "expand limits, don't contort
+    # code"): +9, both capture seams note an unrecorded Library reply with the
+    # turn's own session for the one-time records question; rebased onto dev
+    # (measured 7,028): exact measurement 7,037.
     "tldw_chatbook/Chat/console_runtime.py": 7108,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail

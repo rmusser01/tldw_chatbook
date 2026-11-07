@@ -485,7 +485,6 @@ async def capture_console_staged_evidence_for_chat(
     launch: Any,
     *,
     user_message: str,
-    session_id: str | None = None,
 ) -> "LocalRagContextResult":
     """Capture Console-staged local evidence with the app's services.
 
@@ -500,8 +499,6 @@ async def capture_console_staged_evidence_for_chat(
         launch: Current ``ConsoleLiveWorkLaunch``-like staged context.
         user_message: Current Console draft, used only when the staged bundle
             has no retrieval query.
-        session_id: The turn's own Console session, which a citation-records
-            question waits on (TASK-33620.8.3); the active one when omitted.
 
     Returns:
         Exact provider context, an optional request-local citation builder,
@@ -518,7 +515,6 @@ async def capture_console_staged_evidence_for_chat(
         launch,
         user_message=user_message,
         active_session=lambda: _capture_request_scope_session(app),
-        question_session_id=session_id,
     )
 
 
@@ -559,6 +555,38 @@ async def capture_console_prepared_evidence_for_chat(
         session=session,
         active_session=lambda: _capture_request_scope_session(app),
     )
+
+
+async def note_unrecorded_citation_evidence(
+    app: "TldwCli", result: Any, session_id: Any
+) -> None:
+    """Note a turn whose Library evidence went out with no citation record.
+
+    TASK-33620.8.3: when citation records are off (not a keyring problem), an
+    install still carrying the old shipped ``canonical_writes_enabled = false``
+    is asked once, after this turn's reply, whether to keep records. The
+    runtime calls this with the turn's own session after either capture.
+
+    Args:
+        app: The running app; ``app.services`` supplies the citation
+            trace repository.
+        result: The capture's ``LocalRagContextResult``.
+        session_id: The turn's Console session.
+    """
+
+    if getattr(result, "citation_builder", None) is not None or not getattr(
+        result, "context", None
+    ):
+        return
+    try:  # the repository the capture itself used (ADR-250 services)
+        repository = app.services.chat.citation_trace_repository
+    except AttributeError:
+        return
+    if getattr(repository, "fingerprint_key_state", None) != "writes_disabled":
+        return
+    from ...Chat.citation_records_choice import note_unrecorded_library_evidence
+
+    await note_unrecorded_library_evidence(repository, session_id)
 
 
 async def get_rag_context_capture_for_chat(
