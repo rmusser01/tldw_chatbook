@@ -867,6 +867,13 @@ ADMISSION_2_TARGETS = (
     # TASK-37600: character launch selection and modal resume (bootstrap_profile).
     "Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls",
     "Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume",
+    # TASK-33620.8.3: the one-time citation-records answer -- its precedence,
+    # eligibility and answer file (bootstrap_profile, ~10 s), the Automatic
+    # path's question closed by a real Escape (~10 s) and Don't keep never
+    # asked again after a restart (~20 s serial; mounted Console).
+    "Tests/Chat/test_citation_records_choice.py",
+    "Tests/UI/test_console_citation_records_question.py::test_automatic_library_reply_asks_and_escape_leaves_it_unanswered",
+    "Tests/UI/test_console_citation_records_question.py::test_dont_keep_is_never_asked_again_and_the_palette_changes_it",
 )
 
 #: The third admission-sensitive job's invocation, exactly, in order (Roleplay

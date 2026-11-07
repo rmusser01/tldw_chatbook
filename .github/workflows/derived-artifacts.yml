@@ -574,6 +574,10 @@ jobs:
     # TASK-37421 appends the refused-stream retry pins: real adapters
     # against a loopback server (ten cases, ~12 s) and one mounted Console
     # send to a Custom server that refuses streaming (~8 s serial).
+    # TASK-33620.8.3 appends the citation-records answer pins: its unit file
+    # (precedence, eligibility, the answer file; ~10 s) and two mounted
+    # Console nodes, the Automatic path's question with a real Escape and
+    # Don't keep never asked again after a restart (~10 s and ~20 s serial).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -750,6 +754,9 @@ jobs:
             Tests/UI/test_console_refused_stream_retry_screen.py \
             Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls \
             Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume \
+            Tests/Chat/test_citation_records_choice.py \
+            Tests/UI/test_console_citation_records_question.py::test_automatic_library_reply_asks_and_escape_leaves_it_unanswered \
+            Tests/UI/test_console_citation_records_question.py::test_dont_keep_is_never_asked_again_and_the_palette_changes_it \
             --timeout=300 \
             --tb=short
 
