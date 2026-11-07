@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import textwrap
+import warnings
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -274,3 +275,185 @@ def test_a_real_binding_defines_the_name(body: str) -> None:
     """Negative control: every way a class really binds ``self.x`` still clears it."""
 
     assert _probe_reads(body) == set()
+
+
+# --- TASK-36947.4: the Console chat controller holds no reference to the app ---
+#
+# ADR-250 section 7: ``ConsoleChatController`` receives a ``ConsoleControllerHost``
+# (members from ``app.services`` plus narrow callables), never the app. A test
+# or helper that still sets or reads ``controller.app`` would pass against an
+# ignored attribute, so these pin both sides.
+
+_PACKAGE = _REPO_ROOT / "tldw_chatbook"
+_APP_NAMES = {"app", "_app", "app_instance", "_app_instance", "tldw_app"}
+
+#: Modules whose ``controller`` is not the Console chat controller.
+_NOT_THE_CONSOLE_CONTROLLER = {
+    "tldw_chatbook/UI/Library_Modules/library_file_export.py": (
+        "its ``controller`` is the Library screen, which owns an app handle"
+    ),
+}
+
+
+def _console_chat_controller_class() -> ast.ClassDef:
+    path = _PACKAGE / "Chat" / "console_chat_controller.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ConsoleChatController"
+    )
+
+
+def test_console_chat_controller_never_binds_or_reads_an_app_attribute() -> None:
+    """No ``self.app``-like binding, read or class attribute (AST, AC#1)."""
+
+    cls = _console_chat_controller_class()
+    bound = _defined_names(cls) & _APP_NAMES
+    read = {
+        name
+        for node in _own_nodes(cls)
+        if (name := _self_read(node)) in _APP_NAMES
+    }
+    assert not bound and not read, (
+        f"ConsoleChatController binds {sorted(bound)} / reads {sorted(read)}; "
+        "it receives a ConsoleControllerHost, never the app (ADR-250 s7)"
+    )
+
+
+def _controller_receiver(node: ast.AST) -> ast.AST | None:
+    """The receiver of a ``<x>.app`` read or ``getattr(<x>, "app")`` call."""
+
+    if isinstance(node, ast.Attribute) and node.attr == "app":
+        return node.value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in ("getattr", "hasattr", "setattr")
+        and len(node.args) > 1
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "app"
+    ):
+        return node.args[0]
+    return None
+
+
+def _controller_app_reads(source: str, *, controller_helpers: bool = False) -> list[int]:
+    """Lines reading a controller's ``app``.
+
+    With ``controller_helpers``, a module-level function whose first parameter
+    is ``self`` is a controller method moved out of the class (the Chat/
+    pattern), so its ``self.app`` counts too.
+    """
+    lines = []
+    with warnings.catch_warnings():  # a module's invalid escapes are not ours
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(source)
+    helpers = {
+        id(node)
+        for fn in tree.body
+        if controller_helpers
+        and isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and fn.args.args
+        and fn.args.args[0].arg == "self"
+        for node in ast.walk(fn)
+    }
+    for node in ast.walk(tree):
+        receiver = _controller_receiver(node)
+        name = (
+            receiver.id
+            if isinstance(receiver, ast.Name)
+            else receiver.attr
+            if isinstance(receiver, ast.Attribute)
+            else ""
+        )
+        if "controller" in name.lower() or (name == "self" and id(node) in helpers):
+            lines.append(node.lineno)
+    return lines
+
+
+def test_no_module_reads_the_console_controllers_app() -> None:
+    """No ``controller.app`` read or ``getattr(controller, "app")`` (AST, AC#3)."""
+
+    offenders = []
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        if rel in _NOT_THE_CONSOLE_CONTROLLER:
+            continue
+        helpers = rel.startswith("tldw_chatbook/Chat/")
+        offenders += [
+            f"{rel}:{line}"
+            for line in _controller_app_reads(
+                path.read_text(encoding="utf-8"), controller_helpers=helpers
+            )
+        ]
+    assert not offenders, (
+        f"{offenders} read a controller's ``app``; the Console controller has "
+        "none -- read the member or callable from ``controller._host``"
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "x = controller.app.notify",
+        "x = getattr(self._chat_controller, 'app', None)",
+        "runtime.chat_controller.app = app",
+    ],
+)
+def test_controller_app_scan_flags_each_shape(source: str) -> None:
+    """Negative control: each shape the scan exists for is caught."""
+
+    assert _controller_app_reads(source) == [1]
+
+
+def test_controller_app_scan_flags_a_moved_controller_method() -> None:
+    """Negative control: a Chat/ helper taking the controller as ``self``."""
+
+    source = "def helper(self):\n    return getattr(self.app, 'x', None)\n"
+    assert _controller_app_reads(source, controller_helpers=True) == [2]
+    assert _controller_app_reads(source) == []
+
+
+@pytest.mark.asyncio
+async def test_console_chat_controller_holds_no_app_after_construction(
+    monkeypatch,
+) -> None:
+    """Runtime check: neither construction site leaves the app on the controller."""
+
+    from dataclasses import fields
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_controller_host import controller_host_for_app
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    class App:
+        def notify(self, *_args, **_kwargs):
+            return None
+
+        def call_from_thread(self, fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+    # The prompt history file belongs to the profile; this check needs none.
+    monkeypatch.setattr(ConsoleRuntime, "ensure_prompt_history", lambda self: None)
+    app = App()
+    direct = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+        host=controller_host_for_app(app),
+    )
+    runtime = ConsoleRuntime(app)
+    built = runtime.ensure_chat_controller(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    try:
+        for controller in (direct, built):
+            assert not hasattr(controller, "app")
+            assert not [k for k, v in vars(controller).items() if v is app]
+            host = controller._host
+            assert host.call_from_thread == app.call_from_thread
+            assert not [f.name for f in fields(host) if getattr(host, f.name) is app]
+    finally:
+        await built.shutdown()
+        await direct.shutdown()
