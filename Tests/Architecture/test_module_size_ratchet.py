@@ -229,6 +229,11 @@ _BUDGETS: dict[str, int] = {
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
     # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
     # the chat's previous ordinary outcome id at acceptance.
+    # 2026-11-06 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): 29173 -> 29185 (+12) -- an agent wake
+    # pauses before acceptance at the Ask trigger (+8), and the two
+    # compaction routes lift that pause (+4); the logic lives in
+    # console_compaction_gate.py and console_fleet_wake.py.
     "tldw_chatbook/Chat/console_chat_controller.py": 29180,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,

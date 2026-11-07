@@ -44,6 +44,11 @@ if TYPE_CHECKING:  # pragma: no cover -- typing only
 # Match the durable automatic-work child-result eligibility contract.
 _WAKE_CHILD_STATUSES = frozenset({"done", "error", "cancelled"})
 
+#: TASK-33621.80: the pause code for a wake held at the Ask compaction trigger.
+#: Unlike a budget pause it is the user's to lift: compacting the chat, or
+#: leaving Ask, lets the chain try once more (ADR-052 Ask, ADR-134 pauses).
+COMPACTION_ASK_PAUSE = "compaction_ask"
+
 
 def autowake_enabled() -> bool:
     """Read the ``[agents] autowake_enabled`` kill switch (default ON).
@@ -829,6 +834,7 @@ class ConsoleFleetWakeCoordinator:
             return
         if len(self._active) >= self.MAX_AUTOMATIC_PRIMARIES:
             return
+        self._release_compaction_pause_if_not_ask(conversation_id)
         with self._registry_lock:
             bucket = self._pending.get(conversation_id)
             progress = self._pending_progress.get(conversation_id, {})
@@ -1001,6 +1007,74 @@ class ConsoleFleetWakeCoordinator:
         session_id = self._resolve_session_id(conversation_id)
         if session_id:
             self._notify_ui(session_id)
+
+    async def pause_at_ask_trigger(self, authorization: AgentWakeAuthorization) -> None:
+        """Pause a wake refused before acceptance at the Ask compaction trigger.
+
+        TASK-33621.80: the prepared attempt is aborted (no generation is
+        spent) and its results stay pending. The chain gets no retry timer:
+        ``release_compaction_pause`` (a compaction landed) or leaving Ask lets
+        it try once more, and a chat still over its trigger pauses again.
+
+        Args:
+            authorization: The live wake authority, not yet accepted.
+        """
+        authorization.preflight_refused = True
+        await self._pause(
+            authorization.conversation_id,
+            authorization.work_chain_id,
+            COMPACTION_ASK_PAUSE,
+        )
+
+    def release_compaction_pause(self, session_id: str) -> None:
+        """Let a chat's wakes held at the Ask trigger try again once.
+
+        Args:
+            session_id: The Console session whose chat was just compacted.
+        """
+        conversations = {
+            identity
+            for session in self._controller.store.sessions()
+            if session.id == session_id
+            for identity in (session.persisted_conversation_id, session.id)
+            if identity
+        }
+        if self._lift_compaction_pauses(conversations):
+            self.retry_soon()
+
+    def _lift_compaction_pauses(self, conversations: set[str]) -> bool:
+        lifted = [
+            key
+            for key, reason in self._paused.items()
+            if key[0] in conversations and reason == COMPACTION_ASK_PAUSE
+        ]
+        for key in lifted:
+            self._paused.pop(key, None)
+        return bool(lifted)
+
+    def _release_compaction_pause_if_not_ask(self, conversation_id: str) -> None:
+        """Lift an Ask-trigger pause once the chat's policy is Automatic or Off."""
+        if not any(
+            cid == conversation_id and reason == COMPACTION_ASK_PAUSE
+            for (cid, _), reason in self._paused.items()
+        ):
+            return
+        from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
+
+        session_id = self._resolve_session_id(conversation_id)
+        session = next(
+            (s for s in self._controller.store.sessions() if s.id == session_id), None
+        )
+        try:
+            ask = (
+                session is None
+                or self._controller._compaction_mode_for(session)
+                is ContextCompactionMode.ASK
+            )
+        except Exception:  # noqa: BLE001 - an unreadable policy keeps the pause
+            return
+        if not ask:
+            self._lift_compaction_pauses({conversation_id})
 
     async def _watch_deadline(self, authorization, delivery_task):
         from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
