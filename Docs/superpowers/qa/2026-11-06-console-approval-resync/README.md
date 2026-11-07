@@ -42,7 +42,7 @@ This proves execution. It provides no native UI timing. Earlier setup failures a
 
 There are zero qualified native/browser product presentation samples. The 100 ms feedback and 200 ms actionable p95 budgets and 40 warm samples per transport are not claimed achieved. Compositor refresh, server frames, animation callbacks and terminal flushes alone do not establish presentation.
 
-The documented browser API lacks presentation tracing and requires explicit authorization to use another interaction technology. Guarded installed-Playwright/CDP and QA-only native capture capability probes are prepared but unexecuted, pending that authorization. Product measurement still requires frame identity, source ownership and bounded clock uncertainty. The PR stays draft with auto-merge off until the mandatory evidence, current-head Qodo review and resolved-thread requirements are met.
+The owner authorized installed Playwright/CDP and QA-only native capture. Synthetic capture and clock capabilities are established, and an actual private native Console frame now has verified terminal handles and cell-to-pixel mapping. The complete workload has not yet reached an approval card; no product presentation distribution is qualified. Original failures and zero-sample results are retained. The PR stays draft with auto-merge off until the mandatory evidence, current-head Qodo review and resolved-thread requirements are met.
 
 ## Evidence
 
@@ -51,3 +51,6 @@ The documented browser API lacks presentation tracing and requires explicit auth
 ## Subsequent hosted CI repair
 
 Fresh CI identified startup-import and UAT integration regressions after the preceding record. The [follow-up](ci-followup.md) documents their repair, the measured Details restoration race, unchanged budgets and current source hashes. Timing qualification remains open; the earlier phase counts and source manifest retain their historical scope.
+
+
+The [worker-bundle follow-up](artifact-followup.md) records the inherited hosted stamp failure, durable Windows LF repair, exact source hashes and focused verification limits.

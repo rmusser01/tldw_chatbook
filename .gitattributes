@@ -32,3 +32,6 @@ tldw_chatbook/assets/tiktoken_cache/** -text
 # The default config template is SHA-256 pinned (TASK-36945.1) and written verbatim into
 # a fresh config.toml; a CRLF checkout would break the pin and ship CRLF configs.
 tldw_chatbook/Config_Files/default_config.toml -text
+
+# Remote worker identity hashes these exact bytes on Windows too.
+tldw_chatbook/Tools/remote_worker_bundle.py text eol=lf
