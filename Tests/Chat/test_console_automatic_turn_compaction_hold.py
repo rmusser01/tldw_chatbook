@@ -310,6 +310,50 @@ async def test_rewind_summarize_also_lets_the_paused_wake_go_on(rig) -> None:
 
 
 @pytest.mark.asyncio
+async def test_compact_and_send_lets_the_wake_go_on_after_your_reply(rig) -> None:
+    """The hold card's Compact and send compacts too; the wake follows."""
+
+    try:
+        await rig.over_the_ask_trigger()
+        rig.finish_a_background_child()
+        wake = rig.controller.fleet_wake
+        assert await rig.wake_paused()
+        streams = rig.gateway.stream_calls
+        held = await rig.controller.submit_draft(
+            "carry on with the saved result", session_id=_SESSION
+        )
+        assert held.accepted is False and held.preparation_id is not None
+
+        result = await rig.controller.compact_and_send(held.preparation_id)
+
+        assert result.accepted is True, result.visible_copy
+        assert await _settle(lambda: not wake.has_pending(rig.cid)), (
+            rig.attempts(),
+            wake.pause_reason(rig.cid),
+        )
+        assert await _settle(lambda: not wake._active)
+        assert rig.gateway.auxiliary_calls == 1
+        assert rig.gateway.stream_calls == streams + 2, "your reply, then the wake"
+        messages = rig.store.messages_for_session(_SESSION)
+        user = max(
+            i
+            for i, m in enumerate(messages)
+            if m.role is ConsoleMessageRole.USER
+            and m.content == "carry on with the saved result"
+        )
+        notice = next(
+            i
+            for i, m in enumerate(messages)
+            if getattr(m.metadata, "origin", "") == "agent_wake"
+        )
+        assert user < notice, "the wake runs after your message"
+        assert rig.failed_rows() == []
+        assert rig.attempts() == ["aborted", "completed"]
+    finally:
+        await rig.close()
+
+
+@pytest.mark.asyncio
 async def test_sending_your_own_message_without_compacting_leaves_the_wake_paused(
     rig,
 ) -> None:
