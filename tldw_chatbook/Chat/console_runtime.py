@@ -1151,7 +1151,7 @@ class ConsoleRuntime:
         self._canvas_enabled_reader = canvas_enabled_reader
         self._canvas_disabled_latched = self._read_canvas_enabled() is False
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
-        self._canvas_policy_read_task: asyncio.Task[bool] | None = None
+        self._canvas_policy_read_task: asyncio.Task[bool | None] | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
         # Individual ChatScreen workspaces are disposable views over this
@@ -3900,16 +3900,9 @@ class ConsoleRuntime:
 
     def _read_canvas_enabled(self) -> bool | None:
         """Read policy, distinguishing temporary backup refusal from disable."""
-        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.Canvas.config_policy import _read_runtime_canvas_enabled
 
-        try:
-            return self._canvas_enabled_reader() is True
-        except RecoveryRequired as error:
-            if type(error) is RecoveryRequired and error.args == ("storage_locally_paused",):
-                return None
-            return False
-        except Exception:  # noqa: BLE001 - execution policy fails closed
-            return False
+        return _read_runtime_canvas_enabled(self)
 
     def _canvas_enabled(self) -> bool:
         """Read the global kill switch and the restart-required runtime latch."""
@@ -4614,23 +4607,13 @@ class ConsoleRuntime:
 
     async def _watch_canvas_policy(self) -> None:
         """Revoke native delivery promptly after an external config disable."""
+        from tldw_chatbook.Canvas.config_policy import (
+            _poll_runtime_canvas_enabled, _watch_runtime_canvas_policy,
+        )
 
-        while not self._canvas_maintenance_closed:
-            # Native policy reads may wait for a config writer. Keep the UI
-            # runnable, retaining the actual read if the watcher is cancelled.
-            reader = self._canvas_policy_read_task
-            if reader is None:
-                reader = asyncio.create_task(
-                    asyncio.to_thread(self._canvas_enabled),
-                    name="console-canvas-policy-read",
-                )
-                self._canvas_policy_read_task = reader
-            enabled = await asyncio.shield(reader)
-            self._canvas_policy_read_task = None
-            if not enabled and self.canvas_disabled():
-                await self.apply_canvas_policy()
-                return
-            await asyncio.sleep(0.25)
+        return await _watch_runtime_canvas_policy(
+            self, globals(), _poll_runtime_canvas_enabled
+        )
 
     def _sync_canvas_native_context(self, session_id: str | None) -> None:
         """Forward live store context changes to an already-built authority."""
@@ -5960,6 +5943,9 @@ class ConsoleRuntime:
                 self._bind_view_hooks()
                 return self._attached_generation
             if previous is not view:
+                from tldw_chatbook.Canvas.config_policy import _end_canvas_poll_handoffs
+
+                _end_canvas_poll_handoffs(previous)
                 self._pause_project_instruction_generation(self._attached_generation)
             self._attachment_generation += 1
             generation = self._attachment_generation
@@ -6022,6 +6008,9 @@ class ConsoleRuntime:
             if host is not None:
                 host.release_hook_review_attachment(self._attached_generation)
             self._pause_project_instruction_generation(self._attached_generation)
+            from tldw_chatbook.Canvas.config_policy import _end_canvas_poll_handoffs
+
+            _end_canvas_poll_handoffs(self.view)
             self._clear_view_hooks()
             self.view = None
             self._attached_generation = None

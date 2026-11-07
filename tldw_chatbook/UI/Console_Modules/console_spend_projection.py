@@ -162,6 +162,7 @@ class _CheckedDisplayProof:
 
 _checked_display_proofs = weakref.WeakSet()
 _standard_readiness_projections = weakref.WeakSet()
+_standard_readiness_readers = weakref.WeakKeyDictionary()
 
 
 @dataclass(frozen=True)
@@ -245,6 +246,7 @@ class ConsoleReadinessConfigProjection:
         self.model_token_caps = None
         self._display_proof = None
         self._read_request = None
+        self._handoff_read = None
         self._reads = set()
         self._runtime_owner = None
         self._tokenizers: dict[tuple[str, str], _TokenizerSlot] = {}
@@ -381,6 +383,9 @@ class ConsoleReadinessConfigProjection:
             projection = cls(screen, read_current=read_current)
             if type(projection) is ConsoleReadinessConfigProjection:
                 _standard_readiness_projections.add(projection)
+                _standard_readiness_readers[projection] = (
+                    weakref.ref(read_current), read_current.__code__, read_current.__globals__
+                )
             screen._console_readiness_config_projection = projection
         return projection
 
@@ -439,9 +444,20 @@ class ConsoleReadinessConfigProjection:
         ) and not self.pending:
             self.pending = True
             self._settled.clear()
-            refresh = self._refresh(key)
+            from .config_sync import _bind_identity_config_read
+
+            handoff_read = self._handoff_read = [key, {}, None]
+            _bind_identity_config_read(screen, self, handoff_read)
+            refresh_method = self._refresh
+            if (
+                type(refresh_method) is MethodType
+                and refresh_method.__func__ is _standard_readiness_refresh
+            ):
+                refresh = refresh_method(key, _handoff_read=handoff_read)
+            else:
+                refresh = refresh_method(key)  # Preserve custom override call shape.
             try:
-                screen.run_worker(
+                handoff_read[2] = screen.run_worker(
                     refresh, exclusive=False, group="console-readiness-config"
                 )
             except BaseException as error:
@@ -533,8 +549,10 @@ class ConsoleReadinessConfigProjection:
         if not self._retired():
             self.screen._request_console_control_bar_sync()
 
-    async def _refresh(self, key: tuple) -> None:
+    async def _refresh(self, key: tuple, *, _handoff_read=None) -> None:
         retry = True
+        installed = False
+        handoff_read = _handoff_read  # Captured before the original worker enqueue.
         try:
             reader = self.read_current
             # Only slots asked for before this read may be marked by it; an
@@ -672,6 +690,7 @@ class ConsoleReadinessConfigProjection:
                 _checked_display_proofs.add(published)
                 self._display_proof = published
             self._retry_delay = 0.0
+            installed = True
             retry = False
         except Exception:  # noqa: BLE001 - remain cold and retryable.
             return
@@ -681,7 +700,16 @@ class ConsoleReadinessConfigProjection:
         finally:
             self._read_request = None
             self.pending = False
-            self._settled.set()
+            from .config_sync import _finish_identity_config_read
+
+            try:
+                _finish_identity_config_read(self, handoff_read, installed)
+            except BaseException:
+                pass  # Advisory scheduling cannot replace physical outcome/settlement.
+            finally:
+                if self._handoff_read is handoff_read:
+                    self._handoff_read = None
+                self._settled.set()
             if retry and not self._retired():
                 # TASK-38649: this read publishes nothing, so a cold caller
                 # that deferred to it converges only through the coalesced
@@ -755,6 +783,39 @@ def console_tokenizer_display_ready(screen: Any, model: str, provider: str) -> b
 
 
 _standard_readiness_key = ConsoleReadinessConfigProjection._key
+_standard_readiness_refresh = ConsoleReadinessConfigProjection._refresh
+
+_standard_handoff_methods = tuple(
+    (name, method, method.__code__, method.__globals__)
+    for name in ("warm", "run", "_refresh", "_key")
+    for method in (getattr(ConsoleReadinessConfigProjection, name),)
+)
+
+
+def _handoff_projection_is_stock(projection: Any) -> bool:
+    """Qualify scheduling only; this is never a configuration verdict."""
+    if (
+        type(projection) is not ConsoleReadinessConfigProjection
+        or projection not in _standard_readiness_projections
+    ):
+        return False
+    reader = _standard_readiness_readers.get(projection)
+    original = reader[0]() if reader is not None else None
+    return (
+        original is not None
+        and projection.read_current is original
+        and original.__code__ is reader[1]
+        and original.__globals__ is reader[2]
+        and all(
+            type(bound := getattr(projection, name)) is MethodType
+            and bound.__self__ is projection
+            and bound.__func__ is method
+            and method.__code__ is code
+            and method.__globals__ is namespace
+            for name, method, code, namespace in _standard_handoff_methods
+        )
+    )
+
 
 
 def _checked_display_status(projection: Any) -> bool | None:
@@ -1201,6 +1262,14 @@ def defer_cold_live_read(screen: Any, owner: str) -> bool:
 
 
 def retry_after_config_rebuild(function: Callable) -> Callable:
+    return _retry_after_config_rebuild(function, identity=False)
+
+
+def retry_console_identity_after_config_rebuild(function: Callable) -> Callable:
+    return _retry_after_config_rebuild(function, identity=True)
+
+
+def _retry_after_config_rebuild(function: Callable, *, identity: bool) -> Callable:
     """Retry a screen refresh shortly while a config rebuild holds a cold cache.
 
     TASK-35836: refreshes the Console mount schedules (the identity surfaces a
@@ -1216,6 +1285,12 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
 
     @wraps(function)
     def wrapped(screen, *args, **kwargs):
+        from .config_sync import _owe_console_config_sync
+
+        request = _owe_console_config_sync(screen, "identity") if identity else None
+        ready_token = None
+        if request is not None and request.eligible():
+            ready_token = request.token
         pending = getattr(screen, "_console_config_retries", None)
         with ExitStack() as acquired:
             if not _tldw_config.config_read_would_wait():
@@ -1229,13 +1304,45 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
                         break
                     acquired.callback(lock.release)
                 else:
-                    if not defer_cold_live_read(screen, function.__name__):
-                        if pending is not None:
-                            pending.pop(function.__name__, None)
-                        return function(screen, *args, **kwargs)
-                    ConsoleReadinessConfigProjection.for_screen(screen).run(
-                        lambda: None
+                    waiting = (
+                        request is not None
+                        and request.token is not None
+                        and request.token.active
+                        and request.receipt is None
                     )
+                    if not waiting:
+                        if not defer_cold_live_read(screen, function.__name__):
+                            if pending is not None:
+                                pending.pop(function.__name__, None)
+                            callback_token = (
+                                request.token if request is not None else None
+                            )
+                            try:
+                                return function(screen, *args, **kwargs)
+                            finally:
+                                if (
+                                    request is not None
+                                    and request.token is callback_token
+                                ):
+                                    request.retire()
+                        projection = ConsoleReadinessConfigProjection.for_screen(screen)
+                        if request is not None:
+                            if ready_token is not None and request.token is ready_token:
+                                request.retire(owed=True)
+                            request.begin(projection)
+                        projection.run(lambda: None)
+                        if (
+                            request is not None
+                            and not projection.pending
+                            and request.receipt is None
+                        ):
+                            request.retire()  # No issued read, or scheduling refused.
+        if (
+            request is not None
+            and ready_token is not None
+            and request.token is ready_token
+        ):
+            request.retire(owed=True)  # One READY attempt; preserve its original retry.
         if pending is None:
             pending = screen._console_config_retries = {}
         first = function.__name__ not in pending
@@ -1245,9 +1352,12 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
             def retry() -> None:
                 call = pending.pop(function.__name__, None)
                 if call is not None and not (
-                    getattr(screen, "_closing", False) or getattr(screen, "_closed", False)
+                    getattr(screen, "_closing", False)
+                    or getattr(screen, "_closed", False)
                 ):
                     wrapped(screen, *call[0], **call[1])
+                elif request is not None:
+                    request.retire()
 
             screen.set_timer(0.2, retry)
         return None

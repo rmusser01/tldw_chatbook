@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A parent source pin does not bind a private pytest child's Core import (PR3036, 2026-11-07)
+
+**Incident.** The approval launcher verified selected Main, Core and Tests origins in its `-I` parent after inserting the selected paths into `sys.path`. `Tests.private_profile` then spawned a fresh interpreter: only Main survived through its working directory, and Core resolved through the primary checkout's editable installation. A real child-environment metadata probe reproduced that foreign origin even though all 14 Core Python files happened to have identical content. Earlier parent-origin receipts therefore did not prove complete child-source closure. Performance helper environments had the same omission, including one first-use environment whitelist that dropped `PYTHONPATH` entirely.
+
+**What worked.** Pass selected Main and Core together in the child's `PYTHONPATH`, including every independently constructed/filtered environment. Verify the actual environment builder followed by a fresh interpreter's metadata lookup; avoid importing product code merely to prove a path. Keep before/after source bindings and preserve older results with their narrower provenance scope. The repaired original UI-ready and preimport checks passed; the strict Windows eager-import check still failed at `688 < 688`, so correcting provenance did not turn an unrelated failure green. See `Docs/superpowers/qa/2026-11-06-console-approval-resync/ci-boundary-followup.md` and its source manifest.
+
 ## An empty rejection ledger does not identify a submission failure (TASK-39147, 2026-11-07)
 
 **Incident.** DeepSeek accepted findings, then three dispatched submissions failed

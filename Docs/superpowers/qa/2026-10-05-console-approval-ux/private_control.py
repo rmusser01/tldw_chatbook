@@ -179,6 +179,8 @@ assert target in {
     "Tests/MCP/test_unified_control_plane_service.py",
     "Tests/Chat/test_approval_constants.py",
     "Tests/Architecture/test_console_approval_owner_extraction.py",
+    "Tests/Backup_Recovery/test_canvas_policy_worker.py",
+    "Tests/Canvas/test_canvas_kill_switch.py",
 }
 selection = sys.argv[2:]
 assert not selection or (len(selection) == 2 and selection[0] == "-k")

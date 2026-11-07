@@ -8,6 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 #: TASK-33620.15.1 (owner decision 2026-10-09): while the poll ticks (it
@@ -106,6 +107,173 @@ def run_console_config_sync(
     return True
 
 
+
+@dataclass(eq=False, repr=False)
+class _ConsoleConfigHandoff:
+    screen: Any
+    owner: str
+    source: dict
+    token: Any = None
+    projection: Any = None
+    receipt: tuple | None = None
+
+    def retire(self, *, owed: bool = False) -> None:
+        from ...Canvas.config_policy import _end_canvas_poll_handoffs
+
+        if self.token is not None:
+            _end_canvas_poll_handoffs(self.screen, self.token)
+        self.token = self.projection = self.receipt = None
+        pending = getattr(self.screen, "_console_config_handoffs", {})
+        if not owed and pending.get(self.owner) is self:
+            pending.pop(self.owner)
+
+    def current(self) -> bool:
+        from .composer_run_controls import poll_source_is_current
+
+        return not getattr(
+            self.screen, "_console_sync_maintenance_paused", False
+        ) and poll_source_is_current(self.screen, self.source)
+
+    def begin(self, projection: Any) -> Any:
+        from ...Canvas.config_policy import _begin_canvas_poll_handoff
+        from .console_spend_projection import _handoff_projection_is_stock
+
+        if not self.current() or not _handoff_projection_is_stock(projection):
+            self.retire()
+            return None
+        if self.token is None or not self.token.active:
+            self.token = _begin_canvas_poll_handoff(self.screen)
+            self.projection, self.receipt = projection, None
+        if self.owner == "identity" and projection.pending:
+            _bind_identity_config_read(
+                self.screen, projection, projection._handoff_read
+            )
+        return self.token
+
+    def accept(self, projection: Any, token: Any) -> None:
+        from .console_spend_projection import (
+            _checked_display_proofs,
+            _handoff_projection_is_stock,
+            _same_readiness_key,
+        )
+
+        if self.token is not token:
+            return
+        proof = projection._display_proof
+        if (
+            token is None
+            or not token.active
+            or not self.current()
+            or self.projection is not projection
+            or not _handoff_projection_is_stock(projection)
+            or projection.pending
+            or projection._reads
+            or projection._runtime_owner is not self.source["runtime"]
+            or proof is None
+            or proof not in _checked_display_proofs
+            or proof.projection is not projection
+            or proof.screen is not self.screen
+            or proof.value is not projection.value
+            or proof.reader is not projection.read_current
+            or not _same_readiness_key(projection._key(), projection.key)
+            or not _same_readiness_key(proof.owner, projection.key)
+            or time.monotonic() - projection.at >= projection.max_age
+        ):
+            self.retire()
+            return
+        self.receipt = (
+            projection.key,
+            projection.value,
+            projection.at,
+            proof,
+            projection.max_age,
+        )
+
+    def eligible(self) -> bool:
+        if self.token is not None and (not self.token.active or not self.current()):
+            self.retire()
+            return False
+        if self.receipt is None:
+            read = getattr(self.projection, "_handoff_read", None)
+            worker = read[2] if read is not None else None
+            if worker is not None and (worker.is_cancelled or worker.is_finished):
+                self.retire()
+            return False
+        receipt = self.receipt
+        self.accept(self.projection, self.token)
+        same = self.receipt is not None and (
+            self.receipt[0] is receipt[0]
+            and self.receipt[1] is receipt[1]
+            and self.receipt[2] == receipt[2]
+            and self.receipt[3] is receipt[3]
+            and self.receipt[4] == receipt[4]
+        )
+        if not same:
+            self.retire()
+        return same
+
+
+def _owe_console_config_sync(screen: Any, owner: str) -> _ConsoleConfigHandoff | None:
+    from .composer_run_controls import poll_source
+
+    pending = getattr(screen, "_console_config_handoffs", None)
+    if pending is None:
+        pending = screen._console_config_handoffs = {}
+    current = pending.get(owner)
+    if current is not None:
+        if current.current():
+            return current
+        current.retire()
+    try:
+        source = poll_source(screen)
+    except BaseException:
+        return None  # A custom/incomplete observer keeps the original live route.
+    if source is None:
+        return None
+    current = _ConsoleConfigHandoff(screen, owner, source)
+    pending[owner] = current
+    return current
+
+
+def _begin_console_config_handoffs(screen: Any, projection: Any) -> tuple:
+    request = getattr(screen, "_console_config_handoffs", {}).get("core")
+    return () if request is None else ((request, request.begin(projection)),)
+
+
+def _bind_identity_config_read(screen: Any, projection: Any, read: Any) -> None:
+    """Join one issued logical read generation, never a later screen request."""
+    from .console_spend_projection import _same_readiness_key
+
+    request = getattr(screen, "_console_config_handoffs", {}).get("identity")
+    if (
+        read is not None
+        and request is not None
+        and request.projection is projection
+        and request.token is not None
+        and request.token.active
+        and request.current()
+        and _same_readiness_key(read[0], projection._key())
+    ):
+        read[1]["identity"] = (request, request.token)
+
+
+def _finish_identity_config_read(projection: Any, read: Any, accepted: bool) -> None:
+    if read is None:
+        return
+    for request, token in tuple(read[1].values()):
+        if request.token is not token:
+            continue
+        if accepted:
+            request.accept(projection, token)
+        else:
+            request.retire()
+
+
+def _abandon_console_config_handoffs(screen: Any) -> None:
+    for request in tuple(getattr(screen, "_console_config_handoffs", {}).values()):
+        request.retire()
+
+
 async def prepare_console_presentation_sync(screen: Any) -> bool:
     """Await the existing stock display owner before FULL's synchronous render.
 
@@ -138,7 +306,19 @@ async def prepare_console_presentation_sync(screen: Any) -> bool:
             and projection in _standard_readiness_projections
         ):
             key = projection._key()
-            warmed = await projection.warm()
+            handoffs = _begin_console_config_handoffs(screen, projection)
+            try:
+                warmed = await projection.warm()
+            except BaseException:
+                for request, token in handoffs:
+                    if request.token is token and request.receipt is None:
+                        request.retire()
+                raise
+            for request, token in handoffs:
+                if warmed:
+                    request.accept(projection, token)
+                elif request.token is token:
+                    request.retire()
             if not warmed and not _same_readiness_key(key, projection._key()):
                 key = None  # A chat or model switch moved it mid-read.
     # TASK-38696: the replay backs off only while one unmoved owner keeps
@@ -315,9 +495,49 @@ def sync_console_core_state(screen) -> None:
             held.callback(lock.release)
         else:
             if not defer_cold_live_read(screen, "sync_console_core_state"):
-                screen._sync_console_chat_core_state()
+                request = getattr(screen, "_console_config_handoffs", {}).get("core")
+                try:
+                    screen._sync_console_chat_core_state()
+                finally:
+                    if request is not None:
+                        request.retire()
                 return
+    request = _owe_console_config_sync(screen, "core")
+    if request is not None and request.token is not None:
+        request.retire(owed=True)  # One guarded attempt; whole replay still owns it.
     replay_whole_console_sync(screen)
+
+
+
+def run_coalesced_control_bar_sync(screen: Any, is_torn_down: Callable) -> None:
+    """Service one accepted CORE handoff without reordering the original FULL."""
+    screen._console_control_bar_sync_scheduled = False
+    if is_torn_down(screen):
+        _abandon_console_config_handoffs(screen)
+        screen._console_control_bar_replay_whole_sync = False
+        return
+    paused = getattr(screen, "_console_sync_maintenance_paused", False)
+    if paused:
+        _abandon_console_config_handoffs(screen)
+    whole = getattr(screen, "_console_control_bar_replay_whole_sync", False)
+    if not screen._console_sync_in_progress and not whole:
+        request = getattr(screen, "_console_config_handoffs", {}).get("core")
+        if request is not None:
+            request.retire()
+    if whole:
+        if screen._console_sync_in_progress or paused:
+            request = getattr(screen, "_console_config_handoffs", {}).get("core")
+            if not paused and request is not None and request.eligible():
+                sync_console_core_state(screen)
+            screen._request_console_control_bar_sync(delayed=True)
+            return
+        screen._console_control_bar_replay_whole_sync = False
+        screen._console_sync_requested = False
+        screen.run_worker(
+            screen._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+        )
+    else:
+        screen._sync_console_control_bar()
 
 
 def sync_console_rail_visibility(screen) -> bool:

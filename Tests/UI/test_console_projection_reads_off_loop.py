@@ -929,6 +929,137 @@ async def test_an_unparseable_config_leaves_an_idle_console_idle(request):
     assert first["identity"] >= 1, f"the identity refresh never ran: {first}"
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_finite_checked_reader_leaves_a_core_push_release_window(request):
+    """A finite real checked reader defers the push, then releases normal replay."""
+    from loguru import logger
+
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            projection = await _fresh_display(console)
+            path = config._get_effective_config_path()
+            original = path.read_bytes()
+            entered, release, expired = (
+                threading.Event(),
+                threading.Event(),
+                threading.Event(),
+            )
+            reader = projection.read_current
+            gate_errors = []
+
+            def hold_one_reader(message):
+                if entered.is_set():
+                    return
+                try:
+                    frame = sys._getframe()
+                    for _ in range(64):
+                        if frame is None:
+                            return
+                        if (
+                            frame.f_code is reader.__code__
+                            and frame.f_globals is reader.__globals__
+                            and frame.f_locals.get("projection") is projection
+                        ):
+                            entered.set()
+                            if not release.wait(5):
+                                expired.set()
+                            return
+                        frame = frame.f_back
+                except Exception as error:
+                    gate_errors.append(type(error).__name__)
+
+            starts = _UiLoopStarts(
+                full_sync=(ChatScreen._sync_native_console_chat_ui.__code__, None),
+                core_push=(
+                    ChatScreen._sync_console_chat_core_state.__code__,
+                    config_sync.sync_console_core_state.__code__,
+                ),
+                identity=(
+                    ChatScreen._sync_console_identity_surfaces.__wrapped__.__code__,
+                    None,
+                ),
+            )
+            sink = None
+            with starts:
+                await pilot.pause(2.0)
+                idle = starts.take()
+                path.write_bytes(original + b"\n[unterminated\n")
+                try:
+                    await asyncio.to_thread(config.load_settings, True)
+                    assert config._settings_cache_hit(path) is None
+                    # Filter before Loguru's sink lock: other logging does not
+                    # enter this gate. It blocks only this actual checked reader.
+                    sink = logger.add(
+                        hold_one_reader,
+                        level="ERROR",
+                        filter=lambda record: record["name"] == "tldw_chatbook.config"
+                        and record["function"] == "_load_cli_config_bootstrap_unlocked",
+                        backtrace=False,
+                        diagnose=False,
+                    )
+                    projection.run(lambda: None)
+                    await until(entered.is_set, timeout=30)
+                    assert (
+                        projection.pending
+                    ), "gate did not hold an actual pending read"
+                    rebuild = config._settings_rebuild_lock()
+                    acquired = rebuild.acquire(blocking=False)
+                    if acquired:
+                        rebuild.release()
+                    assert not acquired, "the real checked reader did not own rebuild"
+                    starts.take()
+                    config_sync.sync_console_core_state(console)
+                    held = starts.take()
+                    assert held["core_push"] == 0, "push entered the held rebuild lock"
+                    assert console._console_control_bar_replay_whole_sync
+                    worker = console.run_worker(
+                        console._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
+                    console._sync_console_identity_surfaces()
+                    await asyncio.wait_for(worker.wait(), timeout=5)
+                    release.set()
+                    await until(lambda: not projection.pending, timeout=30)
+                    assert (
+                        not expired.is_set()
+                    ), "finite reader gate expired before release"
+                    assert not gate_errors, gate_errors
+                    first = starts.take()
+                    deadline = asyncio.get_running_loop().time() + 10.0
+                    while not (first["core_push"] and first["identity"]):
+                        if asyncio.get_running_loop().time() > deadline:
+                            break
+                        await pilot.pause(0.1)
+                        for name, count in starts.take().items():
+                            first[name] += count
+                    await pilot.pause(0.5)
+                    starts.take()
+                    await pilot.pause(2.0)
+                    later = starts.take()
+                finally:
+                    release.set()
+                    if sink is not None:
+                        logger.remove(sink)
+                    path.write_bytes(original)
+                    await asyncio.to_thread(config.load_settings, True)
+    assert (
+        later["full_sync"] <= idle["full_sync"] + 1
+    ), f"finite reader left replaying: idle {idle}, later {later}"
+    assert (
+        first["core_push"] >= 1
+    ), f"finite reader released but push never ran: {first}"
+    assert (
+        first["identity"] >= 1
+    ), f"finite reader released but identity never ran: {first}"
+
+
 def _refused_warm_up(monkeypatch, console):
     """Observe FULL's warm-up, replay timers and results (TASK-38696).
 

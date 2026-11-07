@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
+from threading import Lock
+from weakref import WeakSet
 from typing import TYPE_CHECKING, Any, Literal
 
 from tldw_chatbook import config as _config
@@ -310,3 +313,100 @@ def get_canvas_execution_enabled() -> bool:
         diagnostics=[],
     )
     return enabled
+
+
+# Source qualification only: never a cached execution-policy verdict.
+_CANONICAL_EXECUTION_READER = get_canvas_execution_enabled
+
+
+def _read_runtime_canvas_enabled(owner: Any) -> bool | None:
+    """Keep the runtime's original live callback and failure normalization."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    try:
+        return owner._canvas_enabled_reader() is True
+    except RecoveryRequired as error:
+        if type(error) is RecoveryRequired and error.args == (
+            "storage_locally_paused",
+        ):
+            return None
+        return False
+    except Exception:  # noqa: BLE001 - execution policy fails closed
+        return False
+
+
+
+@dataclass(eq=False, repr=False)
+class _CanvasPollHandoff:
+    owner: Any
+    active: bool = True
+
+
+_poll_handoff_lock = Lock()
+_poll_handoffs: WeakSet[_CanvasPollHandoff] = WeakSet()
+
+
+def _begin_canvas_poll_handoff(owner: Any) -> _CanvasPollHandoff:
+    token = _CanvasPollHandoff(owner)
+    with _poll_handoff_lock:
+        _poll_handoffs.add(token)
+    return token
+
+
+def _end_canvas_poll_handoffs(owner: Any, token: Any = None) -> None:
+    """Retire only this opaque view's logical opportunity, never its reads."""
+    with _poll_handoff_lock:
+        for issued in tuple(_poll_handoffs):
+            if issued.owner is owner and (token is None or issued is token):
+                issued.active = False
+                _poll_handoffs.discard(issued)
+
+
+def _poll_runtime_canvas_enabled(owner: Any, expected_owner_type: type) -> bool | None:
+    """Let only the stock background poll decline busy native config locks.
+
+    Actual effect reads keep the runtime's original live path. A declined poll
+    is not a disabled observation, and the existing watcher owns its next tick.
+    """
+    if type(owner) is not expected_owner_type:
+        return owner._canvas_enabled()
+    namespace = object.__getattribute__(owner, "__dict__")
+    if (
+        type(namespace) is not dict  # noqa: E721 - qualify a plain owner dictionary only.
+        or namespace.get("_canvas_enabled_reader") is not _CANONICAL_EXECUTION_READER
+    ):
+        return owner._canvas_enabled()
+    with ExitStack() as acquired:
+        with _poll_handoff_lock:
+            if _poll_handoffs:
+                return None
+            for lock in (_config._settings_rebuild_lock(), _config._config_file_lock()):
+                if not lock.acquire(blocking=False):
+                    return None
+                acquired.callback(lock.release)
+        return owner._canvas_enabled()
+
+
+async def _watch_runtime_canvas_policy(
+    owner: Any, namespace: dict, poll: Callable
+) -> None:
+    """Run the original watcher with its live runtime namespace and local poll."""
+
+    while not owner._canvas_maintenance_closed:
+        # Native policy reads may wait for a config writer. Keep the UI
+        # runnable, retaining the actual read if the watcher is cancelled.
+        reader = owner._canvas_policy_read_task
+        if reader is None:
+            reader = namespace["asyncio"].create_task(
+                namespace["asyncio"].to_thread(
+                    poll, owner, namespace["ConsoleRuntime"]
+                ),
+                name="console-canvas-policy-read",
+            )
+            owner._canvas_policy_read_task = reader
+        enabled = await namespace["asyncio"].shield(reader)
+        owner._canvas_policy_read_task = None
+        if not enabled and owner.canvas_disabled():
+            await owner.apply_canvas_policy()
+            return
+        await namespace["asyncio"].sleep(0.25)
