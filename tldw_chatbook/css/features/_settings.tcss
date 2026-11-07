@@ -78,6 +78,17 @@
     min-width: $ds-size-36;
 }
 
+/* TASK-39134, owner decision 2026-11-06 ("Inspector waits for room"): from
+   101 columns until the floor above applies, the detail pane holds 64 cells
+   (SETTINGS_DETAIL_HOLD_WIDTH, settings_screen.py). Before the inspector
+   fits beside it the spare columns stay empty; after, the inspector takes
+   them, so widening the terminal never narrows this pane. A width, not a
+   max-width: the 6fr share is 63.75 at 127 columns and would round down.
+   The workbench id outranks the compact pane rule's width. */
+#settings-workbench #settings-detail-pane.settings-detail-holds {
+    width: $ds-size-64;
+}
+
 /* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #settings-detail-pane-body,
 #settings-impact-pane-body {

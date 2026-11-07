@@ -966,19 +966,26 @@ def _internal_prompts_save_target() -> Path:
 
 
 MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
-# At or below this terminal width the Settings workbench switches to its
-# compact layout (fixed-width category sidebar, inspector pane hidden),
+# At or below this terminal width the detail pane takes all the room beside
+# the compact layout's fixed-width category sidebar (inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
 SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
+# TASK-39134, owner decision (2026-11-06), "Inspector waits for room": wider
+# than that, the detail pane holds 64 cells (.settings-detail-holds, the 63 it
+# has at 100 columns rounded up to the $ds-size-64 token) and the layout stays
+# compact until the Scope Inspector fits beside it at its 21-cell minimum. The
+# inspector then takes each new column up to its 36-cell floor, so widening
+# the terminal never narrows the detail pane. Rail and gutters take 42.
+SETTINGS_DETAIL_HOLD_WIDTH = 64
+SETTINGS_INSPECTOR_ENTRY_MIN_WIDTH = 42 + SETTINGS_DETAIL_HOLD_WIDTH + 21
 # TASK-38953: at or below this width the compact rail would leave the open
 # category under 30 content cells (it is the width minus 41: 19 at 60, 0 at
 # 40), so Settings shows one pane at a time, like Library below 64.
 SETTINGS_SINGLE_PANE_MAX_WIDTH = 70
 # TASK-33003.7: from this width the Scope Inspector keeps 36 columns
-# (.settings-inspector-floor) and the detail pane still keeps 56: a 24-cell
-# label plus a 20-cell field (test_settings_compact_fields). Rail and
-# gutters take 42.
-SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + 56 + 36
+# (.settings-inspector-floor); the floor and the held detail width hand over
+# at this one column (TASK-39134).
+SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + SETTINGS_DETAIL_HOLD_WIDTH + 36
 # cubic review of #2937: the detail pane width that fits the widest action row
 # (Library > RAG's built-in profile row, 83 cells). Narrower, the rows stack:
 # at 140 columns the floor above leaves the pane 62, which cut "Open Advanced
@@ -5195,7 +5202,15 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_test_result()
 
     def _workbench_compact_now(self) -> bool:
-        return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
+        return self.size.width < SETTINGS_INSPECTOR_ENTRY_MIN_WIDTH
+
+    def _detail_holds_now(self) -> bool:
+        width = self.size.width
+        return (
+            SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
+            < width
+            < SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH
+        )
 
     def _single_pane_now(self) -> bool:
         # A detached screen has no app to size it (a bare "/" on_key test).
@@ -5251,6 +5266,9 @@ class SettingsScreen(BaseAppScreen):
         try:
             self.query_one("#settings-impact-pane").set_class(
                 self._inspector_floor_now(), "settings-inspector-floor"
+            )
+            self.query_one("#settings-detail-pane").set_class(
+                self._detail_holds_now(), "settings-detail-holds"
             )
         except QueryError:
             pass
@@ -23965,6 +23983,7 @@ class SettingsScreen(BaseAppScreen):
                 # Inline height: same bundle-collapse guard as the impact
                 # pane below.
                 detail_pane.add_class("h-full")
+                detail_pane.set_class(self._detail_holds_now(), "settings-detail-holds")
                 yield detail_pane
                 yield self._column_divider("settings-detail-impact-divider")
                 impact_pane = SettingsRegion(

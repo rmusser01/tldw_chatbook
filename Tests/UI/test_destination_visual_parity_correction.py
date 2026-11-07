@@ -2474,10 +2474,13 @@ async def test_settings_inspector_floor_yields_to_the_detail_pane_when_narrow():
     the detail pane from 57 to 42 columns and left the Network CA path 7
     editable cells (test_settings_compact_fields); a live resize must move
     the class both ways. The threshold is pinned at its edge: it hard-codes
-    the rail and gutters (42), so a wider rail must turn this red."""
+    the rail and gutters (42), so a wider rail must turn this red.
+    TASK-39134 rewrote the wide end on purpose, 140 -> 150 columns: the
+    floor now starts where the held detail width hands over (142), and at
+    140 the inspector is 34 columns, still growing toward it."""
     app = _build_test_app()
     host = _ProductionDestinationHarness(app, "settings")
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(150, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#settings-impact-pane")
         inspector = screen.query_one("#settings-impact-pane")
@@ -2487,11 +2490,11 @@ async def test_settings_inspector_floor_yields_to_the_detail_pane_when_narrow():
         )
 
         for width, floor in (
-            (140, 36),
+            (150, 36),
             (120, None),
             (edge - 1, None),
             (edge, 36),
-            (140, 36),
+            (150, 36),
         ):
             await pilot.resize_terminal(width, 42)
             await pilot.pause()
