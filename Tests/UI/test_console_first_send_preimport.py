@@ -228,11 +228,19 @@ def pass_outcome(tmp_path_factory) -> dict:
 
 
 #: The pass as it runs live: the screen routes, then the warm-up, each
-#: warm-up step recording the third-party packages it loaded (TASK-33620.15.18).
+#: warm-up step recording the third-party packages it loaded (TASK-33620.15.18),
+#: and its completion on an idle, attached Console with the process's real
+#: refreezer and collector (TASK-33620.15.57).
 _STEPS_SCRIPT = """
+import gc
 import importlib
 import json
+import os
 import sys
+import threading
+from types import SimpleNamespace
+
+os.environ["TLDW_IDLE_HEAP_REFREEZE"] = "1"
 
 from loguru import logger
 
@@ -277,18 +285,74 @@ class Recorder:
         return getattr(importlib, attr)
 
 
+class Console:
+    # An idle Console on top, its app's pre-import thread still running (live,
+    # the pass's thread waits in call_from_thread while the completion runs).
+    _closing = _closed = False
+    app_instance = _console_pending_send = _console_transcript_sync_timer = None
+
+    def __init__(self):
+        self._console_send_flight = SimpleNamespace(tasks=set(), deferred=None)
+        self.app = SimpleNamespace(
+            screen=self, _screen_preimport_thread=threading.current_thread()
+        )
+        self.timers = []
+
+    def _console_transcript_poll_needed(self):
+        return False
+
+    def set_timer(self, delay, callback):
+        self.timers.append(delay)
+
+
+console = Console()
+app.console_runtime = SimpleNamespace(view=console)
+app.call_from_thread = lambda callback, *args: callback(*args)
+before = set(sys.modules)
 warm.importlib = Recorder()
 warm.preimport_first_send_modules(app, app._finish_first_send_warmup)
 print("STEPS_JSON:" + json.dumps(steps))
+
+from tldw_chatbook.Utils import ui_responsiveness
+
+refreezer = ui_responsiveness.heap_refreezer()
+actions = [list(action) for action in refreezer.actions]
+warmed = [name for name in sys.modules if name not in before]
+unfrozen = {id(o) for g in range(3) for o in gc.get_objects(generation=g)}
+left = [name for name in warmed if id(sys.modules[name]) in unfrozen]
+refreezer._look()
+due = refreezer.compaction_due()
+print(
+    "CLOSING_JSON:"
+    + json.dumps(
+        {
+            "warmed": len(warmed),
+            "unfrozen": left,
+            "actions": actions,
+            "growth": refreezer._frozen - refreezer._baseline,
+            "due": due,
+            "timers": console.timers,
+        }
+    )
+)
 """
 
 
 @pytest.fixture(scope="module")
-def warm_up_steps(tmp_path_factory) -> list[list]:
-    """``[step, [third-party packages it loaded]]`` for the live pass's warm-up."""
+def warm_up_run(tmp_path_factory) -> dict[str, object]:
+    """The live pass's warm-up in a fresh interpreter: its steps and its completion."""
     result = _run_isolated(tmp_path_factory.mktemp("first_send_steps"), _STEPS_SCRIPT)
-    line = next(x for x in result.stdout.splitlines() if x.startswith("STEPS_JSON:"))
-    return json.loads(line[len("STEPS_JSON:") :])
+    outcome: dict[str, object] = {}
+    for prefix in ("STEPS_JSON:", "CLOSING_JSON:"):
+        line = next(x for x in result.stdout.splitlines() if x.startswith(prefix))
+        outcome[prefix] = json.loads(line[len(prefix) :])
+    return outcome
+
+
+@pytest.fixture(scope="module")
+def warm_up_steps(warm_up_run) -> list[list]:
+    """``[step, [third-party packages it loaded]]`` for the live pass's warm-up."""
+    return warm_up_run["STEPS_JSON:"]
 
 
 @pytest.mark.integration
@@ -371,6 +435,38 @@ def test_no_warm_up_step_loads_a_third_party_package_it_does_not_name(warm_up_st
         "these warm-up steps load third-party packages they do not name; list "
         "each package, after its dependencies, before the step: " + repr(hidden)
     )
+
+
+@pytest.mark.integration
+def test_the_warm_ups_end_freezes_its_modules_below_the_compaction_floor(warm_up_run):
+    """A first send after the warm-up finds its modules frozen (TASK-33620.15.57).
+
+    On origin/dev the warm-up's completion only asked for idle maintenance,
+    so its modules stayed unfrozen until 2 s passed with no input; live on
+    29592ecc9b (TASK-33620.15.51), in 4 of 36 launches that maintenance found
+    a compaction due and they stayed unfrozen through the first send. Here
+    the real pass runs, routes
+    first, and completes on an idle Console with the real refreezer and
+    collector: every module the warm-up imported is frozen when the
+    completion returns, with no timer fired.
+
+    They are frozen as runtime growth, not boot objects (TASK-33620.15.50),
+    so they must stay below the compaction floor the owner kept
+    (``COMPACTION_MIN_GROWTH``, TASK-33620.15.3): then they cannot make a
+    compaction due on their own.
+    """
+    from tldw_chatbook.Utils.ui_responsiveness import COMPACTION_MIN_GROWTH
+
+    closing = warm_up_run["CLOSING_JSON:"]
+    assert closing["warmed"] > 60, "the warm-up imported nothing"
+    assert closing["unfrozen"] == [], (
+        f"{len(closing['unfrozen'])} warm-up modules were left unfrozen for a "
+        "first send, e.g. " + ", ".join(closing["unfrozen"][:5])
+    )
+    assert closing["actions"] == [["refreeze", "first_send_preimport"]]
+    assert closing["timers"] == [], "a second re-freeze was requested after it"
+    assert 0 < closing["growth"] < COMPACTION_MIN_GROWTH, closing["growth"]
+    assert not closing["due"]
 
 
 def test_every_live_first_send_import_is_listed():
@@ -523,8 +619,9 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     The warm-up starts right after the last screen route, so its first pause
     has no gap of its own but still parks while a navigation or accepted
     Console work owns the loop: a send that starts as the routes finish
-    imports what it needs itself, unraced. When it is done it freezes the
-    heap again (ADR-198), since the routes' freeze ran before it.
+    imports what it needs itself, unraced. When it is done its completion
+    re-freezes the heap on the UI loop (ADR-198, TASK-33620.15.57), behind
+    the same park and input wait as a step.
     """
     from tldw_chatbook.Chat import console_first_send_modules as warm
     from tldw_chatbook.MCP import server as mcp_server
@@ -557,11 +654,16 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     warm.preimport_first_send_modules(app, app._finish_first_send_warmup)
 
     # Each import "took" 0.1 s on the fake clock: gap 0.1 x 2.0 = 0.2 s,
-    # before every later import and before the manifest parse.
-    assert app.pauses == [0.0] + [pytest.approx(0.2)] * len(warm.FIRST_SEND_MODULES)
+    # before every later import and before the manifest parse. The
+    # completion re-freezes the heap on the UI loop (TASK-33620.15.57), so it
+    # is a step too: a park and the input wait come after the parse.
+    assert app.pauses == (
+        [0.0] + [pytest.approx(0.2)] * len(warm.FIRST_SEND_MODULES) + [0.0]
+    ), "the completion was dispatched without a park after the manifest parse"
     assert app.events[:2] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[0])]
-    assert app.events[-2:] == [
+    assert app.events[-3:] == [
         ("prime", None),
+        ("pause", 0.0),
         ("callback", (app._finish_first_send_warmup, ())),
     ]
 

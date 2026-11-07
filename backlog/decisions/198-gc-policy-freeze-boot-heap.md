@@ -394,6 +394,144 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
 **Measured.** See TASK-33620.15.3's Implementation Notes: paired live sends
 against origin/dev, and memory across conversation switches and run cycles.
 
+## Amendment (2026-11-06, TASK-33620.15.57): the warm-up's end re-freezes; maintenance waits out the pre-import passes
+
+**Context.** The 2026-11-01 amendment left the first-send warm-up's objects to
+the Console's idle maintenance: the warm-up's completion requested it, and it
+ran 2 s later at the earliest, after 2 s without input. On dev 29592ecc9b
+(TASK-33620.15.51, 36 launches) the timer found a compaction already due in 4,
+waited for 5 s of quiet, and the first send dropped the request. Those sends
+ran with the warm-up's modules unfrozen, and the first reply's maintenance
+compacted for 241-298 ms on the UI loop.
+
+The refreezer's accounting, recorded live at every budget check (dev
+2684e5453f, 36 launches per arm, TASK-33620.15.57's round b1), shows why a
+compaction was due. The Console requests a re-freeze when it first paints a
+conversation, near the start of the screen-route pre-import pass, and the
+request's timer fires 2 s later. When the pass is still importing then, that
+runtime re-freeze freezes the routes imported so far, and they count as
+growth; the pass's own boot freeze then credits only what is left. The
+warm-up's request is checked 2 s after the warm-up, and books the warm-up's
+own objects (about 29K) as growth on top. The closer to the pass's end the
+paint re-freeze runs, the more it books. On 29592ecc9b, in all 4 compacting
+launches the paint re-freeze ran 0.03-0.25 s before the pass ended, and the
+pass's boot freeze then moved only 0.4-18.5K objects; in the 3 dev launches
+whose paint re-freeze ran 0.34-1.37 s before the end (24-66K left), none
+compacted. On 2684e5453f a runtime maintenance ran inside the pass in 16 of
+36 dev launches and 18 of 36 with #3336's runtime changes reverted. The dev
+launch whose re-freeze ran 0.86 s before the end booked 110K against a 144K
+budget; the reverted arm's two at 0.15-0.16 s came within 21-26K of theirs,
+less than the warm-up's 29K that dev adds. No dev launch ran in that band in
+this round, and none compacted.
+
+**Decision.**
+
+1. **No runtime maintenance inside a pre-import pass.** The Console's busy
+   check (`_console_heap_busy`) also holds while the app's initial-screen or
+   whole-registry pre-import thread runs, so a pass's modules are frozen by
+   its boot freeze (credited to the baseline, as decision 1 intends) and
+   never as growth. A request that meets the hold is dropped, as any busy
+   request is; the warm-up's end, which ends the pass, takes its place.
+2. **The warm-up's completion re-freezes at once.** It is dispatched behind
+   the same park and 0.15 s input wait as each warm-up step, and on the UI
+   loop, on an idle attached Console, it calls
+   `IdleHeapRefreezer.refreeze_now`. That is a runtime re-freeze, not a boot
+   point (the 2026-11-01 amendment's reason stands): a full collection, then
+   a freeze, and what it freezes counts as growth. Before the refreezer's
+   first look it counts the unfrozen generations instead of walking the
+   frozen set (garbage the collection then reclaims included, so it can only
+   overstate the growth the first look books); after it, it marks the
+   measured size stale. It runs even while a compaction is due, which stays
+   owed, so the frozen set can outgrow its baseline by the budget plus two
+   re-freezes, once per process. A pending request is satisfied by it.
+3. **No second re-freeze after it.** The completion requests idle
+   maintenance only when it could not re-freeze (a covered or busy Console)
+   or a compaction is owed for stranded garbage. A first version requested
+   it as before; 2 s later that re-freeze collected a nearly empty unfrozen
+   heap (0.2-0.9 ms). CPython runs an automatic full collection once a
+   quarter of what the last full collection kept is pending, so one that
+   keeps almost nothing brings the next ones forward: in that version's
+   first two launches the first send ran two generation-2 passes on the UI
+   loop (18.7 + 17.9 ms and 38.0 + 63.4 ms) where dev's ran one or none.
+   The consequence above that "each re-freeze resets" CPython's habit of
+   frequent full collections holds only for a re-freeze whose collection
+   keeps a sizeable heap.
+4. **Unchanged.** The compaction budget and its 50K floor (the owner's
+   2026-10-22 ruling), the quiet times, the stranded-garbage policy, and the
+   boot freezes and their count-without-walk.
+
+The warm-up's own objects number about 29K live (unfrozen at its end, 19K of
+them reachable from the modules it imported), below the 50K floor, so they
+cannot make a compaction due on their own;
+`Tests/UI/test_console_first_send_preimport.py` pins that with the real pass
+and collector.
+
+**Measured 2026-11-06.** Live, real Anthropic claude-haiku-4-5, 160x45, one
+first send per launch 4.5 s after the warm-up ended, and a key sent the moment
+the first reply's maintenance started. Round b1 had 36 blocks of one launch
+per arm on one profile: dev 2684e5453f, the same commit with #3336's runtime
+changes reverted, and the fix. Arm order cycled through all six permutations
+over four seeded profiles. Launches were gated on other sessions' load
+generators only; the host's idle CPU at the send ranged 0-95% (20 blocks at
+15% or more in every arm).
+
+- Warm-up modules unfrozen at Enter: 0 of 36 in each arm. Compactions after
+  the provider POST: none in any arm. The first reply's maintenance was a
+  re-freeze in all 108 launches (medians 20.9-22.0 ms on the UI loop), and
+  the key sent into it paid 35-36 ms from injection to frame in every arm. So this
+  round could not time a compaction, or a key sent during one.
+- The fix never ran a runtime maintenance inside a pass (0 of 36, against
+  16 and 18), and the first budget check after the warm-up booked
+  29.2-29.4K of growth in all 36 launches (budgets 160-185K), so the warm-up
+  cannot make a compaction due. The closing re-freeze held the UI loop
+  3.1-11.3 ms (median 4.1).
+- Enter to POST, paired per block: fix minus dev a median -72 ms (bootstrap
+  95% CI -130 to +6); fix minus revert +10 ms (-130 to +38). Main-thread GC
+  in that span: -1.8 ms (-9.1 to +2.4) and -3.5 ms (-11.4 to +4.4).
+- Those medians hide a fatter tail. Counting every generation, main-thread
+  GC wall time in that span below 15% idle (16 launches per arm): the fix's
+  four largest totals were 154, 162, 169 and 344 ms, against maxima of
+  134 ms (dev) and 139 (revert). All four exceed every dev and revert value
+  in that bucket (about a 1% chance if the arms did not differ, by
+  permutation). Paired, fix minus dev was +64 to +268 ms in 5 of 36 blocks,
+  four of them at 0% idle. TASK-33620.15.60 takes this tail, not the
+  median, as its acceptance test.
+- Generation-2 passes on the UI loop in that span: two or more in 12 fix,
+  14 dev and 15 revert launches, and 553, 516 and 572 ms of CPU in all. With
+  the host at least 15% idle (20 launches per arm), the median total was
+  6.7 ms (fix), 15.4 (dev) and 13.9 (revert). Below it (16 per arm, 0-14%
+  idle at the send, mostly 0), the fix's four largest totals were 95-170 ms
+  of wall time and 36-50 ms of CPU, two passes each. In the same blocks dev
+  and the revert ran one pass, or two in one dev launch, for 9-28 ms of CPU.
+  The fix's Enter to POST in those 16 blocks was still a paired median
+  108 ms sooner than dev's (TASK-33620.15.60 follows it up). A likely cause, not
+  measured (the probe does not count unfrozen objects): the fix leaves what
+  the first 2 s after the warm-up allocate unfrozen until the first reply's
+  maintenance, where dev's timer froze it.
+
+#3336's input-latency wins during the warm-up, re-measured. Round m1 had 32
+blocks of one launch per arm, 8 per cell, and the host was below 15% idle for
+90 of its 96 inputs. Latency runs from injection to the frame.
+
+- A key typed as the warm-up's manifest parse ended, just before its
+  completion: medians of 31 ms (dev), 42 (fix) and 72 (revert). Paired,
+  dev minus revert was -41 ms (dev faster in 8 of 8), fix minus revert -29
+  (fix faster in 6 of 8), and fix minus dev +18 (fix slower in 6 of 8).
+  Two fix keys took 78 and 112 ms against a dev maximum of 45. In both,
+  the closing re-freeze (5.0 and 6.3 ms) had ended 14.9 and 41.2 ms before
+  the key; the delay was a 20 ms Console poll timer in one and a late
+  insert in the other. With 8 per cell, "keeps #3336's wins" holds only to
+  this resolution on a loaded host.
+- Follow-up round n1 (16 dev/fix pairs, 12 with both launches at least 15%
+  idle) put fix minus dev at +0.1 ms (fix slower in 8 of 16; medians 12.8 and
+  13.2 ms). In all 24 fix launches, the closing re-freeze ended 0.2-41 ms
+  before the key was injected.
+- A key 0.02-0.5 s into the warm-up: 24 ms (dev), 33 (fix), 38 (revert).
+  Fix minus revert was -12 ms (faster in 5 of 8) and fix minus dev +5.5
+  (slower in 4 of 8).
+- A Library click into the warm-up: 699, 627 and 696 ms. At its closing: 731,
+  716 and 849 ms. Fix minus dev was -48 and -4 ms.
+
 ## Python versions
 
 The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.14 documentation on 2026-09-29:
@@ -432,3 +570,19 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
   provider call; the paint policy notes stranded garbage only when a freeze
   ran while the outgoing conversation was shown, and never when a new chat
   gains its conversation id.
+- TASK-33620.15.57 (2026-11-06 amendment): `test_gc_idle_refreeze.py` pins
+  `refreeze_now` (runs with a compaction owed and leaves it owed, never
+  walks, books what it froze before the first look as growth, satisfies a
+  pending request, freezes nothing while another collection runs, off under
+  pytest by the default gate unless `TLDW_IDLE_HEAP_REFREEZE` overrides)
+  and, with the real collector, that live foreground objects it freezes
+  make a compaction due where a boot point's would not.
+  `test_console_idle_heap_refreeze.py` pins the hold while either
+  pre-import thread runs and the completion's re-freeze, fallback request
+  and stranded request. `test_console_first_send_preimport.py` runs the real
+  pass and completion with the real refreezer: every module the warm-up
+  imported is frozen when the completion returns, with growth below the
+  50K floor and no second request. `test_first_send_warmup_gc_overlap.py`
+  runs the completion on the event loop after an overlapping navigation or
+  custody cycle retired: the closing re-freeze's full collection reclaims
+  it (the boot-freeze control retains it).
