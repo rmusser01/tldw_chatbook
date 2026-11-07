@@ -2088,20 +2088,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     ) -> None:
         """Lay the strip's two groups side by side, or one above the other.
 
-        Inline styles on purpose: the compact sheet pins
-        ``#library-notes-selection-actions`` to one line (``max-height: 1``)
-        and inline styles outrank it -- the editor header's in-place shapes
-        (TASK-34000.8) use the same mechanism.
+        The compact sheet pins ``#library-notes-selection-actions`` to one
+        line; the ``h-1``/``h-2`` utilities (``!important``, ADR-161 3.10)
+        and the inline min/max bounds outrank it -- the editor header's
+        in-place shapes (TASK-34000.8) use the same mechanism.
         """
         rows = 2 if two_rows else 1
         strip.styles.layout = "vertical" if two_rows else "horizontal"
-        strip.styles.height = rows
+        strip.set_class(not two_rows, "h-1")
+        strip.set_class(two_rows, "h-2")
         strip.styles.min_height = rows
         strip.styles.max_height = rows
         for group in (controls, bulk):
             group.set_class(not two_rows, "w-auto")
             group.set_class(two_rows, "w-full")
-            group.styles.height = 1
+            group.add_class("h-1")
 
     def _apply_select_strip_shape(self) -> None:
         """Re-shape a mounted select strip in place for the current width.
@@ -2169,9 +2170,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             stacked = not choice_strip_fits(
                 tuple(label for _, _, label in NOTES_SELECT_ACTION_CHOICES), width
             )
-            count = len(NOTES_SELECT_ACTION_CHOICES)
             choices.styles.layout = "vertical" if stacked else "horizontal"
-            choices.styles.height = count if stacked else 1
+            # One row per option (three stacked), in place of ``h-auto``.
+            choices.remove_class("h-auto")
+            choices.set_class(not stacked, "h-1")
+            choices.set_class(stacked, "h-3")
 
     def _toolbar_decisions(self, width: int) -> tuple[bool, bool, bool]:
         """The three width-driven shape answers for one pane width."""
@@ -3297,11 +3300,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # One Tab stop per row (the docstring above); ``x`` is
                     # its key, gated to the focused row's Restore.
                     purge.can_focus = False
-                    # The danger class's muted ink, not its 4-cell gap: at
-                    # 160x45 that gap cut "Daily log 2026-09-02" to
-                    # "Daily log 2026-09-0…" (measured live), losing the
-                    # one part of the title that tells the rows apart.
-                    purge.styles.margin = (0, 0, 0, 1)
+                    # The danger class's muted ink, not its 4-cell gap: the
+                    # one-cell margin is ``.library-notes-trash-delete``'s
+                    # (``features/_library_panels.tcss``).
                     purge.tooltip = PURGE_TOOLTIP
                     purge.note_id = row.note_id
                     purge.note_title = row.title
@@ -3344,13 +3345,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         failure = Horizontal(id="library-notes-trash-failure")
         failure.add_class("h-auto")
         with failure:
-            line = Static(
+            yield Static(
                 "Couldn't load recently deleted notes.",
                 id="library-notes-trash-error",
+                classes="w-fill",
                 markup=False,
             )
-            line.styles.width = "1fr"
-            yield line
             yield Button(
                 "Retry",
                 id="library-notes-trash-retry",
