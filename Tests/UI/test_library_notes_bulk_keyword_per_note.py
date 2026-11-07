@@ -568,3 +568,121 @@ async def test_a_writer_started_mid_run_gets_in_within_a_second(
         assert connection.execute(
             "SELECT COUNT(*) FROM conversations WHERE title = 'Concurrent chat'"
         ).fetchone() == (1,)
+
+
+# -- PR #3423 Qodo 3 and 4: no half-written note, no unused keyword ----------
+#
+# Without Sync v2 (the plain local path, ``_sync_local_note_keywords``), a
+# database failure injected by a trigger in the test's own database file, so
+# it fires on the worker thread's own connection too. Base (``bd01c0e46b``):
+# ONE ``note_transaction`` around every note, each call's exception caught --
+# a link whose ``note_keywords`` row was written before its ``sync_log`` row
+# failed was committed (Qodo 3), and the keyword was created before any link
+# was tried (Qodo 4).
+
+
+def _fault(tmp_path, ddl: str) -> None:
+    with sqlite3.connect(tmp_path / "notes.sqlite3") as connection:
+        connection.execute(ddl)
+
+
+def _sync_log_link_rows(tmp_path, note_id: str) -> int:
+    with sqlite3.connect(tmp_path / "notes.sqlite3") as connection:
+        return connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'note_keywords' "
+            "AND substr(entity_id, 1, length(?) + 1) = ? || '_'",
+            (note_id, note_id),
+        ).fetchone()[0]
+
+
+async def test_a_link_whose_sync_log_write_fails_commits_nothing_for_that_note(
+    tmp_path,
+) -> None:
+    """Qodo 3: the note's link row is written, then its sync-log row raises.
+
+    The note's own transaction rolls back whole: no link and no sync-log row
+    for it, while the other two notes are linked and logged; the receipt
+    counts it as not changed, and it stays checked.
+    """
+    host, seed = mounted(tmp_path)
+    faulted = seed.note_ids["Reading list"]
+    others = {seed.note_ids[title] for title in PICKED} - {faulted}
+    # A uuid, safe to inline: trigger DDL takes no bound parameters.
+    _fault(
+        tmp_path,
+        "CREATE TRIGGER qodo3_sync_log_fault BEFORE INSERT ON sync_log "
+        "WHEN NEW.entity = 'note_keywords' "
+        f"AND substr(NEW.entity_id, 1, {len(faulted)}) = '{faulted}' "
+        "BEGIN SELECT RAISE(ABORT, 'injected sync-log failure'); END",
+    )
+    async with host.run_test(size=WIDE) as pilot:
+        screen = await notes_ready(host, pilot)
+        await enter_select_mode(host, pilot, screen)
+        await _check(host, pilot, screen, PICKED)
+        await _keyword(
+            host,
+            pilot,
+            screen,
+            "library-notes-select-action-add-keyword",
+            "travel",
+            "Add a keyword to 3 notes",
+        )
+        receipt = (
+            "Added 'travel' to 2 notes · 1 could not be changed — still "
+            "checked, so you can try again"
+        )
+        await until(
+            pilot,
+            lambda: screen._notes_state.notice == receipt,
+            lambda: f"the partial receipt: {screen._notes_state.notice!r}",
+        )
+        assert screen._notes_state.row_selection.count == 1
+        assert screen._notes_state.row_selection.is_selected(faulted)
+    assert seed.keyword_links("travel") == others
+    assert _sync_log_link_rows(tmp_path, faulted) == 0
+    assert all(_sync_log_link_rows(tmp_path, note_id) == 1 for note_id in others)
+
+
+async def test_a_new_keyword_that_no_note_takes_leaves_no_keyword_row(
+    tmp_path,
+) -> None:
+    """Qodo 4: every selected note refused, so the new keyword is not created.
+
+    The keyword is created inside each note's own transaction, after the
+    policy gate, so a note whose link is refused rolls its keyword back with
+    it: no keyword row, no link, and every note still checked.
+    """
+    host, seed = mounted(tmp_path)
+    _fault(
+        tmp_path,
+        "CREATE TRIGGER qodo4_link_refused BEFORE INSERT ON note_keywords "
+        "BEGIN SELECT RAISE(ABORT, 'injected link refusal'); END",
+    )
+    before = seed.keyword_state()
+    async with host.run_test(size=WIDE) as pilot:
+        screen = await notes_ready(host, pilot)
+        await enter_select_mode(host, pilot, screen)
+        await _check(host, pilot, screen, PICKED)
+        await _keyword(
+            host,
+            pilot,
+            screen,
+            "library-notes-select-action-add-keyword",
+            "lagoon",
+            "Add a keyword to 3 notes",
+        )
+        receipt = (
+            "Added 'lagoon' to 0 notes · 3 could not be changed — still "
+            "checked, so you can try again"
+        )
+        await until(
+            pilot,
+            lambda: screen._notes_state.notice == receipt,
+            lambda: f"the refused receipt: {screen._notes_state.notice!r}",
+        )
+        assert screen._notes_state.row_selection.count == 3
+    assert seed.keyword_state() == before
+    with sqlite3.connect(tmp_path / "notes.sqlite3") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM keywords WHERE keyword = 'lagoon' COLLATE NOCASE"
+        ).fetchone() == (0,)
