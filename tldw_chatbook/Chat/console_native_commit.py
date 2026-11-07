@@ -896,6 +896,12 @@ async def _controller_accept_durable_turn(
                 native_owner.store.pause_unreserved_failed_commit(
                     preparation.preparation_id, preparation.attempt_id
                 )
+                if native_owner.explicit_stop:  # TASK-33621.59: Stop wins
+                    stopped = _controller_stop_failed_commit(
+                        self, native_owner, preparation, origin, queue_entry_id
+                    )
+                    if stopped is not None:
+                        return stopped
             return _source_controller.ConsoleSubmitResult(
                 False,
                 False,
@@ -1112,6 +1118,76 @@ def _store_pause_unreserved_failed_commit(
         session_id=current.session_id, preparation_id=preparation_id
     ).warning("console_durable_turn_commit_failed_before_reservation")
     return True
+
+
+def _controller_stop_failed_commit(self, owner, preparation, origin, queue_entry_id):
+    """Settle a send stopped during its failed durable commit as stopped.
+
+    TASK-33621.59, owner decision 2026-10-29: Stop wins. The failed commit has
+    paused the send as PERSISTENCE -- the store's own pause inside its
+    reservation, or ``pause_unreserved_failed_commit`` before it -- and that
+    pause's card offered Retry send although the user had asked to stop. The
+    send is cancelled instead, as the card's Cancel send would: its echo goes
+    and its text is put back as the draft. The result carries the restored
+    draft revision, so the runtime puts the send's attachments back with it.
+
+    Args:
+        self: The controller whose ordinary save failed.
+        owner: That save's native commit owner, explicitly stopped.
+        preparation: The failed send's preparation.
+        origin: The send's submission origin.
+        queue_entry_id: The send's queue entry, if any.
+
+    Returns:
+        The STOPPED refusal, or None when the send is no longer exactly that
+        attempt's PERSISTENCE pause; it then stays paused for its card.
+    """
+    from . import console_chat_controller as _source_controller
+    from .console_turn_preparation import (
+        SEND_STOPPED_COPY,
+        ConsolePreparationPauseKind,
+        ConsoleTurnPreparationState,
+    )
+
+    preparation_id = preparation.preparation_id
+    current = self.store.preparation_by_id(preparation_id)
+    if (
+        current is None
+        or current.attempt_id != preparation.attempt_id
+        or current.state is not ConsoleTurnPreparationState.PAUSED
+        or current.pause_kind is not ConsolePreparationPauseKind.PERSISTENCE
+    ):
+        return None
+    # The physical save is over; the store refuses to cancel under its owner.
+    self._release_ordinary_native_commit(owner)
+    cancelled = self.store.cancel_preparation(
+        current.session_id,
+        preparation_id,
+        expected_state=ConsoleTurnPreparationState.PAUSED,
+    )
+    if cancelled is None:
+        return None
+    self._drop_preparation(
+        preparation_id,
+        expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
+    )
+    self._set_run_state(
+        _source_controller.ConsoleRunState(
+            _source_controller.ConsoleRunStatus.STOPPED, SEND_STOPPED_COPY
+        ),
+        session_id=current.session_id,
+    )
+    return _source_controller.ConsoleSubmitResult(
+        False,
+        False,
+        SEND_STOPPED_COPY,
+        session_id=current.session_id,
+        terminal_status=_source_controller.ConsoleRunStatus.STOPPED,
+        origin=origin,
+        queue_entry_id=queue_entry_id,
+        preparation_id=preparation_id,
+        cancelled_draft_revision=cancelled.cancelled_draft_revision,
+    )
 
 
 def _store_retain_native_commit_owner(self, preparation_id: str, owner: object) -> None:

@@ -2614,3 +2614,16 @@ Tests/UI/test_portrait_region_editor.py::test_held_save_rejects_retired_authorit
 Tests/UI/test_portrait_region_editor.py::test_held_save_rejects_retired_authority_and_stale_revision[settings]
 Tests/UI/test_portrait_region_editor.py::test_open_dialog_retires_after_another_editor_changes_saved_artwork[review-source-False]
 Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_over_the_video_replace_confirmation_asks_first
+# TASK-33621.59 (2026-11-06): Stop pressed while a send's durable commit runs,
+# and the commit then fails (before and inside its reservation), settles as
+# stopped with the text and image back in the draft, and the next send is
+# answered; with no Stop the failure still pauses for Retry send. One node per
+# mounted case at the tail (4-6 s each).
+Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_failing_commit_gives_the_send_back_and_frees_the_chat[before-reservation]
+Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_failing_commit_gives_the_send_back_and_frees_the_chat[inside-reservation]
+Tests/UI/test_console_stop_during_failed_commit.py::test_a_failing_commit_with_no_stop_still_pauses_for_retry[before-reservation]
+Tests/UI/test_console_stop_during_failed_commit.py::test_a_failing_commit_with_no_stop_still_pauses_for_retry[inside-reservation]
+# TASK-33621.59 review (2026-11-06): Stop pressed during the card's Retry
+# send, whose save then fails too, settles the same way (6-7 s each).
+Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_card_retry_whose_commit_fails_gives_the_send_back[before-reservation]
+Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_card_retry_whose_commit_fails_gives_the_send_back[inside-reservation]
