@@ -158,6 +158,8 @@ RESEND_PAUSE_COPY: Mapping[ConsolePreparationPauseKind, str] = MappingProxyType(
     }
 )
 SEND_CANCELLED_COPY = "Send canceled; nothing was sent."
+#: TASK-33621.59: Stop pressed while the send's save ran, and the save failed.
+SEND_STOPPED_COPY = "Send stopped; nothing was sent."
 
 
 def prepared_cancel_copy(preparation: ConsoleTurnPreparation) -> str:

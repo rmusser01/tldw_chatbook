@@ -738,7 +738,10 @@ of the next prompt, and **Manage** plus a state-specific action such as
   the composer, and **Discard** drops it. Any of them ends the failed send, so
   the next message in that conversation goes through. The failure is never
   shown as provider setup, and the chat is not counted as a live run when you
-  quit.
+  quit. If you pressed Stop while the message was being saved (the command
+  palette's **Console: Stop this tab's run**), Stop wins instead: no card or
+  shelf entry offers it again, the status row reads **Send stopped; nothing
+  was sent**, and the message and its attachments are back in the composer.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.
