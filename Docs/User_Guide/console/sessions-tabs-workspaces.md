@@ -138,7 +138,7 @@ On a local-only setup the server lines collapse into one line:
 | "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab, with its own empty draft in the composer straight away |
 | Click a tab | Switches to it at once, even while another tab's agent is running: the tab lights up and its own draft is in the composer before anything else repaints, and the composer keeps the keyboard, so you can type straight away. A second click on the active tab opens "Rename Chat Tab" |
 | Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
-| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, an unsent turn waiting on the shelf, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, chat-creation confirmations, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
+| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. Console's own rows (command output such as `/help` or `/doctor`, and error notices) are never counted as loss. If closing would discard something (unsaved messages, an unsent draft, pending attachments, an unsent turn waiting on the shelf, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, chat-creation confirmations, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
 
@@ -674,7 +674,11 @@ affected tabs by those same positions. Tab titles, draft and message text never
 appear in the loss dialogs, even for renamed chats. It also reminds you that open tabs are not reopened the next time Chatbook starts;
 saved chats stay in the Chats rail. **Stay** keeps every draft, Temporary chat,
 staged attachment and unsent turn as it was. With nothing to lose, Ctrl+Q quits
-without asking.
+without asking. Command output such as `/help` or `/doctor`, and error notices,
+are not counted in either dialog and never make one appear on their own: a
+saved chat holding only those rows closes and quits without a question once
+its composer is empty. Text a command leaves in the composer after it runs,
+such as `/help`, still counts as an unsent draft until you clear it (Ctrl+U).
 
 ## Assistant recovery choices
 
