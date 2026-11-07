@@ -2666,6 +2666,7 @@ _RAW_RECOVERY_LIMITS = {
     "mcp.history": 256 * 1024**3,
     "runtime.source_state": 16 * 1024**2,
     "tamagotchi.config": 16 * 1024**2,
+    "citations.records_choice": 16 * 1024**2,
     "workspaces.change_tracking": 256 * 1024**3,
     "agents.history": 256 * 1024**3,
     "subscriptions.assets": 256 * 1024**3,

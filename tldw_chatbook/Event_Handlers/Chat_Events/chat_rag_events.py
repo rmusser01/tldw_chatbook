@@ -1756,6 +1756,7 @@ async def capture_console_staged_evidence_for_chat(
     launch: Any,
     *,
     user_message: str,
+    session_id: str | None = None,
 ) -> LocalRagContextResult:
     """Capture Console-staged local evidence at the provider prompt boundary.
 
@@ -1770,6 +1771,8 @@ async def capture_console_staged_evidence_for_chat(
         launch: Current ``ConsoleLiveWorkLaunch``-like staged context.
         user_message: Current Console draft, used only when the staged bundle
             has no retrieval query.
+        session_id: The turn's own Console session, which a citation-records
+            question waits on (TASK-33620.8.3); the active one when omitted.
 
     Returns:
         Exact provider context, an optional request-local citation builder,
@@ -1798,6 +1801,7 @@ async def capture_console_staged_evidence_for_chat(
         user_message=user_message,
         stage="console_rag",
         request_session=None,
+        question_session_id=session_id,
     )
 
 
@@ -1850,6 +1854,7 @@ async def _capture_console_evidence_bundle(
     user_message: str,
     stage: str,
     request_session: _RequestScopeSession | None,
+    question_session_id: str | None = None,
 ) -> LocalRagContextResult:
     """Authorize, format and (when records are available) capture one bundle."""
 
@@ -1895,6 +1900,16 @@ async def _capture_console_evidence_bundle(
             "Console RAG evidence sent without citation labels; "
             "reason=citation_records_unavailable"
         )
+        if unrecorded and getattr(repository, "fingerprint_key_state", None) == (
+            "writes_disabled"
+        ):  # TASK-33620.8.3: an upgraded install is asked once after this reply
+            from ...Chat.citation_records_choice import (
+                note_unrecorded_library_evidence,
+            )
+
+            await note_unrecorded_library_evidence(
+                repository, question_session_id or getattr(request_session, "id", None)
+            )
         return LocalRagContextResult(unrecorded or None, None)
 
     try:
