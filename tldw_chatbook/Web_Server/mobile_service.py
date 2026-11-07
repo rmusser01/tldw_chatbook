@@ -490,51 +490,55 @@ class MobileChatService:
             workspaces=self._data_dir / "workspaces.db",
             agent_runs=self._data_dir / "runs.db",
         )
-        registry = LocalWorkspaceRegistryService(storage.workspaces)
-        chat_db = storage.chachanotes
-        conversation_service = ChatConversationService(chat_db)
-        store = ConsoleChatStore(
-            persistence=ChatPersistenceService(
-                chat_db,
-                workspace_registry=registry,
+        try:
+            registry = LocalWorkspaceRegistryService(storage.workspaces)
+            chat_db = storage.chachanotes
+            conversation_service = ChatConversationService(chat_db)
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    chat_db,
+                    workspace_registry=registry,
+                )
             )
-        )
-        bridge = ConsoleAgentBridge(
-            agent_runs_db=storage.agent_runs,
-            store=store,
-            provider_gateway=self._gateway,
-        )
-        controller = ConsoleChatController(
-            store=store,
-            provider_gateway=self._gateway,
-            provider="openai",
-            model="gpt-4o-mini",
-            agent_bridge=bridge,
-            agent_runtime_enabled=True,
-            # Hooks admission owner, mirroring ConsoleRuntime's
-            # ``ensure_hook_permissions``: with hooks configured the send
-            # gate fails closed until the definitions are reviewed (mobile
-            # v1 has no hook-review surface), while an all-reviewed or
-            # hooks-free profile admits sends. No ``ensure_run_hooks`` is
-            # wired: mobile v1 does not fire run hooks (spike shape).
-            hook_permissions_accessor=lambda: self._ensure_hook_permissions(),
-        )
-        app_context = HeadlessAppContext(
-            workspace_registry_service=registry,
-            chachanotes_db=chat_db,
-            conversation_service=conversation_service,
-        )
-        controller.app = app_context
-        controller.set_pending_approval = self._on_pending_approval
-        self._engine = _Engine(
-            registry=registry,
-            storage=storage,
-            store=store,
-            bridge=bridge,
-            controller=controller,
-            app_context=app_context,
-            conversation_service=conversation_service,
-        )
+            bridge = ConsoleAgentBridge(
+                agent_runs_db=storage.agent_runs,
+                store=store,
+                provider_gateway=self._gateway,
+            )
+            controller = ConsoleChatController(
+                store=store,
+                provider_gateway=self._gateway,
+                provider="openai",
+                model="gpt-4o-mini",
+                agent_bridge=bridge,
+                agent_runtime_enabled=True,
+                # Hooks admission owner, mirroring ConsoleRuntime's
+                # ``ensure_hook_permissions``: with hooks configured the send
+                # gate fails closed until the definitions are reviewed (mobile
+                # v1 has no hook-review surface), while an all-reviewed or
+                # hooks-free profile admits sends. No ``ensure_run_hooks`` is
+                # wired: mobile v1 does not fire run hooks (spike shape).
+                hook_permissions_accessor=lambda: self._ensure_hook_permissions(),
+            )
+            app_context = HeadlessAppContext(
+                workspace_registry_service=registry,
+                chachanotes_db=chat_db,
+                conversation_service=conversation_service,
+            )
+            controller.app = app_context
+            controller.set_pending_approval = self._on_pending_approval
+            self._engine = _Engine(
+                registry=registry,
+                storage=storage,
+                store=store,
+                bridge=bridge,
+                controller=controller,
+                app_context=app_context,
+                conversation_service=conversation_service,
+            )
+        except BaseException:
+            storage.close()  # shutdown() closes only a built engine's storage
+            raise
         logger.info("mobile engine constructed over data_dir=%s", self._data_dir)
 
     def _ensure_hook_permissions(self):

@@ -329,6 +329,7 @@ def open_chachanotes_db(
 def open_media_db(
     path: Path, *, client_id: str, check_integrity: bool = False
 ) -> MediaDatabase:
+    """Open Media; ``check_integrity`` runs its startup integrity check."""
     from .DB.Client_Media_DB_v2 import MediaDatabase
 
     return MediaDatabase(
@@ -339,6 +340,7 @@ def open_media_db(
 def open_prompts_db(
     path: Path, *, client_id: str, check_integrity: bool = False
 ) -> PromptsDatabase:
+    """Open Prompts; ``check_integrity`` runs its startup integrity check."""
     from .DB.Prompts_DB import PromptsDatabase
 
     return PromptsDatabase(
@@ -347,12 +349,14 @@ def open_prompts_db(
 
 
 def open_workspaces_db(path: Path, *, client_id: str) -> WorkspaceDB:
+    """Open the workspaces database (it has no startup integrity check)."""
     from .DB.Workspace_DB import WorkspaceDB
 
     return WorkspaceDB(path, client_id=client_id)
 
 
 def open_agent_runs_db(path: Path, *, client_id: str) -> AgentRunsDB:
+    """Open the agent-runs database (it has no startup integrity check)."""
     from .DB.AgentRuns_DB import AgentRunsDB
 
     return AgentRunsDB(path, client_id=client_id)

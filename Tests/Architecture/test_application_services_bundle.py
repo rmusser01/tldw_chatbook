@@ -471,6 +471,55 @@ def test_open_profile_storage_opens_the_given_paths_and_closes_them(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("check_integrity", [True, False])
+def test_check_integrity_reaches_only_the_databases_that_have_the_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, check_integrity: bool
+) -> None:
+    import tldw_chatbook.config as config
+    from tldw_chatbook.app_services import open_profile_storage
+
+    seen: dict[str, object] = {}
+
+    def recording(name: str) -> type:
+        class Recording:
+            def __init__(self, _path, **kwargs) -> None:
+                seen[name] = kwargs.get("check_integrity_on_startup")
+
+            def close(self) -> None:
+                pass
+
+        return Recording
+
+    for module, name in (
+        ("ChaChaNotes_DB", "CharactersRAGDB"),
+        ("Client_Media_DB_v2", "MediaDatabase"),
+        ("Prompts_DB", "PromptsDatabase"),
+        ("Workspace_DB", "WorkspaceDB"),
+        ("AgentRuns_DB", "AgentRunsDB"),
+    ):
+        monkeypatch.setattr(f"tldw_chatbook.DB.{module}.{name}", recording(name))
+    monkeypatch.setattr(config, "load_console_library_migration_seed", lambda: None)
+
+    open_profile_storage(
+        client_id="factory-test",
+        chachanotes=tmp_path / "c.db",
+        media=tmp_path / "m.db",
+        prompts=tmp_path / "p.db",
+        workspaces=tmp_path / "w.db",
+        agent_runs=tmp_path / "r.db",
+        check_integrity=check_integrity,
+    ).close()
+
+    assert seen == {
+        "CharactersRAGDB": check_integrity,
+        "MediaDatabase": check_integrity,
+        "PromptsDatabase": check_integrity,
+        "WorkspaceDB": None,  # no startup integrity check to pass it to
+        "AgentRunsDB": None,
+    }
+
+
+@pytest.mark.unit
 def test_open_profile_storage_closes_what_it_opened_when_one_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

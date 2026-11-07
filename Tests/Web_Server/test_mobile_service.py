@@ -1674,6 +1674,38 @@ async def test_shutdown_closes_every_database_after_quiescing_the_chat_db(
     assert not any(_holds_connection(db) for db in databases)
 
 
+def test_engine_build_failure_closes_the_storage_it_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-36947.7: if composing the engine fails after the factory opened its
+    databases, they are closed (shutdown() only closes a built engine's)."""
+    from tldw_chatbook.Web_Server import mobile_service
+
+    opened: list[Any] = []
+    real_open = mobile_service.open_profile_storage
+
+    def recording_open(**kwargs):
+        opened.append(real_open(**kwargs))
+        return opened[-1]
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("controller refused")
+
+    monkeypatch.setattr(mobile_service, "open_profile_storage", recording_open)
+    monkeypatch.setattr(mobile_service, "ConsoleChatController", refuse)
+    service = _reading_service(tmp_path)
+
+    with pytest.raises(RuntimeError, match="controller refused"):
+        service.workspace_registry  # noqa: B018 - builds the engine
+
+    (storage,) = opened
+    assert service._engine is None
+    assert not any(
+        _holds_connection(db)
+        for db in (storage.chachanotes, storage.workspaces, storage.agent_runs)
+    )
+
+
 async def test_shutdown_leaves_a_chat_db_that_did_not_quiesce_open(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
