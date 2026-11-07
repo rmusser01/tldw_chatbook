@@ -94,6 +94,44 @@ def test_resolved_media_db_path_is_sensitive(monkeypatch):
     assert is_sensitive_path(Path(instance.media_db.db_path))
 
 
+def test_databases_come_from_the_shared_factory_and_close_with_it(monkeypatch):
+    """TASK-36947.7 (ADR-250 s6): the server's handles are its profile
+    storage's, so closing the storage (main() does) closes both."""
+    instance = _build_server_with_databases(monkeypatch)
+
+    assert instance.chachanotes_db is instance.storage.chachanotes
+    assert instance.media_db is instance.storage.media
+    instance.storage.close()
+    assert getattr(instance.chachanotes_db._local, "conn", None) is None
+    assert getattr(instance.media_db._local, "conn", None) is None
+
+
+def test_init_databases_closes_the_storage_when_a_later_step_fails(
+    monkeypatch, tmp_path
+):
+    """TASK-36947.7: a failure after the factory call closes what it opened
+    (main() never gets a server to close). Config-free: the paths and the
+    seed loader are stubbed."""
+    import tldw_chatbook.config as config
+    import tldw_chatbook.Notes.Notes_Library as notes_library_module
+    from tldw_chatbook.MCP import server as mcp_server_module
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("notes refused")
+
+    monkeypatch.setattr(config, "get_chachanotes_db_path", lambda: tmp_path / "c.db")
+    monkeypatch.setattr(config, "get_media_db_path", lambda: tmp_path / "m.db")
+    monkeypatch.setattr(config, "load_console_library_migration_seed", lambda: None)
+    monkeypatch.setattr(notes_library_module, "NotesInteropService", refuse)
+    instance = mcp_server_module.TldwMCPServer.__new__(mcp_server_module.TldwMCPServer)
+
+    with pytest.raises(RuntimeError, match="notes refused"):
+        instance._init_databases()
+
+    assert getattr(instance.storage.chachanotes._local, "conn", None) is None
+    assert getattr(instance.storage.media._local, "conn", None) is None
+
+
 def test_no_other_undeclared_database_config_keys():
     """AC #2: grep-based check that every ``get_cli_setting("database", ...)``
     call site in the codebase uses one of the declared ``*_db_path`` (or

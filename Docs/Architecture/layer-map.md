@@ -17,9 +17,11 @@ Each top-level package under `tldw_chatbook/`, and each module at the package ro
 | Rank | Layer | Members |
 | --- | --- | --- |
 | 0 | kernel | `Utils/`, `Third_Party/`, `Metrics/`, `state/`, `runtime_policy/`, and the root modules `__init__.py`, `config.py`, `Constants.py`, `Logging_Config.py` |
-| 1 | DB | `DB/` |
+| 1 | DB | `DB/`, and the root module `app_services.py` (see below) |
 | 2 | domain | Every other package (`Chat/`, `Agents/`, `LLM_Calls/`, `Library/`, `Notes/`, `Backup_Recovery/` and the rest) and every other root module (`model_capabilities.py`, `provider_registry.py`, `emergency_stop.py`, `chunking_engine_version.py`, `__main__.py`) |
-| 3 | presentation | `UI/`, `Widgets/`, `Event_Handlers/`, `css/`, `Web_Server/`, and the root modules `app.py`, `app_*.py`, `cli.py` |
+| 3 | presentation | `UI/`, `Widgets/`, `Event_Handlers/`, `css/`, `Web_Server/`, and the root modules `app.py`, `app_*.py` (except `app_services.py`), `cli.py` |
+
+`app_services.py` is a composition module, not part of the app shell, so it ranks with DB despite the `app_*.py` filename rule (TASK-36947.7). ADR-250 sections 1 and 6 make its module level import only the standard library, with service types under `TYPE_CHECKING`; at run time only its shared profile-storage factory imports anything, and only DB classes and `config.py`. DB is the lowest layer those imports allow. The standalone MCP server and the RAG backfill CLI, both domain modules, open their databases through that factory. The test keeps the ranking honest: every run-time import `app_services.py` makes is checked from DB's rank, the DB-to-domain model-module exception applies to `DB/` only, and `Tests/Architecture/test_application_services_bundle.py` pins its stdlib-only module level. This is the one place the test's ranks differ from the review's `layers.py`.
 
 ## The rule
 

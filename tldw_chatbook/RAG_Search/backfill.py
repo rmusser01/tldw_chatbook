@@ -101,24 +101,19 @@ def main(argv=None) -> int:
         )
         return 1
 
-    from ..config import (
-        get_chachanotes_db_path,
-        get_media_db_path,
-        load_console_library_migration_seed,
-    )
-    from ..DB.ChaChaNotes_DB import CharactersRAGDB
-    from ..DB.Client_Media_DB_v2 import MediaDatabase
+    from ..app_services import open_profile_storage
+    from ..config import get_chachanotes_db_path, get_media_db_path
 
-    media_db = None
-    chachanotes_db = None
-    if ITEM_TYPE_MEDIA in item_types:
-        media_db = MediaDatabase(get_media_db_path(), client_id="rag_backfill_cli")
-    if ITEM_TYPE_NOTE in item_types or ITEM_TYPE_CONVERSATION in item_types:
-        chachanotes_db = CharactersRAGDB(
-            get_chachanotes_db_path(),
-            "rag_backfill_cli",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        )
+    # Only the databases the requested item types read (ADR-250 section 6).
+    storage = open_profile_storage(
+        client_id="rag_backfill_cli",
+        media=get_media_db_path() if ITEM_TYPE_MEDIA in item_types else None,
+        chachanotes=(
+            get_chachanotes_db_path()
+            if ITEM_TYPE_NOTE in item_types or ITEM_TYPE_CONVERSATION in item_types
+            else None
+        ),
+    )
 
     def _progress(update):
         print(
@@ -127,17 +122,20 @@ def main(argv=None) -> int:
             file=sys.stderr,
         )
 
-    summary = asyncio.run(
-        backfill_semantic_index(
-            media_db=media_db,
-            chachanotes_db=chachanotes_db,
-            item_types=item_types,
-            page_size=args.page_size,
-            batch_size=args.batch_size,
-            progress_callback=_progress,
-            reconcile_for_recovery=args.reconcile_recovery,
+    try:
+        summary = asyncio.run(
+            backfill_semantic_index(
+                media_db=storage.media,
+                chachanotes_db=storage.chachanotes,
+                item_types=item_types,
+                page_size=args.page_size,
+                batch_size=args.batch_size,
+                progress_callback=_progress,
+                reconcile_for_recovery=args.reconcile_recovery,
+            )
         )
-    )
+    finally:
+        storage.close()
 
     from dataclasses import asdict, is_dataclass
 
