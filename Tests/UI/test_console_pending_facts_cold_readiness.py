@@ -36,6 +36,24 @@ from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 
 
+async def sync_rendered(console, pilot) -> None:
+    """Warm the checked display, then sync the rail until that sync renders.
+
+    TASK-38967: a sync right after ``warm()`` can still refuse (the
+    storage-admission lock busy, or a proof past its life under load), and a
+    refused sync renders nothing. Retry as TASK-38745's ``_prepared`` does.
+    """
+    projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+    deadline = asyncio.get_running_loop().time() + 30
+    while True:
+        assert await projection.warm()
+        if console._sync_console_rail_and_controls() is not False:
+            break
+        assert asyncio.get_running_loop().time() < deadline, "the rail sync kept deferring"
+        await pilot.pause(0.05)
+    await pilot.pause()
+
+
 class _OriginalColdRead(OriginalStorageUnitObserver):
     """Use the existing source records for one exact checked worker return."""
 
@@ -561,9 +579,7 @@ async def test_original_legacy_pending_facts_paint_before_cold_config_retires(
                 )
                 original._start_live_turn(console, controller, store, session_id)
                 projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-                assert await projection.warm()
-                console._sync_console_rail_and_controls()
-                await pilot.pause()
+                await sync_rendered(console, pilot)
                 inspector = console.query_one(
                     "#console-run-inspector-state", ConsoleRunInspector
                 )

@@ -14,6 +14,7 @@ from Tests.UI import test_console_pending_interrupt_projection as original
 from Tests.UI.app_factory import drain_active_service_patches, drain_created_dirs
 from Tests.UI.test_console_pending_facts_cold_readiness import (
     _CheckedNavigationFactory,
+    sync_rendered,
 )
 from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import raw_participants, storage_admission
@@ -90,9 +91,7 @@ async def test_first_persisted_conversation_keeps_pending_count_during_cold_conf
                     in controller._pending_approval_rounds,
                 )
                 projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-                assert await projection.warm()
-                console._sync_console_rail_and_controls()
-                await pilot.pause()
+                await sync_rendered(console, pilot)
                 inspector = console.query_one(
                     "#console-run-inspector-state", ConsoleRunInspector
                 )

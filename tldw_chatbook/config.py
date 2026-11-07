@@ -15,6 +15,7 @@ import difflib
 import hashlib
 import importlib.resources
 import importlib.util
+import itertools
 import json
 import re
 import shutil
@@ -387,6 +388,11 @@ _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING = _take_startup_unlock()
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
 _CONFIG_PERSISTENCE_ERROR = None
+#: TASK-38949: a fresh number for each successful config or settings cache
+#: install (a failed load takes none); ``next`` on one count is atomic, so two
+#: installs under different locks never share a number.
+_CONFIG_CACHE_INSTALL_NUMBERS = itertools.count(1)
+_CONFIG_CACHE_INSTALLS = 0
 
 #: Permission mode used the first time an encryption-related rewrite of the
 #: config file creates it from scratch (no pre-existing file whose mode can
@@ -1959,7 +1965,7 @@ def _load_settings_uncached(
         Dictionary containing all configuration settings.
     """
     global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE, _SETTINGS_CACHE_LOCK
-    global _SETTINGS_CACHE_POSTURE
+    global _SETTINGS_CACHE_POSTURE, _CONFIG_CACHE_INSTALLS
     active_config_path = _get_effective_config_path()
     # Stamped before anything is read: a file swapped mid-read leaves a stale
     # stamp, so the next warm read misses rather than trusting it.
@@ -3610,6 +3616,7 @@ def _load_settings_uncached(
             _SETTINGS_CACHE = config_dict
             _SETTINGS_CACHE_SOURCE = active_config_path
             _SETTINGS_CACHE_POSTURE = posture
+            _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
             logger.debug("load_settings: Configuration cached for future use")
 
     return config_dict
@@ -4155,7 +4162,7 @@ def _load_cli_config_bootstrap_unlocked(
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _FIRST_PROFILE_CREATED_THIS_SESSION
     global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
-    global _CONFIG_SCHEMA_CONFLICT
+    global _CONFIG_SCHEMA_CONFLICT, _CONFIG_CACHE_INSTALLS
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -4286,6 +4293,7 @@ def _load_cli_config_bootstrap_unlocked(
     if bootstrap_succeeded:
         _CONFIG_CACHE = loaded_config
         _CONFIG_CACHE_SOURCE = config_path
+        _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
         # TASK-26038: stamp the file we just loaded so a later external edit
         # is detected, and reset the throttle so the next read re-checks.
         _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
@@ -4903,7 +4911,7 @@ def _install_bootstrap_cache_from_raw(
     """
 
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
-    global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
+    global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC, _CONFIG_CACHE_INSTALLS
 
     if config_path is None:
         config_path = _get_effective_config_path()
@@ -4923,6 +4931,7 @@ def _install_bootstrap_cache_from_raw(
     # preserve that ordering.
     _CONFIG_CACHE = loaded_config
     _CONFIG_CACHE_SOURCE = config_path
+    _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
     _LAST_CONFIG_LOAD_FAILURE = None
     # TASK-26038 (lane-7 review Important #1): stamp the file WE just wrote so a
     # read after the stat-throttle window does not mistake our own write for an

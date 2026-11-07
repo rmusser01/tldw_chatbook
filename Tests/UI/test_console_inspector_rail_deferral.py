@@ -255,6 +255,54 @@ async def test_section_patch_in_a_hidden_rail_keeps_its_new_secondary_line(
     )
 
 
+class _EmptyRailHost(_RailHost):
+    """A rail that mounts its widget later, as the Inspector rail's sections can."""
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(id="rail")
+
+
+async def test_a_section_mounted_into_a_collapsed_rail_waits_for_the_opening(
+    monkeypatch,
+) -> None:
+    """TASK-38946: a late mount is hidden by the rail it lands in.
+
+    Under parallel load the first rail sync can collapse the Inspector rail
+    before the rail has mounted its sections (TASK-38698, 4 of 16 runs). The
+    cascade then marked nothing, so a section mounted afterwards did not count
+    as hidden, and each update it made laid out the whole screen while the
+    rail stayed closed.
+    """
+    after = _section_state(summary="Run history", detail="")
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        **_kwargs(_section_state(summary="", detail="")),
+    )
+    requests = _LayoutRequests(monkeypatch)
+    host = _EmptyRailHost(section)
+    async with host.run_test(size=(40, 30)) as pilot:
+        await pilot.pause()
+        rail = host.query_one("#rail")
+        ChatScreen._sync_console_rail_descendant_visibility(rail, False)
+        await rail.mount(section)
+        await pilot.pause()
+        with requests.counting() as calls:
+            section.sync_state(after)
+            await pilot.pause()
+            await pilot.pause()
+            hidden_calls = list(calls)
+        ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+        opened = await _settled_witness(pilot, rail)
+    assert _names(hidden_calls) == [], (
+        f"the late-mounted section asked for layouts: {_names(hidden_calls)}"
+    )
+    assert (section.rows, section.summary) == (after.rows, after.summary)
+    assert opened == await _never_hidden(
+        ConsoleInspectorSection(title="Agents", section_id="agents", **_kwargs(after))
+    )
+
+
 @pytest.mark.parametrize("held", ["run inspector", "section"])
 async def test_the_held_rebuild_lands_before_the_openings_first_paint(
     monkeypatch, held

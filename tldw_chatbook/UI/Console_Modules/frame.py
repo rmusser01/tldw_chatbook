@@ -10,6 +10,7 @@ its top/bottom separators, Context owns its right divider, Inspect owns its
 left divider, and the transcript owns no frame edge.
 """
 
+from itertools import chain
 from typing import Any
 
 from textual.css.query import QueryError
@@ -180,3 +181,96 @@ def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
         except QueryError:
             focus_control = None
         _paint_edge_region_focus(framed, focused_within, focus_control)
+
+
+def _app_style_inputs(app: Any) -> tuple:
+    return frozenset(app.classes), app.pseudo_classes
+
+
+def note_suspend_style_inputs(screen: Any) -> None:
+    """Record the App's classes and pseudo-classes as the screen leaves (TASK-38950)."""
+    screen._console_suspend_style_inputs = _app_style_inputs(screen.app)
+
+
+def skip_unchanged_resume_restyle(screen: Any, event: Any) -> None:
+    """Spare a return Textual's whole-screen restyle when no style input moved.
+
+    TASK-38950: ``Screen._on_screen_resume`` restyles every node when its
+    ``ScreenResume`` asks, and ``switch_screen`` always asks: 538-554 of the
+    Console's 555 nodes on each return, 55-58 ms of CPU at load 9. A node's own
+    class or pseudo-class change restyles it at once, current screen or not.
+    What a covered screen misses is a reparse of the rules (a theme change, a
+    sheet another screen loaded) and a change to the App node's classes or
+    pseudo-classes, which restyle only the screens on top. So the flag is
+    cleared only when the rules are the very list the last full restyle used
+    and the App's classes and pseudo-classes are the ones it used and the ones
+    the screen left with. This runs before Textual's handler (the dispatch
+    walks the most derived class first), which still does all its other work.
+
+    Every ``pop_screen`` posts ``refresh_styles=False`` and Textual restyles
+    nothing. If the App's classes or pseudo-classes moved while the screen was
+    covered, its nodes may hold the old ones, so the next return restyles.
+    """
+    app = screen.app
+    if not event.refresh_styles:
+        if _app_style_inputs(app) != getattr(
+            screen, "_console_suspend_style_inputs", None
+        ):
+            screen._console_resume_style_inputs = None
+        return
+    inputs = (app.stylesheet.rules, *_app_style_inputs(app))
+    styled = getattr(screen, "_console_resume_style_inputs", None)
+    if (
+        styled is not None
+        and styled[0] is inputs[0]
+        and styled[1:]
+        == inputs[1:]
+        == getattr(screen, "_console_suspend_style_inputs", None)
+    ):
+        event.refresh_styles = False
+    screen._console_resume_style_inputs = inputs
+
+
+def apply_scoped_breakpoints(
+    screen: Any, breakpoints: list[tuple[int, str]], height: int
+) -> None:
+    """Set the screen's vertical breakpoint class, restyling only what it styles.
+
+    TASK-38950: Textual's ``Screen._on_resize`` flips a breakpoint class with a
+    whole-screen restyle, on the Console's first layout and at every height
+    change across 24/25 rows. A rule naming the class can style only the nodes
+    its target selector names (the key Textual's ``rules_map`` matches nodes
+    by), and their subtrees, which inherit from them. Same class choice as
+    ``Screen._get_breakpoint_classes``.
+    """
+    wanted = dict.fromkeys((name for _, name in breakpoints), False)
+    for threshold, name in sorted(breakpoints, reverse=True):
+        if height >= threshold:
+            wanted[name] = True
+            break
+    if all(screen.has_class(name) == on for name, on in wanted.items()):
+        return
+    screen.update_classes(wanted, update=False)
+    stylesheet = screen.app.stylesheet
+    rules = stylesheet.rules
+    cached = getattr(screen, "_console_breakpoint_names", None)
+    if cached is not None and cached[0] is rules and cached[1] == frozenset(wanted):
+        names = cached[2]
+    else:  # One scan per parsed sheet: 5,843 selector strings cost 139 ms at load 86.
+        names = set()
+        for rule in rules:
+            selectors = rule.selectors
+            if any(f".{name}" in selectors for name in wanted):
+                names |= rule.selector_names
+        screen._console_breakpoint_names = (rules, frozenset(wanted), names)
+    targets = [
+        node
+        for node in screen.walk_children(with_self=True)
+        if node._selector_names & names
+    ]
+    stylesheet.update_nodes(
+        dict.fromkeys(
+            chain.from_iterable(n.walk_children(with_self=True) for n in targets)
+        ),
+        animate=False,
+    )

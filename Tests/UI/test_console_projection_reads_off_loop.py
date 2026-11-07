@@ -172,6 +172,137 @@ async def test_a_projection_rereads_an_aging_display_ahead_of_its_expiry(
 
 
 @pytest.mark.asyncio
+async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
+    monkeypatch,
+):
+    """TASK-38967: a FULL sync's warm-up never hands back a proof about to expire.
+
+    ``warm()`` returned True for any display younger than its 1 s life, while
+    ``run()`` re-reads one only once it is that old, so a 0.99 s proof came
+    back as warm. The render that followed refused it as expired, and the
+    whole sync replayed 0.2 s later (11 of 191 warm-ups in three mounted files
+    at load 9-11). The warm-up now re-reads a display past half its life, the
+    share the run poll's projections already refresh ahead at.
+    """
+    clock = _install_clock(monkeypatch)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            projection = await _fresh_display(console)
+            console._stop_console_transcript_sync_timer()  # No run poll.
+            await until(lambda: not projection.pending, timeout=30)
+
+            clock.now += projection.max_age - 0.01
+            assert await projection.warm()
+            clock.now += 0.05  # The FULL sync's own render takes time.
+            result, _ops = _project(console)
+            assert result is True, (
+                "the render refused the display its warm-up had just handed back"
+            )
+
+            # While reads fail, each failed re-read arms a retry sync, so the
+            # warm-up keeps the base rule: re-read only an expired display.
+            # Reading ahead there replayed an unparseable config's idle
+            # Console twice in 2 s (test_an_unparseable_config_...).
+            await until(lambda: not projection.pending, timeout=30)
+            projection._retry_delay = spend.RETRY_FIRST_DELAY  # A read failed.
+            read_at = projection.at
+            clock.now += projection.max_age * 0.6
+            assert await projection.warm()
+            assert projection.at == read_at and not projection.pending, (
+                "the warm-up read ahead while the display's reads were failing"
+            )
+
+
+@pytest.mark.asyncio
+async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
+    monkeypatch,
+):
+    """A FULL sync's own awaits must not expire the display its rail step reads.
+
+    The FULL warms the checked display before its projection, then awaits the
+    transcript and the archive view before its rail-visibility step. Under load
+    those awaits outlived the display's 1 s life, the rail step refused the
+    expired display, and the whole sync replayed. The replay did the same, so
+    an idle Console kept syncing about once a second for as long as the load
+    lasted. That was the flake in
+    ``test_an_unparseable_config_leaves_an_idle_console_idle``: 4 refusals in
+    4 s, all on proof age (1.20-1.33 s), at load about 70. The FULL now warms
+    the display again before its rail step.
+    """
+    clock = _install_clock(monkeypatch)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            projection = await _fresh_display(console)
+            console._stop_console_transcript_sync_timer()  # No run poll.
+            await until(lambda: not projection.pending, timeout=30)
+            real = console._sync_native_console_transcript
+
+            stretch = {"share": 1.2}
+            reads: list = []
+            after_transcript: list = []
+
+            async def slow_transcript(*args, **kwargs):
+                # Load stretched the FULL's awaits.
+                clock.now += projection.max_age * stretch["share"]
+                result = await real(*args, **kwargs)
+                after_transcript.append(len(reads))
+                return result
+
+            console._sync_native_console_transcript = slow_transcript
+            console._console_control_bar_replay_whole_sync = False
+            result = await console._sync_native_console_chat_ui()
+            assert result is True and not console._console_control_bar_replay_whole_sync, (
+                "a FULL sync whose awaits outlived the display replayed itself"
+            )
+
+            # A display still live at the rail step is not read again: with
+            # config unparseable each read is a rebuild under the config locks.
+            await until(lambda: not projection.pending, timeout=30)
+            stretch["share"] = 0.6
+            read_at = projection.at
+            assert await console._sync_native_console_chat_ui() is True
+            assert projection.at == read_at, "the rail step re-read a live display"
+
+            # While reads fail, the rail step starts no read either: one failed
+            # read was followed by a second in the same sync, and the retry
+            # backoff doubled (r11c-rev3).
+            from tldw_chatbook.Chat import console_preparation_reads
+
+            async def unparseable(*args, **kwargs):
+                raise RuntimeError("config.toml is unparseable")
+
+            monkeypatch.setattr(
+                console_preparation_reads, "run_preparation_read", unparseable
+            )
+            await until(lambda: not projection.pending, timeout=30)
+            projection._retry_delay = spend.RETRY_FIRST_DELAY  # A read failed.
+            refresh = projection._refresh
+
+            def counting_refresh(key):
+                reads.append(key)
+                return refresh(key)
+
+            projection._refresh = counting_refresh
+            at_rail: list = []
+            rail = config_sync.sync_console_rail_visibility
+
+            def counting_rail(screen):
+                at_rail.append(len(reads))
+                return rail(screen)
+
+            monkeypatch.setattr(config_sync, "sync_console_rail_visibility", counting_rail)
+            stretch["share"] = 1.2
+            await console._sync_native_console_chat_ui()
+            assert at_rail and at_rail[-1] == after_transcript[-1], (
+                "the rail step started a read while the display's reads were failing"
+            )
+
+
+@pytest.mark.asyncio
 async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_tick(
     monkeypatch,
 ):
@@ -489,6 +620,88 @@ def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monke
     warm["settings"] = {}  # Any owner's warm read ends the episode for all.
     assert not spend.defer_cold_live_read(screen, "another owner")
     assert not screen._console_cold_read_deferrals, "a stale cold-episode entry"
+
+
+def test_a_warm_load_no_owner_saw_still_ends_the_cold_episode(monkeypatch):
+    """TASK-38949: the episode ends when config loads warm, whoever loads it.
+
+    The deferral set was cleared only when some owner was called while config
+    was warm. The credential poll returns before its locked section unless its
+    pre-gate changed, so after a broken config was fixed an owner's entry could
+    outlive the fix, and that owner's first read in the next cold episode ran
+    live on the UI loop (147-222 ms for the poll, about 80 ms for the identity
+    refresh). A successful cache install now ends the episode for every owner.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config
+
+    warm = {"settings": None}
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: warm["settings"])
+    monkeypatch.setattr(config, "_warm_config_cache_hit", dict)
+    installs = getattr(config, "_CONFIG_CACHE_INSTALLS", 0)
+    monkeypatch.setattr(config, "_CONFIG_CACHE_INSTALLS", installs, raising=False)
+
+    class Screen:
+        app_instance = SimpleNamespace(app_config={"disk-loaded": True})
+
+        def _console_config_snapshot_is_disk_loaded(self, value):
+            return bool(value)
+
+    screen = Screen()
+    owners = (
+        "_poll_console_credential_readiness",
+        "sync_console_core_state",
+        "_sync_console_identity_surfaces",
+    )
+    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [True] * 3
+    # An unparseable config.toml installs nothing, so the episode holds.
+    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [False] * 3
+
+    # The file is fixed and another path (the readiness projection's off-loop
+    # read, a Settings save) loads it warm; no owner runs meanwhile.
+    warm["settings"] = {}
+    monkeypatch.setattr(config, "_CONFIG_CACHE_INSTALLS", installs + 1, raising=False)
+    warm["settings"] = None  # Cold again: a new episode.
+    deferred = [spend.defer_cold_live_read(screen, owner) for owner in owners]
+    assert deferred == [True] * 3, (
+        f"an owner read cold config live on its first call of a new episode: {deferred}"
+    )
+    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [False] * 3
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_only_a_successful_config_load_counts_as_a_cache_install(request):
+    """TASK-38949: the install count moves on a good load and holds on a broken one.
+
+    ``defer_cold_live_read`` ends a cold episode when this count moves. A
+    broken config.toml must leave it where it is, or each owner would defer on
+    every call while the file stays unparseable.
+    """
+    from tldw_chatbook import config
+
+    path = config._get_effective_config_path()  # This child's own profile.
+    await asyncio.to_thread(config.load_settings, True)
+    good = path.read_bytes()
+    before = config._CONFIG_CACHE_INSTALLS
+    await asyncio.to_thread(config.load_settings, True)
+    loaded = config._CONFIG_CACHE_INSTALLS
+    try:
+        path.write_bytes(good + b"\n[unterminated\n")
+        await asyncio.to_thread(config.load_settings, True)
+        broken = config._CONFIG_CACHE_INSTALLS
+        await asyncio.to_thread(config.load_settings, True)
+        still_broken = config._CONFIG_CACHE_INSTALLS
+    finally:
+        path.write_bytes(good)
+        await asyncio.to_thread(config.load_settings, True)
+    fixed = config._CONFIG_CACHE_INSTALLS
+    assert loaded > before, f"a good load installed nothing: {before} -> {loaded}"
+    assert broken == still_broken == loaded, (
+        f"an unparseable file counted as an install: {loaded} -> {broken} -> {still_broken}"
+    )
+    assert fixed > still_broken, f"the fixed file installed nothing: {fixed}"
 
 
 def test_the_credential_poll_defers_a_cold_read_once_and_then_stays_idle(monkeypatch):

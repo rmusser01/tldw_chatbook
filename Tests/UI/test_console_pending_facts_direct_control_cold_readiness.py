@@ -25,6 +25,7 @@ from Tests.UI.app_factory import (
     drain_created_dirs,
     persist_seeded_config,
 )
+from Tests.UI.test_console_pending_facts_cold_readiness import sync_rendered
 from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import (
     config_participants,
@@ -562,9 +563,7 @@ async def test_original_direct_control_pending_facts_paint_before_cold_config_re
                 )
                 original._start_live_turn(console, controller, store, session_id)
                 projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-                assert await projection.warm()
-                console._sync_console_rail_and_controls()
-                await pilot.pause()
+                await sync_rendered(console, pilot)
                 inspector = console.query_one(
                     "#console-run-inspector-state", ConsoleRunInspector
                 )

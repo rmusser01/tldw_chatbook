@@ -2508,7 +2508,7 @@ The first overflow probe reported no overflow at all. `Strip.cell_length` gave t
 **What to do.**
 - When you queue the screen's tick ahead of a change, also make sure a screen layout is pending (`screen.refresh(layout=True)`), unless the code under test sets one itself. Check that the unfixed build goes red before you trust a green result.
 - Judge each recorded frame against what the widget holds when it paints (`section.rows`, `browser.state`), not against the settled end state.
-- `CONSOLE_RAIL_PRIOR_DISPLAY` exists only on descendants that were present when the collapse cascade ran. A widget that mounts later inside a collapsed rail is not "hidden by the rail". Do not let a fix depend on that mark, and stress the test under parallel load before you call it fixed.
+- `CONSOLE_RAIL_PRIOR_DISPLAY` exists only on descendants that were present when the collapse cascade ran. A widget that mounts later inside a collapsed rail is not "hidden by the rail". Do not let a fix depend on that mark, and stress the test under parallel load before you call it fixed. (TASK-38946, 2026-11-06: `hidden_by_console_rail` now marks such a widget on its first ask, by finding the rail's `CONSOLE_RAIL_COLLAPSED` flag among its ancestors. Code that reads the raw attribute instead of asking the helper still sees no mark on a late mount.)
 
 ## A Static with no width takes its whole row, and a button pushed past the row's clip still takes Tab (TASK-38757, 2026-11-05)
 
@@ -2535,3 +2535,22 @@ The first overflow probe reported no overflow at all. `Strip.cell_length` gave t
 **What to do.**
 - To know about a click before its focus lands, override the public `Screen.get_focusable_widget_at`. Textual 8.2.8 calls it only in that MouseDown branch, synchronously, just before `set_focus`. Mark the input there and return `super()`'s result. Do not override `_forward_event`.
 - Pin any "the user moved focus" rule with `pilot.click`, not with a mark plus `.focus()`. `pilot.click` calls `screen._forward_event` directly, so it takes the same path.
+
+## A resumed screen restyles every node unless its own `ScreenResume` handler clears `refresh_styles` first (TASK-38950, 2026-11-06)
+
+**Incident.** Every return to the Console restyled all of its nodes: 546 of 546 in the send harness, 94-162 ms of CPU per return at load 33-36. `switch_screen` and `push_screen` post `ScreenResume()`, whose `refresh_styles` defaults to True, and `Screen._on_screen_resume` restyles the whole screen while that flag is set. A height change across 24/25 rows then restyled all 555 nodes again: `Screen._on_resize` flips the `VERTICAL_BREAKPOINTS` class with `update_classes`.
+
+The fix patches nothing of Textual's.
+- **Resume.** The dispatcher walks the MRO most-derived first, so a subclass's own `ScreenResume` handler runs before Textual's private one and can clear `event.refresh_styles`. Textual's handler still does everything else: the suspended class, `stack_updates`, notifications, auto-focus, and the relayout after a size change.
+- **Breakpoints.** A screen whose `VERTICAL_BREAKPOINTS` is `[]` makes Textual skip its own breakpoint code. Its `on_resize` then sets the class itself, with `update=False`, and restyles only the nodes in the matching rules' `selector_names`, the key `rules_map` matches nodes by, plus their subtrees.
+
+**What to do.**
+- **What can go stale.** A class or pseudo-class change on any node restyles it at once, even on a suspended screen, because `App.update_styles` handles non-App nodes immediately. So a screen that is off the stack misses only two things:
+  - a reparse of the rules (a theme change, or a sheet another screen loaded). `stylesheet.rules` is a new list after every parse, so compare it by identity;
+  - a change to the App node's classes or pseudo-classes. `_watch_app_focus` restyles only `app.screen`, and `App.update_styles(app)` restyles only the screens on top.
+- **Keep the inputs conservatively.** Record the rules at each full restyle, and the App's classes and pseudo-classes at both the restyle and the suspend.
+- **Do not ignore a pop.** Every `pop_screen` posts `refresh_styles=False` (Textual 8.2.8 `app.py:3112`), not only a modal's, and Textual then restyles nothing. The first version learned nothing from it, and review r11c-rev1 found the gap: an App class that changed under a pushed screen left the nodes stale, and the next return skipped. On such a resume, compare the App's classes and pseudo-classes with the suspend record, and if they moved, drop the restyle record so that the next return restyles in full.
+- **Pin each check with its own input.** A theme switch moves the rules and the App classes together, so it cannot show that either check is needed on its own. Review r11c-rev1's mutants that dropped one check each passed the first suite.
+  - Give each input a case of its own: an `add_source` rule while away (the rules check), and an App class set while the screen is current and cleared while it is away (the suspend check).
+  - Compare every node's `_css_styles.get_rules()` with a forced `app.update_styles(screen)` (`Tests/UI/test_console_projection_restyles.py`).
+- **The same shape elsewhere.** `#console-shell`'s `-console-compact` class still restyles 517 nodes when the height crosses 34 rows.

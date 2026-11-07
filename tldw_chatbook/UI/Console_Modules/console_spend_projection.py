@@ -410,8 +410,11 @@ class ConsoleReadinessConfigProjection:
             getattr(app, "app_config", None),
         )
 
-    def run(self, body: Callable[[], Any]) -> bool:
-        """Defer a cold owner; use only its own last mapping during expiry."""
+    def run(self, body: Callable[[], Any], *, life: float | None = None) -> bool:
+        """Defer a cold owner; use only its own last mapping during expiry.
+
+        ``life`` re-reads a display younger than ``max_age`` (``warm()``).
+        """
         screen = self.screen
         runtime = _readiness_runtime(screen)
         if getattr(screen, "_closing", False) or getattr(runtime, "_disposed", False):
@@ -422,9 +425,10 @@ class ConsoleReadinessConfigProjection:
             and self.value is not None
             and self._runtime_owner is runtime
         )
-        life = self.max_age
-        if getattr(screen, "_console_transcript_sync_timer", None) is not None:
-            life *= REFRESH_AHEAD_SHARE
+        if life is None:
+            life = self.max_age
+            if getattr(screen, "_console_transcript_sync_timer", None) is not None:
+                life *= REFRESH_AHEAD_SHARE
         now = time.monotonic()
         tokenizer_due = any(
             slot.asked and not slot.prepared and now >= slot.retry_at
@@ -500,7 +504,12 @@ class ConsoleReadinessConfigProjection:
         ):
             return False
         key = self._key()
-        self.run(lambda: None)
+        # TASK-38967: a proof handed back close to its expiry expired in the
+        # FULL render that followed, which refused it and replayed the whole
+        # sync 0.2 s later; re-read one past the run poll's refresh-ahead share.
+        # Not while reads fail: each failure arms a retry sync of its own.
+        ahead = None if self._retry_delay else self.max_age * REFRESH_AHEAD_SHARE
+        self.run(lambda: None, life=ahead)
         if self.pending:
             await self._settled.wait()
         return (
@@ -1174,11 +1183,14 @@ def defer_cold_live_read(screen: Any, owner: str) -> bool:
     cold for good: deferring every cold read replayed an idle Console 5 times a
     second. Each owner defers once per cold episode; its next call reads live,
     as before. Any warm read ends the episode for every owner, so a rarely
-    called owner keeps no stale entry.
+    called owner keeps no stale entry. TASK-38949: so does any successful
+    config load, whoever made it; a failed load installs nothing.
     """
     deferred = getattr(screen, "_console_cold_read_deferrals", None)
-    if deferred is None:
+    installs = _tldw_config._CONFIG_CACHE_INSTALLS
+    if deferred is None or getattr(screen, "_console_cold_read_installs", None) != installs:
         deferred = screen._console_cold_read_deferrals = set()
+        screen._console_cold_read_installs = installs
     if not live_config_read_is_cold(screen):
         deferred.clear()
         return False
