@@ -1,0 +1,70 @@
+{
+  "tldw_chatbook/Chat/console_chat_start.py": {
+    "base_sha256": "d0cd0a4da8dd3a4cd2f185b2323d26a3517a975bc2860cf815f8437cea300c0a",
+    "final_sha256": "f28df48d144d296329f872001a83300248be44e4df8619baff2cd53bd6d8c8b2",
+    "bytes": 31886,
+    "changed_definitions": [
+      "ConsoleChatStartCoordinator",
+      "ConsoleChatStartCoordinator._run"
+    ],
+    "added_definitions": [
+      "ConsoleChatStartCoordinator._restrict_cleanup"
+    ],
+    "imports_exact": true,
+    "all_other_methods_AST_exact": true,
+    "main_run_body_handlers_and_both_physical_drains_exact": true
+  },
+  "tldw_chatbook/DB/automatic_work.py": {
+    "base_sha256": "53e3cc87df9d6029aa34076b2456a9333a041caac8ed558342c88bb797ba6f1c",
+    "final_sha256": "a78ed90f3fd717029ffb3cec53929a888e26f3b7d44f4c703769958153a1211c",
+    "bytes": 54639,
+    "changed_definitions": [
+      "AutomaticWorkLedger"
+    ],
+    "added_definitions": [
+      "AutomaticWorkLedger._confirm_chat_start_absent"
+    ],
+    "imports_exact": true,
+    "public_abort_AST_exact": true,
+    "all_other_executable_AST_exact": true
+  },
+  "tldw_chatbook/Chat/console_chat_fork.py": {
+    "base_sha256": "55a16b1eefe7d9d50ef46644f4dbb7a760c7fc7a13c64ee1a088570c7d1cbc72",
+    "final_sha256": "6d86308c24ad8d2b33f625047b6fea52c9280542bd0c23230de7268cf8ca3afb",
+    "bytes": 62454,
+    "changed_definitions": [
+      "console_fork_visible_selection"
+    ],
+    "added_definitions": [],
+    "imports_exact": true,
+    "whole_module_executable_AST_signature_returns_exact": true
+  },
+  "Tests/Chat/test_console_chat_start.py": {
+    "base_sha256": "63f1eb28fc8c30d3d8fa7fee99e393fab2f212fed8c2b7af72ce777a1a158511",
+    "final_sha256": "96057a9d001ef3a78986366ca94fbe2752a144347dc30bfd87025b7d2ef0ceae",
+    "bytes": 144639,
+    "changed_definitions": [],
+    "added_definitions": [
+      "test_failed_preparation_with_no_attempt_clears_only_its_restriction",
+      "test_preparation_exception_reconciles_persisted_authority_conservatively",
+      "test_restriction_registration_failure_still_drains_exact_native_owners",
+      "test_contended_preparation_confirms_absence_after_writer_exits",
+      "test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release"
+    ],
+    "imports_exact": false,
+    "original_prefix_byte_exact": true,
+    "original_assertions_waits_markers_exact": true
+  },
+  "Tests/DB/test_automatic_chat_starts.py": {
+    "base_sha256": "7055d0addda58c916d3a3f68f96e6b57ebb5c2de03f343c7dc842012c1ff2b6a",
+    "final_sha256": "225e549fd3416e7052c06bbef4bcfaa419c88c3f043214238c798422ea500689",
+    "bytes": 31522,
+    "changed_definitions": [],
+    "added_definitions": [
+      "test_missing_start_confirmation_requires_successful_owned_transaction"
+    ],
+    "imports_exact": true,
+    "original_prefix_byte_exact": true,
+    "original_assertions_waits_markers_exact": true
+  }
+}

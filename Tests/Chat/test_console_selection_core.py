@@ -183,7 +183,7 @@ def test_builder_keeps_the_sessions_blank_max_tokens() -> None:
 
 
 def test_core_reads_a_registry_entry_through_the_unified_lookup() -> None:
-    """ADR-146: the core's provider-settings lookup is the registry-aware one."""
+    """ADR-343: the core's provider-settings lookup is the registry-aware one."""
     config = {
         "custom_endpoints": {
             "gpu-box": {

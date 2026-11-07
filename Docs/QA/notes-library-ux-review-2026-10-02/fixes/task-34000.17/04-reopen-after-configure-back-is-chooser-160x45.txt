@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N    N   Add files to Library notes.                                                                                     │
+│ │ Navigation       Collapse      │  a    o   Nothing chosen yet.                                                                                             │
+│ │     Import…                    │  v    t   Import once — Copy files into Notes, reproducing your folder structure as Library folders. Later changes to     │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e   the originals are not tracked.                                                                                  │
+│ │ ▊ Search Library…        ▎▊x▎  │       s   ┃ Import once ┃                                                                                                 │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │           Keep a folder synced — Create a lasting connection. Changes continue between the folder and Notes, and every    │
+│ │                                │           note is collected in one managed Library folder rather than your folder structure.                              │
+│ │ ─────────────────────────────  │             Keep a folder synced                                                                                          │
+│ │ Browse                    ▾    │           Neither? To edit the files where they already are, switch the strip above to Folder files — it opens the        │
+│ │    Media (23) — your files     │           folder directly and imports nothing.                                                                            │
+│ │    Conversations (0)           │                                                                                                                           │
+│ │  ▸ Notes (126)                 │                                                                                                                           │
+│ │    Prompts (0) — reuse         │                                                                                                                           │
+│ │    Skills (1) — AI add-ons     │<---                                                                                                                       │
+│ │    Collections (0)             │                                                                                                                           │
+│ │    Search / RAG — find all     │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Artifacts                 ▾    │                                                                                                                           │
+│ │    All artifacts               │     --->                                                                                                                  │
+│ │    Chatbooks                   │                                                                                                                           │
+│ │    Reports                     │                                                                                                                           │
+│ │    Dreams                      │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Create                    ▾    │<---                                                                                                                       │
+│ │    New note                    │                                                                                                                           │
+│ │    New prompt                  │                                                                                                                           │
+│ │    New skill                   │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Study                     ▾    │                                                                                                                           │
+│ │    Study decks (0)             │                                                                                                                           │
+│ │    Flashcards due: 0           │                                                                                                                           │
+│ │    Quizzes (0)                 │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Import / Export           ▾  ▆ │                                                                                                                           │
+│ │    Import…                     │                                                                                                                           │
+│ │  ▾ scroll for more             │                                                                                                                           │
+│ └────────────────────────────────┘              ‹ Notes                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter run action | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

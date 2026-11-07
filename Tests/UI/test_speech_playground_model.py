@@ -74,9 +74,7 @@ def test_every_provider_has_knobs_including_the_ones_with_no_specific_params():
 
     for bare in ("audio_cpp", "openai", "alltalk"):
         assert PROVIDER_PARAMS[bare] == ()
-        assert len(params_for_provider(bare)) == len(AUDIO_PARAMS) + len(
-            REQUEST_PARAMS
-        )
+        assert len(params_for_provider(bare)) == len(AUDIO_PARAMS) + len(REQUEST_PARAMS)
 
 
 @pytest.mark.unit
@@ -113,4 +111,3 @@ def test_every_classified_control_is_a_known_playground_control():
 # `LEGACY_PLAYGROUND_CONTROLS` stays as the frozen record of what the legacy
 # screen offered. It is the yardstick that test measures against; without it
 # "nothing was dropped" has nothing to mean.
-

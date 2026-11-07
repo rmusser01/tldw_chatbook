@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationValidationError,
     dump_provider_continuation_json,
     parse_provider_continuation_json,

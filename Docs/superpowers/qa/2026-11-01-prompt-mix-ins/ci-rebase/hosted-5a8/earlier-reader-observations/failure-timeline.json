@@ -1,0 +1,151 @@
+[
+  {
+    "time": 11.836856,
+    "event": "control.second_search:released",
+    "row": "browse-media",
+    "view": "viewer",
+    "selected": "local:media:1",
+    "session_selected": "local:media:1",
+    "loaded": "local:media:1",
+    "pending": null,
+    "focused": {
+      "class": "Button",
+      "id": "library-media-row-0",
+      "media_id": "local:media:2",
+      "instance": 4879123328
+    },
+    "programmatic_target": null,
+    "restoring": false,
+    "entry_armed": true
+  },
+  {
+    "time": 11.853215,
+    "event": "LibraryScreen.on_descendant_focus:before",
+    "row": "browse-media",
+    "view": "viewer",
+    "selected": "local:media:1",
+    "session_selected": "local:media:1",
+    "loaded": "local:media:1",
+    "pending": null,
+    "focused": {
+      "class": "LibraryAdaptiveReaderPaneGrip",
+      "id": "library-browse-library-grip",
+      "media_id": null,
+      "instance": 4894718144
+    },
+    "programmatic_target": null,
+    "restoring": false,
+    "entry_armed": true,
+    "event_widget": {
+      "class": "LibraryAdaptiveReaderPaneGrip",
+      "id": "library-browse-library-grip",
+      "media_id": null,
+      "instance": 4894718144
+    }
+  },
+  {
+    "time": 11.877607,
+    "event": "LibraryScreen._focus_library_control:before",
+    "row": "browse-media",
+    "view": "viewer",
+    "selected": "local:media:1",
+    "session_selected": "local:media:1",
+    "loaded": "local:media:1",
+    "pending": null,
+    "focused": {
+      "class": "LibraryAdaptiveReaderPaneGrip",
+      "id": "library-browse-library-grip",
+      "media_id": null,
+      "instance": 4894718144
+    },
+    "programmatic_target": null,
+    "restoring": false,
+    "entry_armed": false,
+    "identity_arg": "#library-media-row-0"
+  },
+  {
+    "time": 11.928593,
+    "event": "LibraryScreen.on_descendant_focus:before",
+    "row": "browse-media",
+    "view": "viewer",
+    "selected": "local:media:1",
+    "session_selected": "local:media:1",
+    "loaded": "local:media:1",
+    "pending": null,
+    "focused": {
+      "class": "Button",
+      "id": "library-media-row-0",
+      "media_id": "local:media:2",
+      "instance": 4916781392
+    },
+    "programmatic_target": null,
+    "restoring": false,
+    "entry_armed": false,
+    "event_widget": {
+      "class": "Button",
+      "id": "library-media-row-0",
+      "media_id": "local:media:2",
+      "instance": 4916781392
+    }
+  },
+  {
+    "time": 11.92931,
+    "event": "LibraryMediaController._select_library_media_reader_row:before",
+    "row": "browse-media",
+    "view": "viewer",
+    "selected": "local:media:1",
+    "session_selected": "local:media:1",
+    "loaded": "local:media:1",
+    "pending": null,
+    "focused": {
+      "class": "Button",
+      "id": "library-media-row-0",
+      "media_id": "local:media:2",
+      "instance": 4916781392
+    },
+    "programmatic_target": null,
+    "restoring": false,
+    "entry_armed": false,
+    "identity_arg": "local:media:2"
+  },
+  {
+    "time": 12.218,
+    "event": "LibraryScreen._refresh_library_media_detail:after",
+    "row": "browse-media",
+    "view": "viewer",
+    "selected": "local:media:2",
+    "session_selected": "local:media:2",
+    "loaded": "local:media:2",
+    "pending": null,
+    "focused": {
+      "class": "Button",
+      "id": "library-media-row-0",
+      "media_id": "local:media:2",
+      "instance": 4916781392
+    },
+    "programmatic_target": null,
+    "restoring": false,
+    "entry_armed": false,
+    "identity_arg": "local:media:2"
+  },
+  {
+    "time": 12.324464,
+    "event": "test._rail:after",
+    "row": "browse-media",
+    "view": "viewer",
+    "selected": "local:media:2",
+    "session_selected": "local:media:2",
+    "loaded": "local:media:2",
+    "pending": null,
+    "focused": {
+      "class": "Button",
+      "id": "library-media-row-0",
+      "media_id": "local:media:2",
+      "instance": 4916781392
+    },
+    "programmatic_target": null,
+    "restoring": false,
+    "entry_armed": false,
+    "identity_arg": "media"
+  }
+]

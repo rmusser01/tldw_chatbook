@@ -39,7 +39,12 @@ import pytest
 from textual.widgets import Checkbox, DataTable
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.Evals.word_bench.models import CellCapture, PreflightResult, Target, TokenProb
+from tldw_chatbook.Evals.word_bench.models import (
+    CellCapture,
+    PreflightResult,
+    Target,
+    TokenProb,
+)
 from tldw_chatbook.UI.Evals import inspector as inspector_module
 from tldw_chatbook.UI.Evals.library_rail import LibraryRail
 from tldw_chatbook.UI.Evals.results_grid import ResultsGrid
@@ -108,12 +113,16 @@ class _PerCellContinuationCaptureClient:
     @staticmethod
     def _cell() -> CellCapture:
         return CellCapture(
-            prompt_mode="raw", k_requested=2, k_returned=2, content_offset=0,
+            prompt_mode="raw",
+            k_requested=2,
+            k_returned=2,
+            content_offset=0,
             top_k=(
                 TokenProb(token=" blue", logprob=-0.2, token_id=1),
                 TokenProb(token=" grey", logprob=-1.5, token_id=2),
             ),
-            canary="unchecked", captured_at="2026-07-31T00:00:00Z",
+            canary="unchecked",
+            captured_at="2026-07-31T00:00:00Z",
         )
 
 
@@ -133,7 +142,9 @@ def cell_continuation_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
 
-async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0.02) -> None:
+async def _wait_until(
+    pilot, predicate, *, tries: int = 300, interval: float = 0.02
+) -> None:
     """Mirrors the sibling authoring/steering/continuation E2E files' own
     helper -- polls until a background worker's completion becomes
     visible (a selection change), since ``run_worker`` schedules real
@@ -145,7 +156,9 @@ async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0
     raise AssertionError("condition never became true")
 
 
-async def _focus_cell(pilot, grid: ResultsGrid, snippet_id: str, target_id: str) -> None:
+async def _focus_cell(
+    pilot, grid: ResultsGrid, snippet_id: str, target_id: str
+) -> None:
     """Mirrors ``test_evals_results_grid.py``'s own private helper of the
     identical name/shape (not imported from there -- that module's own
     comment scopes it to its own continuation-tests section)."""
@@ -180,7 +193,9 @@ async def test_continuation_captured_per_cell_and_survives_reload(
         # evals_screen.py's own field docstring) -- this loop only ever
         # exercises the bench-run path below, but the seam is the same
         # one either worker reads.
-        screen._sample_bench_client_factory = lambda t: _PerCellContinuationCaptureClient(t)
+        screen._sample_bench_client_factory = lambda t: (
+            _PerCellContinuationCaptureClient(t)
+        )
 
         # -- Import a 2-snippet dataset via the rail's own Import flow
         # (bypasses the FileOpen modal -- established convention, see
@@ -308,7 +323,9 @@ async def test_flag_off_run_renders_no_continuation_for_the_same_cell(
     async with cell_continuation_app.run_test(size=_REALISTIC_SIZE) as pilot:
         await pilot.pause()
         screen: EvalsScreen = pilot.app.screen
-        screen._sample_bench_client_factory = lambda t: _PerCellContinuationCaptureClient(t)
+        screen._sample_bench_client_factory = lambda t: (
+            _PerCellContinuationCaptureClient(t)
+        )
 
         rail = screen.query_one(LibraryRail)
         await rail._handle_dataset_import_file_selected(import_path)

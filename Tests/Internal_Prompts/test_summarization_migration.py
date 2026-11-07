@@ -212,53 +212,55 @@ def test_rolling_summarize_default_channel_is_frozen_at_import(scratch_config):
     assert baked_in_default in joined
 
 
-def test_local_summarizer_template_call_sites_use_registry():
-    """Local_Summarization_Lib's five consuming sites (summarize_with_llama,
-    summarize_with_kobold, summarize_with_tabbyapi, summarize_with_custom_
-    openai, summarize_with_custom_openai_2) all read
-    `get_internal_prompt('summarization.local_summarizer_template')` at call
-    time rather than the deleted module constant. A real HTTP-payload test
-    per the brief's preference turned out disproportionate for two
-    independent, pre-existing reasons found while reading these functions
-    (neither introduced by this migration, both left untouched):
+def test_local_template_fallback_reaches_the_core_user_content(monkeypatch):
+    """TASK-34895: the five legacy local-template call sites are gone with
+    Local_Summarization_Lib; the registry fallback now lives in the
+    chat-dispatch core. A local spec called WITHOUT a custom prompt must
+    put `get_internal_prompt('summarization.local_summarizer_template')`
+    into the outgoing user message -- asserted here at the chat seam the
+    core actually calls, which the old source-inspection pin could not
+    prove."""
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as sgl
 
-    1. summarize_with_llama, summarize_with_kobold, and
-       summarize_with_tabbyapi read config sections that do not exist under
-       those names in config.py's `load_settings()` output (e.g.
-       `loaded_config_data["llama_api"]` — the real section is
-       `"llama_cpp_api"`; `loaded_config_data["api_keys"]` and
-       `["local_api_ip"]` are not produced by load_settings() at all). These
-       functions raise KeyError before reaching their HTTP call regardless
-       of the prompt migration.
-    2. summarize_with_custom_openai and summarize_with_custom_openai_2 (the
-       two functions whose config keys DO resolve correctly) reassign the
-       migrated value to the local variable `input_data`, which is never
-       read again afterward — the outgoing payload's user-message content
-       is built from `text` + `custom_prompt_arg` only. The line is dead
-       code both before and after this migration, so there is no payload to
-       assert against.
+    captured = {}
 
-    Given that, this test asserts the call-site wiring by source inspection:
-    the deleted constant is gone from the module namespace, the five sites
-    reference the registry id (not a stray literal), and the unrelated
-    `summarize_with_oobabooga` local shadow (a different, hardcoded prompt
-    "Please summarize the following text:") is untouched.
-    """
-    import inspect
+    def fake_chat_api_call(endpoint, messages, **kwargs):
+        captured["endpoint"] = endpoint
+        captured["user"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "SUMMARY"}}]}
 
-    from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as lsl
-
-    assert not hasattr(lsl, "summarizer_prompt")
-
-    source = inspect.getsource(lsl)
-    assert (
-        source.count("get_internal_prompt('summarization.local_summarizer_template')")
-        == 5
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call", fake_chat_api_call
     )
-    assert "Rewrite this text in summarized form." not in source
 
-    # The oobabooga local shadow (a different prompt) must remain untouched.
-    assert '"Please summarize the following text:"' in source
+    def fake_setting(section, key, *args, **kwargs):
+        if key == "api_key":
+            return "cfg-key"
+        return args[0] if args else kwargs.get("default")
+
+    monkeypatch.setattr(sgl, "get_cli_setting", fake_setting)
+    # TASK-33001.14: no [api_settings] key, no source -- no profile read.
+    monkeypatch.setattr(sgl, "_readiness_credential", lambda _endpoint: (None, None))
+    monkeypatch.setattr(
+        sgl,
+        "get_internal_prompt",
+        lambda prompt_id: f"REGISTRY[{prompt_id}]",
+    )
+
+    for name in ("llama.cpp", "kobold", "tabbyapi"):
+        result = sgl._summarize_via_chat_api(
+            name, None, "BODY", None, None, None, False
+        )
+        assert result == "SUMMARY"
+        assert captured["user"] == (
+            "REGISTRY[summarization.local_summarizer_template]\n\n\n\nBODY"
+            if name != "llama.cpp"
+            else "REGISTRY[summarization.local_summarizer_template]\n\nBODY"
+        )
+
+    # With a custom prompt the template is NOT consulted.
+    sgl._summarize_via_chat_api("kobold", None, "BODY", "CUSTOM", None, None, False)
+    assert captured["user"] == "CUSTOM\n\n\n\nBODY"
 
 
 def test_rolling_summarize_skips_resolver_when_caller_option_set(

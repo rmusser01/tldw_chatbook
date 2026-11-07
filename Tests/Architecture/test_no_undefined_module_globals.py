@@ -27,8 +27,6 @@ import ast
 import builtins
 from pathlib import Path
 
-import pytest
-
 PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 SKIP_PARTS = {".venv", "Third_Party", "__pycache__", "node_modules"}
 _BUILTINS = set(dir(builtins))
@@ -37,15 +35,13 @@ _BUILTINS = set(dir(builtins))
 #: Shrink-only: a module listed here that has become clean fails the companion
 #: test below, so the list cannot outlive what it excuses.
 _EXEMPT: dict[str, str] = {
-    "tldw_chatbook/Local_Ingestion/API_Endpoint_Sample.py": (
-        "Dead (0 production importers); deleted by TASK-32899. Drop this row "
-        "with the file."
-    ),
+    # TASK-38989: Local_Ingestion/API_Endpoint_Sample.py's row went with the
+    # file (TASK-32899 deleted it).
 }
 
 
-def _module_files() -> list[Path]:
-    return [p for p in sorted(PACKAGE.rglob("*.py")) if not SKIP_PARTS & set(p.parts)]
+def _module_files(package: Path = PACKAGE) -> list[Path]:
+    return [p for p in sorted(package.rglob("*.py")) if not SKIP_PARTS & set(p.parts)]
 
 
 def _module_level_bindings(tree: ast.Module) -> set[str]:
@@ -63,6 +59,18 @@ def _module_level_bindings(tree: ast.Module) -> set[str]:
     binds the name for that call site, and treating it as unbound would be a
     false positive.
     """
+    names = _scope_level_names(tree.body)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.Global):
+            names.update(node.names)
+    return names
+
+
+def _scope_level_names(body: list[ast.stmt]) -> set[str]:
+    """Names one module or class body binds in its own namespace."""
     names: set[str] = set()
 
     def walk_module_scope(body):
@@ -89,13 +97,7 @@ def _module_level_bindings(tree: ast.Module) -> set[str]:
             for handler in getattr(node, "handlers", []) or []:
                 walk_module_scope(handler.body)
 
-    walk_module_scope(tree.body)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                names.add(alias.asname or alias.name.split(".")[0])
-        elif isinstance(node, ast.Global):
-            names.update(node.names)
+    walk_module_scope(body)
     return names
 
 
@@ -143,40 +145,88 @@ def _unresolved_private_calls(tree: ast.Module) -> set[str]:
         if name in module_names or name in _BUILTINS:
             continue
         # only the scopes this call actually sits inside can bind the name
-        cursor, bound = parents.get(node), False
+        cursor, bound, innermost = parents.get(node), False, True
         while cursor is not None:
             if isinstance(cursor, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if name in _local_bindings(cursor):
                     bound = True
                     break
+                innermost = False
+            elif isinstance(cursor, ast.ClassDef):
+                # TASK-38989: a call made directly in a class body resolves in
+                # that class's namespace (e.g. hook_permissions' class-body
+                # `_store_lock = _bind_store_lock(...)`). Methods, lambdas and
+                # comprehensions never see class-body names.
+                if innermost and name in _scope_level_names(cursor.body):
+                    bound = True
+                    break
+                innermost = False
+            elif isinstance(cursor, (ast.Lambda, ast.comprehension)) or isinstance(
+                cursor, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+            ):
+                innermost = False
             cursor = parents.get(cursor)
         if not bound:
             unresolved.add(name)
     return unresolved
 
 
-@pytest.mark.parametrize("path", _module_files(), ids=lambda p: str(p.name))
-def test_every_private_helper_called_in_a_module_is_defined_in_it(path: Path) -> None:
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-    except SyntaxError as exc:  # a syntax error is a different test's problem
-        pytest.skip(f"unparseable: {exc}")
+def _guard_report(package: Path) -> tuple[list[str], list[str]]:
+    """Return ``(offenders, unparseable)`` for every module under ``package``.
 
+    The per-module form reported an unparseable module as a visible skip; one
+    node must name it instead, or the guard would pass over it in silence
+    (TASK-39054 review).
+    """
+    offenders: list[str] = []
+    unparseable: list[str] = []
+    for path in _module_files(package):
+        rel = str(path.relative_to(package.parent))
+        if rel in _EXEMPT:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            unparseable.append(f"{rel}: line {exc.lineno}: {exc.msg}")
+            continue
+        missing = _unresolved_private_calls(tree)
+        if missing:
+            offenders.append(f"{rel}: {sorted(missing)}")
+    return offenders, unparseable
+
+
+def test_every_private_helper_called_in_a_module_is_defined_in_it() -> None:
     """Every private helper a module calls must be defined or imported in it.
 
-    Args:
-        path: One production module, supplied by the parametrisation.
+    One node for the whole package (TASK-39054): one node per module (about
+    2,940) made the conftest's periodic ``gc.collect()`` cost about 6 minutes
+    of the Architecture job for about 30 s of AST work. A module that does not
+    parse fails it too, by name, since it cannot be checked.
     """
-    rel = str(path.relative_to(PACKAGE.parent))
-    missing = _unresolved_private_calls(tree)
-    if rel in _EXEMPT:
-        pytest.skip(f"exempt: {_EXEMPT[rel]}")
-    assert not missing, (
-        f"{path.relative_to(PACKAGE.parent)} calls private helper(s) it does not "
-        f"define and does not import: {sorted(missing)}. A deletion took the "
-        f"definition and left the call site — the shape of TASK-32912, which cost "
-        f"four nights of CI."
+    offenders, unparseable = _guard_report(PACKAGE)
+    assert not offenders and not unparseable, (
+        "These modules call private helper(s) they do not define and do not "
+        "import:\n  " + "\n  ".join(offenders) + "\nA deletion took the "
+        "definition and left the call site — the shape of TASK-32912, which cost "
+        "four nights of CI.\nThese modules do not parse, so the guard cannot "
+        "check them:\n  " + "\n  ".join(unparseable)
     )
+
+
+def test_guard_names_unparseable_and_offending_modules(tmp_path: Path) -> None:
+    """TASK-39054 review: a scratch package's broken module is named, not skipped."""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "broken.py").write_text("def f(:\n", encoding="utf-8")
+    (package / "caller.py").write_text(
+        "def f():\n    return _gone(1)\n", encoding="utf-8"
+    )
+    (package / "clean.py").write_text(
+        "def _ok():\n    return 1\n\n\nvalue = _ok()\n", encoding="utf-8"
+    )
+    offenders, unparseable = _guard_report(package)
+    assert offenders == ["pkg/caller.py: ['_gone']"]
+    assert [line.split(":", 1)[0] for line in unparseable] == ["pkg/broken.py"]
 
 
 def test_no_exemption_outlives_the_thing_it_excuses() -> None:
@@ -195,3 +245,23 @@ def test_no_exemption_outlives_the_thing_it_excuses() -> None:
         if not _unresolved_private_calls(tree):
             stale.append(f"{rel} (now clean — drop the row): {reason}")
     assert not stale, "Exemptions no longer needed:\n  " + "\n  ".join(stale)
+
+
+def test_class_body_helper_resolves_only_in_its_own_class_body() -> None:
+    """TASK-38989: class scope binds for class-body calls, not for methods."""
+    head = (
+        "class Store:\n"
+        "    def _bind(definition):\n"
+        "        return definition\n"
+    )
+    resolved = ast.parse(head + "    _lock = _bind(1)\n    del _bind\n")
+    assert _unresolved_private_calls(resolved) == set()
+    for unbound_use in (
+        "    def method(self):\n        return _bind(2)\n",
+        "    handlers = [_bind(x) for x in (3,)]\n",
+        "    handler = lambda: _bind(4)\n",
+    ):
+        tree = ast.parse(head + unbound_use)
+        assert _unresolved_private_calls(tree) == {"_bind"}, unbound_use
+    deleted = ast.parse("def f():\n    return _deleted_helper(1)\n")
+    assert _unresolved_private_calls(deleted) == {"_deleted_helper"}

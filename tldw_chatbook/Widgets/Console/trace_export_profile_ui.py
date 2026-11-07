@@ -1,7 +1,7 @@
 """Shared presentation for the disclosure profiles, off the heavy export stack.
 
-The per-profile copy, radio labels, and the every-disclosure Full-export
-confirmation are shared by two dialogs:
+The per-profile copy, radio labels, the every-disclosure Full-export
+confirmation, and the Ctrl+Q still-working notice are shared by two dialogs:
 
 * ``trace_export_dialog.py`` (Trace v2, deferred with the trajectory family
   -- TASK-22213), which re-exports these names for its own consumers; and
@@ -26,10 +26,17 @@ from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 __all__ = [
+    "EXPORT_STILL_WRITING",
     "TRACE_EXPORT_PROFILE_COPY",
     "TRACE_EXPORT_PROFILE_LABELS",
     "full_trace_confirmation",
 ]
+
+#: What Ctrl+Q says while either dialog is still writing its export, which
+#: is also when both refuse Escape (TASK-33622.15). One activity, one string:
+#: ``refuse_quit_while_working`` matches these words to recognise a repeated
+#: Ctrl+Q within a dialog.
+EXPORT_STILL_WRITING = "The export is still being written."
 
 
 TRACE_EXPORT_PROFILE_COPY = {

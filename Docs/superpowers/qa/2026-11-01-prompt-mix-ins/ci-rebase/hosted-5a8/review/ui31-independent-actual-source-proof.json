@@ -1,0 +1,30 @@
+{
+  "status": "actual source reviewed; awaiting implementer frozen evidence",
+  "normalized_original_executable_body_ast_identical": true,
+  "facade_signature_ast_identical": true,
+  "facade_full_doc_identical": true,
+  "facade_passes_original_live_globals": true,
+  "removed_behavior_delta": {
+    "same_target_noop_ast": "If(test=Compare(left=Name(id='target', ctx=Load()), ops=[Is()], comparators=[Name(id='focused', ctx=Load())]), body=[Return()], orelse=[])",
+    "exact_marker_assignment_ast": "Assign(targets=[Attribute(value=Name(id='controller', ctx=Load()), attr='_library_notes_programmatic_focus_target', ctx=Store())], value=Name(id='target', ctx=Load()))",
+    "set_focus_try_finally_ast": "Try(body=[Expr(value=Call(func=Attribute(value=Name(id='self', ctx=Load()), attr='set_focus', ctx=Load()), args=[Name(id='target', ctx=Load())], keywords=[keyword(arg='scroll_visible', value=Constant(value=False))]))], handlers=[], orelse=[], finalbody=[If(test=BoolOp(op=And(), values=[Compare(left=Attribute(value=Name(id='controller', ctx=Load()), attr='focused', ctx=Load()), ops=[IsNot()], comparators=[Name(id='target', ctx=Load())]), Compare(left=Attribute(value=Name(id='controller', ctx=Load()), attr='_library_notes_programmatic_focus_target', ctx=Load()), ops=[Is()], comparators=[Name(id='target', ctx=Load())])]), body=[Assign(targets=[Attribute(value=Name(id='controller', ctx=Load()), attr='_library_notes_programmatic_focus_target', ctx=Store())], value=Constant(value=None))], orelse=[])])"
+  },
+  "original_note_journey_ast_identical": true,
+  "source_files": {
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": {
+      "lines": 5246,
+      "bytes": 244565,
+      "sha256": "3051480add6edf724dc0fd7829dbb2194e2cde9764e587e0cf9cfca4939bf419"
+    },
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+      "lines": 1311,
+      "bytes": 67844,
+      "sha256": "5ef6003537f92512744d35309aa96573e5790766ffda399acb89b7cc6b664c93"
+    },
+    "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py": {
+      "lines": 588,
+      "bytes": 24805,
+      "sha256": "46c4cc13b9ed509c65305a3a310cca1b5738f8ec2b0f71152658d234e3a2c37f"
+    }
+  }
+}

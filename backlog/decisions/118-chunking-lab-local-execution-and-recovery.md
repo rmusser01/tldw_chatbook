@@ -4,7 +4,7 @@
 - Date: 2026-09-04
 - Spec: [Chunking Lab design](../../Docs/superpowers/specs/2026-09-04-chunking-lab-design.md)
 - Plan: [Chunking Lab implementation](../../Docs/superpowers/plans/2026-09-04-chunking-lab.md)
-- Related: ADR-003, ADR-029, ADR-031 (keybindings), ADR-073, ADR-076 (Library discovery), ADR-078
+- Related: ADR-003, ADR-029, ADR-299 (keybindings), ADR-318, ADR-076 (Library discovery), ADR-078
 - Allocation evidence: fetched remotes; swept 320 local/remote refs and 61 worktrees
   on 2026-09-04; highest existing ADR 117, task 31420, no scan errors. Recheck at merge.
 

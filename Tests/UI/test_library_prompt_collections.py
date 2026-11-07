@@ -2336,8 +2336,12 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
         )
         await _wait_for_condition(
             pilot,
-            lambda: host.screen._catalog.status in {"ready", "empty"}
-            and host.screen.query_one("#prompt-collection-manager-search", Input).has_focus,
+            lambda: (
+                host.screen._catalog.status in {"ready", "empty"}
+                and host.screen.query_one(
+                    "#prompt-collection-manager-search", Input
+                ).has_focus
+            ),
             message="reopened manager catalog did not finish mounting",
         )
         search = host.screen.query_one("#prompt-collection-manager-search", Input)
@@ -2386,9 +2390,7 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
                 and screen._library_prompt_browse_controller.applied_result.scope.collection_id
                 is None
                 and len(screen.query("#library-prompts-collection")) == 1
-                and str(
-                    screen.query_one("#library-prompts-collection", Button).label
-                )
+                and str(screen.query_one("#library-prompts-collection", Button).label)
                 == "collection: All prompts"
             ),
             message="All prompts label did not refresh",

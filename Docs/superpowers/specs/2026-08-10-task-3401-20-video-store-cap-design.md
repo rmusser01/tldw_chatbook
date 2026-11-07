@@ -177,6 +177,14 @@ Dismissing the choice modal or cancelling the file picker is equivalent to
 Discard. The generated command draft is not restored after a deliberate
 choice: generation succeeded and the user selected the result's disposition.
 
+> **Superseded for the file picker (TASK-33622.17, 2026-10-03, owner
+> decision).** Cancelling the Save-to-disk picker (Escape or **Cancel**) no
+> longer discards: it returns to this choice with the same staged video, as
+> often as the user cancels, so "picker cancellation" below no longer ends the
+> artifact's ownership. Only an explicit discard throws the video away: the
+> choice's **Discard**, or **Discard and quit** when Ctrl+Q asks. Do not
+> restore the cancel-discards behaviour from this spec.
+
 Before opening a modal, the resolver registers the artifact in a screen-owned
 pending-artifact dictionary keyed by its preallocated message id. Its
 `try/finally` unregisters and idempotently closes the artifact after successful

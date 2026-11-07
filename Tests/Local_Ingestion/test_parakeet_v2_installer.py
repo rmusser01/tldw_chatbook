@@ -120,4 +120,6 @@ def test_valid_existing_bundle_is_reused_without_network(
 
     monkeypatch.setattr(installer, "_open_url", unexpected_network)
 
-    assert installer.install_verified_parakeet_v2(destination=destination) == destination
+    assert (
+        installer.install_verified_parakeet_v2(destination=destination) == destination
+    )

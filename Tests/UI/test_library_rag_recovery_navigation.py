@@ -20,7 +20,7 @@ from Tests.UI.test_product_maturity_gate16_library_search_rag import _rag_result
 from tldw_chatbook.Library.library_rag_answer_service import LibraryRagProviderGate
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 QUERY = "draft [/archive] résumé"
 

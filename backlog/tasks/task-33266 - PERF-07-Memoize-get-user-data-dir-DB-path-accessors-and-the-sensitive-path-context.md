@@ -2,7 +2,7 @@
 id: TASK-33266
 title: 'PERF-07: Memoize get_user_data_dir, DB-path accessors and the sensitive-path
   context'
-status: To Do
+status: Done
 created_date: 2026-09-28 18:02
 dependencies:
 - TASK-33260
@@ -78,3 +78,17 @@ Owner decision D2 is recorded in the approved ADR-126 amendment (PR #2911, "D2 c
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Memoization landed and iterated under PR #2924 (commits 42fd146cca "fix(perf): the data-dir
+memo keeps only a result it stamped", 6e9b662209, e3786c8f3d) plus ADR-126 amendment PR #2911
+recording owner decision D2. The task file has all five ACs ticked and full measured notes
+(get_user_data_dir 12.0 -> 2.2 ms; resolve_sensitive_context 237 -> 3.5 ms; 40 -> 2 pre-_ui_ready
+resolutions). Tree check: `_raw_inputs_key`/`resolve_sensitive_context` memo present in
+`tldw_chatbook/Utils/sensitive_paths.py`; `Tests/test_user_data_dir_memo_perf07.py` exists.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

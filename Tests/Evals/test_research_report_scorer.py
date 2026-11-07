@@ -48,8 +48,13 @@ def test_score_metrics_from_full_verification_payload():
 
 def test_score_zero_when_no_markers():
     metrics = score_research_report(
-        {"markers_total": 0, "markers_resolved": 0, "quotes_checked": 0,
-         "quotes_verified": 0, "uncited_sentences": 5}
+        {
+            "markers_total": 0,
+            "markers_resolved": 0,
+            "quotes_checked": 0,
+            "quotes_verified": 0,
+            "uncited_sentences": 5,
+        }
     )
     assert metrics["citation_accuracy"] == 0.0
     assert metrics["quote_grounding"] == 0.0
@@ -110,14 +115,25 @@ def test_baseline_payload_reproduces_recorded_baseline():
 
 # --- aggregation for the live baseline (task-16330) ------------------------------
 
+
 def test_aggregate_metrics_averages_across_payloads():
     from tldw_chatbook.Evals.research_report_scorer import aggregate_metrics
 
     payloads = [
-        {"markers_total": 4, "markers_resolved": 4, "quotes_checked": 0,
-         "quotes_verified": 0, "uncited_sentences": 0},
-        {"markers_total": 4, "markers_resolved": 2, "quotes_checked": 2,
-         "quotes_verified": 1, "uncited_sentences": 4},
+        {
+            "markers_total": 4,
+            "markers_resolved": 4,
+            "quotes_checked": 0,
+            "quotes_verified": 0,
+            "uncited_sentences": 0,
+        },
+        {
+            "markers_total": 4,
+            "markers_resolved": 2,
+            "quotes_checked": 2,
+            "quotes_verified": 1,
+            "uncited_sentences": 4,
+        },
     ]
 
     aggregate = aggregate_metrics(payloads)
@@ -140,14 +156,18 @@ def test_aggregate_metrics_empty_payloads():
 
 # --- gate pass-rate (task-16333) ---------------------------------------------------
 
+
 def test_score_unwraps_nested_citation_verification_and_adds_gate_rate():
     metrics = score_research_report(
         {
             "confidence": 0.7,
             "gate": {"relevant": 2, "raw": 5, "fallback": False},
             "citation_verification": {
-                "markers_total": 4, "markers_resolved": 4,
-                "quotes_checked": 0, "quotes_verified": 0, "uncited_sentences": 1,
+                "markers_total": 4,
+                "markers_resolved": 4,
+                "quotes_checked": 0,
+                "quotes_verified": 0,
+                "uncited_sentences": 1,
             },
         }
     )
@@ -165,11 +185,9 @@ def test_aggregate_averages_gate_rate_only_over_payloads_that_have_it():
     from tldw_chatbook.Evals.research_report_scorer import aggregate_metrics
 
     payloads = [
-        {"markers_total": 2, "markers_resolved": 2,
-         "gate": {"relevant": 4, "raw": 5}},
+        {"markers_total": 2, "markers_resolved": 2, "gate": {"relevant": 4, "raw": 5}},
         {"markers_total": 2, "markers_resolved": 1},  # no gate block
-        {"markers_total": 2, "markers_resolved": 2,
-         "gate": {"relevant": 2, "raw": 5}},
+        {"markers_total": 2, "markers_resolved": 2, "gate": {"relevant": 2, "raw": 5}},
     ]
 
     aggregate = aggregate_metrics(payloads)
@@ -180,6 +198,7 @@ def test_aggregate_averages_gate_rate_only_over_payloads_that_have_it():
 
 
 # --- Evals-UI task registration (task-16485) --------------------------------------
+
 
 def test_research_report_template_loads_and_runs_end_to_end():
     import asyncio
@@ -203,8 +222,7 @@ def test_research_report_template_loads_and_runs_end_to_end():
     assert all("verification" in (sample.metadata or {}) for sample in samples)
 
     results = [
-        asyncio.run(runner.run_single_sample(task_config, sample))
-        for sample in samples
+        asyncio.run(runner.run_single_sample(task_config, sample)) for sample in samples
     ]
     by_id = {r.sample_id: r for r in results}
     assert by_id["synthetic-clean-run"].metrics["citation_accuracy"] == 1.0

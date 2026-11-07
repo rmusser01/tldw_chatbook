@@ -1,0 +1,21 @@
+exec(open('/private/tmp/pr2995-task16-runner.py').read().split('mode=sys.argv[1]')[0])
+CURRENT='749e7540affab2b543f472fcf6fae6bff34d8122';BRANCH='codex/console-chat-starts-dev'
+assert git('rev-parse','HEAD').decode().strip()==CURRENT and not git('status','--porcelain')
+r=capture('pin-rebased-recovery',['git','update-ref','refs/recovery/pr2995-task16-rebased-749e7540',CURRENT]);assert not r.returncode
+nodes=['Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer','Tests/UI/test_personas_workbench.py::TestPreviewIntegration::test_open_in_console_stages_preview_transcript']
+paths=sorted(set(n.split('::')[0] for n in nodes)|set(r['path'] for r in S['protected_feature_sources'])|set(r['path'] for r in S['source_exceptions'] if r['path'].endswith('.py'))|{'Tests/conftest.py','Tests/UI/conftest.py','Tests/console_provider_doubles.py','Tests/UI/consolidated_css.py'})
+try:
+ r=capture('immutable-base-checkout',['git','switch','--detach',START]);assert not r.returncode
+ assert git('rev-parse','HEAD').decode().strip()==START and not git('status','--porcelain')
+ argv=[PYTHON,'-m','pytest','-q','-p','no:randomly','--basetemp=/private/tmp/pr2995-task16/immutable-base-two-nodes',*nodes,'--junitxml='+str(E/'immutable-base-two-nodes.xml')]
+ r=capture('immutable-base-two-nodes',argv,{'PYTHONPATH':str(WT)},paths)
+ root=ET.parse(E/'immutable-base-two-nodes.xml').getroot();cases=[]
+ for c in root.iter('testcase'):
+  failure=c.find('failure');error=c.find('error');f=failure if failure is not None else error
+  cases.append({'classname':c.get('classname'),'name':c.get('name'),'outcome':f.tag if f is not None else 'passed','failure_message':f.get('message') if f is not None else None})
+ save('immutable-base-two-nodes-cases',{'actual_cases':len(cases),'cases':cases,'outcomes':dict(collections.Counter(x['outcome'] for x in cases))})
+ print('immutable base results',cases,flush=True)
+finally:
+ r=capture('restore-rebased-branch',['git','switch',BRANCH]);assert not r.returncode
+ assert git('rev-parse','HEAD').decode().strip()==CURRENT and not git('status','--porcelain')
+ print('Restored branch749e clean',flush=True)

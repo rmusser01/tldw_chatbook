@@ -27,6 +27,13 @@ from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
 from Tests.console_provider_doubles import provider_resolution, with_destination
 
+# TASK-38111: the real ConsoleChatController reads config (its constructor,
+# hook admission, the regenerate path), which the per-test TLDW_CONFIG_PATH
+# redirect refuses (RecoveryRequired raw_source_selection_changed; hook
+# admission reports it as "Hooks unavailable"). Keep the collection-time
+# sandbox profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _store_with_db(tmp_path):
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
@@ -40,12 +47,12 @@ class _TraceGateway:
 
     async def resolve_for_send(self, _selection):
         return provider_resolution(
-                   ready=True,
-                   provider="llama_cpp",
-                   model="test-model",
-                   base_url="http://127.0.0.1:9099",
-                   visible_copy="",
-               )
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            base_url="http://127.0.0.1:9099",
+            visible_copy="",
+        )
 
     async def stream_chat(self, _resolution, _messages, **_kwargs):
         if self.outcome == "error":
@@ -564,7 +571,9 @@ async def test_regenerate_replacement_identity_resolves_after_persistence(tmp_pa
         )
         records = [record for turn in snapshot.turns for record in turn.records]
         emitted_ids = {record.event_id for record in records}
-        regenerated = next(record for record in records if record.kind == "message_regenerated")
+        regenerated = next(
+            record for record in records if record.kind == "message_regenerated"
+        )
         assert regenerated.status == "completed"
         assert regenerated.replacement_event_id in emitted_ids
         assert f"message:{original.persisted_message_id}" not in emitted_ids
@@ -586,7 +595,10 @@ async def test_regenerate_partial_error_records_failed_replacement(tmp_path):
             session.id, role=ConsoleMessageRole.USER, content="question", persist=True
         )
         original = store.append_message(
-            session.id, role=ConsoleMessageRole.ASSISTANT, content="answer", persist=True
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            persist=True,
         )
         controller = ConsoleChatController(
             store=store, provider_gateway=_TraceGateway("partial_error")
@@ -638,7 +650,10 @@ async def test_regenerate_cancel_records_stopped_replacement(tmp_path):
             session.id, role=ConsoleMessageRole.USER, content="question", persist=True
         )
         original = store.append_message(
-            session.id, role=ConsoleMessageRole.ASSISTANT, content="answer", persist=True
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            persist=True,
         )
         controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
@@ -880,7 +895,9 @@ def test_sidecar_write_failure_attempts_one_nonrecursive_diagnostic(
                 raise RuntimeError("secret diagnostic failure")
             return real_writer(rows)
 
-        monkeypatch.setattr(store.persistence, "write_trajectory_rows", selective_writer)
+        monkeypatch.setattr(
+            store.persistence, "write_trajectory_rows", selective_writer
+        )
         assert not store.record_trace_event(
             session.id,
             anchor_message_id=user.id,

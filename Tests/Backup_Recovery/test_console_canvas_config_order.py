@@ -36,7 +36,7 @@ def ensure():
  except BaseException as error:errors.append(error)
 workers=[threading.Thread(target=ensure,name=f'native-authority-{i}',daemon=True) for i in range(2)]
 def contend(context):
- assert raw._runtime_operation() is not None
+ assert raw.runtime_operation() is not None
  for worker in workers:worker.start()
  assert entered.wait(3),'native reader did not enter'
  runtime.bind_canvas_native_view(scope_resolver=resolver)
@@ -56,7 +56,7 @@ try:
  assert results[0] is not None and rendered==[('fixture','fixture')]
  assert runtime.canvas_controller._settlement_listeners==[runtime._canvas_settlement_listener]
  assert results[0]._events=={} and results[0]._selection=={}
- assert not storage._raw_operations and raw._runtime_operation() is None
+ assert not storage._raw_operations and raw.runtime_operation() is None
 finally:
  finished.set()
  config._config_file_lock=original_lock_getter

@@ -1,0 +1,50 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌─────────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────┐  N  Ready · Next: Press Blank note, or choose a template.                               │
+│ │ Navigation             Collapse     │  a  │ Library notes · Ready · Next: Create a note or add from      │  o      ‹ Notes                                                                         │
+│ │    Import…                          │  v  │ files.                                                       │  t  New note                                                                            │
+│ │  ▸ New note                         │     │ Notes (0)                                                    │  e  █Blank note                                                                         │
+│ │  Explore all tools                  │     │ These notes live in the Library's own database — for notes   │  s  █                                                                                   │
+│ │                                     │     │ that live in a folder on disk, switch to Folder files. To    │                                                                                         │
+│ │                                     │     │ copy or keep a folder synced, choose Add from files.         │      From a template…                                                                   │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │ Filter                                                       │                                                                                         │
+│ │                                     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                                                         │
+│ │                                     │     │ ▊ Filter notes… (Enter)                                    ▎ │                                                                                         │
+│ │                                     │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │    New     Sort: Newest     ○ Select                         │                                                                                         │
+│ │                                     │<--- │    Add from files…     Export                                │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │ No notes yet. Create your first note.                        │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │<---                                                                                     │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │<--- │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ │                                     │     │                                                              │                                                                                         │
+│ └─────────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘                                                                                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F6 next pane | enter create note | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -37,8 +37,10 @@ revocation_case = _revocation_case
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("bound", [False, True])
 async def test_real_bound_pin_seals_body_and_constrains_fresh_admission(
     revocation_case,
+    bound,
 ):
     import asyncio
     import json
@@ -53,6 +55,8 @@ async def test_real_bound_pin_seals_body_and_constrains_fresh_admission(
     case = revocation_case
     service = case.service
     checkpoint = parse_provider_continuation_json(json.dumps(_checkpoint()))
+    if bound:
+        checkpoint = replace(checkpoint, schema_version=3, selected_provider="deepseek")
     await service.check_entries(case.entries["a"])
     pin = await asyncio.to_thread(
         service.capture_resume_pin,
@@ -64,7 +68,7 @@ async def test_real_bound_pin_seals_body_and_constrains_fresh_admission(
     sealed = await asyncio.to_thread(
         service.seal_resume_checkpoint, pin, checkpoint, "conversation", "message"
     )
-    assert sealed.schema_version == 2
+    assert sealed.schema_version == (3 if bound else 2)
     assert (
         parse_provider_continuation_json(dump_provider_continuation_json(sealed))
         == sealed
@@ -80,6 +84,14 @@ async def test_real_bound_pin_seals_body_and_constrains_fresh_admission(
         await service.resume_maximum(
             maximum, replace(sealed, checkpoint_revision=2), "conversation", "message"
         )
+    if bound:
+        with pytest.raises(PermissionError):
+            await service.resume_maximum(
+                maximum,
+                replace(sealed, selected_provider="custom-ep:foreign"),
+                "conversation",
+                "message",
+            )
     zero = await service.resume_maximum(maximum, checkpoint, "conversation", "message")
     assert not (await service.admit(zero, "legacy-zero"))["available_skills"]
     # Substituting a larger current maximum does not bypass the admission gate.
@@ -93,12 +105,16 @@ async def test_real_bound_pin_seals_body_and_constrains_fresh_admission(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ack_mode", [None, "valid", "missing", "stale"])
 async def test_real_sqlite_finalizer_reseals_each_event_and_preserves_foreign_history(
-    revocation_case, tmp_path
+    revocation_case, tmp_path, ack_mode
 ):
     import asyncio
 
-    from Tests.Chat.test_console_provider_continuation import _active_checkpoint
+    from Tests.Chat.test_console_provider_continuation import (
+        _MOONSHOT_RUN_TARGET,
+        _active_checkpoint,
+    )
     from tldw_chatbook.Agents.agent_models import (
         ContinuationEventContext,
         ToolBatchReady,
@@ -140,16 +156,48 @@ async def test_real_sqlite_finalizer_reseals_each_event_and_preserves_foreign_hi
             )
 
         context = ContinuationEventContext(owner.id, "root-a", "primary", "persistent")
+        from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
+
+        adapter = _StreamingModelAdapter(
+            store=store,
+            provider_gateway=None,
+            resolution=None,
+            assistant_message_id=owner.id,
+            should_cancel=lambda: False,
+            loop=asyncio.get_running_loop(),
+            native_tools=True,
+            generation_token=store.begin_generation_attempt(owner.id),
+        )
+        batch = ToolBatchReady(context, _active_checkpoint(), None)
         await run_owned_db_call(
             database,
             store.persist_provider_continuation_event,
-            ToolBatchReady(context, _active_checkpoint(), None),
+            batch,
+            continuation_target=_MOONSHOT_RUN_TARGET,
             checkpoint_finalizer=finalize,
         )
         initial = parse_provider_continuation_json(
             database.get_message_by_id(owner.id)["provider_continuation_json"]
         )
         assert initial.schema_version == 2
+        custody = None
+        if ack_mode is not None:
+            if ack_mode != "missing":
+                adapter._live_native_persisted_event = batch
+            if ack_mode == "missing":
+                with pytest.raises(ValueError, match="live_native_acknowledgment"):
+                    adapter._acknowledge_live_native_continuation(batch, batch, None)
+                assert adapter._live_native_custody is None
+            else:
+                adapter._acknowledge_live_native_continuation(batch, batch, None)
+                custody = adapter._live_native_custody
+                assert custody.checkpoint is batch.checkpoint
+                assert custody.durable_checkpoint == initial
+                assert custody.checkpoint.managed_resume is None
+                assert custody.durable_checkpoint.managed_resume is not None
+                assert "PRIVATE" not in repr(custody)
+                with database.transaction() as cursor:
+                    custody.validate(cursor, custody)
         assert (
             await service.resume_maximum(
                 service.capture_maximum("a"),
@@ -162,6 +210,7 @@ async def test_real_sqlite_finalizer_reseals_each_event_and_preserves_foreign_hi
             database,
             store.persist_provider_continuation_event,
             ToolCallExecuting(context, "PRIVATE-CALL-ID", 1),
+            continuation_target=_MOONSHOT_RUN_TARGET,
             checkpoint_finalizer=finalize,
         )
         executing = parse_provider_continuation_json(
@@ -169,6 +218,23 @@ async def test_real_sqlite_finalizer_reseals_each_event_and_preserves_foreign_hi
         )
         assert executing.managed_resume != initial.managed_resume
         assert executing.rounds[0].calls[0].state == "executing"
+        if custody is not None:
+            with (
+                database.transaction() as cursor,
+                pytest.raises((ValueError, RuntimeError)),
+            ):
+                custody.validate(cursor, custody)
+            if ack_mode == "valid":
+                event = ToolCallExecuting(context, "PRIVATE-CALL-ID", 1)
+                adapter._live_native_persisted_event = event
+                adapter._acknowledge_live_native_continuation(event, event, None)
+                refreshed = adapter._live_native_custody
+                assert refreshed.durable_checkpoint == executing
+                assert refreshed.checkpoint.managed_resume is None
+                with database.transaction() as cursor:
+                    refreshed.validate(cursor, refreshed)
+                    with pytest.raises(ValueError, match="live_native_custody_expired"):
+                        custody.validate(cursor, custody)
         # Decoder preserves recognized foreign bytes. Only the resume owner rejects them.
         assert (
             parse_provider_continuation_json(
@@ -344,8 +410,9 @@ async def test_actual_console_fleet_producer_resumes_exact_pin_and_refuses_chang
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["archive", "sync"])
+@pytest.mark.parametrize("bound", [False, True])
 async def test_real_v2_whole_record_transport_preserves_host_envelope(
-    revocation_case, tmp_path, chachanotes_template_db, monkeypatch, transport
+    revocation_case, tmp_path, chachanotes_template_db, monkeypatch, transport, bound
 ):
     import asyncio
 
@@ -372,10 +439,15 @@ async def test_real_v2_whole_record_transport_preserves_host_envelope(
         "transport-source-conversation",
         "transport-source-message",
     )
+    from dataclasses import replace
+
+    source = parse_provider_continuation_json(raw)
+    if bound:
+        source = replace(source, schema_version=3, selected_provider=source.provider)
     checkpoint = await asyncio.to_thread(
         service.seal_resume_checkpoint,
         pin,
-        parse_provider_continuation_json(raw),
+        source,
         "transport-source-conversation",
         "transport-source-message",
     )
@@ -426,6 +498,7 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
         ProviderToolCalls,
         ProviderTurnMetadata,
     )
@@ -463,13 +536,19 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
     class Gateway:
         calls = 0
 
-        def expand_provider_continuation(self, checkpoint):
-            return []
+        # The production translator: it projects the checkpoint's rounds, so
+        # the resumed request carries the native batch the checkpoint owns.
+        expand_provider_continuation = staticmethod(
+            ConsoleProviderGateway.expand_provider_continuation
+        )
 
         async def resolve_for_send(self, selection):
             return provider_resolution(
                 ready=True,
                 provider="Moonshot",
+                selected_provider="Moonshot",
+                execution_key="moonshot",
+                continuation_protocol="chat_completions",
                 model="kimi-k2",
                 base_url="https://api.moonshot.ai/v1",
                 api_mode="chat_completions",
@@ -495,11 +574,13 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
             else:
                 if legacy:
                     assert not rig.service._live_runs
+                self.resumed = [dict(message) for message in messages]
                 current = store.get_message(owner.id).provider_continuation
                 final = replace(
                     current,
                     schema_version=1,
                     managed_resume=None,
+                    selected_provider=None,
                     state="complete",
                     checkpoint_revision=current.checkpoint_revision + 1,
                 )
@@ -525,6 +606,7 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
     maximum["plugin_run_id"] = "pending:initial-checkpoint"
     target = ContinuationRestoreTarget(
         provider="moonshot",
+        selected_provider="Moonshot",
         model="kimi-k2",
         protocol="chat_completions",
         api_base_url="https://api.moonshot.ai/v1",
@@ -545,6 +627,8 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
             resolution=_test_resolution(
                 provider="Moonshot",
                 execution_key="moonshot",
+                selected_provider="Moonshot",
+                continuation_protocol="chat_completions",
                 model="kimi-k2",
                 base_url="https://api.moonshot.ai/v1",
             ),
@@ -554,7 +638,7 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
         assert result.status == "cancelled", result
         checkpoint = store.get_message(owner.id).provider_continuation
         assert (
-            checkpoint.schema_version == 2
+            checkpoint.schema_version == 3
             and checkpoint.rounds[0].calls[0].state == "pending"
         )
         durable = store.persistence.db.get_message_by_id(owner.id)
@@ -563,7 +647,12 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
             == checkpoint
         )
         if legacy:
-            checkpoint = replace(checkpoint, schema_version=1, managed_resume=None)
+            checkpoint = replace(
+                checkpoint,
+                schema_version=1,
+                managed_resume=None,
+                selected_provider=None,
+            )
             current_owner = store.get_message(owner.id)
             version = current_owner.provider_continuation_message_version
             store.persistence.db.update_provider_continuation(
@@ -583,10 +672,14 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
         )
         assert resumed, controller.run_state_for(session.id).visible_copy
         assert gateway.calls == 2
+        call_id = _active_checkpoint().rounds[0].calls[0].call_id
+        assert [
+            message["tool_calls"][0]["id"]
+            for message in gateway.resumed
+            if message.get("tool_calls")
+        ] == [call_id]
         final = store.get_message(owner.id).provider_continuation
-        assert (
-            final.schema_version == (1 if legacy else 2) and final.state == "complete"
-        )
+        assert final.schema_version == 3 and final.state == "complete"
         assert final.rounds[0].calls[0].state == "completed"
     finally:
         await controller.shutdown()

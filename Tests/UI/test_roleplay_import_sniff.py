@@ -1,0 +1,538 @@
+"""Roleplay frame B2b: the bounded import sniff (spec 1.4.6; AC#4, AC#6).
+
+``UI/Persona_Modules/roleplay_import_sniff.py`` decides which kind a picked
+file is before the one Import picker routes it. Pure and file-level contracts
+only: nothing here mounts ``PersonasScreen`` (UI Fast Lane). The routing
+through the picker is ``test_roleplay_import_app.py``'s.
+"""
+
+from __future__ import annotations
+
+import builtins
+import json
+import os
+import pathlib
+import threading
+import time
+import zipfile
+
+import pytest
+
+import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
+import tldw_chatbook.UI.Persona_Modules.roleplay_import_sniff as sniff
+from Tests.UI.roleplay_import_fixtures import (
+    EXPECTED_KINDS,
+    card_v2,
+    write_import_fixtures,
+    write_nested_json,
+    write_sparse,
+)
+from tldw_chatbook.Character_Chat import Character_Chat_Lib
+
+CAP = 10 * 1024 * 1024
+
+
+@pytest.mark.parametrize("suffix", [".json", ".md", ".txt"])
+def test_deciding_card_evidence_after_the_sniff_asks(tmp_path, suffix):
+    path = tmp_path / f"late{suffix}"
+    card = json.dumps(card_v2()).encode()
+    payload = (
+        b" " * 65_537 + card
+        if suffix == ".json"
+        else b"prose\n" * 11_000 + b"```json\n" + card + b"\n```\n"
+    )
+    path.write_bytes(payload)
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt"])
+@pytest.mark.parametrize("heading", ["Character card", "Travel dossier"])
+def test_a_bracket_heading_before_a_late_card_fence_is_inconclusive(
+    tmp_path, suffix, heading
+):
+    path = tmp_path / f"bracket{suffix}"
+    path.write_bytes(
+        f"[{heading}]\n".encode()
+        + b"ordinary prose\n" * 5000
+        + b"```json\n"
+        + json.dumps(card_v2()).encode()
+        + b"\n```\n"
+    )
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt", ".json"])
+def test_complete_bracket_prose_is_still_not_a_card(tmp_path, suffix):
+    path = tmp_path / f"complete{suffix}"
+    path.write_bytes(b"[Travel dossier]\nordinary prose\n")
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("not_roleplay", ())
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt", ".json"])
+@pytest.mark.parametrize(
+    "intro",
+    [b"[1,]\n", b"[true]\n", b"[NaN]\n", b"[broken\n"],
+    ids=["malformed-array", "valid-array", "nan-array", "unclosed-label"],
+)
+def test_json_array_prefixes_do_not_become_inconclusive_headings(
+    tmp_path, suffix, intro
+):
+    path = tmp_path / f"array{suffix}"
+    path.write_bytes(intro + b" " * 70_000)
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("not_roleplay", ())
+
+
+@pytest.mark.parametrize("size,verdict", [(65_536, "not_roleplay"), (65_537, "ask")])
+def test_prose_at_the_read_boundary_distinguishes_eof(tmp_path, size, verdict):
+    path = tmp_path / "prose.md"
+    path.write_bytes(b"x" * size)
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert result.verdict == verdict
+    assert result.kinds == (sniff.TEXT_KINDS if verdict == "ask" else ())
+
+
+def test_a_short_read_before_the_stated_eof_is_inconclusive(tmp_path, monkeypatch):
+    from io import BytesIO
+
+    path = tmp_path / "short.txt"
+    path.write_bytes(b"prose" * 10)
+    reads = []
+
+    class ShortRead(BytesIO):
+        def read(self, size):
+            reads.append(size)
+            return super().read(5)
+
+    monkeypatch.setattr(
+        sniff, "open", lambda *args: ShortRead(path.read_bytes()), raising=False
+    )
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
+    assert reads == [65_536]
+
+
+@pytest.fixture
+def fixtures(tmp_path):
+    return write_import_fixtures(tmp_path / "fixtures")
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_KINDS))
+def test_every_format_of_the_four_pickers_sniffs_to_its_kind(fixtures, name):
+    result = sniff.sniff_import_file(fixtures[name], max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("decided", (EXPECTED_KINDS[name],))
+
+
+def test_cross_kind_shapes_dev_accepts_silently_are_told_apart(fixtures):
+    """On dev each per-kind importer accepts the other kinds' JSON: SillyTavern
+    lore imports as a character "Book", a dictionary as a character "Dict", a
+    CCv2 card as a lore book with no entries, and the dictionary export
+    matches the generic V2 ``data`` check (Survey 2 §0 item 6, measured). B2b
+    routes each to its own kind; the per-kind importers stay as they are."""
+    cases = {
+        # SillyTavern World Info carries a name, like a card would.
+        "lore": {
+            **json.loads(fixtures["lore_sillytavern.json"].read_text()),
+            "name": "Book",
+        },
+        "dictionary": {
+            "name": "Dict",
+            "entries": [{"key": "a", "content": "b"}],
+            "max_tokens": 10,
+        },
+        "character": card_v2(),
+    }
+    for kind, payload in cases.items():
+        result = sniff.classify(".json", json.dumps(payload).encode())
+        assert (result.verdict, result.kinds) == ("decided", (kind,)), kind
+    export = fixtures["dictionary_export.json"].read_bytes()
+    assert sniff.classify(".json", export).kinds == ("dictionary",)
+
+
+def test_an_11_mb_file_is_refused_before_any_read(tmp_path, monkeypatch):
+    path = write_sparse(tmp_path / "huge.json", 11 * 1024 * 1024)
+    opened: list[object] = []
+
+    def spy_open(*args, **kwargs):
+        opened.append(args[0] if args else kwargs)
+        return builtins.open(*args, **kwargs)
+
+    monkeypatch.setattr(sniff, "open", spy_open, raising=False)
+    monkeypatch.setattr(
+        pathlib.Path, "read_bytes", lambda self: opened.append(self) or b""
+    )
+    monkeypatch.setattr(
+        pathlib.Path, "open", lambda self, *a, **k: opened.append(self) or None
+    )
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert result.verdict == "too_large"
+    assert opened == []
+
+
+@pytest.mark.parametrize("suffix", [".tldw-actor-pack", ".tldw-persona-vpack"])
+def test_packs_route_by_extension_and_skip_the_cap(tmp_path, suffix):
+    """Actor and Buddy packs legitimately pass 10 MB (archive limits are the
+    importers' own); the sniff never measures or opens them (OQ3 iii)."""
+    path = write_sparse(tmp_path / f"big{suffix}", 11 * 1024 * 1024)
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert result.verdict == "decided"
+    assert result.kinds == (sniff.PACK_SUFFIXES[suffix],)
+
+
+@pytest.mark.parametrize("opener", ["[", '{"a":'])
+def test_a_deeply_nested_9_mb_json_is_not_a_roleplay_file_and_raises_nothing(
+    tmp_path, opener
+):
+    path = write_nested_json(tmp_path / "nested.json", 9 * 1024 * 1024, opener=opener)
+    started = time.monotonic()
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert result.verdict == "not_roleplay"
+    assert result.kinds == ()
+    # Evidence, not a threshold: a bounded read never needs a full parse.
+    assert time.monotonic() - started < 5
+
+
+def test_the_sniff_reads_at_most_64_kib(tmp_path, monkeypatch):
+    card = card_v2()
+    card["data"]["description"] = "x" * (5 * 1024 * 1024)
+    path = tmp_path / "card.json"
+    path.write_text(json.dumps(card), encoding="utf-8")
+    reads: list[int] = []
+    real_open = builtins.open
+
+    class Counting:
+        def __init__(self, handle):
+            self._handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._handle.close()
+
+        def read(self, size=-1):
+            data = self._handle.read(size)
+            reads.append(len(data))
+            return data
+
+    monkeypatch.setattr(
+        sniff, "open", lambda *a, **k: Counting(real_open(*a, **k)), raising=False
+    )
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("decided", ("character",))
+    assert sum(reads) <= sniff.SNIFF_MAX_BYTES
+    assert reads
+
+
+def test_the_sniffer_never_opens_an_archive_or_decodes_pixels(
+    fixtures, tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    calls: list[tuple] = []
+
+    def refuse(*args, **kwargs):
+        # Recorded as well as raised: a caller that swallows the error still fails.
+        calls.append(args)
+        raise AssertionError("the sniff opened an archive or decoded an image")
+
+    zip_as_json = tmp_path / "archive.json"
+    zip_as_json.write_bytes(fixtures["actor.tldw-actor-pack"].read_bytes())
+    monkeypatch.setattr(zipfile, "ZipFile", refuse)
+    monkeypatch.setattr(Image, "open", refuse)
+    monkeypatch.setattr(Image.Image, "load", refuse)
+    for name, path in fixtures.items():
+        assert sniff.sniff_import_file(path, max_bytes=CAP).kinds == (
+            EXPECTED_KINDS[name],
+        ), name
+    assert sniff.sniff_import_file(zip_as_json, max_bytes=CAP).verdict == "not_roleplay"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("suffix", "prefix", "verdict"),
+    [
+        (".json", b"\xff\xfe\x00{", "not_roleplay"),
+        (".json", b"[" * 70_000, "not_roleplay"),
+        (".json", b'{"a":' * 20_000, "not_roleplay"),
+        # A truncated object is still a JSON object: ask, never refuse.
+        (".json", b'{"name": "x", "description": ', "ask"),
+        # A non-object JSON value is not a Roleplay file.
+        (".json", b"[1, 2, 3]", "not_roleplay"),
+        (".md", b"\xff\xfe\xfd", "not_roleplay"),
+        (".png", b"GIF89a", "not_roleplay"),
+        (".webp", b"RIFF\x00\x00\x00\x00WAVE", "not_roleplay"),
+        # An image extension without its signature is refused even when the
+        # bytes are card JSON (read as JSON they would be a card).
+        (".png", b'{"spec": "chara_card_v2", "data": {"name": "x"}}', "not_roleplay"),
+        ("", b"plain words", "not_roleplay"),
+        (".json", b"", "not_roleplay"),
+    ],
+    # Short ids: a 70 KB prefix as a node id defeats grep-based replay tools.
+    ids=[
+        "json-not-utf8",
+        "json-nested-lists",
+        "json-nested-objects",
+        "json-truncated-object",
+        "json-list",
+        "md-not-utf8",
+        "png-gif-bytes",
+        "webp-wave-bytes",
+        "png-ext-card-json",
+        "no-suffix-prose",
+        "json-empty",
+    ],
+)
+def test_undecodable_or_recursive_prefixes_mean_unknown_never_an_exception(
+    suffix, prefix, verdict
+):
+    result = sniff.classify(suffix, prefix)
+    assert result.verdict == verdict
+    # ``ask`` lists every candidate; a refusal lists none.
+    assert result.kinds == (sniff.TEXT_KINDS if verdict == "ask" else ())
+
+
+@pytest.mark.parametrize(
+    "suffix", [".txt", ".yaml", ""], ids=["txt", "yaml", "no-suffix"]
+)
+def test_a_bracket_led_text_card_still_reads_as_a_card(suffix):
+    """Dev's card picker reads any non-image file as text: a ``.txt`` that
+    starts with ``[`` (``[Character card]``) and holds a fenced json block
+    imports as a card on dev. Sent to the JSON parse it would be refused,
+    which would be a regression new with B2b."""
+    text = b'[Character card]\n\n```json\n{"name": "Tam Reyes"}\n```\n'
+    result = sniff.classify(suffix, text)
+    assert (result.verdict, result.kinds) == ("decided", ("character",))
+    assert sniff.classify(suffix, b"[1, 2, 3]").verdict == "not_roleplay"
+
+
+@pytest.mark.parametrize("kind", ["character", "dictionary"])
+def test_a_multibyte_character_cut_by_the_read_does_not_refuse_the_file(tmp_path, kind):
+    """The 64 KiB read can end inside a UTF-8 character: that half character
+    is dropped, never read as an undecodable file (a JSON card or a Markdown
+    dictionary with non-ASCII text past 64 KiB). The dictionary's
+    ``---@@@---`` line comes first, inside the read: only that line decides a
+    chat dictionary (owner decision D8)."""
+    for pad in ("", "x"):
+        if kind == "character":
+            card = card_v2(f"Æsir{pad}")
+            card["data"]["description"] = "é" * 70_000
+            name, raw = "card.json", json.dumps(card, ensure_ascii=False).encode()
+        else:
+            text = f"BP: blood pressure\n---@@@---\nHR{pad}: " + "é" * 70_000 + "\n"
+            name, raw = "rules.md", text.encode()
+        try:
+            raw[: sniff.SNIFF_MAX_BYTES].decode("utf-8")
+        except UnicodeDecodeError:
+            break  # the read ends inside a 2-byte "é"
+    else:
+        pytest.fail("no padding puts the read's end inside a character")
+    path = tmp_path / name
+    path.write_bytes(raw)
+    assert sniff.sniff_import_file(path, max_bytes=CAP).kinds == (kind,)
+
+
+def test_keys_past_the_prefix_ask_rather_than_refuse(tmp_path):
+    """A V1 card whose leading ``avatar`` holds 100 KB of base64: its
+    discriminating keys lie past the 64 KiB read. Dev's card picker imports
+    it, so refusing it would be a regression new with B2b."""
+    card = {
+        "avatar": "QUFB" * 25_000,
+        "name": "Late Keys",
+        "description": "d",
+        "personality": "p",
+        "first_mes": "hi",
+        "mes_example": "",
+    }
+    path = tmp_path / "late.json"
+    path.write_text(json.dumps(card), encoding="utf-8")
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
+
+
+def test_the_root_key_rules_decide_each_kind_without_entries(tmp_path):
+    """Deferred minor T3c: ``_LORE_KEYS``, ``_DICTIONARY_KEYS`` and
+    ``_CARD_KEYS`` had no failing test, because every fixture's entries
+    decided the kind as well. These files carry no deciding entry: a tldw
+    lore export with ``"entries": []``, a flat dictionary with none, and a
+    V1-style card with only a card root key."""
+    cases = {
+        "lore": {"name": "Atlas", "scan_depth": 3, "entries": []},
+        "dictionary": {"name": "Dict", "strategy": "sorted_evenly", "entries": []},
+        "character": {"name": "Corwin", "char_persona": "A quiet smith."},
+    }
+    for kind, payload in cases.items():
+        path = tmp_path / f"{kind}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        result = sniff.sniff_import_file(path, max_bytes=CAP)
+        assert (result.verdict, result.kinds) == ("decided", (kind,)), kind
+    # No root key and no deciding entry: inconclusive, so "Import as:" asks
+    # (the module's rule: a strict sniff would refuse files dev accepts).
+    nothing = sniff.classify(".json", b'{"name": "Nothing", "entries": []}')
+    assert (nothing.verdict, nothing.kinds) == ("ask", sniff.TEXT_KINDS)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="native FIFOs require os.mkfifo")
+def test_a_fifo_is_refused_without_blocking(tmp_path):
+    """Deferred minor T3a: a FIFO picked as ``x.json`` blocked the sniff's
+    worker in ``open()`` until a writer appeared (on dev its ``read_bytes``
+    blocks the same way; not fixed there). The sniff now refuses anything
+    but a regular file on the ``stat`` it already takes, with the same
+    OSError the screen turns into "{file} could not be imported: …". A
+    regression fails here instead of hanging: the sniff runs on a daemon
+    thread with a deadline, and a writer unblocks a stuck reader."""
+    path = tmp_path / "x.json"
+    os.mkfifo(path)
+    outcome: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            outcome["result"] = sniff.sniff_import_file(path, max_bytes=CAP)
+        except Exception as exc:  # noqa: BLE001 - the verdict under test
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+    if worker.is_alive():
+        # Unblock the reader stuck in open() so the thread can end.
+        writer = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+        os.close(writer)
+        worker.join(timeout=5)
+        pytest.fail("the sniff blocked on a FIFO instead of refusing it")
+    assert "result" not in outcome, outcome
+    error = outcome["error"]
+    assert isinstance(error, OSError) and not isinstance(error, ValueError)
+    assert "not a regular file" in str(error)
+
+
+def test_a_nonregular_stat_is_refused_before_open(tmp_path, monkeypatch):
+    import stat
+    from types import SimpleNamespace
+
+    path = tmp_path / "nonregular.json"
+    checked = SimpleNamespace(
+        name=path.name,
+        stat=lambda: SimpleNamespace(st_mode=stat.S_IFIFO, st_size=0),
+    )
+    monkeypatch.setattr(sniff, "validate_path_simple", lambda *a, **k: checked)
+
+    def refuse_open(*args, **kwargs):
+        pytest.fail("nonregular file reached open")
+
+    monkeypatch.setattr(sniff, "open", refuse_open, raising=False)
+    with pytest.raises(OSError, match="not a regular file"):
+        sniff.sniff_import_file(path, max_bytes=CAP)
+
+
+def test_markdown_that_fits_two_kinds_asks():
+    text = b"---\nname: Both\n---\nBP: blood pressure\n---@@@---\nHR: heart rate\n"
+    result = sniff.classify(".md", text)
+    assert (result.verdict, result.kinds) == ("ask", ("character", "dictionary"))
+    assert sniff.classify(".md", b"# notes\n\njust prose\n").verdict == "not_roleplay"
+
+
+def test_markdown_key_value_lines_alone_ask_with_the_dictionary_preselected():
+    """Owner decision D8 (2026-10-29): only a ``---@@@---`` line decides a chat
+    dictionary. A README or notes file has ``key: value`` lines too ("Note:
+    ..."), so such a file asks "Import as:", opening on Chat dictionary: a
+    real dictionary without a separator costs one Enter. The plan's first
+    sniff imported it as a chat dictionary without asking, which would have
+    been new with B2b for the Characters, Personas and Lore pickers; on dev
+    the Dictionaries picker imports it without asking, and B2b's one picker
+    asks first."""
+    readme = b"# Field kit\n\nNote: pack light.\nAuthor: Tam Reyes\n"
+    result = sniff.classify(".md", readme)
+    assert (result.verdict, result.kinds) == ("ask", ("character", "dictionary"))
+    assert result.preselect == "dictionary"
+    rules = sniff.classify(".md", b"BP: blood pressure\n---@@@---\nHR: heart rate\n")
+    assert (rules.verdict, rules.kinds) == ("decided", ("dictionary",))
+    assert rules.preselect is None
+
+
+@pytest.mark.parametrize(
+    "suffix", [".yaml", ".yml", ".txt", ""], ids=["yaml", "yml", "txt", "no-suffix"]
+)
+def test_a_text_card_in_another_extension_still_reads_as_a_card(suffix):
+    """Dev's card picker read any non-image file as text under All Files, so
+    YAML frontmatter or a json block (fenced ```json or bare ```) in a
+    ``.yaml`` or ``.txt`` file imported as a card; refusing it would be a
+    regression new with B2b. Plain text there is still not a Roleplay file
+    (no other kind's importer reads it)."""
+    frontmatter = b"---\nname: Tam Reyes\ndescription: A pilot.\n---\n"
+    json_block = b'# Card\n\n```json\n{"name": "Tam Reyes"}\n```\n'
+    bare_block = b'# Card\n\n```\n{"name": "Tam Reyes"}\n```\n'
+    for text in (frontmatter, json_block, bare_block):
+        result = sniff.classify(suffix, text)
+        assert (result.verdict, result.kinds) == ("decided", ("character",)), text
+    assert sniff.classify(suffix, b"key: value\nmore words\n").verdict == (
+        "not_roleplay"
+    )
+
+
+@pytest.mark.parametrize("suffix", [".md", ".markdown"], ids=["md", "markdown"])
+def test_a_json_card_saved_as_markdown_reads_as_a_card(suffix):
+    """Dev's card importer reads a Markdown file's raw JSON, or a json block
+    fenced with or without ``json``, so a CCv2 card saved as ``.md`` imported
+    as a character on dev. Its ``spec`` must win here too (spec 1.4.6): read
+    as Markdown, the card's ``"key": "value"`` lines would make it a likely
+    chat dictionary, which would be new with B2b. Text that only looks like
+    JSON still gets the Markdown checks."""
+    card = json.dumps(card_v2(), indent=2).encode()
+    bare_block = b'Notes: a pilot.\n\n```\n{"name": "Tam Reyes"}\n```\n'
+    for text in (card, b"\n" + card, bare_block):
+        result = sniff.classify(suffix, text)
+        assert (result.verdict, result.kinds) == ("decided", ("character",)), text[:24]
+    rules = sniff.classify(suffix, b"{not json}\nBP: blood pressure\n---@@@---\n")
+    assert (rules.verdict, rules.kinds) == ("decided", ("dictionary",))
+
+
+def test_the_sniff_never_runs_the_markdown_card_parser(tmp_path, monkeypatch):
+    """The card parser's json-block regex is quadratic (0.39 s at 25 KB, 5.7 s
+    at 100 KB on dev, measured): it exists on dev and B2b does not fix it,
+    so the sniff must never call it."""
+
+    calls: list[tuple] = []
+
+    def refuse(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("the sniff ran the Markdown card parser")
+
+    monkeypatch.setattr(
+        Character_Chat_Lib, "load_character_card_from_string_content", refuse
+    )
+    path = tmp_path / "adversarial.md"
+    path.write_text("```json\n{" + " " * 100_000, encoding="utf-8")
+    started = time.monotonic()
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("decided", ("character",))
+    assert calls == []
+    # Evidence, not a threshold (the spy above is the proof): a linear check
+    # of 64 KiB never takes seconds, even under xdist and load.
+    assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize(
+    "suffix,prefix",
+    [
+        pytest.param(suffix, prefix, id=f"{name}-{suffix}")
+        for suffix in (".json", ".md", ".txt")
+        for name, prefix in (
+            ("invalid-utf8", b"\xff" * 65_536),
+            ("binary-nul", b"\x00" * 65_536),
+            ("deep-list", b"[" * 65_536),
+            ("deep-object", b'{"a":' * 13_108),
+        )
+        # Markdown's existing key:value fallback asks for a dictionary even
+        # after malformed JSON; this repair preserves that established rule.
+        if (suffix, name) != (".md", "deep-object")
+    ],
+)
+def test_incomplete_binary_and_deep_json_still_refuse(tmp_path, suffix, prefix):
+    path = tmp_path / f"refused{suffix}"
+    path.write_bytes(prefix + b"x")
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("not_roleplay", ())

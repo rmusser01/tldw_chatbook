@@ -24,6 +24,7 @@ from ....Scheduling.events import (
     RunReminderNowRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
+
 # PR-3 task 5: the owner-row dropdown's own lock/failed-state gating reads
 # the SAME state tuple `SchedulingService.transfer_lock_reason` keys off
 # (survey §3) -- a plain constant import, not a fresh boot-cost tier
@@ -34,6 +35,7 @@ from ....Scheduling.db.scheduled_tasks_db import IN_FLIGHT_TRANSFER_STATES
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from ....Widgets.detail_value_row import DetailGroup, DetailValueRow
 from ..destination_recovery import DestinationRecoveryState
+
 # PR-3 task 3: the Frequency row editors reuse the create/edit modal's own
 # preset<->cron mapping and timezone-option builder verbatim (never
 # re-derived) -- `reminder_form.py` is already part of this same lazy-
@@ -46,6 +48,7 @@ from .forms.reminder_form import (
     preset_to_cron,
     timezone_options,
 )
+
 # Hoisted to `unified_rows.py` (redesign PR-2 Task 1) so that pure module can
 # reuse them without pulling Textual in as an import side effect; re-exported
 # here unchanged so every existing call site/test import keeps working.
@@ -201,14 +204,17 @@ def _format_next_run(
     # the timestamp first made a completed task read "-" while its status
     # badge said "Disabled" (Qodo review). Suppression is a property of the
     # status, not of whether a stale timestamp happens to survive.
-    display_status = _task_status(task)
-    # UAT finding 3e: a fired one-time reminder is COMPLETED (not
-    # DISABLED, since `_task_status` above now checks `reminder_has_
-    # fired` first) -- its own branch, not the generic "nothing
-    # scheduled" fallback below, so "Completed" never explains itself as
-    # "— (disabled)".
-    if display_status == TaskStatus.COMPLETED:
+    #
+    # UAT finding 3e: a fired one-time reminder gets its own branch, not
+    # the generic "nothing scheduled" fallback below, so "Completed" never
+    # explains itself as "— (disabled)". TASK-33641.4: the branch tests
+    # `reminder_has_fired`, never a Completed display status --
+    # `_task_status` falls through to `last_status`, a successful dispatch
+    # records "completed" on a recurring reminder too, and testing the
+    # status hid an armed weekly reminder's stored next run.
+    if isinstance(task, ReminderTask) and reminder_has_fired(task):
         return "—"
+    display_status = _task_status(task)
     if display_status == TaskStatus.DISABLED:
         return "— (disabled)"
     if display_status == TaskStatus.PAUSED:
@@ -262,9 +268,7 @@ def format_incidents(incidents) -> str:
     """
     if not incidents:
         return "No open incidents"
-    open_rows = [
-        row for row in incidents if str(row.get("status")) != "closed"
-    ]
+    open_rows = [row for row in incidents if str(row.get("status")) != "closed"]
     if not open_rows:
         return "No open incidents"
     lines = []
@@ -333,9 +337,7 @@ _PROJECTION_MANAGERS: dict[str, str] = {
 }
 
 
-def _managed_elsewhere_notice(
-    task: ScheduledTask, verb: str = "edit"
-) -> str:
+def _managed_elsewhere_notice(task: ScheduledTask, verb: str = "edit") -> str:
     """Copy for rows managed by another system (task-23106).
 
     Schedules shows these rows read-only; the copy names the owning
@@ -797,10 +799,16 @@ class TaskDetail(Vertical):
                 # hide the row's own value Static, which the existing
                 # transfer-badge rendering pins verbatim).
                 self._runs_on_cancel_button = Button(
-                    "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning", classes="detail-owner-action-button"
+                    "Cancel transfer",
+                    id=_RUNS_ON_CANCEL_ID,
+                    variant="warning",
+                    classes="detail-owner-action-button",
                 )
                 self._runs_on_retry_button = Button(
-                    "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning", classes="detail-owner-action-button"
+                    "Retry transfer",
+                    id=_RUNS_ON_RETRY_ID,
+                    variant="warning",
+                    classes="detail-owner-action-button",
                 )
                 runs_on_actions = Horizontal(
                     self._runs_on_cancel_button,
@@ -962,18 +970,14 @@ class TaskDetail(Vertical):
         except Exception:  # noqa: BLE001 -- absent before mount
             return
         incidents = getattr(self, "_current_incidents", []) or []
-        alerting = [
-            row for row in incidents if str(row.get("status")) == "alerting"
-        ]
+        alerting = [row for row in incidents if str(row.get("status")) == "alerting"]
         button.disabled = not alerting
         button.display = bool(alerting)
 
     def _request_acknowledge(self) -> None:
         """Post an acknowledge request for the newest alerting incident."""
         incidents = getattr(self, "_current_incidents", []) or []
-        alerting = [
-            row for row in incidents if str(row.get("status")) == "alerting"
-        ]
+        alerting = [row for row in incidents if str(row.get("status")) == "alerting"]
         if not alerting:
             return
         incident_id = alerting[0].get("id")
@@ -1258,7 +1262,10 @@ class TaskDetail(Vertical):
                 # `_edit_selected_automation`'s own options-building
                 # already uses (survey §7) -- a `Select`'s initial value
                 # must be among its options.
-                options = [*options, (owner_display_label(current_owner), current_owner)]
+                options = [
+                    *options,
+                    (owner_display_label(current_owner), current_owner),
+                ]
             row.begin_edit(
                 Select(
                     options,
@@ -1333,9 +1340,7 @@ class TaskDetail(Vertical):
         if new_preset == "custom":
             row.show_error(_REPEAT_CUSTOM_REFUSAL)
             return
-        new_cron = preset_to_cron(
-            new_preset, current_time_text or DEFAULT_TIME_OF_DAY
-        )
+        new_cron = preset_to_cron(new_preset, current_time_text or DEFAULT_TIME_OF_DAY)
         assert new_cron is not None, (
             "every _preset_options() value besides 'custom' always yields a cron"
         )
@@ -1353,9 +1358,7 @@ class TaskDetail(Vertical):
             # editor above.
             return
         row.end_edit()
-        self.post_message(
-            ReminderFieldEditRequested(task, {"timezone": new_zone}, row)
-        )
+        self.post_message(ReminderFieldEditRequested(task, {"timezone": new_zone}, row))
 
     def _commit_at_edit(self, event: Input.Submitted) -> None:
         task = self._editing_task()
@@ -1482,9 +1485,9 @@ class TaskDetail(Vertical):
             missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
             missed_notice.update("")
             missed_notice.display = False
-            self.query_one("#schedules-follow-in-console", Button).label = (
-                "Follow in Console"
-            )
+            self.query_one(
+                "#schedules-follow-in-console", Button
+            ).label = "Follow in Console"
             # PR-3 task 3: stale lock state from a PREVIOUS selection must
             # not survive into a cleared pane (harmless today since the
             # groups are hidden either way, but `on_detail_value_row_
@@ -1519,9 +1522,7 @@ class TaskDetail(Vertical):
         # schedules-redesign PR-1, task 3: the Details/Frequency/History
         # groups are reminder-only (spec §5's reminder column).
         is_reminder = isinstance(task, ReminderTask)
-        self.query_one("#scheduling-task-detail-groups", Vertical).display = (
-            is_reminder
-        )
+        self.query_one("#scheduling-task-detail-groups", Vertical).display = is_reminder
         if is_reminder:
             assert self._runs_on_row is not None, "set_task called before mount"
             body = (task.body or "").strip()
@@ -1565,7 +1566,7 @@ class TaskDetail(Vertical):
 
         follow_button = self.query_one("#schedules-follow-in-console", Button)
         short_title = task.title if len(task.title) <= 24 else f"{task.title[:23]}…"
-        follow_button.label = f"Follow '{short_title}' in Console"
+        follow_button.label = Text(f"Follow '{short_title}' in Console")
 
         # Only the action that would change the current state stays enabled;
         # the other is visibly disabled instead of silently no-oping (UX-059).
@@ -1591,7 +1592,7 @@ class TaskDetail(Vertical):
             else:
                 run_now_button.label = "Run now"
 
-        self._update_static("scheduling-task-detail-title", task.title)
+        self._update_static("scheduling-task-detail-title", Text(task.title))
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
         self._update_missed_notice(task)
         self._update_static(
@@ -1608,9 +1609,7 @@ class TaskDetail(Vertical):
         badge.remove_class(*_STATUS_BADGE_CLASSES.values())
         badge.add_class(status_badge_class(status))
 
-    def _update_missed_notice(
-        self, task: ReminderTask | ScheduledTask | None
-    ) -> None:
+    def _update_missed_notice(self, task: ReminderTask | ScheduledTask | None) -> None:
         """Render the late-dispatch notice for the last dispatch.
 
         Distinct from failed: failed means the dispatch ran and the handler
@@ -1684,9 +1683,7 @@ class TaskDetail(Vertical):
         try:
             why = self.query_one("#schedules-follow-why", Static)
             why.update(
-                ""
-                if available
-                else SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip
+                "" if available else SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip
             )
         except Exception:  # noqa: BLE001 - widget not mounted yet
             pass
@@ -1754,7 +1751,7 @@ class TaskDetail(Vertical):
         why = self.query_one("#scheduling-transfer-why", Static)
         why.update(f"Edit/Duplicate/Enable/Disable/Delete: {reason}" if reason else "")
 
-    def _update_static(self, widget_id: str, content: str) -> None:
+    def _update_static(self, widget_id: str, content: str | Text) -> None:
         """Update a child Static widget by id."""
         static = self.query_one(f"#{widget_id}", Static)
         static.update(content)
@@ -1841,7 +1838,7 @@ class TaskInspector(Vertical):
         card = self.query_one("#scheduling-conflict-card", Vertical)
         text = self.query_one("#scheduling-conflict-text", Static)
         if task is not None and _underlying_status(task) == TaskStatus.CONFLICT:
-            text.update(f"Conflict detected\n{task.title}")
+            text.update(Text(f"Conflict detected\n{task.title}"))
             card.add_class("conflict")
         else:
             text.update("No conflict")

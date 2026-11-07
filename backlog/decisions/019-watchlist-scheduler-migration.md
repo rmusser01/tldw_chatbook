@@ -75,9 +75,9 @@ Migrate watchlist/subscription check execution from `Subscriptions/scheduler.py`
 `tldw_chatbook` currently has two scheduling systems:
 
 1. **`Subscriptions/scheduler.py`** — A dedicated scheduler for RSS/URL watchlist checks. It owns its own priority queue, concurrency limit, rate limiting, feed monitoring, and subscription state updates. It is tightly coupled to `Subscriptions_DB` and does not participate in the new server-side scheduled-tasks control plane.
-2. **`Scheduling/scheduler/loop.py`** — A generic scheduler introduced in ADR-018 for reminders and (eventually) automation definitions. It polls `ScheduledTasksDB` and dispatches due tasks to typed handlers.
+2. **`Scheduling/scheduler/loop.py`** — A generic scheduler introduced in ADR-291 for reminders and (eventually) automation definitions. It polls `ScheduledTasksDB` and dispatches due tasks to typed handlers.
 
-ADR-018 already decided that watchlist jobs would remain read-only projections from `Subscriptions_DB` until Phase 5. Phase 5 is now beginning. The workbench UI already displays watchlist jobs via `WatchlistProjection`; the missing piece is moving their *execution* into the unified scheduler so that:
+ADR-291 already decided that watchlist jobs would remain read-only projections from `Subscriptions_DB` until Phase 5. Phase 5 is now beginning. The workbench UI already displays watchlist jobs via `WatchlistProjection`; the missing piece is moving their *execution* into the unified scheduler so that:
 
 - A single loop owns all scheduled work.
 - Server-side and local scheduling concepts align.
@@ -110,6 +110,6 @@ ADR-018 already decided that watchlist jobs would remain read-only projections f
 
 ## Links
 
-- ADR-018: Local/server hybrid scheduled-tasks storage and sync
+- ADR-291: Local/server hybrid scheduled-tasks storage and sync
 - [Implementation plan](../../Docs/superpowers/plans/2026-07-18-scheduling-module-screen-implementation-plan.md)
 - [Design spec](../../Docs/superpowers/specs/2026-07-18-scheduling-module-screen-design.md)

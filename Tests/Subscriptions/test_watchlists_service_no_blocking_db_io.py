@@ -101,8 +101,10 @@ def _offloaded_call_nodes(tree: ast.AST) -> set[int]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        name = node.func.id if isinstance(node.func, ast.Name) else (
-            node.func.attr if isinstance(node.func, ast.Attribute) else None
+        name = (
+            node.func.id
+            if isinstance(node.func, ast.Name)
+            else (node.func.attr if isinstance(node.func, ast.Attribute) else None)
         )
         if name != OFFLOAD_HELPER:
             continue
@@ -139,9 +141,7 @@ def _loop_body_nodes(function: ast.AST) -> list[ast.AST]:
 
     def descend(node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
-            if isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
-            ):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 continue
             collected.append(child)
             descend(child)
@@ -164,9 +164,7 @@ def _blocking_db_calls_in_async_defs(source: str) -> list[str]:
                 continue
             if _db_rooted(inner.func):
                 rendered = ast.unparse(inner.func)
-                findings.append(
-                    f"{node.name} (line {inner.lineno}): {rendered}(...)"
-                )
+                findings.append(f"{node.name} (line {inner.lineno}): {rendered}(...)")
     return findings
 
 

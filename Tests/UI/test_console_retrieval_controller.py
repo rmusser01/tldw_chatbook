@@ -83,7 +83,7 @@ def test_retrieval_status_vocabulary_is_controller_owned() -> None:
     assert controller._console_rag_source_status(None) == "not staged"
     assert (
         controller._console_rag_source_status(None, sent_source_count=2)
-        == "sent with the last message · 2 sources"
+        == "attached to the last message · 2 sources"
     )
     assert (
         controller._console_rag_source_status(searching)

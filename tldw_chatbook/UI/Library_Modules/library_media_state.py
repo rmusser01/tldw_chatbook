@@ -254,6 +254,39 @@ def media_state_shim_attr(field_name: str) -> str:
     return "_library_media_" + field_name
 
 
+@dataclass(frozen=True)
+class LibraryMediaLinkReceipt:
+    """One "Use in Console" press's workspace link (TASK-34000.24).
+
+    Attributes:
+        workspace_id: The workspace the item was linked into -- Undo removes
+            THIS membership, never whatever is active by the time it is
+            pressed.
+        workspace_name: That workspace's display name for the receipt line.
+        item_id: The media membership id the receipt is about.
+        written: Whether THE PRESS that earned this receipt inserted the
+            membership ("Linked to …") or found it there ("Already linked
+            to …").
+        undo_offered: Whether "Undo link" renders -- true when a press in
+            this reader session wrote the membership (this one, or an
+            earlier press on the same item and workspace whose receipt a
+            later "Already linked" press replaced); never for a membership
+            the user did not add here.
+    """
+
+    workspace_id: str
+    workspace_name: str
+    item_id: str
+    written: bool
+    undo_offered: bool
+
+    @property
+    def line(self) -> str:
+        """The receipt sentence the Reader paints."""
+        prefix = "Linked to" if self.written else "Already linked to"
+        return f"{prefix} {self.workspace_name} · staged in Console"
+
+
 @dataclass
 class LibraryMediaState:
     """Every field the Media subsystem exclusively owns."""
@@ -450,10 +483,35 @@ class LibraryMediaState:
     # hands back a cached Mapping cannot make a fresh open look "already
     # rendered" and strand the viewer on its loading line.
     composed_detail: Mapping[str, Any] | None = None
+    # TASK-34000.18 (fix round 2): the Reader HOLDS the list highlight -- an
+    # ORDER fact, not a scope fact. Set the moment an item is opened or
+    # selected for the Reader (open-by-link, a row select, the receipt's
+    # Open, a restored selection); released only at the user's scope-change
+    # seams (``_clear_library_media_selection_for_scope_change``: a type
+    # choice, a typed query, the filter Clear, a sort or page change), when
+    # the Reader is reset to no selection, and on the viewer exit. While held
+    # and the held item is not on the page, no row wears the cue and the
+    # selection keeps naming the Reader's item (owner Q2 (b)); a scope change
+    # AFTER the open is the list moving on (TASK-15457: row 0).
+    highlight_held_by_reader: bool = False
     editing: bool = False
+    # TASK-34000.22: the metadata form's typed values (keys ``title``,
+    # ``author``, ``url``, ``keywords``), or None while no draft stands.
+    # Seeded from the saved values when the form opens, written by the
+    # fields' ``Changed`` events, read by the viewer's compose so a Reader
+    # tab switch, More or Find rebuild keeps the typed text, and compared
+    # against the saved values by ``media_edit_form_dirty`` -- the ONE
+    # predicate every exit (Escape, Back, another row, a rail row, the nav
+    # bar, Ctrl+Q) reads. Per item: dropped when the Reader selects another
+    # item, like ``link_receipt``. Cleared on Save, Discard and every
+    # viewer reset that clears ``editing``.
+    edit_draft: dict[str, str] | None = None
     confirming_delete: bool = False
     highlights: list[dict[str, Any]] = field(default_factory=list)
     editing_analysis: bool = False
+    # TASK-34000.22: the analysis form's typed text, the same contract as
+    # ``edit_draft`` for ``editing_analysis`` (``media_analysis_dirty``).
+    analysis_draft: str | None = None
 
     # task-28006: an LLM analysis generation is in flight for the open item.
     generating_analysis: bool = False
@@ -541,3 +599,11 @@ class LibraryMediaState:
     #: (task-2223: "Open in Library" on a match landed on the twin's
     #: identity with no explanation).
     arrival_note: str = ""
+
+    #: TASK-34000.24: the workspace membership the last "Use in Console"
+    #: press linked (or found), shown in the Reader as "Linked to <name> ·
+    #: staged in Console" with an Undo for a membership THIS session wrote.
+    #: Cleared at the Reader's selection entry (per-load, like the
+    #: conversation reader's metadata) and keyed by item id so a stale
+    #: receipt can never stand beside a different item.
+    link_receipt: LibraryMediaLinkReceipt | None = None

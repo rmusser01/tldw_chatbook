@@ -1,0 +1,12 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "scripts/check_timestamp_writers.py"
+  ],
+  "environment": {
+    "PYTHONIOENCODING": "utf-8"
+  },
+  "exit_code": 1,
+  "seconds": 27.058,
+  "qualification": "Only missing output from initial11script batch rerun after UTF8 decoding failed on Windows smartdash; all raw bytes retained. No product rewrite."
+}

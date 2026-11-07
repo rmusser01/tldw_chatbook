@@ -57,9 +57,7 @@ async def test_preflight_aggregates_and_grants(tmp_path):
     assert report.download_bytes == 2048
     assert report.sufficient_space is True
     assert report.entries[0].already_installed is False
-    assert report.entries[0].provenance == (
-        ProvenanceClass.CHATBOOK_CURATED,
-    )
+    assert report.entries[0].provenance == (ProvenanceClass.CHATBOOK_CURATED,)
     report.grant()  # must not raise
 
 
@@ -305,7 +303,9 @@ async def test_preflight_stale_sidecar_credit_capped_by_actual_file_size(tmp_pat
         # TASK-1694: staged credit now lives under a service-owned
         # download stage's state/ subtree (see _staged_bytes_for).
         stage = core._download_stage_for(desc, create=True)
-        (stage.payload / "model.onnx").write_bytes(b"m" * 100)  # only 100 bytes ACTUALLY staged
+        (stage.payload / "model.onnx").write_bytes(
+            b"m" * 100
+        )  # only 100 bytes ACTUALLY staged
         (stage.state / "fetch-state.json").write_text(
             json.dumps(
                 {

@@ -230,9 +230,9 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
         pane.query_one("#sources-create-watchlist", Select).value = watchlist_id
         pane.query_one("#sources-create-tags", Input).value = "news, daily"
         pane.query_one("#sources-create-frequency", Select).value = 86_400
-        pane.query_one("#sources-create-ignore-selectors", TextArea).text = (
-            ".ad\n.counter"
-        )
+        pane.query_one(
+            "#sources-create-ignore-selectors", TextArea
+        ).text = ".ad\n.counter"
         await pilot.pause(0.2)
 
         await _choose_runtime_backend(screen, pilot, "server")
@@ -249,14 +249,10 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
         assert not pane.query("#sources-create-ignore-selectors")
         assert pane.query_one("#sources-create-name", Input).value == "Morning"
         assert (
-            pane.query_one("#sources-create-url", Input).value
-            == "https://example.test"
+            pane.query_one("#sources-create-url", Input).value == "https://example.test"
         )
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert (
-            pane.query_one("#sources-create-watchlist", Select).value
-            == watchlist_id
-        )
+        assert pane.query_one("#sources-create-watchlist", Select).value == watchlist_id
         assert pane.query_one("#sources-create-tags", Input).value == "news, daily"
 
         await _choose_runtime_backend(screen, pilot, "local")
@@ -276,10 +272,7 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
             == ".ad\n.counter"
         )
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert (
-            pane.query_one("#sources-create-watchlist", Select).value
-            == watchlist_id
-        )
+        assert pane.query_one("#sources-create-watchlist", Select).value == watchlist_id
 
 
 @pytest.mark.parametrize("size", SIZES)
@@ -336,9 +329,7 @@ async def test_a_sources_reload_interleaving_the_open_does_not_lose_focus():
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
         screen.active_section = "sources"
-        await _wait_for_selector(
-            screen, pilot, "#watchlists-sources-pane", timeout=5.0
-        )
+        await _wait_for_selector(screen, pilot, "#watchlists-sources-pane", timeout=5.0)
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
 
         # Open the form: arms `_pending_create_focus` and queues a
@@ -369,8 +360,12 @@ async def test_a_sources_reload_interleaving_the_open_does_not_lose_focus():
         await pilot.pause()
         await pilot.pause()
 
-        assert pane.query("#sources-create-form"), "the create form should still be open"
-        assert screen.focused is not None and screen.focused.id == "sources-create-name", (
+        assert pane.query("#sources-create-form"), (
+            "the create form should still be open"
+        )
+        assert (
+            screen.focused is not None and screen.focused.id == "sources-create-name"
+        ), (
             "a `sources` reload interleaving the create form's own opening "
             "lost the focus intent: expected 'sources-create-name', got "
             f"{screen.focused.id if screen.focused else None!r}"
@@ -422,8 +417,12 @@ async def test_an_external_rebuild_does_not_yank_focus_back_to_the_first_field()
         await pilot.pause()
         await pilot.pause()
 
-        assert pane.query("#sources-create-form"), "the create form should still be open"
-        assert screen.focused is not None and screen.focused.id == "sources-create-url", (
+        assert pane.query("#sources-create-form"), (
+            "the create form should still be open"
+        )
+        assert (
+            screen.focused is not None and screen.focused.id == "sources-create-url"
+        ), (
             "an unrelated `sources` reload yanked focus back to the first "
             "field instead of leaving it on the user's field: got "
             f"{screen.focused.id if screen.focused else None!r}"
@@ -477,8 +476,12 @@ async def test_an_external_rebuild_does_not_yank_focus_to_a_stale_pending_target
         await pilot.pause()
         await pilot.pause()
 
-        assert pane.query("#sources-create-form"), "the create form should still be open"
-        assert screen.focused is not None and screen.focused.id == "sources-create-url", (
+        assert pane.query("#sources-create-form"), (
+            "the create form should still be open"
+        )
+        assert (
+            screen.focused is not None and screen.focused.id == "sources-create-url"
+        ), (
             "a stale pending focus intent yanked the user back to field 0 "
             "instead of leaving them on the field they had Tabbed to: got "
             f"{screen.focused.id if screen.focused else None!r}"
@@ -525,15 +528,16 @@ async def test_confirm_create_focus_gives_up_after_max_attempts():
 
         pane.call_after_refresh = _spy
 
-        pane._confirm_create_focus(target, attempts=pane._CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS)
+        pane._confirm_create_focus(
+            target, attempts=pane._CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS
+        )
 
         assert pane._pending_create_focus is None, (
             "the intent must clear once the reschedule bound is reached, "
             "or it stays armed forever with focus never confirmed"
         )
         assert calls == [], (
-            "_confirm_create_focus rescheduled itself past its own bound: "
-            f"{calls}"
+            f"_confirm_create_focus rescheduled itself past its own bound: {calls}"
         )
 
 
@@ -636,8 +640,7 @@ async def test_tab_walks_the_create_form_in_visual_order(
             seen.append(screen.focused.id if screen.focused else None)
 
         assert seen == field_order, (
-            f"Tab order through the create form is {seen}, expected "
-            f"{field_order}"
+            f"Tab order through the create form is {seen}, expected {field_order}"
         )
 
         # "Visual order" is not just DOM order: every step must move down the
@@ -727,8 +730,7 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(
                 f"{pane.region} at {size} -- the user cannot reach it"
             )
             assert region.y >= pane.region.y, (
-                f"#{field_id} at {region} starts above the Sources pane "
-                f"{pane.region}"
+                f"#{field_id} at {region} starts above the Sources pane {pane.region}"
             )
 
         # The table must survive too: the form is transient, the list is not.
@@ -842,8 +844,8 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
         assert screen._tree_watchlists
         screen._controller.create_source = record_create
         screen._controller.list_sources = record_source_reload
-        screen._notify_watchlists = (
-            lambda message, severity="information", **_kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **_kwargs: (
+            notices.append(message)
         )
 
         original_create_source = screen._create_source
@@ -862,9 +864,7 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
 
         _screen, pane = await _open_sources_create_form(pilot, host)
         pane.query_one("#sources-create-name", Input).value = "Race Feed"
-        pane.query_one("#sources-create-url", Input).value = (
-            "https://race.example/feed"
-        )
+        pane.query_one("#sources-create-url", Input).value = "https://race.example/feed"
         pane.query_one("#sources-create-watchlist", Select).value = watchlist_id
         await pilot.pause(0.2)
         pane.query_one("#sources-create-submit", Button).press()
@@ -915,8 +915,8 @@ async def test_existing_source_is_filed_without_claiming_it_was_created():
             }
 
         screen._controller.create_source = resolve_existing
-        screen._notify_watchlists = (
-            lambda message, severity="information", **_kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **_kwargs: (
+            notices.append(message)
         )
         await screen._create_source(
             {"name": "Existing Feed", "watchlist_id": watchlist_id},
@@ -942,10 +942,8 @@ async def test_unrelated_create_failure_keeps_the_generic_error_copy():
             raise ValueError("the supported RSS source failed for another reason")
 
         screen._controller.create_source = fail_create
-        screen.app_instance.notify = (
-            lambda message, severity="information", **_kwargs: notices.append(
-                (message, severity)
-            )
+        screen.app_instance.notify = lambda message, severity="information", **_kwargs: (
+            notices.append((message, severity))
         )
         pane.query_one("#sources-create-name", Input).value = "Broken RSS"
         pane.query_one("#sources-create-url", Input).value = "https://broken.test/rss"
@@ -1016,9 +1014,11 @@ async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
             created.append(payload)
 
         async def fake_list(*, runtime_backend, limit=100):
-            return [
-                {"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True}
-            ] if created else []
+            return (
+                [{"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True}]
+                if created
+                else []
+            )
 
         screen._controller.create_source = fake_create
         screen._controller.list_sources = fake_list
@@ -1092,7 +1092,11 @@ async def test_a_background_refresh_does_not_tear_down_an_open_create_form():
         # fires, and the pair whose recomposes TASK-1960 caught destroying this
         # pane.
         screen._apply_local_wc_snapshot(
-            (), 0, True, "Watchlists services unavailable; retry Watchlists later.", None
+            (),
+            0,
+            True,
+            "Watchlists services unavailable; retry Watchlists later.",
+            None,
         )
         screen._load_tree_data()
         for _ in range(300):

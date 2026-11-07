@@ -1,0 +1,10 @@
+Next-latency measurements (cross-cutting verifier, 2026-10-02, dev 2d34cbf80d; polled capture-pane every 0.1-0.25 s)
+run v-cross-cutting-3 (fresh profile, 120x40, no env keys, Full track):
+  Welcome(Full selected) -> Enter: 'Step 1 of 11' at 0.29 s (Welcome still shown), Provider at 0.55 s
+  Provider (OpenAI, key pasted, discovery already settled) -> Ctrl+N: Model 'Models for OpenAI' at 0.42 s
+  Model (prefilled gpt-5.6-terra) -> Ctrl+N: Voice at 0.46 s
+  Voice (untouched, PocketTTS) -> Ctrl+N: RAG (Step 5 of 11) at 0.48 s
+run v-cross-cutting-4 (fresh profile with OPENAI_API_KEY exported; wizard skipped at boot, re-run opened from Ctrl+P 'setup'):
+  Welcome -> Ctrl+N: 0.33 s; Provider(OpenAI env key) -> Model: 0.38 s; Model -> Voice: 1.15 s; Voice -> Protect: 0.34 s; Protect -> Summary: 0.23 s
+  Total for the five Nexts ~2.4 s (claim: 2.5-4 s EACH, ~20 s total) -- not reproduced.
+run v-cross-cutting-1: Voice untouched Next -> Protect within 2 s (first poll).

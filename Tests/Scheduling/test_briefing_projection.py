@@ -173,9 +173,7 @@ def test_projection_next_run_at_after_a_failure_is_one_cadence_after_the_failure
     )
     assert task.next_run_at == expected
     assert task.next_run_at != now
-    stale = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc) + timedelta(
-        seconds=1800
-    )
+    stale = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc) + timedelta(seconds=1800)
     assert task.next_run_at != stale
 
 
@@ -255,9 +253,7 @@ def test_next_eligibility_helper_normalizes_latest_attempt_to_utc(tmp_path):
     """Receipts and queue tasks must derive the same UTC eligibility instant."""
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     watchlist_id = _make_watchlist(db, name="Timezone")
-    db.set_watchlist_briefing_settings(
-        watchlist_id, briefing_cadence_seconds=86_400
-    )
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=86_400)
     failed_id = db.insert_briefing(watchlist_id, status="failed")
     _force_created_at(db, failed_id, "2026-08-27T10:00:00-07:00")
     [row] = db.list_briefing_schedules()

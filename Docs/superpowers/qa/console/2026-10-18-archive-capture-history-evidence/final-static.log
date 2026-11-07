@@ -1,0 +1,8 @@
+tldw_chatbook/Chat/console_chat_controller.py [(1, 191, 1), (1, 191, 1)] same True
+tldw_chatbook/Chat/console_agent_bridge.py [(1, 29, 1), (1, 29, 1)] same True
+tldw_chatbook/Chat/console_trace_service.py [(1, 33, 0), (1, 33, 1)] same True
+Tests/Chat/test_console_archive_recovery_followup.py [(0, 0, 0), (1, 1, 0)] same False
+Traceback (most recent call last):
+  File "/private/tmp/archive_capture_task3_static.py", line 38, in <module>
+    assert same, name
+AssertionError: Tests/Chat/test_console_archive_recovery_followup.py

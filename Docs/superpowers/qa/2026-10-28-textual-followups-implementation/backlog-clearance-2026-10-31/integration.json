@@ -1,0 +1,47 @@
+{
+  "integration-contracts-1793488395405182300": {
+    "tests": 248,
+    "failures": 2,
+    "errors": 0,
+    "skips": 0,
+    "xml_sha256": "139780bf8878ad955a3eda05a3098375e9a6699e7818880b8e1adc33904d8df0"
+  },
+  "exact-targets-1793488651320959500": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "xml_sha256": "e216da9cf4289d470ba855da69d61cd6512d0b754bb74aacc28e2cdfa84fa4b5"
+  },
+  "remaining-native-1793491137592994500": {
+    "tests": 16,
+    "failures": 7,
+    "errors": 0,
+    "skips": 0,
+    "xml_sha256": "386e0ba6a20e1fc5cbd4c7c3a8b41aae2eea9f6424eafb48a3242517ad3305fa"
+  },
+  "export-boundary-retry-1793492104978802100": {
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "xml_sha256": "69fe834943713ba1080e78e853429e185e4db3666f970e15926a824b4a812c19"
+  },
+  "healthy-source-retry-1793492686521959800": {
+    "tests": 4,
+    "failures": 1,
+    "errors": 0,
+    "skips": 0,
+    "xml_sha256": "74f65d9eaf5e409b487451b05f3b9e06aab7987e614dae246f4fd2b7802d85b1"
+  },
+  "utf8-links-final-1793493092365096900": {
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "xml_sha256": "8b8bb166597d8c33362b272fb4fbb6c597af4782274ce09faec1ebf8dce5b9a1"
+  },
+  "base": "dcdb2249294c60c5b660011e8d7b0f3c8babb28c",
+  "reviewed_source": "188fe0fc92dfd64ddb70f3fc890919640f77d036",
+  "qualification": "Targeted local integration only. Failed intermediate receipts retained. Corrected final three links pass. All four product blobs are unchanged from reviewed source. Hosted CI gate and size caps waived by owner; no full-suite/provider/platform/capacity pass claimed."
+}

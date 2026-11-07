@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 from Tests.private_profile import private_profile_test
+
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -58,9 +59,7 @@ def test_profile_scoped_inspector_requests_preserve_captured_context(request):
         intent="run",
         profile_context=context,
     )
-    reallow_request = MCPInspector.ReallowRequested(
-        "local:docs", "search", context
-    )
+    reallow_request = MCPInspector.ReallowRequested("local:docs", "search", context)
     remove_arg_rule_request = MCPInspector.RemoveArgRuleRequested(
         "local:docs", "search", "rule-1", context
     )
@@ -82,6 +81,7 @@ def test_profile_scoped_inspector_requests_preserve_captured_context(request):
     assert jump_request.profile_context == context
     assert audit_open_request.profile_context == context
     assert audit_adjust_request.profile_context == context
+
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
@@ -4430,9 +4430,7 @@ async def test_arg_rule_row_redacts_a_secret_shaped_argument():
         await pilot.pause()
 
         events = [
-            e
-            for e in app.events
-            if isinstance(e, MCPInspector.RemoveArgRuleRequested)
+            e for e in app.events if isinstance(e, MCPInspector.RemoveArgRuleRequested)
         ]
         assert events[0].rule_id == args_json
 
@@ -4454,17 +4452,16 @@ async def test_arg_rule_row_on_a_high_risk_tool_says_it_is_not_in_effect():
         )
         await pilot.pause()
 
-        assert str(
-            app.query_one("#mcp-inspector-arg-rule-0", Static).renderable
-        ) == 'Exact-input allow (not in effect: risk floor) · {"path": "x"}'
+        assert (
+            str(app.query_one("#mcp-inspector-arg-rule-0", Static).renderable)
+            == 'Exact-input allow (not in effect: risk floor) · {"path": "x"}'
+        )
 
         await pilot.click("#mcp-inspector-arg-rule-remove-0")
         await pilot.pause()
 
         events = [
-            e
-            for e in app.events
-            if isinstance(e, MCPInspector.RemoveArgRuleRequested)
+            e for e in app.events if isinstance(e, MCPInspector.RemoveArgRuleRequested)
         ]
         assert [e.rule_id for e in events] == ["r1"]
 
@@ -4523,9 +4520,7 @@ async def test_remove_arg_rule_button_press_posts_requested_with_rule_id():
         await pilot.pause()
 
         events = [
-            e
-            for e in app.events
-            if isinstance(e, MCPInspector.RemoveArgRuleRequested)
+            e for e in app.events if isinstance(e, MCPInspector.RemoveArgRuleRequested)
         ]
         assert len(events) == 1
         assert events[0].server_key == "local:docs"

@@ -90,9 +90,9 @@ async def _wait_for(pilot, predicate, *, attempts: int = 80) -> bool:
 async def _far_jump_to_m10(pilot, transcript: ConsoleTranscript) -> None:
     """Select a windowed-out early message: re-center + head-pinned selection."""
     transcript.select_message("m10")
-    assert await _wait_for(
-        pilot, lambda: "m10" in _mounted_message_ids(transcript)
-    ), "selecting a windowed-out message never mounted it"
+    assert await _wait_for(pilot, lambda: "m10" in _mounted_message_ids(transcript)), (
+        "selecting a windowed-out message never mounted it"
+    )
     await _settle(pilot)
     assert _mounted_message_ids(transcript)[0] == "m10", (
         "precondition: the jump target must be head-pinned (first mounted row)"
@@ -103,9 +103,7 @@ def test_activity_far_jump_maps_to_owner_and_keeps_turn_window_atomic() -> None:
     """Re-centering a nested id targets the owner and never splits its unit."""
     transcript = ConsoleTranscript()
     messages = [
-        ConsoleChatMessage(
-            id="before", role=ConsoleMessageRole.USER, content="before"
-        ),
+        ConsoleChatMessage(id="before", role=ConsoleMessageRole.USER, content="before"),
         ConsoleChatMessage(
             id="owner", role=ConsoleMessageRole.ASSISTANT, content="answer"
         ),
@@ -125,18 +123,14 @@ def test_activity_far_jump_maps_to_owner_and_keeps_turn_window_atomic() -> None:
                 "tool", "fs_list", "success"
             ),
         ),
-        ConsoleChatMessage(
-            id="after", role=ConsoleMessageRole.USER, content="after"
-        ),
+        ConsoleChatMessage(id="after", role=ConsoleMessageRole.USER, content="after"),
     ]
     transcript.set_messages(messages)
     transcript._set_hidden_prefix(4)
     transcript._recenter_window_on(3, "tool")
 
     assert transcript._reveal_scroll_target == "owner"
-    assert {"owner", "thinking", "tool"}.isdisjoint(
-        transcript._pruned_message_ids
-    )
+    assert {"owner", "thinking", "tool"}.isdisjoint(transcript._pruned_message_ids)
     assert {"owner", "thinking", "tool"}.isdisjoint(transcript._hidden_tail_ids)
 
 
@@ -210,9 +204,7 @@ def test_pending_nested_activity_selection_reveals_owner_unit_atomically() -> No
     assert {"large-owner", "large-tool-1", "large-tool-2"}.isdisjoint(
         transcript._hidden_tail_ids
     )
-    assert "large-tool-1" in {
-        message.id for message in transcript._visible_messages()
-    }
+    assert "large-tool-1" in {message.id for message in transcript._visible_messages()}
 
 
 @pytest.mark.asyncio

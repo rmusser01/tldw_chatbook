@@ -6,8 +6,9 @@
 # module is the wrong home for suite-wide infrastructure, and its per-call
 # `tempfile.mkdtemp` was never cleaned up (the 2026-07-30 audit found 324k
 # leaked sandboxes totalling ~285GB on one dev machine). The factory now
-# records every directory it creates and the root conftest drains them after
-# each test (`drain_created_dirs`).
+# records its directories and constructor-owned database caches; the root
+# conftest closes those caches before removing the directories after each test
+# (`drain_created_dirs`).
 #
 # Deliberately NOT here: any form of app-instance caching or reuse across
 # tests. That was tried, and it produced wedged compositors and dead message
@@ -33,6 +34,17 @@ from tldw_chatbook.runtime_policy import RuntimeSourceState
 # Every user-data dir handed to a TldwCli built here; drained (rmtree'd) by the
 # root conftest's autouse cleanup after each test.
 _created_dirs: list[Path] = []
+
+# Exact constructor-owned databases, retained until their explicit close.
+# Destination harnesses never mount the wrapped TldwCli, and native storage
+# admission retains cached handles until close; unlinking files or GC cannot
+# replace that ownership boundary. Later test-injected replacements stay owned
+# by the caller that supplied them.
+_created_databases: list[Any] = []
+
+# Exact constructor apps and lock handles; replacements remain caller-owned.
+_created_apps: list[TldwCli] = []
+_created_instance_locks: list[Any] = []
 
 # Every still-running `get_subscriptions_db_path` patch started by
 # `_build_test_app` (task-1631); stopped by the root conftest's autouse
@@ -77,12 +89,17 @@ def build_test_app_config(
     once called.
 
     So do what the shipping app does: `app.py` assigns
-    ``self.app_config = load_settings()``. That is hermetic here because the
-    root conftest re-points ``TLDW_CONFIG_PATH``/``HOME``/``XDG_*`` at a
-    per-test sandbox before anything imports the app, so `load_settings()`
-    reads the *test's* config file -- the same file
-    `save_setting_to_cli_config` writes and `get_cli_setting` reads. One
-    config, one truth, for the app snapshot and for every later refresh.
+    ``self.app_config = load_settings()``, which reads the selected profile's
+    config file -- the same file `save_setting_to_cli_config` writes and
+    `get_cli_setting` reads. One config, one truth, for the app snapshot and
+    for every later refresh. The profile is selected once per process
+    (ADR-126): the root conftest binds config to the session's bootstrap
+    profile at import, so under a plain test's per-test ``TLDW_CONFIG_PATH``
+    redirect this call raises ``RecoveryRequired("raw_source_selection_
+    changed")`` (TASK-36381). A caller runs under ``@private_profile_test``
+    (a fresh profile in a child process) or ``bootstrap_profile`` (the shared
+    session profile, for tests that neither save config nor assign into
+    ``app.app_config``: the dict below is the shared cache, see next).
 
     The dict is deliberately NOT deep-copied off `load_settings()`'s cache:
     production shares that object too (`load_settings` returns the cached
@@ -108,7 +125,7 @@ def build_test_app_config(
             them.
 
     Returns:
-        The app config dict, sourced from the per-test sandbox config file.
+        The app config dict, sourced from the selected profile's config file.
     """
     config = load_settings()
     _deep_merge_into(config, {"tldw_api": {"base_url": "http://localhost:8000"}})
@@ -203,18 +220,38 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     return db
 
 
+async def drain_created_runtimes() -> None:
+    """Retire factory-app Console workers before their owned DBs and locks."""
+    from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
+
+    for app in _created_apps:
+        await dispose_console_runtime(app)
+
+
 def drain_created_dirs() -> int:
     """Remove every user-data dir created since the last drain.
 
     Called by the root conftest's autouse cleanup fixture after each test, so
-    a test that builds several apps leaks nothing. Removal happens while the
-    app objects may still hold open sqlite handles — POSIX unlink semantics
-    make that safe, and the per-test gc in app-mounting dirs (task-1468)
-    closes the handles promptly afterwards.
+    a test that builds several apps leaks nothing. Close the exact eager
+    database caches created by the factory first, even when the app was never
+    mounted or a test subsequently replaced one of its database attributes.
+    Other injected or lazy service owners keep their existing cleanup boundary.
 
     Returns:
         The number of directories removed.
     """
+    while _created_databases:
+        database = _created_databases[-1]
+        database.close()
+        _created_databases.pop()
+
+    while _created_instance_locks:
+        handle = _created_instance_locks[-1]
+        # acquire_profile_instance_lock documents close as native OS release.
+        handle.close()
+        _created_instance_locks.pop()
+    _created_apps.clear()
+
     drained = 0
     while _created_dirs:
         path = _created_dirs.pop()
@@ -248,6 +285,7 @@ def _build_test_app(
     first_run_setup_completed: bool = True,
     preserve_profile_admission: bool = False,
     config_overrides: Mapping[str, Any] | None = None,
+    user_data_dir: Path | None = None,
 ) -> TldwCli:
     """Build a TldwCli instance with every real I/O seam faked out.
 
@@ -258,6 +296,9 @@ def _build_test_app(
             this app's snapshot only -- see `build_test_app_config`, and
             prefer `save_setting_to_cli_config` for anything a refreshing
             seam must also see.
+        user_data_dir: Existing private test profile directory. Factory-created
+            handles still retire through exact-owner cleanup; the caller owns
+            directory deletion. Defaults to a fresh factory-owned directory.
         preserve_profile_admission: Defaults to False, which clears
             ``library_new_profile_admission``. `app.py` sets that flag from
             `first_profile_created_this_session()`, and the per-test config
@@ -296,15 +337,20 @@ def _build_test_app(
         except ``get_subscriptions_db_path``, which stays patched for the
         rest of the test (see the comment where it is started, below).
     """
-    user_data_dir = Path(
-        tempfile.mkdtemp(prefix="tldw-chatbook-test-")
-        # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
-        # mkdtemp returns /var/folders/..., /var is a symlink, and the
-        # private-path guard refuses to traverse a symlinked component.
-        # Without it every test on this harness dies with
-        # `PrivatePathError: link_or_non_regular` before its first assertion.
-    ).resolve(strict=True)
-    _created_dirs.append(user_data_dir)
+    if user_data_dir is None:
+        user_data_dir = Path(
+            tempfile.mkdtemp(prefix="tldw-chatbook-test-")
+            # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
+            # mkdtemp returns /var/folders/..., /var is a symlink, and the
+            # private-path guard refuses to traverse a symlinked component.
+            # Without it every test on this harness dies with
+            # `PrivatePathError: link_or_non_regular` before its first assertion.
+        ).resolve(strict=True)
+        _created_dirs.append(user_data_dir)
+    else:
+        user_data_dir = Path(user_data_dir).resolve(strict=True)
+        if not user_data_dir.is_dir():
+            raise NotADirectoryError(user_data_dir)
 
     # task-1631: started (not entered via the `with ExitStack()` below) and
     # left running -- `LocalWatchlistsService.db_factory` (wired inside
@@ -426,9 +472,20 @@ def _build_test_app(
                 "tldw_chatbook.app_service_wiring.get_writing_db_path",
                 return_value=user_data_dir / "writing.sqlite",
             ),
+            # TASK-33665: this path calls config's own get_user_data_dir, which
+            # the app-module patch below does not reach.
+            patch(
+                "tldw_chatbook.app_service_wiring.get_library_collections_db_path",
+                return_value=user_data_dir / "library_collections.sqlite",
+            ),
             patch_app_global(
                 "get_user_data_dir",
                 return_value=user_data_dir,
+            ),
+            # TASK-33665: read in `__init__`, opened lazily on first TTS use.
+            patch_app_global(
+                "get_tts_profiles_db_path",
+                return_value=user_data_dir / "tts_profiles.sqlite",
             ),
             patch(
                 "tldw_chatbook.Video_Generation.video_store.get_user_data_dir",
@@ -453,6 +510,18 @@ def _build_test_app(
         ):
             stack.enter_context(ctx)
         app = TldwCli()
+        _created_apps.append(app)
+        handle = app._instance_lock_status.handle
+        if handle is not None:
+            _created_instance_locks.append(handle)
+        for database in (
+            app.local_library_collections_db,
+            app.local_workspace_db,
+            app.subscriptions_db,
+            getattr(app.evaluation_orchestrator, "db", None),
+        ):
+            if database is not None:
+                _created_databases.append(database)
         # PR-3 Task 4: the Library RAG answer worker runs a real provider
         # call automatically once a rag-mode retrieval settles -- no button
         # of its own. `LibraryScreen._library_rag_answer_chat_kwargs` treats

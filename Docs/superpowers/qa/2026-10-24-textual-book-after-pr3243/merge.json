@@ -1,0 +1,14 @@
+{
+  "state": "MERGED",
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/3243",
+  "mergedAt": "2026-10-25T03:41:14Z",
+  "mergeCommit": {
+    "oid": "139333920d2a87cb011e4f3aa5f8319b59c44a5c"
+  },
+  "headRefOid": "6ffb773dbd0647a33b5ce5d4e346fe43dfba3685",
+  "rebased_onto": "6fcbded875a00970936a2d6f8da62cb487e213e9",
+  "audited_dev": "139333920d2a87cb011e4f3aa5f8319b59c44a5c",
+  "merge_tree_equals_qualified_head": true,
+  "review_method": "superpowers:requesting-code-review; Qodo replaced per user instruction",
+  "unresolved_review_threads": 0
+}

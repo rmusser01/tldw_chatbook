@@ -1,0 +1,16 @@
+{
+  "later_edit": true,
+  "before": {
+    "text": "Saved-new",
+    "focus": true,
+    "cursor": 9,
+    "dirty": true
+  },
+  "after": {
+    "text": "Saved",
+    "same_input": false,
+    "focus": true,
+    "cursor": 5
+  },
+  "stored": "Saved"
+}

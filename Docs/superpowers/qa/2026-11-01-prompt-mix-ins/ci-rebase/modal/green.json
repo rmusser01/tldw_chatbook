@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_modal_wide_tier.py",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-modal-hw860ch9/green-pytest"
+  ],
+  "returncode": 1,
+  "raw_text": "....F..........................................                          [100%]\n=================================== FAILURES ===================================\n_____________________ test_every_anchor_targets_real_code ______________________\nTests/UI/test_modal_wide_tier.py:167: in test_every_anchor_targets_real_code\n    assert not failures, \"anchors that no longer resolve:\\n  \" + \"\\n  \".join(failures)\nE   AssertionError: anchors that no longer resolve:\nE       #console-style-picker-modal: '#console-style-picker-modal' not in css/features/_console.tcss\nE   assert not [\"#console-style-picker-modal: '#console-style-picker-modal' not in css/features/_console.tcss\"]\n=============================== warnings summary ===============================\nTests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped\n  <unknown>:31: SyntaxWarning: invalid escape sequence '\\ '\n\nTests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped\n  <unknown>:32: SyntaxWarning: invalid escape sequence '\\ '\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n============================= slowest 25 durations =============================\n15.42s call     Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped\n\n(24 durations < 1s hidden.)\n=========================== short test summary info ============================\nFAILED Tests/UI/test_modal_wide_tier.py::test_every_anchor_targets_real_code\n1 failed, 46 passed, 2 warnings in 34.35s\n"
+}

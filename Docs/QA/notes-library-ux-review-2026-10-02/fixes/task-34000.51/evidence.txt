@@ -1,0 +1,18 @@
+TASK-34000.51 AC#5 live run -- 2026-10-08, branch fix/task-34000-wave1c-sync-followups, isolated profile w1c-t3-1 (160x45)
+Vault: $HARNESS/runs/w1c-t3-1-vault/quotes.md (sibling of the run dir), seeded by seed_t4_sync_root.py; app via PYTHONPATH=<this worktree>.
+Typing: tmux send-keys -l " w$i" once per second, i=1..60 (15:16:37-15:17:38), Back + Manage sync folders + reopen (03, 04), then i=61..120 (15:19:19-15:20:20); production autosave timings (2 s debounce, 10 s max wait).
+
+note version: 13
+note content length: 566 ends with: 'w116 w117 w118 w119 w120'
+file bytes length: 567 ends with: b'116 w117 w118 w119 w120\n'
+sha256 note(+final newline): e4c28496fa9cf67fa442917a37d7bd98bd5d93c00332ed58c894ee99d81a1acc
+sha256 file:                 e4c28496fa9cf67fa442917a37d7bd98bd5d93c00332ed58c894ee99d81a1acc
+BYTE-EQUAL: True
+words typed present: w1..w120: True
+incomplete operations: []
+operations by kind/state: [('update_file', 'completed', 12)]
+reason codes seen: [(None, 12)]
+root row: [('t4-root', 'active', 'up_to_date')]
+
+App log Tracebacks: 0 (tldw_cli_app.log), 0 (faulthandler.log)
+Back (‹ Notes) pressed mid-burst: list rendered within 0.6 s of the click (03).

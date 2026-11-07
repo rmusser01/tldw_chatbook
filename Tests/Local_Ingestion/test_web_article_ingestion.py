@@ -65,7 +65,9 @@ def test_non_html_content_type_is_permanent(monkeypatch):
     _allow_public_dns(monkeypatch)
     with patch(
         "httpx.Client",
-        side_effect=_client_returning(_handler_for("%PDF-1.4", ctype="application/pdf")),
+        side_effect=_client_returning(
+            _handler_for("%PDF-1.4", ctype="application/pdf")
+        ),
     ):
         with pytest.raises(PermanentIngestError):
             extract_article_for_ingest("https://example.com/x.pdf", {})

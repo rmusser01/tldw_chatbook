@@ -5,7 +5,7 @@ Date: 2026-08-26
 Related Tasks: [TASK-18926 - Raw CLI executor and Console user command](../tasks/task-18926%20-%20Raw-CLI-executor-and-Console-user-command.md), TASK-22509, TASK-22510, TASK-22512
 Design: [Raw and virtual CLI design](../../Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md)
 Persistent terminal phase: [ADR-099](099-persistent-terminal-session-runtime-boundary.md)
-Partially supersedes: [ADR-033](033-local-agent-process-execution-boundary.md), only its rejection of raw shell execution
+Partially supersedes: [ADR-302](302-local-agent-process-execution-boundary.md), only its rejection of raw shell execution
 
 ## Decision
 
@@ -64,7 +64,7 @@ part of this decision's first implementation phase.
 
 ## Context
 
-ADR-033 chose a virtual CLI and rejected raw shell execution because a claim of
+ADR-302 chose a virtual CLI and rejected raw shell execution because a claim of
 workspace confinement based only on `cwd` would be false, and a portable OS
 sandbox is a separate project. That reasoning remains correct. The product
 decision has changed: Chatbook should offer an advanced, unmistakably dangerous
@@ -75,7 +75,7 @@ The repository already owns most of the required seams:
 
 - `Agents/tool_catalog.py` and `Agents/local_tool_provider.py` provide model-tool
   registration and invocation;
-- ADR-032's permission store and approval cards provide fail-closed consent;
+- ADR-300's permission store and approval cards provide fail-closed consent;
 - `STT/executor_process_tree.py` provides proven POSIX process-group and Windows
   Job Object admission patterns;
 - Console TOOL markers and AgentRunsDB provide durable local operational traces;
@@ -89,7 +89,7 @@ subsystem or a second permission store.
 
 | Option | Why rejected |
 | --- | --- |
-| Preserve ADR-033's virtual-only decision | Does not meet the approved advanced-user requirement for a real host shell. |
+| Preserve ADR-302's virtual-only decision | Does not meet the approved advanced-user requirement for a real host shell. |
 | Claim raw commands are confined because they start in the workspace | False: a shell can use absolute paths, change directory, access the network, and launch arbitrary processes. |
 | Require an OS sandbox for raw CLI v1 | Produces a different capability from the intentionally requested host-authority escape hatch and creates a large cross-platform sandbox project. |
 | Separate `bash_exec`, `powershell_exec`, and `cmd_exec` tools | Duplicates schemas, permissions, lifecycle code, and UI while one fixed shell selector is sufficient. |

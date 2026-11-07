@@ -1,0 +1,12 @@
+{
+  "run": "root-ci-rebased-f9",
+  "cases": 175,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "xml_sha256": "1b8da213ce691a597901de603f6129879a648c2e8395bf821c8149d82c5c4b7a",
+  "census_entries_floor": 1080,
+  "latest_dev_prefix": 967,
+  "shards": 17,
+  "timeout_seconds": 1200
+}

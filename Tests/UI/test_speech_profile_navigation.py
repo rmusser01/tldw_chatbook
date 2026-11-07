@@ -139,7 +139,9 @@ class _OpenAIProfileTTSService:
         _provider_id: str,
         _exact_voice_model_ids: Iterable[str],
     ) -> TTSNativeCapabilitySnapshot:
-        raise AssertionError("OpenAI-compatible profile tests must not use native catalogs")
+        raise AssertionError(
+            "OpenAI-compatible profile tests must not use native catalogs"
+        )
 
     async def audio_cpp_guided_dependency_snapshot(
         self,
@@ -282,9 +284,9 @@ async def _deliver_profile_sample(
         await playground.workers.wait_for_complete()
         await _wait_until(
             pilot,
-            lambda: not playground.query_one(
-                "#audio-save-profile-btn", Button
-            ).disabled,
+            lambda: (
+                not playground.query_one("#audio-save-profile-btn", Button).disabled
+            ),
         )
     else:
         await pilot.pause()
@@ -613,7 +615,10 @@ async def test_real_profile_verification_reconciles_on_library_remount(
             )
 
             assert restored._selected_profile is not None
-            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
+            assert (
+                restored._selected_profile.profile.profile_id
+                == target.profile.profile_id
+            )
             assert getattr(app.focused, "id", None) == "stts-profile-table"
             assert restored_table.scroll_offset.y == selected_scroll
             assert reconciled_rows == [str(target.profile.profile_id)]
@@ -728,10 +733,17 @@ async def test_edited_profile_cannot_publish_stale_verified_result(
 
             assert restored._selected_profile is not None
             assert restored._selected_profile.profile.profile_id == profile.profile_id
-            assert restored._selected_profile.profile.revision == updated.profile.revision
-            assert str(
-                restored.query_one("#stts-profile-table", DataTable).get_row_at(row)[3]
-            ) == "Needs test"
+            assert (
+                restored._selected_profile.profile.revision == updated.profile.revision
+            )
+            assert (
+                str(
+                    restored.query_one("#stts-profile-table", DataTable).get_row_at(
+                        row
+                    )[3]
+                )
+                == "Needs test"
+            )
             assert reconciled_rows == []
     finally:
         await repository.close()
@@ -769,7 +781,8 @@ async def test_deleted_profile_discards_verified_result_and_selection(
                     len(screen.query(STTSProfileLibrary)) == 1
                     and str(target.profile.profile_id)
                     not in screen.query_one(STTSProfileLibrary)._rendered_profile_ids
-                    and len(screen.query_one(STTSProfileLibrary)._row_availability) == 31
+                    and len(screen.query_one(STTSProfileLibrary)._row_availability)
+                    == 31
                     and screen.stts_window._pending_profile_verification is None
                 ),
             )
@@ -827,16 +840,22 @@ async def test_mismatched_sample_never_updates_real_profile_row(
                 ),
             )
             restored = screen.query_one(STTSProfileLibrary)
-            row = restored._rendered_profile_ids.index(
-                str(target.profile.profile_id)
-            )
+            row = restored._rendered_profile_ids.index(str(target.profile.profile_id))
 
             assert screen.stts_window._pending_profile_verification is None
             assert restored._selected_profile is not None
-            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
-            assert str(
-                restored.query_one("#stts-profile-table", DataTable).get_row_at(row)[3]
-            ) == "Needs test"
+            assert (
+                restored._selected_profile.profile.profile_id
+                == target.profile.profile_id
+            )
+            assert (
+                str(
+                    restored.query_one("#stts-profile-table", DataTable).get_row_at(
+                        row
+                    )[3]
+                )
+                == "Needs test"
+            )
             assert reconciled_rows == []
             assert profile_library_module._profile_test_context_count() == 0
     finally:
@@ -876,7 +895,10 @@ async def test_profile_test_cancel_retires_context_and_restores_library(
             )
 
             assert restored._selected_profile is not None
-            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
+            assert (
+                restored._selected_profile.profile.profile_id
+                == target.profile.profile_id
+            )
     finally:
         await repository.close()
 
@@ -1015,14 +1037,20 @@ async def test_out_of_order_superseded_callback_cannot_consume_newer_context(
             assert profile_library_module._profile_test_context_count() == 1
             assert playground._profile_mount_generation == current_mount_generation
             assert playground._profile_test_context_token == registration.context_token
-            assert profile_library_module._consume_profile_test_context(
-                stale_token,
-                stale_preset,
-            ) is None
-            assert profile_library_module._resolve_profile_test_context(
-                registration.context_token,
-                registration.preset,
-            ) is not None
+            assert (
+                profile_library_module._consume_profile_test_context(
+                    stale_token,
+                    stale_preset,
+                )
+                is None
+            )
+            assert (
+                profile_library_module._resolve_profile_test_context(
+                    registration.context_token,
+                    registration.preset,
+                )
+                is not None
+            )
 
             screen.stts_window.select_view("profiles")
             await _wait_until(

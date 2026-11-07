@@ -115,7 +115,9 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
     #:
     #: Unknown values fall through unchanged (see `_status_label`) -- a status
     #: this pane has never heard of must still be readable, not blank.
-    _STATUS_LABELS = {value: label for label, value in _STATUS_OPTIONS if value != "all"}
+    _STATUS_LABELS = {
+        value: label for label, value in _STATUS_OPTIONS if value != "all"
+    }
 
     @classmethod
     def _status_label(cls, status: Any) -> str:
@@ -322,11 +324,15 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
             if selected_id is not None and str(item.get("id")) == selected_id:
                 results.append(item)
                 continue
-            if status_filter != "all" and str(item.get("status") or "").lower() != status_filter:
+            if (
+                status_filter != "all"
+                and str(item.get("status") or "").lower() != status_filter
+            ):
                 continue
             if query:
                 text = " ".join(
-                    str(item.get(key) or "") for key in ("title", "url", "source_name", "status")
+                    str(item.get(key) or "")
+                    for key in ("title", "url", "source_name", "status")
                 ).lower()
                 if query not in text:
                     continue
@@ -444,7 +450,9 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
             # same column, so a raw value here would put the two vocabularies
             # back on screen together the moment a row was repainted.
             table.update_cell(
-                str(item_id), self._column_keys[2], escape_markup(self._status_label(status))
+                str(item_id),
+                self._column_keys[2],
+                escape_markup(self._status_label(status)),
             )
         except CellDoesNotExist:
             # The row is not currently rendered (filtered out, or the table

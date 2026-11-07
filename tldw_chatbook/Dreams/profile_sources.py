@@ -5,6 +5,14 @@ plain DB reads over the existing keyword tables, and the Personal Context
 reader is opt-in and lock-aware — when the profile is passphrase-locked it
 returns the distillate cached by the last successful read instead of
 raising.
+
+The Guardian reader (ADR-204 contract 3) is AGGREGATE-ONLY: it counts
+alert rows per topic and never touches message text (Guardian stores
+digests, not prompts). The discovery gate lives in this reader's SQL join
+-- only rules with ``feeds_discovery=1`` contribute, so crisis-adjacent
+topics are excluded here by construction (and the write boundary in
+``GuardianDB.upsert_rule`` already refuses ``is_crisis`` +
+``feeds_discovery``).
 """
 from __future__ import annotations
 
@@ -19,10 +27,12 @@ from tldw_chatbook.Utils.private_paths import (
     atomic_private_write_text,
     open_private_binary,
 )
+from tldw_chatbook.Utils.timestamps import to_utc_iso, utc_now
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.DB.Guardian_DB import GuardianDB
 
 
 #: Weight contributed per touch inside the window: four touches saturate a
@@ -137,6 +147,69 @@ def read_media_topics(
             "source": "media",
         }
         for row in rows
+    ]
+
+
+def read_guardian_topics(
+    guardian_db: GuardianDB, *, window_days: int = 14
+) -> list[dict]:
+    """Aggregate Guardian alert hits per topic, feeds_discovery rules only.
+
+    The Dreams half of the discovery gate (ADR-204 contract 3): the SQL
+    requires captured ``crisis_provenance=0`` on each historical alert and
+    joins its current rule for enabled, non-crisis ``feeds_discovery=1``
+    consent. Unknown legacy or captured crisis history stays excluded after
+    rule edits or deletion. Live Guardian and restored-owner admission apply
+    independently of both stored facts.
+    Output is counts per topic -- never message text -- weighted with the
+    same ``_WEIGHT_PER_TOUCH`` saturation as the other readers.
+
+    Args:
+        guardian_db: The Guardian store to read alerts from.
+        window_days: How many days back an alert still counts as a signal.
+
+    Returns:
+        Topic rows ``{"facet": "topic", "text", "weight", "searchable",
+        "source": "guardian"}``, heaviest first.
+    """
+    from tldw_chatbook.Backup_Recovery.activation import execution_scope
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+    from tldw_chatbook.Guardian.settings import guardian_setting
+
+    if not guardian_setting("enabled", False):
+        return []
+    with operation_owned_connection(guardian_db), execution_scope(
+        ("db.guardian",), getattr(guardian_db, "db_path", None)
+    ) as allowed:
+        if not allowed:
+            return []
+        cutoff = to_utc_iso(utc_now() - timedelta(days=window_days))
+        with guardian_db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT a.topic AS topic, COUNT(*) AS hits
+                FROM guardian_alerts AS a
+                JOIN guardian_rules AS r ON r.id = a.rule_id
+                WHERE r.feeds_discovery = 1
+                  AND r.enabled = 1 AND r.is_crisis = 0
+                  AND a.rule_id IS NOT NULL AND a.crisis_provenance = 0
+                  AND a.ts >= ?
+                GROUP BY a.topic
+                ORDER BY hits DESC, a.topic COLLATE NOCASE
+                """,
+                (cutoff,),
+            ).fetchall()
+
+    return [
+        {
+            "facet": "topic",
+            "text": str(row["topic"]).strip(),
+            "weight": min(1.0, _WEIGHT_PER_TOUCH * int(row["hits"])),
+            "searchable": 1,
+            "source": "guardian",
+        }
+        for row in rows
+        if str(row["topic"]).strip()
     ]
 
 

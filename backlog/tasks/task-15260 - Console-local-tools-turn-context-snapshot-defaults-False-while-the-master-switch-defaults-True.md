@@ -3,7 +3,7 @@ id: TASK-15260
 title: >-
   Console local tools: turn-context snapshot defaults False while the master
   switch defaults True
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-11 14:40'
 labels: []
@@ -19,6 +19,16 @@ Found while repairing the dev test baseline (the MCP permission tests). PR #1474
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both resolution sites agree on one default constant; a config.toml missing the key produces the same answer at the snapshot, the provider, and the hub switch
-- [ ] #2 A regression test covers the upgrade shape: config with no local_tools_enabled key, assert the run actually gets local tools and the hub switch agrees
+- [x] #1 Both resolution sites agree on one default constant; a config.toml missing the key produces the same answer at the snapshot, the provider, and the hub switch
+- [x] #2 A regression test covers the upgrade shape: config with no local_tools_enabled key, assert the run actually gets local tools and the hub switch agrees
 <!-- AC:END -->
+
+## Closeout audit 2026-10-11
+
+Board-prune audit (branch chore/board-prune-c, base a3c47c6c72): completed-but-unmarked. Evidence gathered 2026-10-11 against origin/dev:
+
+AC dispositions:
+- AC#1: met - All resolution sites now agree on LOCAL_TOOLS_DEFAULT_ENABLED: Chat/console_chat_controller.py:16031/16035/16038/16245/16249/16380/16384 use the one constant (premise quoted coerce_bool_setting(..., False) no longer exists).
+- AC#2: met - Tests/Agents/test_builtin_tool_gate.py:536-551 asserts 'missing key -> ON by default' for the upgrade shape.
+- git grep LOCAL_TOOLS_DEFAULT_ENABLED origin/dev -- tldw_chatbook/Chat/console_chat_controller.py shows every snapshot/provider read using the shared constant (Agents/builtin_tool_gate.py:800).
+- Regression evidence: test_builtin_tool_gate.py:536 'missing key -> available by default', :546/:551 'missing key -> ON by default'.

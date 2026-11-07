@@ -251,8 +251,14 @@ def _build_v3_database(path: str) -> dict[str, str]:
 #: even in a test: `table` is a plain function argument, not a hardcoded
 #: literal, so nothing stops a future caller from passing something else.
 _ALLOWED_RAW_COLUMN_TABLES = {
-    "eval_tasks", "eval_datasets", "eval_models", "eval_runs",
-    "eval_results", "eval_run_metrics", "ab_tests", "ab_test_runs",
+    "eval_tasks",
+    "eval_datasets",
+    "eval_models",
+    "eval_runs",
+    "eval_results",
+    "eval_run_metrics",
+    "ab_tests",
+    "ab_test_runs",
 }
 
 
@@ -363,7 +369,8 @@ def test_reopening_a_migrated_v3_database_is_idempotent(request, tmp_path):
     columns = {row[1] for row in second_conn.execute("PRAGMA table_info(eval_runs)")}
     assert "run_group_id" in columns
     indexes = [
-        row[1] for row in second_conn.execute("PRAGMA index_list(eval_runs)")
+        row[1]
+        for row in second_conn.execute("PRAGMA index_list(eval_runs)")
         if row[1] == "idx_eval_runs_group"
     ]
     assert len(indexes) == 1, "the index must not be duplicated across reopens"

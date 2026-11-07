@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send",
+    "--basetemp=/private/tmp/console-finalfix-manual-currentness-01a0fa6c"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 59.98571419715881,
+  "output": "--- _setup_logging START (from Logging_Config.py) ---\nLoguru: All pre-existing sinks removed.\nLoguru: Configured to forward its messages to standard Python logging system.\n.                                                                        [100%]\n============================= slowest 25 durations =============================\n41.94s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send\n\n(2 durations < 1s hidden.)\n1 passed in 51.82s\n"
+}

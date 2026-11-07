@@ -1,0 +1,34 @@
+F821 Undefined name `ToolResult`
+   --> Tests/Agents/test_agent_chat_create_tools.py:137:25
+    |
+135 |     )
+136 |
+137 |     tool = lambda args: ToolResult(ok=True, content="{}")
+    |                         ^^^^^^^^^^
+138 |     assert [s.name for s in _chat_create_runtime_schemas(AGENT_KIND_SUBAGENT, tool, tool)] == [
+139 |         "fork_chat",
+    |
+
+F821 Undefined name `fork_chat_enabled`
+    --> tldw_chatbook/Chat/console_agent_bridge.py:5801:31
+     |
+5799 |             ),
+5800 |             run_skill_script_enabled=script_tool_enabled,
+5801 |             fork_chat_enabled=fork_chat_enabled,
+     |                               ^^^^^^^^^^^^^^^^^
+5802 |             new_chat_enabled=new_chat_enabled,
+5803 |             worktree_merge_enabled=worktree_merge_enabled,
+     |
+
+F821 Undefined name `new_chat_enabled`
+    --> tldw_chatbook/Chat/console_agent_bridge.py:5802:30
+     |
+5800 |             run_skill_script_enabled=script_tool_enabled,
+5801 |             fork_chat_enabled=fork_chat_enabled,
+5802 |             new_chat_enabled=new_chat_enabled,
+     |                              ^^^^^^^^^^^^^^^^
+5803 |             worktree_merge_enabled=worktree_merge_enabled,
+5804 |             agent_messages=agent_messages,
+     |
+
+Found 3 errors.

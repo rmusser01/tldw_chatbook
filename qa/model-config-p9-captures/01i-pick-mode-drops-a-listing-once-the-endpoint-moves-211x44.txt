@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+                 ╭─────────────────╭─ Switch model · now: llama.cpp · model-a ────────────────────────────────────────────────────────────────────────────────────────────────╮─────────────────╮
+                 │  Chat settings ·│ Find type to search 1 model in 1 provider · Enter picks                                                                                  │                 │
+                 │                 │ RECENT · your last 50 chats                                                                                                              │                 │
+                 │  ● Model and gen│ ▶ model-a                      llama.cpp                     ?  Ready · reachable 09:53      ● CURRENT                                   │                 │
+                 │ Applies to this │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                 │
+                 │ Endpoint        │   other-z                      llama.cpp                     ?  Ready · reachable 09:53                                                  │                 │
+                 │                 │ NEEDS SETUP · set up in Settings first                                                                                                   │                 │
+                 │ Tests this endpo│   (any model)                  Anthropic                        Not ready · no key                                                       │                 │
+                 │ Ready · not test│   (any model)                  Arcee AI                         Not ready · no key                                                       │                 │
+                 │ A send attempt i│   (any model)                  Azure OpenAI                     Not ready · no key                                                       │                 │
+                 │ Credential · Not│   (any model)                  Baidu Qianfan                    Not ready · no key                                                       │                 │
+                 │ Endpoint · Chang│   (any model)                  Baseten                          Not ready · no key                                                       │                 │
+                 │ Model · Changed │   (any model)                  ByteDance Seed (BytePlus)        Not ready · no key                                                       │                 │
+                 │ Generation · Not│   (any model)                  Cerebras                         Not ready · no key                                                       │                 │
+                 │  Test generation│   (any model)                  Cloudflare Workers AI            Not ready · no key                                                       │                 │
+                 │  ▶ Request estim│     … 39 more providers need setup · type a name to find one                                                                             │                 │
+                 │  ▶ Your name in │ NOT RUNNING · local servers never set up · rechecked on open                                                                             │                 │
+                 │                 │   Aphrodite Engine · Ollama · TabbyAPI · vLLM · Custom OpenAI-compatible · Custom OpenAI-compatible #2                                   │               ▅ │
+                 │ ▼ more — scroll │   MLX-LM (Apple silicon) (not checked)                                                                                                   │                 │
+                 │                 │ Enter picks · Esc cancel                                                                                                                 │                 │
+                 │                 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯at (Ctrl+Enter)  │
+                 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                                        │                                                                │
+                                                                        └────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+  Ctrl+P palette | Ctrl+Q quit

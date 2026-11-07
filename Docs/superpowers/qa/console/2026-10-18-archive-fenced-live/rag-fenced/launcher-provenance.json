@@ -1,0 +1,9 @@
+{
+  "source": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/config.py",
+  "data": "/private/tmp/archive-recovery-profilev2-live-20261018/rag-fenced/data/task7_live",
+  "keyring": "keyring.backends.null",
+  "max_model_turns": 2,
+  "max_model_retries": 0,
+  "consumed_offset": 22,
+  "authorized_cap": 30
+}

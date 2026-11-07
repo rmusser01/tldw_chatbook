@@ -1,0 +1,73 @@
+..........FF............................................................ [ 88%]
+.........                                                                [100%]
+=================================== FAILURES ===================================
+___________ test_child_chain_uses_its_own_exact_first_request_budget ___________
+Tests/Chat/test_console_agent_project_instructions.py:460: in test_child_chain_uses_its_own_exact_first_request_budget
+    assert outcome.status == RUN_DONE
+E   AssertionError: assert 'error' == 'done'
+E
+E     - done
+E     + error
+----------------------------- Captured stderr call -----------------------------
+2026-10-02 21:13:20.522 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_child_chain_uses_its_own_0/test_data/config/config.toml
+2026-10-02 21:13:20.522 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6117 - CLI Config file not found at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_child_chain_uses_its_own_0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-10-02 21:13:20.524 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6126 - Created default CLI config file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_child_chain_uses_its_own_0/test_data/config/config.toml
+2026-10-02 21:13:20.524 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-10-02 21:13:20.524 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-02 21:13:20.662 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_child_chain_uses_its_own_0/runs.db [Client: test]
+2026-10-02 21:13:20.886 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+2026-10-02 21:13:20.887 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+2026-10-02 21:13:20.888 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-02 21:13:20.894 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2188 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-02 21:13:20.905 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3403 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_child_chain_uses_its_own_0/test_data/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-02 21:13:20.909 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3413 - load_settings: Configuration cached for future use
+_______ test_primary_token_omission_is_delivery_local_when_child_admits ________
+Tests/Chat/test_console_agent_project_instructions.py:524: in test_primary_token_omission_is_delivery_local_when_child_admits
+    assert outcome.status == RUN_DONE
+E   AssertionError: assert 'error' == 'done'
+E
+E     - done
+E     + error
+----------------------------- Captured stderr call -----------------------------
+2026-10-02 21:13:21.327 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_primary_token_omission_is0/test_data/config/config.toml
+2026-10-02 21:13:21.331 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6117 - CLI Config file not found at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_primary_token_omission_is0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-10-02 21:13:21.348 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6126 - Created default CLI config file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_primary_token_omission_is0/test_data/config/config.toml
+2026-10-02 21:13:21.348 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-10-02 21:13:21.348 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-02 21:13:21.424 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_primary_token_omission_is0/runs.db [Client: test]
+2026-10-02 21:13:21.540 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+2026-10-02 21:13:21.540 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+2026-10-02 21:13:21.541 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-02 21:13:21.541 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2188 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-02 21:13:21.544 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3403 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-fix1-related-owners/test_primary_token_omission_is0/test_data/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-02 21:13:21.544 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3413 - load_settings: Configuration cached for future use
+============================= slowest 25 durations =============================
+3.67s call     Tests/Chat/test_console_fleet_wake.py::test_a_busy_session_defers_the_wake_until_its_terminal_transition
+2.97s call     Tests/Chat/test_automatic_work_lineage.py::test_prior_wake_token_cannot_authorize_a_later_delivery
+2.65s call     Tests/Chat/test_automatic_work_lineage.py::test_accepted_manual_turns_establish_distinct_chains_for_both_paths[True]
+2.63s call     Tests/Chat/test_console_fleet_wake.py::test_persona_buddy_wake_tracks_pending_delivery_and_exact_settlement
+2.37s call     Tests/Chat/test_automatic_work_lineage.py::test_manual_chain_uses_persisted_conversation_identity
+2.37s call     Tests/Chat/test_console_fleet_wake.py::test_dispose_fences_delivery_completion_after_its_await
+2.35s call     Tests/Chat/test_automatic_work_lineage.py::test_accepted_manual_turns_establish_distinct_chains_for_both_paths[False]
+2.08s call     Tests/Chat/test_console_fleet_wake.py::test_a_pending_run_the_ledger_shows_delivered_is_dropped_not_reannounced
+2.03s call     Tests/Chat/test_console_fleet_wake.py::test_autowake_off_records_everything_and_fires_nothing
+1.99s call     Tests/Chat/test_automatic_work_lineage.py::test_plain_wakes_keep_separate_result_lineage_and_no_fresh_allowance
+1.97s call     Tests/Chat/test_console_fleet_wake.py::test_children_finishing_inside_their_turn_never_wake
+1.86s call     Tests/Chat/test_automatic_work_lineage.py::test_chain_creation_waits_for_sqlite_without_blocking_console
+1.84s call     Tests/Chat/test_console_fleet_wake.py::test_one_conversations_failed_delivery_does_not_strand_anothers
+1.83s call     Tests/Chat/test_console_fleet_wake.py::test_mount_claim_delivers_a_marked_conversations_result_from_the_db
+1.80s call     Tests/Chat/test_console_fleet_wake.py::test_the_global_cap_defers_a_wake_like_any_other_send
+1.73s call     Tests/Chat/test_console_agent_project_instructions.py::test_folderless_session_skips_optional_project_instructions_and_runs
+1.71s call     Tests/Chat/test_console_agent_project_instructions.py::test_project_instruction_disable_terminalizes_and_allows_retry[False]
+1.69s call     Tests/Chat/test_console_fleet_wake.py::test_a_wake_turn_occupies_the_sessions_send_slot
+1.67s call     Tests/Chat/test_console_fleet_wake.py::test_post_durable_runtime_failure_settles_bound_wake_once
+1.64s call     Tests/Chat/test_automatic_work_lineage.py::test_failed_chain_write_prevents_dispatch_and_clears_stream_ownership
+1.60s call     Tests/Chat/test_console_fleet_wake.py::test_user_wins_ties_a_composer_draft_defers_the_wake
+1.60s call     Tests/Chat/test_console_fleet_wake.py::test_children_settling_during_a_wake_turn_ride_the_next_wake
+1.51s call     Tests/Chat/test_console_agent_project_instructions.py::test_controller_notice_uses_owning_session_and_drift_cancels_bridge_send
+1.51s call     Tests/Chat/test_console_fleet_wake.py::test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice
+1.44s call     Tests/Chat/test_console_fleet_wake.py::test_a_redelivered_drain_cannot_double_deliver
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_agent_project_instructions.py::test_child_chain_uses_its_own_exact_first_request_budget
+FAILED Tests/Chat/test_console_agent_project_instructions.py::test_primary_token_omission_is_delivery_local_when_child_admits
+2 failed, 79 passed in 80.98s (0:01:20)

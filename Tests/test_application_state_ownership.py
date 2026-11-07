@@ -605,7 +605,11 @@ def _package_class_module_path(
         if not isinstance(node, ast.ImportFrom) or node.module is None:
             continue
         imported = next(
-            (alias.name for alias in node.names if (alias.asname or alias.name) == name),
+            (
+                alias.name
+                for alias in node.names
+                if (alias.asname or alias.name) == name
+            ),
             None,
         )
         if imported is None:
@@ -1396,10 +1400,9 @@ def test_legacy_ccp_prompt_handlers_and_compatibility_exports_are_absent() -> No
         if path.exists()
     ] == []
 
-    ingest_source = INGEST_EVENTS_PATH.read_text(encoding="utf-8")
-    assert "character_ingest_events" not in ingest_source
-    assert "prompt_ingest_events" not in ingest_source
-    assert "INGEST_BUTTON_HANDLERS" not in ingest_source
+    # The ingest_events.py compatibility shim itself is retired; this guard
+    # keeps it from being reintroduced alongside the retired names below.
+    assert not INGEST_EVENTS_PATH.exists()
 
     ingest_utils_source = INGEST_UTILS_PATH.read_text(encoding="utf-8")
     for retired_name in (
@@ -2189,9 +2192,7 @@ def test_tldw_cli_has_no_retired_llm_destination_state_or_dispatcher() -> None:
         "_update_model_download_log",
     )
     violations = {
-        name: _app_occurrences(name)
-        for name in retired_names
-        if _app_occurrences(name)
+        name: _app_occurrences(name) for name in retired_names if _app_occurrences(name)
     }
 
     assert violations == {}

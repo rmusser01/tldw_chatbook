@@ -1,0 +1,311 @@
+# Roleplay (PersonasScreen) text renders — origin/dev @ 84247cb843, StyledPersonasTestApp harness (real app CSS bundle), 2 stub characters (no description => 1-line rows; real rows with a description are 2 lines), 1 stub persona, 1 stub dictionary, no provider configured (=> 'Blocked'). Line NN = terminal row y.
+
+## rp-characters-170x50
+00|                                   ╭─────────────╮
+01| ⌃1 Home  ⌃2 Console !  ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+02|──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+04|│ Roleplay                                                                                                                                                               │
+05|│ Author the pieces that shape a chat                                                                                                                                    │
+06|│  Blocked                                                                                                                                                               │
+07|└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+08|Characters — who the AI plays · 2
+09| Modes:    Characters    Personas    Dictionaries    Lore
+10|┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+11|│                                                                                                                                                                        │
+12|│ ╭───────────────────────────────────────╮╭─────────────────────────────────────────────────────────────────────────────────╮┌────────────────────────────────────────┐ │
+13|│ │  Library                           <  ││                        ▸ Try a test chat (nothing saved)                        ││                                        │ │
+14|│ │  Search...                            ││ Character                                                                       ││  Inspector                          >  │ │
+15|│ │                  New                  ││  Name: Detective Sam                                                            ││ Selected: Detective Sam                │ │
+16|│ │            New Actor Pack             ││                                                                                 ││ Type: character                        │ │
+17|│ │                Import                 ││  Description: Noir detective                                                    ││ Validation: OK                         │ │
+18|│ │           Import Actor Pack           ││                                                                                 ││ Conversations                          │ │
+19|│ │               Duplicate               ││  First message: The name's {{char}}. Who's asking?                              ││   Search this character's chats        │ │
+20|│ │              Sort: Name               ││                                                                                 ││  Load failed.                          │ │
+21|│ │               Tag: All                ││  Version: 1                                                                     ││  Retry conversations                   │ │
+22|│ │  Detective Sam                        ││                                                                                 ││ Readiness                              │ │
+23|│ │  Lab Assistant                        ││ Tags: none                                                                      ││ Chat now blocked: No provider is not   │ │
+24|│ │                                       ││ Alternate greetings: 2                                                          ││ ready: Select a provider. Choose a     │ │
+25|│ │                                       ││ An alternate opener.                                                            ││ provider and model before sending.     │ │
+26|│ │                                       ││                                                                                 ││                Chat now                │ │
+27|│ │                                       ││  Voice & Speech                                                                 ││         Send to Console draft          │ │
+28|│ │                                       ││  Use global default                                                        ▼    ││              Export JSON               │ │
+29|│ │                                       ││  Save/reopen before assigning.                                                  ││               Export PNG               │ │
+30|│ │                                       ││    Create                                                                       ││           Export Actor Pack            │ │
+31|│ │                                       ││ Avatar: none                                                                    ││                 Delete                 │ │
+32|│ │                                       ││                                                                                 ││              Manage Buddy              │ │
+33|│ │                                       ││                                                                                 ││               Show Buddy               │ │
+34|│ │                                       ││                                                                                 ││              Close Buddy               │ │
+35|│ │                                       ││                                                                                 ││             Disable Buddy              │ │
+36|│ │                                       ││                                                                                 ││                                        │ │
+37|│ │                                       ││                                                                                 ││                                        │ │
+38|│ │                                       ││                                                                                 ││                                        │ │
+39|│ │                                       ││                                                                                 ││                                        │ │
+40|│ │                                       ││                                                                                 ││                                        │ │
+41|│ │                                       ││                                                                                 ││                                        │ │
+42|│ │                                       ││                                                                                 ││                                        │ │
+43|│ │                                       ││                                                                                 ││                                        │ │
+44|│ │                                       ││                                                                               ▇ ││                                        │ │
+45|│ │                                       ││    Edit     Conversations (0)                                                   ││                                        │ │
+46|│ ╰───────────────────────────────────────╯╰─────────────────────────────────────────────────────────────────────────────────╯└────────────────────────────────────────┘ │
+47|│                                                                                                                                                                        │
+48|└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+49|  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit
+
+## rp-characters-120x40
+00|                                   ╭─────────────╮
+01| ⌃1 Home  ⌃2 Console !  ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+02|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+04|│ Roleplay                                                                                                             │
+05|│ Author the pieces that shape a chat                                                                                  │
+06|│  Blocked                                                                                                             │
+07|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+08|Characters — who the AI plays · 2
+09| Modes:    Characters    Personas    Dictionaries    Lore
+10|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+11|│                                                                                                                      │
+12|│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+13|│ │  Library              <  ││           ▸ Try a test chat (nothing saved)            ││                            │ │
+14|│ │  Search...               ││ Character                                              ││  Inspector             >   │ │
+15|│ │           New            ││  Name: Detective Sam                                   ││ Selected: Detective Sam    │ │
+16|│ │      New Actor Pack      ││                                                        ││ Type: character            │ │
+17|│ │          Import          ││  Description: Noir detective                           ││ Validation: OK             │ │
+18|│ │    Import Actor Pack     ││                                                        ││ Conversations              │ │
+19|│ │        Duplicate         ││  First message: The name's {{char}}. Who's asking?     ││   Search this              │ │
+20|│ │        Sort: Name        ││                                                        ││  Load failed.              │ │
+21|│ │         Tag: All         ││  Version: 1                                            ││  Retry conversations       │ │
+22|│ │  Detective Sam           ││                                                        ││ Readiness                  │ │
+23|│ │  Lab Assistant           ││ Tags: none                                             ││ Chat now blocked: No       │ │
+24|│ │                          ││ Alternate greetings: 2                                 ││ provider is not ready:     │ │
+25|│ │                          ││ An alternate opener.                                   ││ Select a provider. Choose  │ │
+26|│ │                          ││                                                        ││ a provider and model       │ │
+27|│ │                          ││  Voice & Speech                                        ││ before sending.            │ │
+28|│ │                          ││  Use global default                               ▼    ││         Chat now           │ │
+29|│ │                          ││  Save/reopen before assigning.                         ││   Send to Console draft    │ │
+30|│ │                          ││    Create                                              ││        Export JSON         │ │
+31|│ │                          ││ Avatar: none                                           ││        Export PNG          │ │
+32|│ │                          ││                                                        ││     Export Actor Pack    ▅ │ │
+33|│ │                          ││                                                        ││          Delete            │ │
+34|│ │                          ││                                                      ▆ ││       Manage Buddy         │ │
+35|│ │                          ││    Edit     Conversations (0)                          ││                            │ │
+36|│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+37|│                                                                                                                      │
+38|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+39|  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | F1 · Ctrl+P · Ctrl+Q
+
+## rp-characters-80x24
+00|                                   ╭─────────────╮
+01| ⌃1 Home  ⌃2 Console !  ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 S  More ▾
+02|────────────────────────────────────────────────────────────────────────────────
+03|┌──────────────────────────────────────────────────────────────────────────────┐
+04|│ Roleplay                                                                     │
+05|│  Blocked                                                                     │
+06|└──────────────────────────────────────────────────────────────────────────────┘
+07|Characters — who the AI plays · 2
+08| Modes:    Characters    Personas    Dictionaries    Lore
+09|┌──────────────────────────────────────────────────────────────────────────────┐
+10|│╭──────────────╮╭──────────────────────────────────────╮┌────────────────────┐│
+11|││  Library  <  ││      ▸ Try a test chat (nothing      ││  Inspector     >   ││
+12|││  Search...   ││ Character                            ││ Selected:          ││
+13|││     New      ││  Name: Detective Sam                 ││ Detective Sam      ││
+14|││     New      ││                                      ││ Type: character  ▃ ││
+15|││    Import    ││  Description: Noir detective         ││ Validation: OK     ││
+16|││    Import    ││                                   ▁  ││ Conversations      ││
+17|││    Duplic    ││  First message: The name's           ││   Search this      ││
+18|││    Sort:     ││  {{char}}. Who's asking?           ▂ ││  Load failed.      ││
+19|││     Tag:     ││  Version: 1                          ││  Retry             ││
+20|││  Detective…  ││                                      ││  conversations     ││
+21|│╰──────────────╯╰──────────────────────────────────────╯└────────────────────┘│
+22|└──────────────────────────────────────────────────────────────────────────────┘
+23|  ctrl+n new | ctrl+f search | F1 · F6 · Ctrl+P · Ctrl+Q
+
+## rp-characters-52x20
+00|                      ╭─────────────╮
+01| ‹ sole !  ⌃3 Library │ ⌃4 Roleplay │ ⌃5 W  More ▾
+02|────────────────────────────────────────────────────
+03|┌──────────────────────────────────────────────────┐
+04|│ Roleplay                                         │
+05|│  Blocked                                         │
+06|└──────────────────────────────────────────────────┘
+07|Characters — who the AI plays · 2
+08| Modes:    Characters    Personas    Dictionaries
+09|┌──────────────────────────────────────────────────┐
+10|│   ╭──────────────────────────────────────────╮   │
+11|│   │    ▸ Try a test chat (nothing saved)     │ In│
+12|│   │ Character                                │   │
+13|│   │  Name: Detective Sam                     │   │
+14|│   │                                        ▇ │   │
+15|│   │  Description: Noir detective             │   │
+16|│   │                                       ▁  │   │
+17|│   ╰──────────────────────────────────────────╯   │
+18|└──────────────────────────────────────────────────┘
+19|  ctrl+n new | F1 · F6 · Ctrl+P · Ctrl+Q
+
+## rp-character-editor-120x40
+00|                                   ╭─────────────╮
+01| ⌃1 Home  ⌃2 Console !  ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+02|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+04|│ Roleplay                                                                                                             │
+05|│ New character                                                                                                        │
+06|│  Ready                                                                                                               │
+07|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+08|Characters — who the AI plays · 2
+09| Modes:    Characters    Personas    Dictionaries    Lore
+10|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+11|│                                                                                                                      │
+12|│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+13|│ │  Library              <  ││           ▸ Try a test chat (nothing saved)            ││                            │ │
+14|│ │  Search...               ││ Character Editor                                       ││  Inspector              >  │ │
+15|│ │           New            ││  Context: whole character  Generate whole character…   ││ Selected: none             │ │
+16|│ │      New Actor Pack      ││  Name                                                  ││ Type: -                    │ │
+17|│ │          Import          ││  ┌─────────────────────────────────────────────────┐   ││ Pick a character or        │ │
+18|│ │    Import Actor Pack     ││  │  Character name                                 │   ││ persona to start chatting. │ │
+19|│ │        Duplicate         ││  └─────────────────────────────────────────────────┘   ││        Manage Buddy        │ │
+20|│ │        Sort: Name        ││  First message  Generate                               ││         Show Buddy         │ │
+21|│ │         Tag: All         ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││        Close Buddy         │ │
+22|│ │  Detective Sam           ││  ▊                                                 ▎   ││       Disable Buddy        │ │
+23|│ │  Lab Assistant           ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││                            │ │
+24|│ │                          ││  Description  Generate                                 ││                            │ │
+25|│ │                          ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││                            │ │
+26|│ │                          ││  ▊                                                 ▎   ││                            │ │
+27|│ │                          ││  ▊                                                 ▎   ││                            │ │
+28|│ │                          ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││                            │ │
+29|│ │                          ││  Personality  Generate                                 ││                            │ │
+30|│ │                          ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││                            │ │
+31|│ │                          ││  ▊                                                 ▎   ││                            │ │
+32|│ │                          ││                                                        ││                            │ │
+33|│ │                          ││    Save     Cancel                                     ││                            │ │
+34|│ │                          ││                   ▸ Dictionaries (0)                   ││                            │ │
+35|│ │                          ││                   ▸ World Books (0)                    ││                            │ │
+36|│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+37|│                                                                                                                      │
+38|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+39|  ctrl+n new | ctrl+f search | ctrl+s save | esc back | f6 pane | c/p/d/l mode | [ ] mode | F1 · Ctrl+P · Ctrl+Q
+
+## rp-personas-120x40
+00|                                   ╭─────────────╮
+01| ⌃1 Home  ⌃2 Console !  ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+02|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+04|│ Roleplay                                                                                                             │
+05|│ Author the pieces that shape a chat                                                                                  │
+06|│  Ready                                                                                                               │
+07|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+08|Personas — who you play in the chat · 1
+09| Modes:    Characters    Personas    Dictionaries    Lore
+10|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+11|│                                                                                                                      │
+12|│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+13|│ │  Library              <  ││           ▸ Try a test chat (nothing saved)            ││                            │ │
+14|│ │  Search...               ││                                                        ││  Inspector              >  │ │
+15|│ │           New            ││                                                        ││ Selected: none             │ │
+16|│ │      New Actor Pack      ││                                                        ││ Type: -                    │ │
+17|│ │    Import Actor Pack     ││                                                        ││ Pick a character or        │ │
+18|│ │        Sort: Name        ││                                                        ││ persona to start chatting. │ │
+19|│ │  Archivist               ││                                                        ││        Manage Buddy        │ │
+20|│ │                          ││                                                        ││         Show Buddy         │ │
+21|│ │                          ││                                                        ││        Close Buddy         │ │
+22|│ │                          ││                                                        ││       Disable Buddy        │ │
+23|│ │                          ││                                                        ││                            │ │
+24|│ │                          ││                                                        ││                            │ │
+25|│ │                          ││                                                        ││                            │ │
+26|│ │                          ││                                                        ││                            │ │
+27|│ │                          ││                                                        ││                            │ │
+28|│ │                          ││                                                        ││                            │ │
+29|│ │                          ││                                                        ││                            │ │
+30|│ │                          ││                                                        ││                            │ │
+31|│ │                          ││                                                        ││                            │ │
+32|│ │                          ││                                                        ││                            │ │
+33|│ │                          ││                                                        ││                            │ │
+34|│ │                          ││                                                        ││                            │ │
+35|│ │                          ││                                                        ││                            │ │
+36|│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+37|│                                                                                                                      │
+38|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+39|  ctrl+n new | ctrl+f search | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit
+
+## rp-dictionaries-120x40
+00|                                   ╭─────────────╮
+01| ⌃1 Home  ⌃2 Console !  ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+02|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+04|│ Roleplay                                                                                                             │
+05|│ Author the pieces that shape a chat                                                                                  │
+06|│  Ready                                                                                                               │
+07|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+08|Dictionaries — text find/replace rules · 0
+09| Modes:    Characters    Personas    Dictionaries    Lore
+10|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+11|│                                                                                                                      │
+12|│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+13|│ │  Library              <  ││                                                        ││                            │ │
+14|│ │  Search...               ││                                                        ││  Inspector              >  │ │
+15|│ │           New            ││                                                        ││ Selected: none             │ │
+16|│ │          Import          ││                                                        ││ Type: -                    │ │
+17|│ │        Duplicate         ││                                                        ││ Pick a character or        │ │
+18|│ │                          ││                                                        ││ persona to start chatting. │ │
+19|│ │  New Dictionary Owner    ││                                                        ││        Manage Buddy        │ │
+20|│ │  2 entries · on          ││                                                        ││         Show Buddy         │ │
+21|│ │                          ││                                                        ││        Close Buddy         │ │
+22|│ │                          ││                                                        ││       Disable Buddy        │ │
+23|│ │                          ││                                                        ││                            │ │
+24|│ │                          ││ Try it — substitution preview                          ││                            │ │
+25|│ │                          ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││                            │ │
+26|│ │                          ││ ▊                                                    ▎ ││                            │ │
+27|│ │                          ││ ▊                                                    ▎ ││                            │ │
+28|│ │                          ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││                            │ │
+29|│ │                          ││   Run preview                                          ││                            │ │
+30|│ │                          ││ Select a dictionary to preview substitutions.          ││                            │ │
+31|│ │                          ││                                                        ││                            │ │
+32|│ │                          ││                                                        ││                            │ │
+33|│ │                          ││                                                        ││                            │ │
+34|│ │                          ││                                                        ││                            │ │
+35|│ │                          ││                                                        ││                            │ │
+36|│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+37|│                                                                                                                      │
+38|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+39|  ctrl+n new | ctrl+f search | f6 pane | c/p/d/l mode | [ ] mode | space toggle | F1 · Ctrl+P · Ctrl+Q
+
+## rp-rails-collapsed-120x40
+00|                                   ╭─────────────╮
+01| ⌃1 Home  ⌃2 Console !  ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+02|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+04|│ Roleplay                                                                                                             │
+05|│ Author the pieces that shape a chat                                                                                  │
+06|│  Blocked                                                                                                             │
+07|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+08|Characters — who the AI plays · 2
+09| Modes:    Characters    Personas    Dictionaries    Lore
+10|┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+11|│                                                                                                                      │
+12|│              ╭──────────────────────────────────────────────────────────────────────────────────────────╮            │
+13|│              │                            ▸ Try a test chat (nothing saved)                             │ Inspector  │
+14|│              │ Character                                                                                │            │
+15|│              │  Name: Detective Sam                                                                     │            │
+16|│              │                                                                                          │            │
+17|│              │  Description: Noir detective                                                             │            │
+18|│              │                                                                                          │            │
+19|│              │  First message: The name's {{char}}. Who's asking?                                       │            │
+20|│              │                                                                                          │            │
+21|│              │  Version: 1                                                                              │            │
+22|│              │                                                                                          │            │
+23|│              │ Tags: none                                                                               │            │
+24|│   Library    │ Alternate greetings: 2                                                                   │            │
+25|│              │ An alternate opener.                                                                     │            │
+26|│              │                                                                                          │            │
+27|│              │  Voice & Speech                                                                          │            │
+28|│              │  Use global default                                                                 ▼    │            │
+29|│              │  Save/reopen before assigning.                                                           │            │
+30|│              │    Create                                                                                │            │
+31|│              │ Avatar: none                                                                             │            │
+32|│              │                                                                                          │            │
+33|│              │                                                                                          │            │
+34|│              │                                                                                        ▆ │            │
+35|│              │    Edit     Conversations (0)                                                            │            │
+36|│              ╰──────────────────────────────────────────────────────────────────────────────────────────╯            │
+37|│                                                                                                                      │
+38|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+39|  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | F1 · Ctrl+P · Ctrl+Q

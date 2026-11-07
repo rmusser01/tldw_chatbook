@@ -44,8 +44,12 @@ def test_youtube_job_reaches_selected_transcription_runner(
         return str(audio)
 
     monkeypatch.setattr(LocalVideoProcessor, "download_video", download)
+    # (TASK-20973) ``extract_metadata`` now takes the threaded
+    # ``url_provenance`` keyword, so the stub must accept kwargs.
     monkeypatch.setattr(
-        LocalVideoProcessor, "extract_metadata", lambda *args: {"title": "Sample video"}
+        LocalVideoProcessor,
+        "extract_metadata",
+        lambda *args, **kwargs: {"title": "Sample video"},
     )
     observed = []
 

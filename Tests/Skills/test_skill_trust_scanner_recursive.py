@@ -19,10 +19,15 @@ def test_recurses_and_classifies(tmp_path):
     _write(d / "assets" / "logo.png", b"\x89PNG\x00\x01binary")
     snap = scan_skill_directory("demo", d)
     fps = {f.relative_path: f for f in snap.fingerprints}
-    assert set(fps) == {"SKILL.md", "references/api.md", "scripts/run.sh", "assets/logo.png"}
+    assert set(fps) == {
+        "SKILL.md",
+        "references/api.md",
+        "scripts/run.sh",
+        "assets/logo.png",
+    }
     assert fps["SKILL.md"].file_type == "skill"
     assert fps["assets/logo.png"].file_type == "supporting_binary"
-    assert "assets/logo.png" not in snap.text_files       # binary not decoded
+    assert "assets/logo.png" not in snap.text_files  # binary not decoded
     assert "references/api.md" in snap.text_files
     assert fps["scripts/run.sh"].executable is True
     assert snap.unsupported_paths == ()
@@ -38,7 +43,7 @@ def test_prunes_junk(tmp_path):
     snap = scan_skill_directory("demo", d)
     paths = {f.relative_path for f in snap.fingerprints}
     assert paths == {"SKILL.md"}
-    assert snap.unsupported_paths == ()   # junk pruned, NOT recorded
+    assert snap.unsupported_paths == ()  # junk pruned, NOT recorded
 
 
 def test_nested_skill_md_is_not_the_body(tmp_path):
@@ -140,9 +145,9 @@ def test_symlinked_junk_named_directory_still_unsupported(tmp_path):
     _write(d / "__pycache__" / "x.pyc", b"\x00pyc")  # real junk dir + junk file
     snap = scan_skill_directory("demo", d)
     fps = {f.relative_path for f in snap.fingerprints}
-    assert "node_modules" in snap.unsupported_paths       # symlink surfaced
+    assert "node_modules" in snap.unsupported_paths  # symlink surfaced
     assert "node_modules" not in fps
-    assert "node_modules/secret.md" not in fps            # walk did not descend
+    assert "node_modules/secret.md" not in fps  # walk did not descend
     # Real junk dir/file: pruned entirely, never recorded anywhere.
     assert "__pycache__" not in snap.unsupported_paths
     assert "__pycache__/x.pyc" not in snap.unsupported_paths

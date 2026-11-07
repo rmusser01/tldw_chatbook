@@ -1,0 +1,45 @@
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+            ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+            ▊                                                                                                                                      ▎ │
+   Terminal ▊  Prompt Workbench                                                                                                                    ▎ │
+ ───────────▊  Prompts / Mix-ins                                                                                                                   ▎ │
+ Workspaces ▊  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ▎ │
+ ───────────▊                                                                                                                                      ▎ │
+ Conversatio▊  Mix-ins · 1 enabled                                                                                                                 ▎ │
+     Archive▊  Before / your message / After. Changes apply to future sends.                                                                       ▎ │
+      Archiv▊   Browse Prompts / Recipes ┏━━━━━━━━━━━━━━━━━┓                                                                                       ▎ │
+     Search ▊  Updated Library definitions apply to the next send; placement changes move to the new group end.                                    ▎ │
+   Describe ▊                                                                                                                                      ▎ │
+   scene.   ▊  Add from Local Library                                                                                                              ▎ │
+            ▊                                                                                                                                      ▎ │
+  ▊▔▔▔▔▔▔▔▔▔▊                                                                                                                                      ▎ │
+  ▊  Filter ▊  Server mix-ins cannot be enabled: revision snapshots are unsupported.                                                               ▎ │
+  ▊▁▁▁▁▁▁▁▁▁▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ▎ │
+            ▊  ▊  Search mix-ins                                                                                                               ▎   ▎ │
+   New conve▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▃  ▎ │
+  Chats     ▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Add  Search    ▎ │◂ Inspect
+    Today   ▊  ▊  Choose a mix-in                                                                                              ▼  ▎                ▎ │
+   Chat 1   ▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                ▎ │
+   Describe ▊   Previous Page 1 of 1                                                                                                       Next    ▎ │
+            ▊                                                                                                                                      ▎ │
+ ───────────▊                                                                                                                                      ▎ │
+ Character ·▊  Exact next-send preview                                                                                                             ▎ │
+ ───────────▊  {                                                                                                                                   ▎ │
+ Model      ▊    "model": "gpt-4.1-mini",                                                                                                          ▎ │
+ ───────────▊    "messages": [],                                                                                                                   ▎ │
+ Agent      ▊    "system": [],                                                                                                                     ▎ │
+ ───────────▊    "staged_sources": [],                                                                                                             ▎ │
+ Details    ▊    "tools": {                                                                                                                        ▎ │
+            ▊      "native_schemas": [],                                                                                                           ▎ │
+            ▊      "mcp_note": null,                                                                                                               ▎ │
+            ▊      "preview_note": "Preview unavailable due to an internal error."                                                              ▂  ▎ │
+            ▊    },                                                                                                                                ▎ │
+            ▊  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ▎ │
+            ▊                                                                                                                                      ▎ │
+────────────▊                                                                                                                      Back   Close    ▎────────────
+ Provider: O▊                                                                                                                                      ▎· Curre◀ ▶
+            ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                 Send disabled: type a message       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐  N    N  Select a note to edit it here.                                                │
+│ │ Navigation                │  a    o                                                                                │
+│ │     Import…               │  v    t                                                                                │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e                                                                                │
+│ │ ▊ Search Library…   ▎▊x▎  │       s                                                                                │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │                                                                                        │
+│ │                           │                                                                                        │
+│ │ ────────────────────────  │                                                                                        │
+│ │ Browse               ▾    │                                                                                        │
+│ │    Media (2)              │<---                                                                                    │
+│ │    Conversations (6)      │                                                                                        │
+│ │  ▸ Notes (5)              │                                                                                        │
+│ │    Prompts (4) — reuse    │                                                                                        │
+│ │    Skills (1)             │     --->                                                                               │
+│ │    Collections (0)        │                                                                                        │
+│ │    Search / RAG           │                                                                                        │
+│ │ ────────────────────────  │                                                                                        │
+│ │ Artifacts            ▾    │                                                                                        │
+│ │    All artifacts          │<---                                                                                    │
+│ │    Chatbooks            ▅ │                                                                                        │
+│ │    Reports                │                                                                                        │
+│ │ ────────────────────────  │                                                                                        │
+│ │ Create               ▾    │                                                                                        │
+│ │    New note               │                                                                                        │
+│ │    New prompt             │                                                                                        │
+│ │    New skill              │                                                                                        │
+│ │  ▾ scroll for more        │                                                                                        │
+│ └───────────────────────────┘                                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

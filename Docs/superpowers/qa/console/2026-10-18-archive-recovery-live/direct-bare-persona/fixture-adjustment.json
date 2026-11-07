@@ -1,0 +1,9 @@
+{
+  "reason": "supported policy-only Persona; nonempty system artifact provenance is a separate pre-existing capture limit",
+  "persona_prompt": "",
+  "fallback_system_prompt": "",
+  "production_source_edited": false,
+  "capture_enabled": true,
+  "request_offset": 15,
+  "request_cap": 20
+}

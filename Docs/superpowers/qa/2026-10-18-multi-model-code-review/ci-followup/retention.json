@@ -1,0 +1,80 @@
+{
+  "archive_path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/ci-followup-evidence.tar.gz",
+  "archive_sha256": "66de86f46d1919da76b6fcc9bb1e1b020a5bdb46ef68dd0b571804489f78c641",
+  "archive_bytes": 117565,
+  "baseline": "98bb849eb6a92f429fe2104a39222427602a0e39",
+  "members": [
+    {
+      "name": "task35582-ci-98bb849-decision.json",
+      "sha256": "dfb169930468832d0ffddd223acebe3476a2a7a4f69aefaee69133b133d246d1"
+    },
+    {
+      "name": "task35582-ci-ui9.log",
+      "sha256": "e91212b34abddaf178614a283ee4eb38ff6cc60ee71e6c56232843a1460bdb31"
+    },
+    {
+      "name": "task35582-ci-derived.log",
+      "sha256": "fb0cd2c3454b10b69226a6e652b4ba1c5d293f0ed021557bd4ba5f5d742cbda8"
+    },
+    {
+      "name": "task35582-ci-windows-eval.log",
+      "sha256": "49f78c2d0512f92fcfc9522a24a082d574fce752763f9834c37b0de0fea54b1f"
+    },
+    {
+      "name": "task35582-ci-windows-gguf.log",
+      "sha256": "d32f4fe792d5a5699a4574ee57dcbc7dbbf10a36ac24c5275bed04689c242711"
+    },
+    {
+      "name": "task35582-ci-ui-report.md",
+      "sha256": "2f01debc79a92ed0b4ec43eb16752cd55303eae983eda3b131e43c1ded13dc56"
+    },
+    {
+      "name": "task35582-ci-ui-red3.log",
+      "sha256": "df187888aaa6173f2b28c359f61b02b04ca1fc93c5aabb85abb9296e3783c06d"
+    },
+    {
+      "name": "task35582-ci-ui-final.log",
+      "sha256": "79f3b3e11d893a4bd4e02997a202aeb7d229ee0288fbfe80b18d8753917c010a"
+    },
+    {
+      "name": "task35582-ci-ui-final.xml",
+      "sha256": "9e0e960d9333768cb46b285db2c0df8f597ffeae6c4dfd06ef9ad5d178ce07ec"
+    },
+    {
+      "name": "task35582-ci-eval-diagnosis.md",
+      "sha256": "1c4dfe6e9bd5ef3b89d4cfa9b8c26c77572efb697f9bdf9621807415a909fdad"
+    },
+    {
+      "name": "task35582-ci-eval-watchdog-test.log",
+      "sha256": "acbf37433ea7e92367a15ebda5a6b934e5f92428faa9740786df15312ec505c2"
+    },
+    {
+      "name": "task35582-ci-eval-watchdog-test.xml",
+      "sha256": "1ac7f783a30ace6d9f6e318e6cdc07526e689c78e29dfa793134d0b9eddea44d"
+    },
+    {
+      "name": "task35582-ci-eval-watchdog-control.py",
+      "sha256": "fe7a04ba0450d6e13c9192422b29ffcb6f7707500764e1ea127464d3def93a04"
+    },
+    {
+      "name": "task35582-ci-startup-repro-receipt.json",
+      "sha256": "cd06a522c0d8265565baba256c614d6e865db12dbbbbec4a2980b69b167bab24"
+    },
+    {
+      "name": "task35582-ci-startup-win-sleep-repro.py",
+      "sha256": "eae5509b625a4d6da3ab12cc68ad8a562977ccc7f98daa992be1f23afec014cb"
+    },
+    {
+      "name": "task35582-ci-startup-textual-timer-repro.py",
+      "sha256": "b44fa8f2208915f59f765b406377e267a0742780b1e2534e32827dfb8554e3dc"
+    },
+    {
+      "name": "task35582-ci-diag-final.log",
+      "sha256": "7320f23ec9689c634b886bd6568182d4617791b0c9ed9dbf39cbc4466d3ff865"
+    },
+    {
+      "name": "task35582-ci-final-static.json",
+      "sha256": "e47418c7855d99c373ea225ff87e48e7217a68e108c4db580c2403611d3b7922"
+    }
+  ]
+}

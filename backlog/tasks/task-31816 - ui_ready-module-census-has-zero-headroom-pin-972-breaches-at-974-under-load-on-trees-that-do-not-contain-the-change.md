@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-06 04:43'
+updated_date: '2026-11-07 02:03'
 labels:
   - performance
   - tech-debt
@@ -29,3 +30,15 @@ Tests/Performance/test_ui_ready_module_census.py asserts at most 972 tldw_chatbo
 - [ ] #5 The two residents responsible for the +2 excess over the pin are named individually -- the breach message already diffs the census against boot_budget_snapshots/ui_ready_modules.txt, so this is a read, not an investigation -- and the work that introduced them is identified, so the paydown lands with its actual owner rather than with whichever PR next trips the guard
 - [ ] #6 backlog/docs/library-decomposition-recipe.md section 7's documented-pre-existing-failures list has the ui_ready census entry removed, with the commit that fixed it named
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Round-11 update (2026-11-07, filing only; nothing implemented). The round-11 follow-up "the UI-ready module census is nondeterministic" was not filed as a new task, because this task already covers it. The figures here are current:
+
+- **The pin.** Dev 2684e5453f pins `MAX_TLDW_MODULES_AT_UI_READY = 1038` (`Tests/Performance/test_ui_ready_module_census.py:178-183`). Its comment names the wobble: 1038 is reached "when `DB.character_conversation_search` also loaded before ready".
+- **The snapshot.** `boot_budget_snapshots/ui_ready_modules.txt` lists 1037 modules, without that module.
+- **Measured.** Six round-11 boot-budget runs read 1038 of 1038 (headroom 0) on the arch, library and modals branches, and 1037 on the console, recovery and settings branches.
+- **Likely loader, from reading the code only.** `DB.character_conversation_search` is imported inside `CharacterConversationNavigationService.__init__` (`Character_Chat/character_conversation_navigation.py:515`). The Console character context uses that class as its `service_factory` (`UI/Console_Modules/character_context.py:730`).
+- **For AC#5.** The resident to name is `DB.character_conversation_search`. The 972/974 figures in the description are stale.
+<!-- SECTION:NOTES:END -->

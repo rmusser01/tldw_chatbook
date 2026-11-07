@@ -1,0 +1,26 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "Tests/Chat/test_console_archive_recovery_followup.py",
+    "-k",
+    "captured_native_turn_restores_original_second_row or canonical_history_owners or releases_exact_admitted_authority or composes_existing_transform or refuses_unowned_or_non_text_changes",
+    "-q",
+    "--tb=short",
+    "--basetemp=/private/tmp/archive-capture-task3-green-stores"
+  ],
+  "exit": 1,
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13",
+    "tldw_chatbook/Chat/console_runtime.py": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+    "Tests/Chat/test_console_archive_recovery_followup.py": "b29c7b46e8773c7c87024a9588ca0f20d3f229513915cbea5e5e293a537ddb7c"
+  }
+}

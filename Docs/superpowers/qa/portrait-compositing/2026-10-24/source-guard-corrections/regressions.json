@@ -1,0 +1,43 @@
+{
+  "pre_commit_head": "1e336401493c77c461d0ffaf5ccd3229a135de33",
+  "logs": {
+    "lifetime_red": {
+      "summary": "4 failed, 2 errors in 7.76s",
+      "sha256": "468dfc5dc668b0d6a7d9236f073c1df1fd1fac423f0cdba933f861f13b26a273"
+    },
+    "mounted_only_red": {
+      "summary": "1 failed in 1.20s; removed target still reported mounted",
+      "sha256": "3ec2a7d587e3229ec83af4d88c5c5c581d59e9fdab848e94debfc36c5f9dede5"
+    },
+    "save_original_red": {
+      "summary": "1 failed in 3.65s",
+      "sha256": "2e35798a14a9f25fbd82f8a5926a9aebaf5420de17340fb4053adeba909857b0"
+    },
+    "focused_lifetime_green": {
+      "summary": "7 passed in 11.08s",
+      "sha256": "11fcd29481c86409611a379c1756fd84877fddec1f32d41d05013c525645207c"
+    },
+    "all_affected_ui_green": {
+      "summary": "86 passed in 194.94s",
+      "sha256": "5eceb150ac260084571c3e2a9e1fd9592dad263d0bd438883791bab65df3960b"
+    },
+    "fresh_installed_green": {
+      "summary": "1 passed in 44.07s",
+      "sha256": "3c04bf95c15a547f71a5cd0101c14aa42506cda3e7bb1c1e03abc8581a4fbc27"
+    },
+    "live_keyboard_boundary_green": {
+      "summary": "3 passed in 19.55s",
+      "sha256": "9829ae784d8e6ce4dbd94672d8b97b5316196955c7c1d356bfc14d3f487fcc54"
+    },
+    "checker_initial": {
+      "summary": "437 passed, 1 skipped, 1 stale keyboard-route failure in 220.02s",
+      "sha256": "a0304258158a54aed42c340815eb42d4724c8d775b09eec198bff0a4e0236b07"
+    },
+    "complete_worker_checker_green": {
+      "summary": "364 passed in 35.66s",
+      "sha256": "1fa0c669223303d533035bf9957d354044f05e9c5d9d58aa9f45d5ca5801946b"
+    }
+  },
+  "live_image_requests": 0,
+  "live_qualified": false
+}

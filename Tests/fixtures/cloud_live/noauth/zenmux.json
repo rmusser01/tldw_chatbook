@@ -1,0 +1,646 @@
+{
+  "server": "zenmux",
+  "base_url": "https://zenmux.ai/api/v1",
+  "probe_model": "qwen/qwen3.8-omni-flash",
+  "listing": {
+    "status": 200,
+    "entries": [
+      {
+        "id": "openai/gpt-6.1-sol"
+      },
+      {
+        "id": "qwen/qwen3.8-omni-flash"
+      },
+      {
+        "id": "anthropic/claude-sonnet-5.5"
+      },
+      {
+        "id": "openai/gpt-6-luna"
+      },
+      {
+        "id": "openai/gpt-6-sol"
+      },
+      {
+        "id": "anthropic/claude-opus-5.5"
+      },
+      {
+        "id": "xiaomi/mimo-v2.6-pro-ultraspeed"
+      },
+      {
+        "id": "xiaomi/mimo-v2.6-flash"
+      },
+      {
+        "id": "inclusionai/ming-image-0.1-design"
+      },
+      {
+        "id": "inclusionai/ming-image-0.1-design-layer"
+      },
+      {
+        "id": "xiaomi/mimo-v2.6-pro"
+      },
+      {
+        "id": "x-ai/grok-4.7"
+      },
+      {
+        "id": "stepfun/step-5-preview"
+      },
+      {
+        "id": "z-ai/glm-5.3-flashx"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash-vl"
+      },
+      {
+        "id": "atria-asi/atria-dawn-preview"
+      },
+      {
+        "id": "moonshotai/kimi-k2.8-preview"
+      },
+      {
+        "id": "sakana/fugu-ultra-v2"
+      },
+      {
+        "id": "deepseek/deepseek-v4.1-flash"
+      },
+      {
+        "id": "openai/gpt-image-2.5-sunburst"
+      },
+      {
+        "id": "openai/gpt-image-2.5-flare"
+      },
+      {
+        "id": "openai/gpt-6-astra"
+      },
+      {
+        "id": "inclusionai/llada-image-turbo"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash-sante"
+      },
+      {
+        "id": "meta/muse-spark-1.3"
+      },
+      {
+        "id": "meta/muse-spark-1.3-contributor"
+      },
+      {
+        "id": "google/gemini-3.8-flash"
+      },
+      {
+        "id": "minimax/minimax-h3-max"
+      },
+      {
+        "id": "qwen/qwen3.8-max-0902"
+      },
+      {
+        "id": "anthropic/claude-fable-5.1"
+      },
+      {
+        "id": "tencent/hy4-preview"
+      },
+      {
+        "id": "qwen/qwen3.8-flash"
+      },
+      {
+        "id": "meta/muse-image-1.0"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash-fin"
+      },
+      {
+        "id": "z-ai/glm-5.3-flash"
+      },
+      {
+        "id": "alibaba/wan3.0-video"
+      },
+      {
+        "id": "alibaba/wan3.0-video-prime"
+      },
+      {
+        "id": "qwen/qwen3.8-27b"
+      },
+      {
+        "id": "mindai/macaron-v1-tall"
+      },
+      {
+        "id": "mindai/macaron-v1-venti"
+      },
+      {
+        "id": "dots-studio/dots3-note-prev"
+      },
+      {
+        "id": "google/gemini-3.7-flash"
+      },
+      {
+        "id": "z-ai/glm-5.3"
+      },
+      {
+        "id": "x-ai/grok-4.6"
+      },
+      {
+        "id": "qwen/qwen3.8-2.4t-a95b"
+      },
+      {
+        "id": "deepseek/deepseek-v4-pro"
+      },
+      {
+        "id": "pixverse/c1"
+      },
+      {
+        "id": "pixverse/v6"
+      },
+      {
+        "id": "x-ai/grok-imagine-image-2.0"
+      },
+      {
+        "id": "sapiens-ai/agnes-2.5-flash"
+      },
+      {
+        "id": "bytedance/doubao-seedance-2.5"
+      },
+      {
+        "id": "inclusionai/ling-3.0-tiny"
+      },
+      {
+        "id": "meta/muse-spark-1.2"
+      },
+      {
+        "id": "openai/gpt-transcribe"
+      },
+      {
+        "id": "qwen/qwen-audio-3.0-tts-plus"
+      },
+      {
+        "id": "x-ai/grok-voice-stt-1.0"
+      },
+      {
+        "id": "bfl/flux-3-video"
+      },
+      {
+        "id": "qwen/qwen3.8-max"
+      },
+      {
+        "id": "sapiens-ai/agnes-2.5-pro"
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash"
+      },
+      {
+        "id": "x-ai/grok-voice-tts-1.0"
+      },
+      {
+        "id": "minimax/minimax-h3"
+      },
+      {
+        "id": "klingai/kling-3.0-omni"
+      },
+      {
+        "id": "klingai/kling-3.0"
+      },
+      {
+        "id": "klingai/kling-3.0-turbo"
+      },
+      {
+        "id": "qwen/qwen3.7-flash"
+      },
+      {
+        "id": "anthropic/claude-opus-5"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash"
+      },
+      {
+        "id": "google/gemini-3.6-flash"
+      },
+      {
+        "id": "google/gemini-3.5-flash-lite"
+      },
+      {
+        "id": "moonshotai/kimi-k3"
+      },
+      {
+        "id": "openai/gpt-5.6-luna"
+      },
+      {
+        "id": "openai/gpt-5.6-terra"
+      },
+      {
+        "id": "openai/gpt-5.6-sol"
+      },
+      {
+        "id": "x-ai/grok-4.5"
+      },
+      {
+        "id": "meta/muse-spark-1.1"
+      },
+      {
+        "id": "xiaomi/mimo-v2.5-asr"
+      },
+      {
+        "id": "tencent/hy3"
+      },
+      {
+        "id": "meituan/longcat-2.0"
+      },
+      {
+        "id": "anthropic/claude-sonnet-5"
+      },
+      {
+        "id": "bytedance/doubao-seed-asr-2.0"
+      },
+      {
+        "id": "bytedance/doubao-seed-2.1-turbo"
+      },
+      {
+        "id": "bytedance/doubao-seed-2.1-pro"
+      },
+      {
+        "id": "bytedance/doubao-seed-evolving"
+      },
+      {
+        "id": "bytedance/doubao-seed-character"
+      },
+      {
+        "id": "z-ai/glm-5.2"
+      },
+      {
+        "id": "moonshotai/kimi-k2.7-code-highspeed"
+      },
+      {
+        "id": "moonshotai/kimi-k2.7-code"
+      },
+      {
+        "id": "anthropic/claude-fable-5"
+      },
+      {
+        "id": "qwen/qwen3.7-plus"
+      },
+      {
+        "id": "minimax/minimax-m3"
+      },
+      {
+        "id": "stepfun/step-3.7-flash"
+      },
+      {
+        "id": "anthropic/claude-opus-4.8"
+      },
+      {
+        "id": "x-ai/grok-build-0.1"
+      },
+      {
+        "id": "qwen/qwen3.7-max"
+      },
+      {
+        "id": "google/gemini-embedding-2"
+      },
+      {
+        "id": "google/gemini-3.5-flash"
+      },
+      {
+        "id": "inclusionai/ring-2.6-1t"
+      },
+      {
+        "id": "google/gemini-3.1-flash-lite"
+      },
+      {
+        "id": "baidu/ernie-5.1"
+      },
+      {
+        "id": "openai/chat-latest"
+      },
+      {
+        "id": "x-ai/grok-4.3"
+      },
+      {
+        "id": "qwen/qwen3.6-max-preview"
+      },
+      {
+        "id": "openai/gpt-5.5-pro"
+      },
+      {
+        "id": "openai/gpt-5.5"
+      },
+      {
+        "id": "google/gemini-3.1-flash-tts-preview"
+      },
+      {
+        "id": "inclusionai/ling-2.6-1t"
+      },
+      {
+        "id": "xiaomi/mimo-v2.5-pro"
+      },
+      {
+        "id": "xiaomi/mimo-v2.5"
+      },
+      {
+        "id": "inclusionai/ling-2.6-flash"
+      },
+      {
+        "id": "openai/gpt-image-2"
+      },
+      {
+        "id": "moonshotai/kimi-k2.6"
+      },
+      {
+        "id": "anthropic/claude-opus-4.7"
+      },
+      {
+        "id": "z-ai/glm-5.1"
+      },
+      {
+        "id": "bytedance/doubao-seedance-2.0"
+      },
+      {
+        "id": "google/gemma-4-26b-a4b-it"
+      },
+      {
+        "id": "qwen/qwen3.6-plus"
+      },
+      {
+        "id": "z-ai/glm-5v-turbo"
+      },
+      {
+        "id": "google/gemma-4-31b-it"
+      },
+      {
+        "id": "minimax/minimax-m2.7"
+      },
+      {
+        "id": "minimax/minimax-m2.7-highspeed"
+      },
+      {
+        "id": "openai/gpt-5.4-nano"
+      },
+      {
+        "id": "openai/gpt-5.4-mini"
+      },
+      {
+        "id": "inclusionai/llada2.1-flash"
+      },
+      {
+        "id": "z-ai/glm-5-turbo"
+      },
+      {
+        "id": "x-ai/grok-4.2-fast"
+      },
+      {
+        "id": "x-ai/grok-4.2-fast-non-reasoning"
+      },
+      {
+        "id": "openai/gpt-5.4"
+      },
+      {
+        "id": "openai/gpt-5.4-pro"
+      },
+      {
+        "id": "qwen/qwen3.5-flash"
+      },
+      {
+        "id": "qwen/qwen3.6-flash"
+      },
+      {
+        "id": "google/gemini-3.1-pro-preview"
+      },
+      {
+        "id": "anthropic/claude-sonnet-4.6"
+      },
+      {
+        "id": "qwen/qwen3.5-plus"
+      },
+      {
+        "id": "bytedance/doubao-seed-2.0-mini"
+      },
+      {
+        "id": "bytedance/doubao-seed-2.0-lite"
+      },
+      {
+        "id": "bytedance/doubao-seed-2.0-code"
+      },
+      {
+        "id": "bytedance/doubao-seed-2.0-pro"
+      },
+      {
+        "id": "minimax/minimax-m2.5"
+      },
+      {
+        "id": "minimax/minimax-m2.5-lightning"
+      },
+      {
+        "id": "z-ai/glm-5"
+      },
+      {
+        "id": "openai/gpt-5.3-codex"
+      },
+      {
+        "id": "anthropic/claude-opus-4.6"
+      },
+      {
+        "id": "stepfun/step-3.5-flash"
+      },
+      {
+        "id": "qwen/qwen3-max"
+      },
+      {
+        "id": "minimax/minimax-m2-her"
+      },
+      {
+        "id": "baidu/ernie-5.0-thinking-preview"
+      },
+      {
+        "id": "z-ai/glm-4.7-flash-free"
+      },
+      {
+        "id": "z-ai/glm-4.7-flashx"
+      },
+      {
+        "id": "openai/gpt-5.2-codex"
+      },
+      {
+        "id": "qwen/qwen3-vl-rerank"
+      },
+      {
+        "id": "qwen/qwen3-rerank"
+      },
+      {
+        "id": "qwen/qwen3-vl-embedding"
+      },
+      {
+        "id": "z-ai/glm-4.7"
+      },
+      {
+        "id": "minimax/minimax-m2.1"
+      },
+      {
+        "id": "bytedance/doubao-seed-1.8"
+      },
+      {
+        "id": "google/gemini-3-flash-preview"
+      },
+      {
+        "id": "openai/gpt-image-1.5"
+      },
+      {
+        "id": "openai/gpt-5.2-pro"
+      },
+      {
+        "id": "openai/gpt-5.2"
+      },
+      {
+        "id": "z-ai/glm-4.6v-flash-free"
+      },
+      {
+        "id": "z-ai/glm-4.6v-flash"
+      },
+      {
+        "id": "z-ai/glm-4.6v"
+      },
+      {
+        "id": "deepseek/deepseek-v3.2"
+      },
+      {
+        "id": "mistralai/mistral-large-2512"
+      },
+      {
+        "id": "anthropic/claude-opus-4.5"
+      },
+      {
+        "id": "openai/gpt-5.1-codex"
+      },
+      {
+        "id": "openai/gpt-5.1-codex-mini"
+      },
+      {
+        "id": "openai/gpt-5.1"
+      },
+      {
+        "id": "bytedance/doubao-seed-code"
+      },
+      {
+        "id": "openai/text-embedding-3-small"
+      },
+      {
+        "id": "openai/text-embedding-3-large"
+      },
+      {
+        "id": "minimax/minimax-m2"
+      },
+      {
+        "id": "anthropic/claude-haiku-4.5"
+      },
+      {
+        "id": "openai/gpt-5-pro"
+      },
+      {
+        "id": "z-ai/glm-4.6"
+      },
+      {
+        "id": "anthropic/claude-sonnet-4.5"
+      },
+      {
+        "id": "qwen/qwen3-vl-plus"
+      },
+      {
+        "id": "openai/gpt-5-codex"
+      },
+      {
+        "id": "baidu/ernie-x1.1-preview"
+      },
+      {
+        "id": "qwen/qwen3-asr-flash"
+      },
+      {
+        "id": "deepseek/deepseek-chat-v3.1"
+      },
+      {
+        "id": "openai/gpt-5"
+      },
+      {
+        "id": "openai/gpt-5-nano"
+      },
+      {
+        "id": "openai/gpt-5-mini"
+      },
+      {
+        "id": "anthropic/claude-opus-4.1"
+      },
+      {
+        "id": "z-ai/glm-4.5-air"
+      },
+      {
+        "id": "z-ai/glm-4.5"
+      },
+      {
+        "id": "qwen/qwen3-coder-plus"
+      },
+      {
+        "id": "google/gemini-2.5-flash-lite"
+      },
+      {
+        "id": "qwen/qwen3-235b-a22b-2507"
+      },
+      {
+        "id": "qwen/qwen3-235b-a22b-thinking-2507"
+      },
+      {
+        "id": "qwen/qwen3-coder"
+      },
+      {
+        "id": "google/gemini-2.5-flash"
+      },
+      {
+        "id": "google/gemini-2.5-pro"
+      },
+      {
+        "id": "deepseek/deepseek-r1-0528"
+      },
+      {
+        "id": "qwen/qwen3-14b"
+      },
+      {
+        "id": "openai/o4-mini"
+      },
+      {
+        "id": "openai/gpt-4.1-mini"
+      },
+      {
+        "id": "openai/gpt-4.1-nano"
+      },
+      {
+        "id": "openai/gpt-4.1"
+      },
+      {
+        "id": "meta/llama-4-scout-17b-16e-instruct"
+      },
+      {
+        "id": "meta/llama-3.3-70b-instruct"
+      },
+      {
+        "id": "openai/gpt-4o-mini"
+      },
+      {
+        "id": "openai/gpt-4o"
+      }
+    ]
+  },
+  "chat_no_key": {
+    "status": 403,
+    "body": {
+      "error": {
+        "code": "403",
+        "type": "access_denied",
+        "message": "You have no permission to access this resource (api_key_source: payg) (request_id: e1fda7f28adb4c4b8d22537f680ede2d)"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 403,
+    "body": {
+      "error": {
+        "code": "403",
+        "type": "access_denied",
+        "message": "You have no permission to access this resource (api_key_source: payg) (request_id: e134282aba1e4e478d2257be1220406d)"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:19:52+00:00"
+}

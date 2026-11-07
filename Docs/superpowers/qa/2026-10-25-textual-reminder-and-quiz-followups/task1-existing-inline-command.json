@@ -1,0 +1,13 @@
+[
+  "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+  "-m",
+  "pytest",
+  "-p",
+  "bootstrap_legacy",
+  "Tests/UI/test_schedules_workbench.py::test_junk_at_value_shows_inline_error_and_restores_old_display",
+  "Tests/UI/test_schedules_workbench.py::test_committing_timezone_edit_preserves_cron",
+  "-q",
+  "--tb=short",
+  "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\task1-existing-inline\\pytest",
+  "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\task1-existing-inline\\result.xml"
+]

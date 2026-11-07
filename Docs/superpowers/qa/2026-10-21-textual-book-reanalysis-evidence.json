@@ -1,0 +1,303 @@
+{
+  "audited_dev": "df24de7ad71b95992f63a77fc5a19726e840849d",
+  "audit_date": "2026-10-21",
+  "previous_merge": {
+    "pr": 3182,
+    "commit": "fd4df0a5341d8d97fde7ee0276b38120de35c1d2"
+  },
+  "book": {
+    "title": "Creating TUI Applications with Textual and Python",
+    "author": "Michael Driscoll",
+    "edition": "2025-07-25",
+    "pdf_pages": 455,
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6",
+    "document_is_reference_not_instructions": true
+  },
+  "textual_version": "8.2.8",
+  "tasks": [
+    {
+      "id": 36036,
+      "title": "Keep admitted Schedules reminder bulk actions and newer marks intact",
+      "priority": "medium",
+      "path": "backlog/tasks/task-36036 - Keep-admitted-Schedules-reminder-bulk-actions-and-newer-marks-intact.md",
+      "acceptance_criteria": 4
+    },
+    {
+      "id": 36037,
+      "title": "Preserve unfinished Evals dataset names when snippet imports complete",
+      "priority": "medium",
+      "path": "backlog/tasks/task-36037 - Preserve-unfinished-Evals-dataset-names-when-snippet-imports-complete.md",
+      "acceptance_criteria": 4
+    }
+  ],
+  "schedules": {
+    "source_commit": "df24de7ad71b95992f63a77fc5a19726e840849d",
+    "diagnostic": "probe.py",
+    "technology": "Mounted Textual App.run_test; actual x/down/x/space and d confirmation dialog keys/clicks; real SchedulingService and private file SQLite; stubbed SchedulingServerClient awaits held by asyncio.Event",
+    "toggle_overlap": {
+      "calls": [
+        "update srv0",
+        "update srv2"
+      ],
+      "cancelled_awaiter": true,
+      "final_enabled": [
+        true,
+        true,
+        false
+      ],
+      "completion": "Toggled 1 marked task.",
+      "source": "First run stdout, session 29371"
+    },
+    "toggle_new_marks": {
+      "verb": "toggle",
+      "overlap": false,
+      "initial_marks": [
+        "3ff5192a-48dc-470a-a1de-0b524c432f0f",
+        "ef8de652-1576-41ec-a5c0-1442194d8272"
+      ],
+      "newer_marks": [
+        "0611d2ec-a84c-4642-9815-6f6de453fdb4"
+      ],
+      "final_marks": [],
+      "calls": [
+        [
+          "update",
+          "srv0"
+        ],
+        [
+          "update",
+          "srv1"
+        ]
+      ],
+      "cancelled_awaiter": false,
+      "rows": [
+        {
+          "title": "srv0",
+          "enabled": false
+        },
+        {
+          "title": "srv1",
+          "enabled": false
+        },
+        {
+          "title": "Task 2",
+          "enabled": true
+        }
+      ],
+      "notifications": [
+        "Toggled 2 marked tasks."
+      ]
+    },
+    "delete_overlap": {
+      "verb": "delete",
+      "overlap": true,
+      "initial_marks": [
+        "1f92b285-a6d3-4211-bbb4-fed343e2b846",
+        "40c99094-244b-4f06-b933-af449ae16603"
+      ],
+      "newer_marks": [
+        "d94e842f-129e-4461-998a-fd5eb6fb918c"
+      ],
+      "final_marks": [],
+      "calls": [
+        [
+          "delete",
+          "srv0"
+        ],
+        [
+          "delete",
+          "srv2"
+        ]
+      ],
+      "cancelled_awaiter": true,
+      "rows": [
+        {
+          "title": "Task 0",
+          "enabled": true
+        },
+        {
+          "title": "Task 1",
+          "enabled": true
+        },
+        null
+      ],
+      "notifications": [
+        "Deleted 1 marked task."
+      ]
+    },
+    "setup_failure": "First delete-overlap.log failed at pre-action WorkerManager.wait_for_complete on an already-cancelled startup refresh. Corrected scratch drain observes active worker completion; target gestures reached on retry.",
+    "limits": [
+      "Server client is controlled stub; no external service or HTTP effects proven.",
+      "Cancelled awaiter does not prove physical remote operation cancellation.",
+      "Local enabled/delete paths do not suspend and are not claimed vulnerable to this same overlap timing.",
+      "No product/tests/backlog or Git/index/HEAD edits; only owned scratch.",
+      "No full suite or implementation."
+    ],
+    "source_lines": [
+      "schedules_workbench.py:439-441 keyboard bindings",
+      "schedules_workbench.py:5052-5091 captured bulk delete confirmation",
+      "schedules_workbench.py:5125-5155 delete loop, global mark clear, exclusive group",
+      "schedules_workbench.py:5222-5247 mark/clear actions",
+      "schedules_workbench.py:5273-5290 toggle admission",
+      "schedules_workbench.py:5325-5359 toggle loop, global mark clear, exclusive group",
+      "scheduling_service.py:672 remote update await",
+      "scheduling_service.py:932 remote delete await"
+    ],
+    "book": [
+      "Ch7 printed149/PDF158 async handlers and background task responsiveness",
+      "Ch17 printed326/PDF335 exclusive grouped weather worker and late-result suppression; refresh example, not durable-write policy"
+    ]
+  },
+  "evals": {
+    "harness": "actual mounted EvalsScreen harness; private-profile helper; real SQLite; actual validated file-read thread and completion; picker callback driven directly",
+    "outcome": "3 intended draft-retention assertion failures in82.24s; import persistence and success notification verified first",
+    "observations": [
+      {
+        "format": "txt",
+        "before": {
+          "value": "Stored dataset name-draft",
+          "focused": true,
+          "cursor": 25
+        },
+        "after": {
+          "value": "Stored dataset name",
+          "same_input": false,
+          "new_input_focused": false,
+          "focused_id": "evals-rail-toggle-runs",
+          "cursor": 19
+        },
+        "persisted_name": "Stored dataset name",
+        "persisted_texts": [
+          "initial text",
+          "imported text"
+        ],
+        "notifications": [
+          [
+            "Imported 1 snippet(s).",
+            "information"
+          ]
+        ]
+      },
+      {
+        "format": "csv",
+        "before": {
+          "value": "Stored dataset name-draft",
+          "focused": true,
+          "cursor": 25
+        },
+        "after": {
+          "value": "Stored dataset name",
+          "same_input": false,
+          "new_input_focused": false,
+          "focused_id": "evals-rail-toggle-runs",
+          "cursor": 19
+        },
+        "persisted_name": "Stored dataset name",
+        "persisted_texts": [
+          "initial text",
+          "imported text"
+        ],
+        "notifications": [
+          [
+            "Imported 1 snippet(s).",
+            "information"
+          ]
+        ]
+      },
+      {
+        "format": "json",
+        "before": {
+          "value": "Stored dataset name-draft",
+          "focused": true,
+          "cursor": 25
+        },
+        "after": {
+          "value": "Stored dataset name",
+          "same_input": false,
+          "new_input_focused": false,
+          "focused_id": "evals-rail-toggle-runs",
+          "cursor": 19
+        },
+        "persisted_name": "Stored dataset name",
+        "persisted_texts": [
+          "initial text",
+          "imported text"
+        ],
+        "notifications": [
+          [
+            "Imported 1 snippet(s).",
+            "information"
+          ]
+        ]
+      }
+    ],
+    "excluded_setup": "Initial PowerShell basetemp argument error did not reach product behavior and is excluded.",
+    "limits": [
+      "Headless mounted harness; no native picker or full TldwCli journey.",
+      "No provider call or failed-import/explicit-Rename regression run; these remain task acceptance work."
+    ]
+  },
+  "receipts": [
+    {
+      "scratch_path": ".test-tmp/textual-audit-2026-10-21/schedules/probe.py",
+      "sha256": "785e6c58490ba87481ce6957cc9140258106961cce4e3e36a29daec283b6986c"
+    },
+    {
+      "scratch_path": ".test-tmp/textual-audit-2026-10-21/schedules/delete-overlap-retry.log",
+      "sha256": "8004674e1ac957ce3637b80c328debb9b57de1ce5c3e7a6a8f3ba9afb55a62c4"
+    },
+    {
+      "scratch_path": ".test-tmp/textual-audit-2026-10-21/schedules/toggle-marks.log",
+      "sha256": "751b29323ac3c2fe12d07a4d13f46c5643da76dbf9a1b45355eca9a07524d971"
+    },
+    {
+      "scratch_path": ".test-tmp/textual-audit-2026-10-21/evals/test_evals_name_import_diagnostic.py",
+      "sha256": "90d63b538ef10ec4d9da1cad341dfd909ba1e337a130ba84180c5d161e5ab0c6"
+    },
+    {
+      "scratch_path": ".test-tmp/textual-audit-2026-10-21/evals/diagnostic-run2.log",
+      "sha256": "c04ca6b58827de4f2d09448550b1275b7e736d231d55df146c405ae24155d70c"
+    },
+    {
+      "scratch_path": ".test-tmp/textual-audit-2026-10-21/evals/diagnostic-run2.xml",
+      "sha256": "46cab71a17e87891d69e8c93c5e703323dcb90259f35ab00b198b8240ffb0329"
+    }
+  ],
+  "allocation": {
+    "max_integer_id": 36006,
+    "allocated": [
+      36036,
+      36037
+    ],
+    "buffer": 30,
+    "sweep_refs": 285,
+    "registered_worktrees": 52
+  },
+  "validation": {
+    "backlog_ids": "pass across5598 task records",
+    "backlog_readability": "pass across5598 task records",
+    "local_markdown_links": 57,
+    "task_metadata": "2 To Do medium unassigned tasks;4 separate unchecked ACs each;older related tasks;no premature implementation sections",
+    "whitespace": "pass on all3 new Markdown files",
+    "full_suite_run": false
+  },
+  "review": {
+    "method": "superpowers:requesting-code-review",
+    "reviewed_commit": "8e919ee3f8609fba6430da1ab5a38ffe67895765",
+    "critical": [],
+    "important": [],
+    "minor": [
+      {
+        "finding": "Clarify exact caret position/selection range retention instead of remain usable.",
+        "disposition": "TASK36037 AC3 now requires exact caret position and selection range; no product scope added."
+      }
+    ],
+    "assessment": "Ready to deliver; optional AC clarification applied.",
+    "declined_to_judge": [
+      "Physical remote cancellation: not exercised or claimed.",
+      "Full-app/native-picker behavior: headless callback-driven harness only.",
+      "Unexercised repair controls: future task acceptance work."
+    ],
+    "repeated_diagnostics_tests_or_allocation_sweeps": false
+  }
+}

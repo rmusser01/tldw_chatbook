@@ -19,6 +19,7 @@ Pinned behaviors (see .superpowers/sdd/2026-07-26-imagegen-fal-gemini-fireworks/
 - 404 on submit gets task-620 enrichment naming the model path + the
   [image_generation.fal] default_model config key.
 """
+
 import base64
 import io
 
@@ -85,7 +86,9 @@ def _result_response(url="https://cdn.fal.media/files/output.png"):
     return {"images": [{"url": url}]}
 
 
-def _make_fake_fetch_json(calls, *, submit_response, statuses=("COMPLETED",), result_response=None):
+def _make_fake_fetch_json(
+    calls, *, submit_response, statuses=("COMPLETED",), result_response=None
+):
     """A fetch_json fake that distinguishes submit/status/result calls by URL shape."""
     status_iter = iter(statuses)
     if result_response is None:
@@ -118,7 +121,9 @@ def test_fal_submit_url_and_headers(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(calls, submit_response=_submit_response())
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell")
     m.FalImageAdapter().generate(req)
@@ -138,7 +143,9 @@ def test_fal_submit_body_basic_shape(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(calls, submit_response=_submit_response())
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell")
     m.FalImageAdapter().generate(req)
@@ -153,7 +160,9 @@ def test_fal_submit_includes_seed_when_set(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(calls, submit_response=_submit_response())
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell", seed=42)
     m.FalImageAdapter().generate(req)
@@ -168,7 +177,9 @@ def test_fal_submit_includes_image_size_when_width_and_height_set(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(calls, submit_response=_submit_response())
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell", width=768, height=512)
     m.FalImageAdapter().generate(req)
@@ -183,7 +194,9 @@ def test_fal_submit_omits_image_size_when_only_one_dimension_set(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(calls, submit_response=_submit_response())
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell", width=768, height=None)
     m.FalImageAdapter().generate(req)
@@ -198,7 +211,9 @@ def test_fal_negative_prompt_appended(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(calls, submit_response=_submit_response())
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell", negative_prompt="blurry, low quality")
     m.FalImageAdapter().generate(req)
@@ -217,7 +232,9 @@ def test_fal_submit_includes_reference_image_data_url(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(calls, submit_response=_submit_response())
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     ref = ResolvedReferenceImage(
         file_id=1,
@@ -306,7 +323,9 @@ def test_fal_polls_two_segment_app_id_url_for_three_segment_model(monkeypatch):
         statuses=("IN_QUEUE", "IN_PROGRESS", "COMPLETED"),
     )
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell")
     m.FalImageAdapter().generate(req)
@@ -315,8 +334,14 @@ def test_fal_polls_two_segment_app_id_url_for_three_segment_model(monkeypatch):
     assert poll_urls
     for url in poll_urls:
         assert url == "https://queue.fal.run/fal-ai/flux/requests/req-xyz/status"
-    result_calls = [c for c in calls if c["method"].upper() == "GET" and not c["url"].endswith("/status")]
-    assert result_calls[0]["url"] == "https://queue.fal.run/fal-ai/flux/requests/req-xyz"
+    result_calls = [
+        c
+        for c in calls
+        if c["method"].upper() == "GET" and not c["url"].endswith("/status")
+    ]
+    assert (
+        result_calls[0]["url"] == "https://queue.fal.run/fal-ai/flux/requests/req-xyz"
+    )
 
 
 def test_fal_polls_namespaced_three_segment_app_id_for_four_segment_model(monkeypatch):
@@ -335,7 +360,9 @@ def test_fal_polls_namespaced_three_segment_app_id_for_four_segment_model(monkey
         statuses=("COMPLETED",),
     )
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="workflows/owner/app/variant")
     m.FalImageAdapter().generate(req)
@@ -343,9 +370,18 @@ def test_fal_polls_namespaced_three_segment_app_id_for_four_segment_model(monkey
     poll_urls = [c["url"] for c in calls if c["url"].endswith("/status")]
     assert poll_urls
     for url in poll_urls:
-        assert url == "https://queue.fal.run/workflows/owner/app/requests/req-xyz/status"
-    result_calls = [c for c in calls if c["method"].upper() == "GET" and not c["url"].endswith("/status")]
-    assert result_calls[0]["url"] == "https://queue.fal.run/workflows/owner/app/requests/req-xyz"
+        assert (
+            url == "https://queue.fal.run/workflows/owner/app/requests/req-xyz/status"
+        )
+    result_calls = [
+        c
+        for c in calls
+        if c["method"].upper() == "GET" and not c["url"].endswith("/status")
+    ]
+    assert (
+        result_calls[0]["url"]
+        == "https://queue.fal.run/workflows/owner/app/requests/req-xyz"
+    )
 
 
 def test_fal_single_segment_model_refused_before_network(monkeypatch):
@@ -374,10 +410,14 @@ def test_fal_matching_status_url_polls_fine(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(
         calls,
-        submit_response=_submit_response(request_id="req-1", status_url=expected_status_url),
+        submit_response=_submit_response(
+            request_id="req-1", status_url=expected_status_url
+        ),
     )
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell")
     res = m.FalImageAdapter().generate(req)
@@ -393,14 +433,20 @@ def test_fal_namespaced_matching_status_url_polls_fine(monkeypatch):
     m = _reset_and_import(monkeypatch)
     _patch_no_op_sleep(monkeypatch, m)
 
-    expected_status_url = "https://queue.fal.run/workflows/fal-ai/some-flow/requests/req-1/status"
+    expected_status_url = (
+        "https://queue.fal.run/workflows/fal-ai/some-flow/requests/req-1/status"
+    )
     calls = []
     fake = _make_fake_fetch_json(
         calls,
-        submit_response=_submit_response(request_id="req-1", status_url=expected_status_url),
+        submit_response=_submit_response(
+            request_id="req-1", status_url=expected_status_url
+        ),
     )
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="workflows/fal-ai/some-flow")
     res = m.FalImageAdapter().generate(req)
@@ -420,10 +466,14 @@ def test_fal_mismatching_status_url_raises_and_never_polls_vendor_url(monkeypatc
     calls = []
     fake = _make_fake_fetch_json(
         calls,
-        submit_response=_submit_response(request_id="req-1", status_url=vendor_status_url),
+        submit_response=_submit_response(
+            request_id="req-1", status_url=vendor_status_url
+        ),
     )
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell")
     with pytest.raises(ImageGenerationError) as exc_info:
@@ -453,7 +503,9 @@ def test_fal_mismatching_status_url_different_path_same_host(monkeypatch):
     calls = []
     fake = _make_fake_fetch_json(
         calls,
-        submit_response=_submit_response(request_id="req-1", status_url=vendor_status_url),
+        submit_response=_submit_response(
+            request_id="req-1", status_url=vendor_status_url
+        ),
     )
     monkeypatch.setattr(m, "fetch_json", fake)
 
@@ -479,7 +531,9 @@ def test_fal_poll_lifecycle_in_queue_then_in_progress_then_completed(monkeypatch
         statuses=("IN_QUEUE", "IN_PROGRESS", "COMPLETED"),
     )
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell")
     res = m.FalImageAdapter().generate(req)
@@ -531,7 +585,9 @@ def test_fal_failed_status_raises_sanitized_error(monkeypatch):
             return _submit_response()
         if url.endswith("/status"):
             return {"status": "FAILED", "error": {"message": secret_marker}}
-        raise AssertionError("result URL should never be requested after a FAILED status")
+        raise AssertionError(
+            "result URL should never be requested after a FAILED status"
+        )
 
     monkeypatch.setattr(m, "fetch_json", fake_fetch_json)
 
@@ -604,7 +660,9 @@ def test_fal_result_missing_image_url_raises(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad_request_id", ["abc/def", "abc def", "abc?def", "", "abc#def"])
+@pytest.mark.parametrize(
+    "bad_request_id", ["abc/def", "abc def", "abc?def", "", "abc#def"]
+)
 def test_fal_request_id_charset_refusal(monkeypatch, bad_request_id):
     m = _reset_and_import(monkeypatch)
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
@@ -612,7 +670,9 @@ def test_fal_request_id_charset_refusal(monkeypatch, bad_request_id):
     def fake_fetch_json(method, url, **kw):
         if method.upper() == "POST":
             return _submit_response(request_id=bad_request_id) if bad_request_id else {}
-        raise AssertionError("polling must never be reached with an invalid/missing request_id")
+        raise AssertionError(
+            "polling must never be reached with an invalid/missing request_id"
+        )
 
     monkeypatch.setattr(m, "fetch_json", fake_fetch_json)
 
@@ -626,9 +686,13 @@ def test_fal_request_id_valid_charset_accepted(monkeypatch):
     _patch_no_op_sleep(monkeypatch, m)
 
     calls = []
-    fake = _make_fake_fetch_json(calls, submit_response=_submit_response(request_id="Req-ID-123"))
+    fake = _make_fake_fetch_json(
+        calls, submit_response=_submit_response(request_id="Req-ID-123")
+    )
     monkeypatch.setattr(m, "fetch_json", fake)
-    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+    monkeypatch.setattr(
+        m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png")
+    )
 
     req = _req(model="fal-ai/flux/schnell")
     res = m.FalImageAdapter().generate(req)
@@ -695,7 +759,9 @@ def test_fal_404_names_model_path_and_config_key(monkeypatch):
         request = httpx.Request(method, url)
         response = httpx.Response(404, request=request, text="Not Found")
         raise httpx.HTTPStatusError(
-            "Client error '404 Not Found' for url '{}'".format(url), request=request, response=response
+            "Client error '404 Not Found' for url '{}'".format(url),
+            request=request,
+            response=response,
         )
 
     monkeypatch.setattr(m, "fetch_json", _raise_404)
@@ -718,10 +784,14 @@ def test_fal_403_names_balance_message(monkeypatch):
     def _raise_403(method, url, **kw):
         request = httpx.Request(method, url)
         response = httpx.Response(
-            403, request=request, text="Forbidden: account internal-balance-detail-99 locked"
+            403,
+            request=request,
+            text="Forbidden: account internal-balance-detail-99 locked",
         )
         raise httpx.HTTPStatusError(
-            "Client error '403 Forbidden' for url '{}'".format(url), request=request, response=response
+            "Client error '403 Forbidden' for url '{}'".format(url),
+            request=request,
+            response=response,
         )
 
     monkeypatch.setattr(m, "fetch_json", _raise_403)
@@ -743,7 +813,9 @@ def test_fal_non_404_status_keeps_generic_message(monkeypatch):
         request = httpx.Request(method, url)
         response = httpx.Response(500, request=request, text="Internal Server Error")
         raise httpx.HTTPStatusError(
-            "Server error '500 Internal Server Error' for url '{}'".format(url), request=request, response=response
+            "Server error '500 Internal Server Error' for url '{}'".format(url),
+            request=request,
+            response=response,
         )
 
     monkeypatch.setattr(m, "fetch_json", _raise_500)

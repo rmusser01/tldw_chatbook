@@ -1,0 +1,14 @@
+....FF.......................F                                           [100%]
+=================================== FAILURES ===================================
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_prompt_mixin_composition.py:74: ImportError: cannot import name 'TraceTransform' from 'tldw_chatbook.Chat.console_trace_provenance' (/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/console_trace_provenance.py)
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/console_prepared_request.py:1509: TypeError: test_mixin_overflow_is_mandatory_and_clean_history_remains_compactable.<locals>.<lambda>() takes 1 positional argument but 2 were given
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/DB/base_db.py:606: sqlite3.OperationalError: no such column: masked_value_json
+============================= slowest 25 durations =============================
+1.05s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[True]
+
+(24 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_composition.py::test_agent_tool_loop_preserves_mixin_owner_and_counts_body_once
+FAILED Tests/Chat/test_console_prompt_mixin_composition.py::test_mixin_overflow_is_mandatory_and_clean_history_remains_compactable
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_capture_masks_credentials_but_operational_body_is_exact
+3 failed, 27 passed in 22.05s

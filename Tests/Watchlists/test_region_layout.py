@@ -11,7 +11,10 @@ def test_default_layout_has_everything_visible():
     layout = RegionLayout()
     assert layout.collapsed == frozenset()
     assert layout.visible() == (
-        Region.LEFT_RAIL, Region.ITEMS, Region.CONTENT, Region.RIGHT_RAIL,
+        Region.LEFT_RAIL,
+        Region.ITEMS,
+        Region.CONTENT,
+        Region.RIGHT_RAIL,
     )
 
 

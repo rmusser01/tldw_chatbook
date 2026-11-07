@@ -11,16 +11,17 @@ from types import SimpleNamespace
 path=parent/'ui_state.toml'
 assert not path.exists()
 entered,release=threading.Event(),threading.Event()
-original=raw._replace
+original=raw.replace
 writes=[]
 def held(operation,source,destination):
  if destination==path and not writes:
   entered.set();assert release.wait(10)
  original(operation,source,destination)
  if destination==path:writes.append(path.read_bytes())
-raw._replace=held
+raw.replace=held
 async def main():
  screen=object.__new__(ChatScreen)
+ screen._console_rail_first_use_seeds={}
  screen.ui_state=SimpleNamespace(collapsible_states={'one':True},sidebar_search_query='',last_active_section='one')
  screen._sidebar_state_persist_lock=asyncio.Lock()
  screen._sidebar_state_revision=0
@@ -50,7 +51,7 @@ async def main():
  assert toml.loads(path.read_text())['sidebar']['collapsible_states']=={'one':False,'two':True}
  assert not storage._raw_operations
 try:asyncio.run(main())
-finally:raw._replace=original;release.set()
+finally:raw.replace=original;release.set()
 print('retired and reopened')
 """
 )

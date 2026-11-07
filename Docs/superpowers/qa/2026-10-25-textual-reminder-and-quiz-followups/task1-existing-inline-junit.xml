@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="2" time="16.328" timestamp="2026-10-25T10:52:20.675994-07:00" hostname="DESKTOP-BISU2HE">
+    <testcase classname="Tests.UI.test_schedules_workbench" name="test_junk_at_value_shows_inline_error_and_restores_old_display" time="7.668" />
+    <testcase classname="Tests.UI.test_schedules_workbench" name="test_committing_timezone_edit_preserves_cron" time="6.788" />
+  </testsuite>
+</testsuites>

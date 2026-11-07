@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import random
 import sqlite3
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -1603,9 +1604,7 @@ def test_list_sources_and_collections_are_bounded_redacted_and_filter_bound(
     assert first["sources"][0]["url"] == "https://sources.test/Alpha"
     assert "secret" not in first_raw
     assert mismatched["status"] == "invalid_argument"
-    assert collections["collections"][0]["id"] == (
-        f"local:watchlist:{collection_id}"
-    )
+    assert collections["collections"][0]["id"] == (f"local:watchlist:{collection_id}")
     assert collections["collections"][0]["source_count"] == 3
     assert len(first_raw.encode("utf-8")) < 30 * 1024
 
@@ -1614,8 +1613,7 @@ def test_source_metadata_page_packs_complete_rows_with_compact_continuation(
     db: SubscriptionsDB,
 ) -> None:
     collections = [
-        _collection(db, f"Collection {index} " + "集" * 4_000)
-        for index in range(20)
+        _collection(db, f"Collection {index} " + "集" * 4_000) for index in range(20)
     ]
     source_ids = []
     for index in range(6):
@@ -1855,9 +1853,7 @@ def test_get_briefing_reserves_body_budget_and_shapes_immutable_provenance(
             ],
         )
 
-    raw = _service(db).get_briefing(
-        {"briefing_id": f"local:briefing:{briefing_id}"}
-    )
+    raw = _service(db).get_briefing({"briefing_id": f"local:briefing:{briefing_id}"})
     result = _payload(raw)
     content = result["briefing"]["content"]
 
@@ -1867,9 +1863,7 @@ def test_get_briefing_reserves_body_budget_and_shapes_immutable_provenance(
     assert content["content_truncated"] is True
     assert content["body_markdown"].startswith("Readable 🧪 briefing")
     assert len(content["body_markdown"].encode("utf-8")) >= 4_096
-    assert result["briefing"]["selected_items"][0]["id"] == (
-        "local:watchlist_item:10"
-    )
+    assert result["briefing"]["selected_items"][0]["id"] == ("local:watchlist_item:10")
     assert result["briefing"]["selected_items"][0]["url"] == (
         "https://items.test/story"
     )
@@ -2011,9 +2005,7 @@ def test_operation_status_accepts_only_exact_receipts_and_scrubs_errors(
 
     overview = _payload(service.get_operations_status({"limit": 1}))
     continuation = _payload(
-        service.get_operations_status(
-            {"limit": 1, "cursor": overview["next_cursor"]}
-        )
+        service.get_operations_status({"limit": 1, "cursor": overview["next_cursor"]})
     )
     mismatched = _payload(
         service.get_operations_status(
@@ -2025,16 +2017,16 @@ def test_operation_status_accepts_only_exact_receipts_and_scrubs_errors(
     )
     run = _payload(run_raw)
     briefing = _payload(
-        service.get_operation_status(
-            {"operation_id": f"local:briefing:{briefing_id}"}
-        )
+        service.get_operation_status({"operation_id": f"local:briefing:{briefing_id}"})
     )
     invalid = _payload(service.get_operation_status({"operation_id": str(run_id)}))
 
     assert overview["status"] == "ok"
     assert overview["has_more"] is True
     assert continuation["has_more"] is False
-    assert {row["id"] for row in overview["operations"] + continuation["operations"]} == {
+    assert {
+        row["id"] for row in overview["operations"] + continuation["operations"]
+    } == {
         f"local:watchlist_run:{run_id}",
         f"local:briefing:{briefing_id}",
     }
@@ -2617,3 +2609,308 @@ def test_search_and_detail_are_read_only_against_mutable_database_and_runtime(
 
     assert _database_snapshot(db) == before_db
     assert runtime_state == before_runtime
+
+
+# ---------------------------------------------------------------------------
+# TASK-34400: incremental byte budget — parity with the previous algorithm.
+#
+# The byte-budget packers used to re-serialize the whole accumulated payload
+# for every candidate row (O(n^2) bytes per call). They now serialize each
+# shaped row once and keep a running byte total against a once-per-row
+# envelope measurement. The two oracles below are the OLD loops kept
+# verbatim; the randomized fixed-seed cases assert byte-identical output —
+# same accepted prefix, same page tail (has_more/next_cursor), same cuts.
+# ---------------------------------------------------------------------------
+
+
+def _legacy_packed_search_payload(
+    service: WatchlistsToolService,
+    *,
+    request: Any,
+    as_of: str,
+    page: dict[str, Any],
+    scope: dict[str, Any],
+    memberships: dict[int, dict[str, Any]],
+    fingerprint: str,
+) -> str:
+    """The pre-TASK-34400 ``_search_items`` packing loop, verbatim."""
+    rows = page["items"]
+    items: list[dict[str, Any]] = []
+    final_payload = service._search_response(
+        request=request,
+        as_of=as_of,
+        snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+        scope=scope,
+        items=items,
+        has_more=False,
+        next_cursor=None,
+    )
+    for index, row in enumerate(rows):
+        candidate = service._shape_search_item(
+            row,
+            memberships[int(row["subscription_id"])],
+            request.query,
+        )
+        candidate_items = [*items, candidate]
+        has_more = bool(page["has_more"]) or index < len(rows) - 1
+        next_cursor = (
+            service._encode_cursor(
+                as_of=as_of,
+                snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+                last_effective_date=row["effective_date"],
+                last_item_id=int(row["id"]),
+                filter_fingerprint=fingerprint,
+            )
+            if has_more
+            else None
+        )
+        candidate_payload = service._search_response(
+            request=request,
+            as_of=as_of,
+            snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+            scope=scope,
+            items=candidate_items,
+            has_more=has_more,
+            next_cursor=next_cursor,
+        )
+        if service._json_size(candidate_payload) >= 30 * 1024:
+            break
+        items = candidate_items
+        final_payload = candidate_payload
+    return service._finalize(final_payload)
+
+
+def _legacy_finalize_metadata_page(
+    *,
+    base: dict[str, Any],
+    item_key: str,
+    rows: list[Any],
+    shaped: list[dict[str, Any]],
+    storage_has_more: bool,
+    cursor_for: Any,
+) -> str:
+    """The pre-TASK-34400 ``_finalize_metadata_page``, verbatim."""
+    payload = dict(base)
+    accepted: list[dict[str, Any]] = []
+    payload[item_key] = accepted
+    payload["returned_count"] = 0
+    payload["has_more"] = False
+    payload["next_cursor"] = None
+    for index, (row, item) in enumerate(zip(rows, shaped, strict=True)):
+        accepted.append(item)
+        has_more = storage_has_more or index < len(rows) - 1
+        payload["returned_count"] = len(accepted)
+        payload["has_more"] = has_more
+        payload["next_cursor"] = cursor_for(row) if has_more else None
+        if WatchlistsToolService._json_size(payload) >= 30 * 1024:
+            accepted.pop()
+            if not accepted:
+                raise RuntimeError("bounded Watchlists metadata row did not fit")
+            payload["returned_count"] = len(accepted)
+            payload["has_more"] = True
+            payload["next_cursor"] = cursor_for(rows[index - 1])
+            break
+    return WatchlistsToolService._finalize(payload)
+
+
+class _FakeSearchDatabase:
+    """Just the two read surfaces ``_search_items`` touches."""
+
+    def __init__(
+        self,
+        page: dict[str, Any],
+        memberships: dict[int, dict[str, Any]],
+    ) -> None:
+        self._page = page
+        self._memberships = memberships
+
+    def search_items_for_agent(self, **kwargs: object) -> dict[str, Any]:
+        assert isinstance(kwargs["limit"], int) and 1 <= kwargs["limit"] <= 50
+        return self._page
+
+    def get_source_collection_memberships(
+        self, source_ids: list[int]
+    ) -> dict[int, dict[str, Any]]:
+        assert source_ids == [
+            int(row["subscription_id"]) for row in self._page["items"]
+        ]
+        return self._memberships
+
+
+_TEXT_POOL = (
+    "🧪",          # 4-byte multibyte: exercises UTF-8 byte accounting
+    "needle",      # the query hit
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, ",
+    "日本語のテキストはバイト数と文字数が一致しません。",
+    "a",           # 1-byte filler
+)
+
+
+def _random_text(rng: "random.Random", maximum_chars: int) -> str:
+    parts: list[str] = []
+    length = rng.randrange(0, maximum_chars)
+    while sum(len(part) for part in parts) < length:
+        parts.append(rng.choice(_TEXT_POOL))
+    return "".join(parts)[:length]
+
+
+def _random_row(
+    rng: "random.Random", subscription_id: int, item_id: int, index: int
+) -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "subscription_id": subscription_id,
+        "title": _random_text(rng, rng.choice((12, 300, 1_500))),
+        "title_truncated": False,
+        "author": rng.choice(("Example Author", None, _random_text(rng, 700))),
+        "url": rng.choice(
+            (
+                f"https://items.test/{item_id}",
+                "not a url at all",
+                f"https://items.test/{item_id}/path?q=1",
+            )
+        ),
+        "status": rng.choice(("new", "reviewed", "ingested")),
+        "effective_date": rng.choice(
+            ("2026-08-14T12:00:00Z", None, "2026-08-15T09:30:00+00:00")
+        ),
+        "published_date": "2026-08-14T12:00:00Z",
+        "created_at": "2026-08-14T12:05:00Z",
+        "updated_at": "2026-08-14T12:10:00Z",
+        "content_format": rng.choice((None, "html", "markdown")),
+        "content_kind": rng.choice((None, "article")),
+        "content_match_context": _random_text(rng, rng.choice((1, 900, 5_000))),
+        "subscription_name": _random_text(rng, rng.choice((20, 800))),
+        "subscription_source": f"https://sources.test/{subscription_id}",
+        "subscription_type": "rss",
+        "subscription_is_active": bool(index % 2),
+        "subscription_is_paused": False,
+    }
+
+
+def test_incremental_search_byte_budget_matches_legacy_loop_byte_for_byte() -> None:
+    """Randomized fixed-seed parity: same payload bytes as the old O(n^2) loop."""
+    rng = random.Random(34400)
+    service = _service(_FakeSearchDatabase({}, {}))
+    as_of = service._format_utc(datetime(2026, 8, 14, 21, 30, tzinfo=UTC))
+    checked_a_cut = False
+
+    for case in range(25):
+        subscription_id = 100 + case
+        rows = [
+            _random_row(rng, subscription_id, 1_000 * case + index, index)
+            for index in range(rng.randrange(1, 51))
+        ]
+        page = {
+            "items": rows,
+            "has_more": bool(case % 3),
+            "snapshot_max_item_id": 10_000 + case,
+        }
+        memberships = {
+            subscription_id: {
+                "collections": (
+                    [{"id": 7, "name": _random_text(rng, 900)}] if case % 2 else []
+                ),
+                "has_more": bool(case % 4),
+            }
+        }
+        for query in (None, "needle"):
+            arguments = {"limit": 50}
+            if query is not None:
+                arguments["query"] = query
+            request = service._validate_search(arguments)
+            fingerprint = service._filter_fingerprint(
+                query=request.query,
+                collection_id=None,
+                source_id=None,
+                statuses=request.statuses,
+                since=request.since,
+            )
+            scope = {"collection": None, "source": None}
+            service._db_resolver = lambda page=page, memberships=memberships: (
+                _FakeSearchDatabase(page, memberships)
+            )
+            actual = service.search_items(arguments)
+            expected = _legacy_packed_search_payload(
+                service,
+                request=request,
+                as_of=as_of,
+                page=page,
+                scope=scope,
+                memberships=memberships,
+                fingerprint=fingerprint,
+            )
+            assert actual == expected, f"case {case}, query={query!r}"
+            assert len(actual.encode("utf-8")) < 30 * 1024
+            payload = _payload(actual)
+            if 0 < payload["returned_count"] < len(rows):
+                checked_a_cut = True
+
+    # The randomized set must actually exercise the budget cut, not only
+    # pages that fit whole — otherwise the parity proves little.
+    assert checked_a_cut
+
+
+def test_incremental_metadata_page_byte_budget_matches_legacy_loop_byte_for_byte() -> None:
+    """Randomized fixed-seed parity for the metadata page packer."""
+    rng = random.Random(34401)
+    base = {
+        "status": "ok",
+        "ordering": "casefolded_name_prefix_asc_name_prefix_asc_id_asc",
+        "note": _random_text(rng, 600),
+    }
+    checked_a_cut = False
+    checked_a_refusal = False
+
+    for case in range(25):
+        count = rng.randrange(1, 31)
+        rows = [
+            {"id": index, "name": _random_text(rng, rng.choice((8, 900, 4_000)))}
+            for index in range(count)
+        ]
+        shaped = [
+            {
+                "id": f"local:subscription:{row['id']}",
+                "name": row["name"],
+                "name_truncated": False,
+                "url": f"https://sources.test/{row['id']}",
+                "url_redacted": False,
+                "url_truncated": False,
+                "is_active": True,
+                "is_paused": False,
+                "created_at": "2026-08-01 09:00:00",
+                "updated_at": "2026-08-02 10:00:00",
+                "last_checked": "2026-08-13 11:00:00",
+                "last_successful_check": "2026-08-13 10:55:00",
+            }
+            for row in rows
+        ]
+        storage_has_more = bool(case % 3)
+
+        def cursor_for(row: dict[str, Any], _case: int = case) -> str:
+            # Deliberately variable length: the envelope changes per row.
+            return f"cursor:{_case}:{int(row['id'])}:{len(row['name'])}"
+
+        kwargs = dict(
+            base=base,
+            item_key="sources",
+            rows=rows,
+            shaped=shaped,
+            storage_has_more=storage_has_more,
+            cursor_for=cursor_for,
+        )
+        try:
+            expected = _legacy_finalize_metadata_page(**kwargs)
+        except RuntimeError as exc:
+            with pytest.raises(type(exc), match="metadata row did not fit"):
+                WatchlistsToolService._finalize_metadata_page(**kwargs)
+            checked_a_refusal = True
+            continue
+        actual = WatchlistsToolService._finalize_metadata_page(**kwargs)
+        assert actual == expected, f"case {case}"
+        assert len(actual.encode("utf-8")) < 30 * 1024
+        payload = _payload(actual)
+        if 0 < payload["returned_count"] < count:
+            checked_a_cut = True
+
+    assert checked_a_cut or checked_a_refusal

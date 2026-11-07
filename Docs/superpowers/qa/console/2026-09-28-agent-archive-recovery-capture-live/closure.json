@@ -1,0 +1,18 @@
+{
+  "normal_fingerprints_equal": true,
+  "index_artifacts": {
+    "rag": [],
+    "direct": [],
+    "direct-fixed": []
+  },
+  "server_healthy_idle": true,
+  "model_attempts": 10,
+  "all_10_http_200_sse_done": true,
+  "native_quit_exit_codes": {
+    "rag": 0,
+    "direct": 0,
+    "direct-fixed": 0
+  },
+  "fresh_direct_followup_qualified": false,
+  "reason": "Shared ten-attempt guard reached after Direct tool discovery and archive search; no follow-up sent."
+}

@@ -1,0 +1,10 @@
+{
+  "tag": "after1",
+  "original": false,
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "3ead6f115e72224932396b8b7c89be174bfb7438d24866a5e276ddbb4b56f78e",
+    "tldw_chatbook/Utils/textual_css_fastpath.py": "8f9f4404b37fd627e202d00843ff0c0a0e018381368f058c34c5e78f86f85876"
+  },
+  "exit_code": 0,
+  "seconds": 48.59399999998277
+}

@@ -10,10 +10,11 @@ from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 
-from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
+from tldw_chatbook.Image_Generation.capabilities import (
+    resolve_backend_reference_image_capability,
+)
 from tldw_chatbook.Image_Generation.config import (
-
-# Media_Generation.validation_helpers; these delegates keep the local names
+    # Media_Generation.validation_helpers; these delegates keep the local names
     DEFAULT_INLINE_MAX_BYTES,
     DEFAULT_MAX_HEIGHT,
     DEFAULT_MAX_PIXELS,
@@ -68,7 +69,6 @@ def effective_inline_max_bytes(config: Any | None = None) -> int:
     return value if value > 0 else DEFAULT_INLINE_MAX_BYTES
 
 
-
 def validate_image_generation_request(
     structured: dict[str, Any],
     *,
@@ -81,7 +81,9 @@ def validate_image_generation_request(
 
     issues: list[ImageGenerationValidationIssue] = []
     prompt = structured.get("prompt")
-    max_prompt_length = _positive_int_attr(config, "max_prompt_length", DEFAULT_MAX_PROMPT_LENGTH)
+    max_prompt_length = _positive_int_attr(
+        config, "max_prompt_length", DEFAULT_MAX_PROMPT_LENGTH
+    )
     if isinstance(prompt, str) and len(prompt) > max_prompt_length:
         issues.append(_issue("prompt exceeds max length", "prompt"))
 
@@ -93,14 +95,22 @@ def validate_image_generation_request(
 
     width_ok = _validate_int_bound(issues, width, path="width", max_value=max_width)
     height_ok = _validate_int_bound(issues, height, path="height", max_value=max_height)
-    if width_ok and height_ok and isinstance(width, int) and isinstance(height, int) and width * height > max_pixels:
+    if (
+        width_ok
+        and height_ok
+        and isinstance(width, int)
+        and isinstance(height, int)
+        and width * height > max_pixels
+    ):
         issues.append(_issue("image dimensions exceed max pixels", "width,height"))
 
     steps = structured.get("steps")
     max_steps = _positive_int_attr(config, "max_steps", DEFAULT_MAX_STEPS)
     _validate_int_bound(issues, steps, path="steps", max_value=max_steps)
 
-    _validate_positive_finite_float(issues, structured.get("cfg_scale"), path="cfg_scale")
+    _validate_positive_finite_float(
+        issues, structured.get("cfg_scale"), path="cfg_scale"
+    )
     _validate_extra_params(structured, config, issues)
     _validate_reference_image(structured, config, issues)
     return issues
@@ -112,9 +122,6 @@ def _issue(message: str, path: str) -> ImageGenerationValidationIssue:
         message=message,
         path=path,
     )
-
-
-
 
 
 def _validate_extra_params(
@@ -140,7 +147,9 @@ def _validate_extra_params(
         return
     for key in keys_to_validate:
         if key not in allowlist:
-            issues.append(_issue("extra_params key not allowlisted", f"extra_params.{key}"))
+            issues.append(
+                _issue("extra_params key not allowlisted", f"extra_params.{key}")
+            )
 
     if "cli_args" in extra_params and "cli_args" in allowlist:
         cli_args = extra_params.get("cli_args")
@@ -170,7 +179,10 @@ def _validate_reference_image(
     capability = resolve_backend_reference_image_capability(backend, config=config)
     if not capability.supported:
         issues.append(
-            _issue(f"backend {backend!r} does not support reference images", "reference_image")
+            _issue(
+                f"backend {backend!r} does not support reference images",
+                "reference_image",
+            )
         )
 
     mime_type = getattr(reference_image, "mime_type", None)
@@ -187,18 +199,30 @@ def _validate_reference_image(
     # ``BytesIO`` can leak a raw ``TypeError`` across the validation boundary.
     content = getattr(reference_image, "content", None)
     if content is None:
-        if backend == "comfyui" and getattr(reference_image, "temp_path", None) is not None:
+        if (
+            backend == "comfyui"
+            and getattr(reference_image, "temp_path", None) is not None
+        ):
             issues.append(
-                _issue("ComfyUI reference image must use in-memory content", "reference_image")
+                _issue(
+                    "ComfyUI reference image must use in-memory content",
+                    "reference_image",
+                )
             )
         else:
-            issues.append(_issue("reference image has no content bytes", "reference_image"))
+            issues.append(
+                _issue("reference image has no content bytes", "reference_image")
+            )
     elif type(content) is not bytes:
-        issues.append(_issue("reference image content must be bytes", "reference_image"))
+        issues.append(
+            _issue("reference image content must be bytes", "reference_image")
+        )
     elif not content:
         issues.append(_issue("reference image has no content bytes", "reference_image"))
     elif len(content) > IMAGE_GEN_REFERENCE_MAX_BYTES:
-        issues.append(_issue("reference image exceeds the 10MB limit", "reference_image"))
+        issues.append(
+            _issue("reference image exceeds the 10MB limit", "reference_image")
+        )
     else:
         _validate_reference_image_content(reference_image, content, config, issues)
 
@@ -222,9 +246,10 @@ def _validate_reference_image_content(
             header_valid = True
 
             declared_mime = getattr(reference_image, "mime_type", None)
-            if _REFERENCE_MIME_BY_FORMAT.get(
-                str(detected_format or "").upper()
-            ) != declared_mime:
+            if (
+                _REFERENCE_MIME_BY_FORMAT.get(str(detected_format or "").upper())
+                != declared_mime
+            ):
                 issues.append(
                     _issue(
                         "reference image mime does not match image content",
@@ -264,7 +289,9 @@ def _validate_reference_image_content(
             decoded_pixels = decoded_width * decoded_height
             if decoded_pixels > PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS:
                 issues.append(
-                    _issue("reference image exceeds safe decode limits", "reference_image")
+                    _issue(
+                        "reference image exceeds safe decode limits", "reference_image"
+                    )
                 )
                 header_valid = False
             if decoded_pixels > max_pixels:
@@ -280,11 +307,14 @@ def _validate_reference_image_content(
                 return
             image.load()
     except (Image.DecompressionBombError, Image.DecompressionBombWarning):
-        issues.append(_issue("reference image exceeds safe decode limits", "reference_image"))
+        issues.append(
+            _issue("reference image exceeds safe decode limits", "reference_image")
+        )
         return
     except (OSError, UnidentifiedImageError, ValueError):
         issues.append(_issue("reference image could not be decoded", "reference_image"))
         return
+
 
 def _validate_reference_dimension(
     issues: list[ImageGenerationValidationIssue],
@@ -295,7 +325,12 @@ def _validate_reference_dimension(
 ) -> bool:
     if value is None:
         return True
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value > max_value:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value <= 0
+        or value > max_value
+    ):
         issues.append(_issue(f"reference image {path} out of range", "reference_image"))
         return False
     return True
@@ -316,13 +351,19 @@ _positive_int_attr = shared_helpers.positive_int_attr
 
 
 def _validate_int_bound(issues, value, *, path, max_value):
-    return shared_helpers.validate_int_bound(issues, value, path=path, max_value=max_value, issue=_issue)
+    return shared_helpers.validate_int_bound(
+        issues, value, path=path, max_value=max_value, issue=_issue
+    )
 
 
 def _validate_positive_finite_float(issues, value, *, path):
-    shared_helpers.validate_positive_finite_float(issues, value, path=path, issue=_issue)
+    shared_helpers.validate_positive_finite_float(
+        issues, value, path=path, issue=_issue
+    )
 
 
 def allowed_extra_params_for_backend(backend: str, config: Any) -> set[str]:
     """Return configured passthrough allowlist keys for a image backend."""
-    return shared_helpers.allowed_extra_params_for_backend(backend, config, _EXTRA_PARAM_ATTRS)
+    return shared_helpers.allowed_extra_params_for_backend(
+        backend, config, _EXTRA_PARAM_ATTRS
+    )

@@ -4,7 +4,7 @@ title: First-run wizard - offer a media-first path
 status: To Do
 assignee: []
 created_date: '2026-09-02 04:11'
-updated_date: '2026-09-02 21:07'
+updated_date: '2026-10-03 20:00'
 labels:
   - onboarding
   - media-ux
@@ -21,12 +21,14 @@ priority: low
 The five-step wizard (Welcome, Provider, Model, Voice, Summary) is entirely LLM and voice setup; a user whose goal is ingesting media must skip everything (Esc plus confirm) and find Import on their own. Home's card helps, but the wizard never mentions the Library ingest loop. Related live observation: the Check-model-lists-online consent modal fired on top of the user's first navigation - consider sequencing startup modals so they do not interrupt.
 
 Re-verified 2026-09-02: wizard is now six steps (Welcome/Provider/Model/Voice/Protect/Summary) - still no media/ingest path; the "Check model lists online?" modal fired on first Library entry in the live run.
+
+Narrowed 2026-10-03: this task now covers only AC#3 (startup modals do not interrupt the first navigation). AC#1 and AC#2 (a documents-first path, with skipping still one gesture) moved to the documents-first slice of the approved setup-shape spec (Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md, D8 and §10 F7) and are no longer this task's to do. AC#3 is delivered by the first-run programme's single startup attention queue (review enhancement E10); close this task when that lands.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The wizard surfaces the import or Library path as a first-class option or step
-- [ ] #2 Skipping remains one gesture
+- [ ] #1 The wizard surfaces the import or Library path as a first-class option or step (moved out of this task on 2026-10-03; see Description)
+- [ ] #2 Skipping remains one gesture (moved out of this task on 2026-10-03; see Description)
 - [ ] #3 Startup modals do not interrupt the user's first navigation
 <!-- AC:END -->
 

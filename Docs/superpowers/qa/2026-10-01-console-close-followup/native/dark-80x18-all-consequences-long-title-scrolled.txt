@@ -1,0 +1,18 @@
+         ╭┌──────────────────────────────────────────────────────────┐
+ ⌃1 Home ││                                                          │  More ▾
+──────────│            Temporary or unsaved messages: 1              │──────────
+ Console —│                    Unsent draft: yes                     │ Blocked
+   New tab│                 Pending attachments: 1                   │  Help
+──────────│                   Live agent turns: 1                    │──────────
+ Conversat│                   Delegated agents: 1                 ▇  │
+    ◆ View│                Unsent queued prompts: 1                  │
+ Each tab │         Tool approvals: denied; runs cancelled.          │ >     ✕
+  ────────│         Questions: cancelled without an answer.          │───────▂
+   Tool   │        Skill installs: declined; runs cancelled.         │
+   ? Quest│        Skill scripts: declined; runs cancelled.          │       ▂
+     Priva│   Worktree decisions: cancelled; no merge or discard.    │
+  ────────│                                                          │───────
+──────────│                                                          │──────────
+ Status ▾ │                    Stay        Close                     │  Model:
+█  Compose│                                                          │e
+  Ctrl+Shi└──────────────────────────────────────────────────────────┘

@@ -616,11 +616,14 @@ async def test_bootstrap_history_rejects_wrong_scope_before_apply_or_cursor_adva
         ).cursor
         == "pre-page"
     )
-    assert state.get_sync_v2_profile_state(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-1",
-        workspace_scope=None,
-    )["dataset_cursors"]["sync_v2"] == "pre-page"
+    assert (
+        state.get_sync_v2_profile_state(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-1",
+            workspace_scope=None,
+        )["dataset_cursors"]["sync_v2"]
+        == "pre-page"
+    )
     assert (
         notes.get_connection()
         .execute("SELECT COUNT(*) AS count FROM keywords WHERE deleted = 0")
@@ -697,11 +700,14 @@ async def test_bootstrap_history_rejects_malformed_pagination_before_apply(
         ).cursor
         == "pre-page"
     )
-    assert state.get_sync_v2_profile_state(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-1",
-        workspace_scope=None,
-    )["dataset_cursors"]["sync_v2"] == "pre-page"
+    assert (
+        state.get_sync_v2_profile_state(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-1",
+            workspace_scope=None,
+        )["dataset_cursors"]["sync_v2"]
+        == "pre-page"
+    )
     assert (
         notes.get_connection()
         .execute("SELECT COUNT(*) AS count FROM keywords WHERE deleted = 0")
@@ -774,11 +780,14 @@ async def test_bootstrap_history_rejected_envelope_fails_without_cursor_advance(
         ).cursor
         == "pre-page"
     )
-    assert state.get_sync_v2_profile_state(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-1",
-        workspace_scope=None,
-    )["dataset_cursors"]["sync_v2"] == "pre-page"
+    assert (
+        state.get_sync_v2_profile_state(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-1",
+            workspace_scope=None,
+        )["dataset_cursors"]["sync_v2"]
+        == "pre-page"
+    )
     notes.close_connection()
 
 
@@ -1076,14 +1085,23 @@ async def test_empty_bootstrap_history_reaches_ready_without_a_cursor(tmp_path) 
     )
 
     assert result == {"status": "ready", "dataset_id": "dataset-1"}
-    checkpoint = notes.get_connection().execute(
-        "SELECT local_state, inventory_phase, pull_cursor "
-        "FROM notes_organization_sync_checkpoints"
-    ).fetchone()
+    checkpoint = (
+        notes.get_connection()
+        .execute(
+            "SELECT local_state, inventory_phase, pull_cursor "
+            "FROM notes_organization_sync_checkpoints"
+        )
+        .fetchone()
+    )
     assert tuple(checkpoint) == ("ready", "complete", None)
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM note_folders WHERE name = 'Agent_Lessons' AND deleted = 0"
-    ).fetchone()[0] == 1
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM note_folders WHERE name = 'Agent_Lessons' AND deleted = 0"
+        )
+        .fetchone()[0]
+        == 1
+    )
     notes.close_connection()
 
 
@@ -1132,10 +1150,14 @@ async def test_upgraded_ready_unknown_profile_replays_history_before_seeding(
 
     assert result == {"status": "ready", "dataset_id": "dataset-1"}
     assert history.calls == 1
-    seed = notes.get_connection().execute(
-        "SELECT state, scope_mode FROM agent_lessons_seed_state WHERE "
-        "profile_id = 'server-a' AND dataset_id = 'dataset-1'"
-    ).fetchone()
+    seed = (
+        notes.get_connection()
+        .execute(
+            "SELECT state, scope_mode FROM agent_lessons_seed_state WHERE "
+            "profile_id = 'server-a' AND dataset_id = 'dataset-1'"
+        )
+        .fetchone()
+    )
     assert tuple(seed) == ("seeded", "synchronized")
     notes.close_connection()
 

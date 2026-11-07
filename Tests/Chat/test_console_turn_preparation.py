@@ -732,6 +732,11 @@ def test_pause_actions_are_the_exact_frozen_data_matrix() -> None:
             "send_without_capture",
             "cancel",
         ),
+        ConsolePreparationPauseKind.CONTEXT_COMPACTION: (
+            "compact_and_send",
+            "send_without_compacting",
+            "cancel",
+        ),
     }
 
 
@@ -1750,6 +1755,29 @@ _LEGAL_TRANSITION_SHAPES = frozenset(
         (
             ConsoleTurnPreparationState.PAUSED,
             ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
+            ConsoleTurnPreparationState.CANCELLED,
+            None,
+            False,
+        ),
+        # TASK-34350: a send held at the compaction threshold pauses before
+        # commit, resumes to READY (nothing was committed), or is cancelled.
+        (
+            ConsoleTurnPreparationState.COMMITTING,
+            None,
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.CONTEXT_COMPACTION,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.CONTEXT_COMPACTION,
+            ConsoleTurnPreparationState.READY,
+            None,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.CONTEXT_COMPACTION,
             ConsoleTurnPreparationState.CANCELLED,
             None,
             False,

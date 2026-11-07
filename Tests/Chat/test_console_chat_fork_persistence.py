@@ -1632,3 +1632,29 @@ async def test_video_reference_round_trips_from_store_projection(
         fork_conversation_id=f"refork-{source_inside_snapshot}",
     )
     assert refork.messages[-1].video_tombstone is not None
+
+
+def test_fork_input_helper_reads_original_module_binding_after_first_use(
+    tmp_path, monkeypatch
+):
+    db = CharactersRAGDB(tmp_path / "fork-input-binding.db", client_id="fork-test")
+    try:
+        snapshot = _snapshot(db)
+        kwargs = _conversation_kwargs(snapshot)
+        first = ChatPersistenceService._fork_conversation_kwargs(snapshot, kwargs)
+        original = chat_persistence_service.snapshot_from_session_settings
+        observed = []
+
+        def current_snapshot(settings):
+            observed.append(settings)
+            return original(settings)
+
+        monkeypatch.setattr(
+            chat_persistence_service, "snapshot_from_session_settings", current_snapshot
+        )
+        assert (
+            ChatPersistenceService._fork_conversation_kwargs(snapshot, kwargs) == first
+        )
+        assert observed == [snapshot.configuration.settings]
+    finally:
+        db.close()

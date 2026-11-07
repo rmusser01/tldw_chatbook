@@ -50,9 +50,7 @@ class TestRealConfigKeyNamesAreDetected:
         # Real TOML keys under [SearchEngines], read from the shipped
         # default config rather than typed by hand.
         search_engines = DEFAULT_CONFIG["SearchEngines"]
-        provider_key_names = [
-            key for key in search_engines if key.endswith("_api_key")
-        ]
+        provider_key_names = [key for key in search_engines if key.endswith("_api_key")]
         # Sanity: the default config still actually ships this family.
         assert len(provider_key_names) >= 5
         for key_name in provider_key_names:

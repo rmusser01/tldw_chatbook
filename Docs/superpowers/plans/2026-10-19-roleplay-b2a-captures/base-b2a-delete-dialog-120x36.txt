@@ -1,0 +1,36 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Roleplay  Characters › Ada (Debugging Partner)                                  No chat provider · Settings ›   Local
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+│ │  Library              <  ││           ▸ Try a test chat (nothing saved)            ││                            │ │
+│ │  Search...               ││ Character                                              ││  Inspector             >   │ │
+│ │           New            ││  Name: Ada (Debugging Partner)                         ││ Selected: Ada (Debugging   │ │
+│ │      New Actor Pack      ││                                                        ││ Partner)                   │ │
+│ │          Import          │█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█Type: character            │ │
+│ │    Import Actor Pack     │█                                                          █Validation: OK             │ │
+│ │        Duplicate         │█                          Delete                          █Conversations (0)          │ │
+│ │        Sort: Name        │█                                                          █  Search this              │ │
+│ │         Tag: All         │█     Delete 3 characters? This cannot be undone here.     █ No saved conversations.   │ │
+│ │  ● Ada (Debugging Par…   │█                                                          █                           │ │
+│ │  A patient senior eng…   │█                                                          █Readiness                  │ │
+│ │  ● ARIA-7                │█                   Cancel       Delete                    █Chat now blocked: openai   │ │
+│ │  A ship AI that has q… ▇ │█                                                          █is not ready: Missing API  │ │
+│ │  ● Brother Anselm        │█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█key. Set OPENAI_API_KEY    │ │
+│ │  A monastery brewer w…   ││ Alternate greetings: 0                                 ││ or add api_key under       │ │
+│ │  Captain Isolde Varga    ││                                                        ││ [api_settings.openai].     │ │
+│ │  Captain Isolde Varga…   ││  Voice & Speech                                        ││         Chat now           │ │
+│ │  Chef Auguste            ││  Use global default                               ▼    ││   Send to Console draft    │ │
+│ │  A temperamental Pari…   ││  Using the global speech default.                      ││        Export JSON       ▂ │ │
+│ │  Coach Pemberton         ││    Create                                              ││        Export PNG          │ │
+│ │  A relentlessly upbea…   ││ Avatar: none                                           ││     Export Actor Pack      │ │
+│ │  Default Assistant       ││                                                      ▆ ││          Delete            │ │
+│ │ 3 marked                 ││    Edit     Conversations (0)                          ││                            │ │
+│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | F1 · Ctrl+P · Ctrl+Q

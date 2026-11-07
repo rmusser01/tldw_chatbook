@@ -78,6 +78,8 @@ class ConsoleTerminalController:
         self._frame_pending = False
         self._last_fingerprint: object | None = None
         self._visible_session_id: str | None = None
+        #: TASK-33625.3: rail sides the user asked for during this visit.
+        self._reclaimed_rails: frozenset[str] = frozenset()
 
     @property
     def is_open(self) -> bool:
@@ -102,6 +104,7 @@ class ConsoleTerminalController:
         self._mount_generation += 1
         generation = self._mount_generation
         self._view = view
+        self._reclaimed_rails = frozenset()  # each visit starts from the yield
         self._last_fingerprint = None
         self._visible_session_id = None
         try:
@@ -243,7 +246,16 @@ class ConsoleTerminalController:
         admitted = getattr(created, "admitted", False) is True
         if not admitted:
             self._status("Terminal session was refused.")
-        return admitted
+            return False
+        # TASK-33622.5: the manager selects a new session only when nothing
+        # is selected, so Terminal 2 left Terminal 1 taking the keys, and no
+        # create ever focused the viewport -- typed shell commands went to the
+        # chat composer. Select the new session and hand it the keyboard.
+        projection = getattr(created, "projection", None)
+        session_id = getattr(projection, "session_id", None)
+        if isinstance(session_id, str):
+            self.request_focus(session_id)
+        return True
 
     async def request_rename(self, session_id: str) -> bool:
         """Validate a user-visible rename before manager revalidation."""
@@ -297,6 +309,88 @@ class ConsoleTerminalController:
             self._status("Terminal session could not be closed.")
             return False
         return receipt is not None
+
+    def reclaim_rails(self, *, left_open: bool | None, right_open: bool | None) -> None:
+        """Exempt the rail sides the user just asked for from the Terminal's yield.
+
+        TASK-33625.3: under a narrow Terminal both rails yield by default,
+        but Alt+C, Alt+I or a handle must still open (or close) a rail;
+        otherwise the toggle writes a preference and shows nothing.
+
+        Args:
+            left_open: The Context rail request, or ``None`` when untouched.
+            right_open: The Inspect rail request, or ``None`` when untouched.
+        """
+        sides = (("left", left_open), ("right", right_open))
+        self._reclaimed_rails |= {side for side, value in sides if value is not None}
+
+    def yield_rails(self, rail_state: Any, available_columns: int | None) -> Any:
+        """Return ``rail_state`` with the narrow-width Terminal rail yield applied.
+
+        Args:
+            rail_state: The effective ``ConsoleRailState`` after every other rule.
+            available_columns: Current Console width, when known.
+
+        Returns:
+            The rail state the Terminal center renders with.
+        """
+        from tldw_chatbook.Chat.console_rail_state import (
+            yield_console_rails_to_terminal,
+        )
+
+        return yield_console_rails_to_terminal(
+            rail_state, available_columns, reclaimed=self._reclaimed_rails
+        )
+
+    def owns_widget(self, widget: object | None) -> bool:
+        """Return whether ``widget`` is a visible part of the mounted workspace.
+
+        TASK-33622.5: the screen's pane/focus bookkeeping asks this so the
+        Terminal center counts as the Console's center pane while it is open.
+
+        Args:
+            widget: Focused (or candidate) widget, or ``None``.
+
+        Returns:
+            ``True`` only for the attached workspace or a descendant of it
+            whose whole ancestor chain is displayed.
+        """
+        workspace = self._workspace_accessor()
+        if workspace is None or not getattr(workspace, "is_attached", False):
+            return False
+        if widget is not workspace and workspace not in getattr(
+            widget, "ancestors", ()
+        ):
+            return False
+        current: Any = widget
+        while current is not None:
+            if current.display is False or current.styles.display == "none":
+                return False
+            current = getattr(current, "parent", None)
+        return True
+
+    def focus_target_ids(self) -> tuple[str, ...]:
+        """Return the workspace's focus candidates, most useful first.
+
+        TASK-33622.5: the live session's viewport when one is selected and
+        armed; otherwise the one control that moves the user forward.
+
+        Returns:
+            Widget ids for the screen's displayed-first focus walk.
+        """
+        runtime = self._terminal_runtime()
+        if (
+            getattr(runtime, "armed", False) is True
+            and getattr(runtime, "selected_session_id", None) is not None
+        ):
+            return ("console-terminal-viewport", "console-terminal-return")
+        return (
+            "console-terminal-retry",
+            "console-terminal-new",
+            "console-terminal-arm",
+            "console-terminal-open-settings",
+            "console-terminal-return",
+        )
 
     def request_focus(self, session_id: str) -> bool:
         """Select a retained session through the current view generation."""
@@ -366,22 +460,38 @@ class ConsoleTerminalController:
             return False
         return getattr(result, "accepted", False) is True
 
-    def send_paste(self, text: str, *, bracketed: bool) -> bool:
-        """Offer one atomic paste through the manager-owned input actor."""
-        selected = self._selected_session_id()
+    def send_paste(self, text: str, *, bracketed: bool | None = None) -> bool:
+        """Offer one atomic paste using the live selected session's mode by default."""
         view = self._view
-        if selected is None or view is None:
+        if view is None:
             return False
         try:
-            result = self._terminal_runtime().send_paste(
+            runtime = self._terminal_runtime()
+            state = runtime.view_state(view)
+            if not isinstance(state, TerminalViewState):
+                return False
+            selected = state.selected_session_id
+            session = next(
+                (item for item in state.sessions if item.projection.session_id == selected),
+                None,
+            )
+            if session is None:
+                return False
+            result = runtime.send_paste(
                 selected,
                 text,
-                bracketed=bracketed,
+                bracketed=session.screen.bracketed_paste if bracketed is None else bracketed,
                 view=view,
             )
         except Exception:
+            self._status("Terminal paste is unavailable.")
             return False
-        return getattr(result, "accepted", False) is True
+        accepted = getattr(result, "accepted", False) is True
+        if not accepted:
+            self._status(getattr(result, "safe_message", "") or "Terminal paste is unavailable.")
+        else:
+            self._status("")
+        return accepted
 
     async def request_resize(self, columns: int, rows: int) -> bool:
         """Offer and apply the latest selected-session resize for this view."""
@@ -545,6 +655,154 @@ class ConsoleTerminalController:
         setter = getattr(workspace, "set_status", None)
         if callable(setter):
             setter(message)
+
+
+def sync_terminal_center_chrome(screen: Any) -> None:
+    """Collapse the chat composer while the Terminal owns the Console center.
+
+    TASK-33622.5 (owner decision 2026-10-27): typing into a visible composer
+    under a host terminal was a mode error -- shell commands became chat
+    drafts and Enter sent them to the model. The composer is hidden AND
+    unfocusable here (``focus()`` still lands on a ``display: none`` widget),
+    the footer names Terminal keys, and chat comes back with "Return to
+    transcript". The user's own composer collapse is left untouched.
+
+    Args:
+        screen: The Console ``ChatScreen`` whose center was just swapped.
+    """
+    terminal_open = screen._console_terminal_open is True
+    composer = screen._console_composer_or_none()
+    if composer is not None:
+        if terminal_open:
+            screen._console_unknown_send_armed = None
+            popup = screen._console_command_popup_or_none()
+            if popup is not None:
+                popup.hide()
+        composer.display = not terminal_open
+        composer.can_focus = (
+            not terminal_open
+            and not screen._console_composer_collapsed
+            and not screen._console_setup_modal_blocking()
+        )
+    screen._register_console_footer_shortcuts()
+
+
+def capture_center_reading(screen: Any, center: Any) -> None:
+    """Remember the transcript reading position before the Terminal replaces it.
+
+    TASK-33622.8: the swap removes the transcript region, and its return
+    mounts a fresh one; this is the position "Return to transcript" restores.
+
+    Args:
+        screen: The Console ``ChatScreen`` swapping its center.
+        center: The center about to be removed (only a transcript region
+            carries a reading state).
+    """
+    capture = getattr(center, "capture_reading_state", None)
+    if callable(capture):
+        pending = screen._console_terminal_return_reading
+        if pending is not None and pending[0] == _active_console_session_id(screen):
+            return  # Return/Open again must not recapture an unrestored center.
+        # The store may already be activating B while A is still painted.
+        # Never relabel A's offset with the active-but-unpublished owner.
+        owner = center.reading_session_id
+        screen._console_terminal_return_reading = (
+            (owner, capture())
+            if owner is not None and owner == _active_console_session_id(screen)
+            else None
+        )
+
+
+def _active_console_session_id(screen: Any) -> str | None:
+    """Return the Console store's active session id, or ``None`` without one."""
+    store = getattr(screen, "_console_chat_store", None)
+    return getattr(store, "active_session_id", None)
+
+
+def finish_center_swap(screen: Any) -> None:
+    """Settle chrome, focus and content after the Console center was swapped.
+
+    TASK-33622.8: returning mounts a fresh transcript center, and nothing
+    re-synced it -- the tab strip showed only "New tab", a populated chat
+    read "No messages yet." (the transcript sync gate still held the
+    pre-swap token), and focus sat on the transcript, where "y" opened
+    Trace. The return now re-renders tabs and transcript, restores the
+    captured reading position, and focuses the composer.
+
+    Args:
+        screen: The Console ``ChatScreen`` whose center was just mounted.
+    """
+    sync_terminal_center_chrome(screen)
+    # TASK-33625.3: a narrow Terminal takes the rails, and Return gives them back.
+    screen._sync_console_rail_visibility_if_changed(
+        screen._current_console_rail_state()
+    )
+    if screen._console_terminal_open:
+        screen.call_after_refresh(screen._focus_open_console_terminal)
+        return
+    # The mounted transcript is new: its sync gate must not skip it.
+    screen._console_transcript_sync_token = None
+    screen.run_worker(
+        screen._sync_native_console_chat_ui(),
+        group="console-sync",
+        exclusive=True,
+    )
+    screen.call_after_refresh(
+        screen._focus_console_workbench_target, "console-native-composer"
+    )
+
+
+def restore_returned_reading_after_publication(screen: Any) -> None:
+    """Restore a pending return only after the existing sync publishes its center."""
+    reading = screen._console_terminal_return_reading
+    if reading is None or screen._console_terminal_open:
+        return
+    session_id, state = reading
+    if session_id != _active_console_session_id(screen):
+        screen._console_terminal_return_reading = None
+        return
+    region = screen._console_transcript_region_or_none()
+    if region is None or not region.is_attached or region.reading_session_id != session_id:
+        return
+
+    def still_current() -> bool:
+        return (
+            region.is_attached
+            and screen._console_terminal_return_reading is reading
+            and region.reading_session_id == session_id
+            and not screen._console_terminal_open
+            and session_id == _active_console_session_id(screen)
+            and region is screen._console_transcript_region_or_none()
+        )
+
+    def restored() -> None:
+        if screen._console_terminal_return_reading is reading:
+            screen._console_terminal_return_reading = None
+
+    def restore() -> None:
+        if screen._console_terminal_return_reading is not reading:
+            return
+        if session_id != _active_console_session_id(screen):
+            screen._console_terminal_return_reading = None
+            return
+        if not still_current():
+            return
+        screen._restore_console_transcript_reading_state(
+            state, is_current=still_current, on_restored=restored
+        )
+
+    screen.call_after_refresh(restore)
+
+
+def capturing_viewport(screen: Any) -> Any | None:
+    """Return only the focused Terminal viewport that currently owns input."""
+    focused = screen.focused
+    if not screen._console_terminal_open or getattr(focused, "id", None) != "console-terminal-viewport":
+        return None
+    # Preserve lazy Terminal imports on the ordinary Console first-paint path.
+    from ...Widgets.Console.console_terminal_workspace import TerminalViewport
+
+    return focused if isinstance(focused, TerminalViewport) and focused.input_focused else None
 
 
 def _projection_fingerprint(

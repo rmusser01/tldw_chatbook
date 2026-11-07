@@ -1,0 +1,4 @@
+{
+  "sha256": "8d8716d822807a5056d53fab4e0446961ad026673d7bd6b0232b47651a88e602",
+  "raw_text": "FAIL: scripts/ui_pr_gate_census.txt is not intact (2 problem(s)):\n  - node id overlaps a whole-file entry: Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys\n    Tests/UI/test_library_rail_switch_keeps_reader_and_note.py is also listed and contains it; pytest collapses overlapping arguments (ADR-103). Drop one of the two.\n  - node id overlaps a whole-file entry: Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_restore_releases_only_its_failed_focus_marker\n    Tests/UI/test_library_rail_switch_keeps_reader_and_note.py is also listed and contains it; pytest collapses overlapping arguments (ADR-103). Drop one of the two.\n"
+}

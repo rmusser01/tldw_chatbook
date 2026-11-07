@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N    N   Library notes · Manage sync folders                                                                             │
+│ │ Navigation       Collapse      │  a    o   Nothing chosen yet.                                                                                             │
+│ │     Import…                    │  v    t   Sync folder (name unavailable before cutover)                                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e   ✓ Up to date as of 15:17 · Next: Check changes                                                                  │
+│ │ ▊ Search Library…        ▎▊x▎  │       s                                                  Check changes                                                    │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │                                                              Pause                                                        │
+│ │                                │                                           ○ Retarget unavailable — not in this release                                    │
+│ │ ─────────────────────────────  │                                          ○ Disconnect unavailable — not in this release                                   │
+│ │ Browse                    ▾    │                                                                                                                           │
+│ │    Media (0) — your files      │                                                                                                                           │
+│ │    Conversations (0)           │           Receipts                                                                                                        │
+│ │  ▸ Notes (1)                   │           2026-10-08 15:17 · Wrote note to file · quotes.md · quotes                                                      │
+│ │    Prompts (0) — reuse         │           2026-10-08 15:17 · Wrote note to file · quotes.md · quotes                                                      │
+│ │    Skills (1) — AI add-ons     │<---       2026-10-08 15:17 · Wrote note to file · quotes.md · quotes                                                      │
+│ │    Collections (0)             │           2026-10-08 15:17 · Wrote note to file · quotes.md · quotes                                                      │
+│ │    Search / RAG — find all     │           2026-10-08 15:16 · Wrote note to file · quotes.md · quotes                                                      │
+│ │ ─────────────────────────────  │           2026-10-08 15:16 · Wrote note to file · quotes.md · quotes                                                      │
+│ │ Artifacts                 ▾    │                                                                                                                           │
+│ │    All artifacts               │     --->                                                                                                                  │
+│ │    Chatbooks                   │                                                                                                                           │
+│ │    Reports                     │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Create                    ▾    │                                                                                                                           │
+│ │    New note                    │<---                                                                                                                       │
+│ │    New prompt                  │                                                                                                                           │
+│ │    New skill                   │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Study                     ▾    │                                                                                                                           │
+│ │    Study decks (0)             │                                                                                                                           │
+│ │    Flashcards due: 0           │                                                                                                                           │
+│ │    Quizzes (0)                 │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Import / Export           ▾    │                                                                                                                           │
+│ │    Import…                     │                                                                                                                           │
+│ │    Export                    ▇ │                                                                                                                           │
+│ │  ▾ scroll for more             │           Retarget/Disconnect unavailable — not in this release; nothing on disk or in Notes changes.                     │
+│ └────────────────────────────────┘            ┃   ‹ Notes    ┃                                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter run action | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,24 @@
+                                                    ╭─────────────╮
+ ‹ s  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Diagnostics
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Read-only here | Validation     │
+│  Core                        │  │  │  and reload expose status without       │
+│      Overview (view)         │  │  │  writing raw TOML.                      │
+│      Providers & Models      │  │  │ │  Write safety: validation is       │  │
+│      Web Search              │  │  │ │  read-only                         │  │
+│      Speech & TTS            │  │  │ │  Diagnostics writes: not           │  │
+│  Interface                   │  │  │ │  available yet - raw edits remain  │  │
+│      Appearance              │  │  │ │  gated in Advanced Config          │  │
+│      Theme                 ▃ │  │  │ │  Validate Config                   │  │
+│      Splash Screen           │  │  │ │  Reload Config                     │▂ │
+│      Console Behavior        │  │  │ │  Run Setup Wizard                  │  │
+│  Data & Privacy              │  │  │ │  Config validation: not run        │  │
+│      Storage                 │  │  │ │  Config reload: not run            │  │
+│      Workspaces              │  │  │ └────────────────────────────────────┘  │
+│      Tool Profiles           │  │  │                                         │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Config validation, logs, and troubleshooting signals.
+  t validate config | F1 · F6 · Ctrl+P · Ctrl+Q

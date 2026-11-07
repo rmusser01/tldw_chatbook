@@ -33,6 +33,7 @@ yet folded when the PROCESS exits -- it is durable nowhere (``agent_runs``
 rows carry no token data), which is why there is deliberately NO
 mount-time usage reconcile.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -276,9 +277,7 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
             )
             assert outcome.status == "done"
             assert gateway.entered_event.wait(5), "the child never started"
-            await _finalize(
-                controller, aid, session.id, signals, resolution, outcome
-            )
+            await _finalize(controller, aid, session.id, signals, resolution, outcome)
             persisted_id = store.get_message(aid).persisted_message_id
             assert persisted_id is not None, (
                 "precondition: the turn's terminal mark persisted the reply"
@@ -290,9 +289,7 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
             await controller.shutdown()
 
             # The screen is gone. The survivor bills one more call.
-            signals.record_usage_payload(
-                {"prompt_tokens": 40, "completion_tokens": 5}
-            )
+            signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
             signals.close_usage_call()
         finally:
             gate.set()
@@ -300,9 +297,8 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
 
         folded = await _settle(
             lambda: (
-                store.get_message(aid).usage or ProviderUsage()
-            ).total_tokens
-            == 165
+                (store.get_message(aid).usage or ProviderUsage()).total_tokens == 165
+            )
         )
         assert folded, (
             "the post-teardown fold never ran: usage is "
@@ -360,14 +356,11 @@ async def test_a_conversation_export_includes_survivor_spend_after_the_fold(
         signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
         signals.close_usage_call()
 
-        controller._on_fleet_drained_reattach_usage(
-            _drain_event(session.id, aid)
-        )
+        controller._on_fleet_drained_reattach_usage(_drain_event(session.id, aid))
         folded = await _settle(
             lambda: (
-                store.get_message(aid).usage or ProviderUsage()
-            ).total_tokens
-            == 165
+                (store.get_message(aid).usage or ProviderUsage()).total_tokens == 165
+            )
         )
         assert folded, "precondition: the fold itself must have landed"
 
@@ -379,9 +372,7 @@ async def test_a_conversation_export_includes_survivor_spend_after_the_fold(
             for message in payload["messages"]
             if "usage" in message
         ]
-        assert [u.total_tokens for u in exported_usages if u is not None] == [
-            165
-        ], (
+        assert [u.total_tokens for u in exported_usages if u is not None] == [165], (
             "the export must include the folded usage row (survivor spend "
             f"included): {payload['messages']}"
         )
@@ -430,8 +421,9 @@ async def test_an_earlier_turns_survivor_folds_onto_its_own_message_after_a_late
         _drain_event(session.id, first.id, status="cancelled", run_id=None)
     )
     folded = await _settle(
-        lambda: (store.get_message(first.id).usage or ProviderUsage()).total_tokens
-        == 165
+        lambda: (
+            (store.get_message(first.id).usage or ProviderUsage()).total_tokens == 165
+        )
     )
     assert folded, (
         "the earlier turn's survivor spend must fold onto its OWN message "
@@ -466,9 +458,9 @@ async def test_re_attaching_twice_yields_the_same_stored_total():
     controller._on_fleet_drained_reattach_usage(event)
     folded = await _settle(
         lambda: (
-            store.get_message(placeholder.id).usage or ProviderUsage()
-        ).total_tokens
-        == 165
+            (store.get_message(placeholder.id).usage or ProviderUsage()).total_tokens
+            == 165
+        )
     )
     assert folded
     first_json = store.get_message(placeholder.id).usage.to_json()
@@ -501,7 +493,10 @@ async def test_a_drain_for_an_unwatched_turn_is_a_harmless_no_op():
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
     await _finalize(
-        controller, earlier.id, session.id, _turn_signals(prompt=7, completion=1),
+        controller,
+        earlier.id,
+        session.id,
+        _turn_signals(prompt=7, completion=1),
         resolution,
     )
 
@@ -546,9 +541,7 @@ async def test_the_fold_preserves_the_turns_partial_flag():
     signals = _turn_signals()
     # The cancel path's exact pair (production order): partial attach,
     # then the watch with the same flag.
-    controller._attach_stream_usage(
-        placeholder.id, signals, resolution, partial=True
-    )
+    controller._attach_stream_usage(placeholder.id, signals, resolution, partial=True)
     controller._watch_post_turn_usage(
         session.id,
         signals,
@@ -565,9 +558,9 @@ async def test_the_fold_preserves_the_turns_partial_flag():
     )
     folded = await _settle(
         lambda: (
-            store.get_message(placeholder.id).usage or ProviderUsage()
-        ).total_tokens
-        == 165
+            (store.get_message(placeholder.id).usage or ProviderUsage()).total_tokens
+            == 165
+        )
     )
     assert folded, f"fold never landed: {store.get_message(placeholder.id).usage!r}"
     usage = store.get_message(placeholder.id).usage
@@ -593,9 +586,7 @@ async def test_source_map_records_only_turns_that_still_owe_a_drain():
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
     resolution = _resolution()
-    await _finalize(
-        controller, childless.id, session.id, _turn_signals(), resolution
-    )
+    await _finalize(controller, childless.id, session.id, _turn_signals(), resolution)
     assert controller._fleet_usage_reattach_sources == {}, (
         "a turn owing no drain must not retain its signals object"
     )
@@ -611,9 +602,7 @@ async def test_source_map_records_only_turns_that_still_owe_a_drain():
     controller._on_fleet_drained_reattach_usage(
         _drain_event(session.id, survivor_turn.id)
     )
-    await _settle(
-        lambda: controller._fleet_usage_reattach_sources == {}, seconds=2.0
-    )
+    await _settle(lambda: controller._fleet_usage_reattach_sources == {}, seconds=2.0)
     assert controller._fleet_usage_reattach_sources == {}
 
 
@@ -625,9 +614,7 @@ def test_has_unsettled_children_reads_the_drain_paired_counter(tmp_path):
     the re-attach source for a turn finalizing in that window."""
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=None
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
     assert bridge.has_unsettled_children("conv-x") is False
     with bridge._change_window_lock:
         bridge._live_child_counts["conv-x"] = 0
@@ -662,6 +649,4 @@ def test_the_consumer_is_registered_at_construction_and_on_runtime_refresh():
 
     # No bridge / a bridge without the seam: constructor must not raise.
     ConsoleChatController(store=store, provider_gateway=object(), agent_bridge=None)
-    ConsoleChatController(
-        store=store, provider_gateway=object(), agent_bridge=object()
-    )
+    ConsoleChatController(store=store, provider_gateway=object(), agent_bridge=object())

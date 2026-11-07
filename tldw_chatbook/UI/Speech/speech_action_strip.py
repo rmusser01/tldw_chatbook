@@ -26,9 +26,7 @@ from ..Workbench.workbench_state import WorkbenchAction
 class SpeechActionStrip(Horizontal):
     """Text actions in a row, mounted under the ids they were given."""
 
-    def __init__(
-        self, actions: Iterable[WorkbenchAction], **kwargs: Any
-    ) -> None:
+    def __init__(self, actions: Iterable[WorkbenchAction], **kwargs: Any) -> None:
         """Create the strip.
 
         Args:

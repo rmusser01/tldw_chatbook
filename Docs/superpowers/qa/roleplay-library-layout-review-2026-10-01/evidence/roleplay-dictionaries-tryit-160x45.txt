@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                     │
+│ Author the pieces that shape a chat                                                                                                                          │
+│  Ready                                                                                                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Dictionaries — text find/replace rules · 3
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                                                                            ││                                     │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││                                                                            ││  Inspector                       >  │ │
+│ │ ▊  Search...                      ▎ ││                                                                            ││ Selected: Fantasy Anachronism Swaps │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││                                                                            ││ Type: dictionary                    │ │
+│ │    New     Import     Duplicate     ││                                                                            ││ Validation: OK                      │ │
+│ │                                     ││                                                                            ││ Readiness                           │ │
+│ │  British to American spelling       ││  Entries  Settings  Stats  Versions  Attachments                           ││ Console chat is for characters and  │ │
+│ │  15 entries · on                    ││                                                                            ││ personas.                           │ │
+│ │  Fantasy Anachronism Swaps          ││                                                                            ││               Delete                │ │
+│ │  8 entries · on                     ││  pattern   replacement     type     prob %  group  pri                     ││            Manage Buddy             │ │
+│ │  Profanity Softener                 ││  phone     speaking-stone  literal  100            0                       ││             Show Buddy              │ │
+│ │  6 entries · off                    ││  car       carriage        literal  100            0                       ││             Close Buddy             │ │
+│ │                                     ││ Try it — substitution preview                                              ││            Disable Buddy            │ │
+│ │                                     ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││                                     │ │
+│ │                                     ││ ▊ Grab your phone and the car keys, OK? The police took my computer.     ▎ ││                                     │ │
+│ │                                     ││ ▊                                                                        ▎ ││                                     │ │
+│ │                                     ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││                                     │ │
+│ │                                     ││   Run preview                                                              ││                                     │ │
+│ │                                     ││ Changed spans highlighted below.                                           ││                                     │ │
+│ │                                     ││ Grab your phone and the car keys, OK? The police took my computer.         ││                                     │ │
+│ │                                     ││ Grab your speaking-stone and the carriage keys, Aye? The city watch took   ││                                     │ │
+│ │                                     ││ my scrying-glass.                                                          ││                                     │ │
+│ │                                     ││ 5 fired · 0 skipped · 6/1000 tokens                                        ││                                     │ │
+│ │                                     ││ /\bOK\b/ → Aye · ×1 · 1 tok                                                ││                                     │ │
+│ │                                     ││ car → carriage · ×1 · 1 tok                                                ││                                     │ │
+│ │                                     ││ computer → scrying-glass · ×1 · 1 tok                                      ││                                     │ │
+│ │                                     ││ phone → speaking-stone · ×1 · 1 tok                                        ││                                     │ │
+│ │                                     ││ police → city watch · ×1 · 2 tok                                           ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | f6 pane | c/p/d/l mode | [ ] mode | space toggle | F1 help · Ctrl+P palette · Ctrl+Q quit

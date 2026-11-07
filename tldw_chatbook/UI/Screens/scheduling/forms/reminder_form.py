@@ -566,9 +566,13 @@ class ReminderForm(ModalScreen):
         self.query_one("#reminder-title", Input).value = self._reminder_task.title
         body = self._reminder_task.body or ""
         self.query_one("#reminder-body", TextArea).text = body
-        self.query_one("#reminder-kind", Select).value = self._reminder_task.schedule_kind.value
+        self.query_one(
+            "#reminder-kind", Select
+        ).value = self._reminder_task.schedule_kind.value
         if self._reminder_task.run_at is not None:
-            self.query_one("#reminder-run-at", Input).value = self._reminder_task.run_at.isoformat()
+            self.query_one(
+                "#reminder-run-at", Input
+            ).value = self._reminder_task.run_at.isoformat()
             self._update_run_at_preview()
         if self._reminder_task.cron is not None:
             self.query_one("#reminder-cron", Input).value = self._reminder_task.cron
@@ -727,7 +731,9 @@ class ReminderForm(ModalScreen):
         if not cron:
             preview.update("")
         elif croniter.is_valid(cron):
-            preview.update(f"Runs: {_humanize_cron(cron, timezone or _DEFAULT_TIMEZONE)}")
+            preview.update(
+                f"Runs: {_humanize_cron(cron, timezone or _DEFAULT_TIMEZONE)}"
+            )
         else:
             preview.update("Not a valid cron expression yet.")
 
@@ -845,5 +851,10 @@ class ReminderForm(ModalScreen):
             # Preserve the current enabled state when editing.
             form_data["enabled"] = self._reminder_task.enabled
 
-        self.post_message(ReminderFormSubmitted(form_data, task_id=self._reminder_task.id if self._reminder_task else None))
+        self.post_message(
+            ReminderFormSubmitted(
+                form_data,
+                task_id=self._reminder_task.id if self._reminder_task else None,
+            )
+        )
         self.dismiss(form_data)

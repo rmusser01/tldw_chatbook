@@ -326,13 +326,18 @@ def test_wikilink_targets_are_recorded_without_embeds(vault: Path) -> None:
 def test_obsidian_mode_off_leaves_frontmatter_and_links_untouched(
     vault: Path,
 ) -> None:
-    """With the toggle off the parser behaves exactly as it did before."""
+    """With the toggle off the parser behaves as it did before for a block
+    holding the vault's own properties (``status:`` here): the whole file is
+    the body, links are text. The one exception (TASK-34000.31 fix round 1
+    ruling) is a block made only of keys the import honours or Chatbook's own
+    exports write -- pinned in ``Tests/Chatbooks/test_note_frontmatter_round_trip.py``."""
     payload = _payloads(vault, obsidian_mode=False)["vault/Projects/Library review.md"]
 
     assert payload.title == "Ignored heading"
     assert payload.keywords == ()
     assert payload.wikilinks == ()
     assert payload.content.startswith("---")
+    assert payload.unimported_frontmatter_keys == ()
 
 
 def test_a_frontmatter_only_note_still_imports_with_its_metadata(

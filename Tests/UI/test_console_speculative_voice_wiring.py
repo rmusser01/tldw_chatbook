@@ -14,6 +14,7 @@ import pytest
 from Tests.UI.test_console_dictation import FakeDictationSession, _mounted_console
 from Tests.UI.test_console_hands_free_wiring import _ready_host
 from Tests.UI.test_console_native_chat_flow import _ReadyResolutionGateway
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 
 from tldw_chatbook.Chat.console_hands_free import HandsFreeController
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
@@ -74,6 +75,7 @@ async def test_visible_default_factory_selects_attested_private_process(
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
             assert await pilot.click("#console-hands-free-switch")
+            await accept_hands_free_consent(host, pilot)
             async with asyncio.timeout(5):
                 while console._console_hands_free is None:
                     assert not failures, failures
@@ -115,6 +117,7 @@ async def test_visible_default_factory_selects_attested_private_process(
                 original = engine
                 await pilot.pause()
                 assert await pilot.click("#console-hands-free-switch")
+                await accept_hands_free_consent(host, pilot)
                 async with asyncio.timeout(8):
                     while len(created) != 2 or not created[-1].ready:
                         await asyncio.sleep(0.01)
@@ -207,7 +210,7 @@ async def test_hard_off_gate_keeps_legacy_hands_free_controller(monkeypatch):
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert console._console_hands_free is not None
@@ -241,7 +244,7 @@ async def test_qualified_path_uses_one_view_session_and_runtime_owners(monkeypat
         promotion_owner = runtime.voice_promotion_owner
         dispatch_supervisor = runtime.voice_dispatch_supervisor
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         console._enter_console_hands_free_loop(capture_live=True)
 
@@ -264,17 +267,17 @@ async def test_qualified_path_uses_one_view_session_and_runtime_owners(monkeypat
         assert runtime.voice_promotion_owner is promotion_owner
         assert runtime.voice_dispatch_supervisor is dispatch_supervisor
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         assert session.close_reasons[-1] is ControlKind.HANDS_FREE_EXIT
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         console._dictation._handle_console_dictation_button()
         assert session.close_reasons[-1] is ControlKind.MICROPHONE_DISABLED
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         console._console_hands_free.controller.on_stop_request()
         assert session.close_reasons[-1] is ControlKind.STOP
@@ -307,7 +310,7 @@ async def test_qualified_path_uses_production_factory_when_no_test_seam_is_injec
         console = await _mounted_console(host, pilot)
         runtime = console._console_runtime()
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert len(factory_calls) == 1
@@ -353,7 +356,7 @@ async def test_cold_default_factory_load_keeps_visible_toggle_responsive(monkeyp
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            console.action_toggle_console_hands_free()
+            console._hands_free.action_toggle_console_hands_free()
             assert await asyncio.to_thread(load_started.wait, 1)
             await pilot.pause()
 
@@ -401,6 +404,8 @@ async def test_duplicate_visible_state_requests_do_not_spawn_replacement_session
         console = await _mounted_console(host, pilot)
         console._hands_free.request_console_hands_free_state(True)
         console._hands_free.request_console_hands_free_state(True)
+        # TASK-33626.1: one consent answers the repeated request.
+        await accept_hands_free_consent(host, pilot)
         await pilot.pause()
 
         assert len(sessions) == 1
@@ -431,7 +436,7 @@ async def test_qualified_unmount_fences_view_session_not_runtime_owners(monkeypa
         runtime = console._console_runtime()
         promotion_owner = runtime.voice_promotion_owner
         dispatch_supervisor = runtime.voice_dispatch_supervisor
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
     assert session.close_reasons == [ControlKind.TEARDOWN]
@@ -465,14 +470,14 @@ async def test_replaced_qualified_session_cannot_repaint_or_clear_new_preview(
         console = await _mounted_console(host, pilot)
         transcript = console.query_one(ConsoleTranscript)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         first_callbacks = factory_calls[0]
         first_callbacks["project_preview"](_preview(epoch=1, text="first"))
         await pilot.pause()
 
         console.action_exit_console_hands_free()
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         second_callbacks = factory_calls[1]
         winning = _preview(epoch=2, text="second")
@@ -511,13 +516,13 @@ async def test_qualified_enter_failure_clears_session_and_allows_retry(monkeypat
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert console._console_hands_free is None
         assert sessions[0].close_reasons == [ControlKind.TEARDOWN]
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free is not None
         assert sessions[1].entered_with == [False]
@@ -542,7 +547,7 @@ async def test_qualified_runtime_failure_closes_session_and_switch(monkeypatch):
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         factory_calls[0]["on_runtime_failure"](RuntimeError("audio pump failed"))
@@ -566,7 +571,7 @@ async def test_qualified_facade_tolerates_legacy_key_and_send_callbacks(monkeypa
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         console._console_hands_free.controller.on_composer_key()
@@ -603,11 +608,11 @@ async def test_stale_async_entry_failure_cannot_close_replacement(monkeypatch):
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         console.action_exit_console_hands_free()
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         replacement = console._console_hands_free
         release_failure.set()
@@ -631,7 +636,7 @@ async def test_confirmed_navigation_fences_qualified_view_before_unmount(monkeyp
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert await console.confirm_navigation() is True

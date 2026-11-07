@@ -1,0 +1,400 @@
+diff --git a/tldw_chatbook/Chat/console_agent_bridge.py b/tldw_chatbook/Chat/console_agent_bridge.py
+index bb0d6b941b..5d2c685da2 100644
+--- a/tldw_chatbook/Chat/console_agent_bridge.py
++++ b/tldw_chatbook/Chat/console_agent_bridge.py
+@@ -4876,6 +4876,11 @@ def _advertised_path_root_aliases(
+     ):
+         if provider is None or not offered & names:
+             continue
++        if provider is local_provider and "fs_search_index" in offered & names:
++            ordinary = (offered & names) - {"fs_search_index"}
++            if not ordinary:
++                aliases.update(provider.project_index_aliases())
++                continue
+         provider_aliases = provider.path_root_aliases()
+         if provider_aliases is None:
+             alias_free = True
+@@ -5094,22 +5099,6 @@ def build_console_first_request_plan(
+     from tldw_chatbook.Agents.agent_models import plugin_tool_ceiling
+ 
+     allowed_tools = plugin_tool_ceiling(agent_messages, allowed_tools)
+-    # TASK-33940.1: built AFTER the final allow-list so the note describes only
+-    # tools the model is actually offered -- the root_alias values its path
+-    # tools accept and which built-ins resolve relative paths in scratch.
+-    workspace_note = workspace_context_note(
+-        workspace_id,
+-        binding_authority=workspace_binding_authority,
+-        status_cache=get_remote_binding_status_cache(),
+-        path_tool_aliases=_advertised_path_root_aliases(
+-            allowed_tools,
+-            local_provider=local_provider,
+-            virtual_cli_provider=virtual_cli_provider,
+-        ),
+-        scratch_relative_tools=_advertised_scratch_relative_tools(
+-            allowed_tools, builtin_names
+-        ),
+-    )
+     config = AgentConfig(
+         model=resolved_model,
+         system_prompt=direct_prompt,
+@@ -5126,7 +5115,6 @@ def build_console_first_request_plan(
+         ),
+         native_tools=native_tools,
+         reasoning_replay=getattr(resolution, "reasoning_replay", None),
+-        workspace_context_note=workspace_note,
+         response_reserve_tokens=response_reserve,
+     )
+     catalog_entries = None
+@@ -5162,6 +5150,29 @@ def build_console_first_request_plan(
+             config, registry, catalog_entries=catalog_entries
+         )
+         allowed_tools = config.allowed_tools
++    # Describe only the final offered capabilities, including Goal scope
++    # narrowing, before schema/request construction consumes the note.
++    workspace_note = workspace_context_note(
++        workspace_id,
++        binding_authority=workspace_binding_authority,
++        status_cache=get_remote_binding_status_cache(),
++        path_tool_aliases=_advertised_path_root_aliases(
++            allowed_tools,
++            local_provider=local_provider,
++            virtual_cli_provider=virtual_cli_provider,
++        ),
++        workspace_read_tools=set(allowed_tools)
++        & {"fs_list", "fs_glob", "fs_grep", "fs_read", "fs_search_index"},
++        project_index_aliases=(
++            local_provider.project_index_aliases()
++            if local_provider is not None and "fs_search_index" in allowed_tools
++            else ()
++        ),
++        scratch_relative_tools=_advertised_scratch_relative_tools(
++            allowed_tools, builtin_names
++        ),
++    )
++    config = dataclass_replace(config, workspace_context_note=workspace_note)
+     messages = agent_messages
+     if turn_bundle_block:
+         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
+diff --git a/tldw_chatbook/Chat/console_chat_controller.py b/tldw_chatbook/Chat/console_chat_controller.py
+index d4fc30f555..0246825240 100644
+--- a/tldw_chatbook/Chat/console_chat_controller.py
++++ b/tldw_chatbook/Chat/console_chat_controller.py
+@@ -113,7 +113,10 @@ from tldw_chatbook.Chat.citation_trace_builder import (
+ )
+ from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
+ from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+-from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
++from tldw_chatbook.Chat.answer_citations import (
++    CONSOLE_CITATION_INSTRUCTIONS,
++    format_console_evidence_for_cited_answer,
++)
+ from tldw_chatbook.Chat.console_chat_store import (
+     CapturePurgeStaleError,
+     CapturePolicyStaleError,
+@@ -10624,7 +10627,7 @@ class ConsoleChatController:
+                 preparation_outcome is not None
+                 and preparation_outcome.evidence_bundle is not None
+             ):
+-                citation_context = format_evidence_for_cited_answer(
++                citation_context = format_console_evidence_for_cited_answer(
+                     preparation_outcome.evidence_bundle
+                 )
+             elif origin not in (
+@@ -10715,6 +10718,12 @@ class ConsoleChatController:
+                 provider_messages = self._prepend_evidence_context(
+                     provider_messages,
+                     citation_context,
++                    instructions=(
++                        CONSOLE_CITATION_INSTRUCTIONS
++                        if citation_repair_contract is not None
++                        and not citation_repair_contract.require_markers
++                        else ()
++                    ),
+                 )
+             if citation_context and echoed_user is not None and not repeated_pass:
+                 trace_prefix = f"console-trace:{echoed_user.id}:retrieval"
+@@ -13121,7 +13130,7 @@ class ConsoleChatController:
+                 )
+                 provider_messages = self._prepend_evidence_context(
+                     provider_messages,
+-                    format_evidence_for_cited_answer(bundle),
++                    format_console_evidence_for_cited_answer(bundle),
+                 )
+         return _DispatchRetryContext(
+             resolution=resolution,
+@@ -15480,6 +15489,17 @@ class ConsoleChatController:
+                 project_selection=project_selection,
+                 project_authority_guard=project_authority_guard,
+             )
++        index_service, index_scopes = await asyncio.to_thread(
++            self._prepare_project_index_scopes, tuple(admitted_roots)
++        )
++        index_kwargs = (
++            {
++                "project_index_service": index_service,
++                "project_index_scopes": index_scopes,
++            }
++            if index_scopes
++            else {}
++        )
+         local_provider, local_review_hook = self._compose_local_provider(
+             session_id=session_id,
+             turn_context=turn_context,
+@@ -15491,9 +15511,63 @@ class ConsoleChatController:
+             project_root_guard=project_authority_guard,
+             admitted_roots=admitted_roots,
+             local_kill_switch=local_kill_switch,
++            **index_kwargs,
+         )
+         return mcp_provider, builtin_gate, local_provider, local_review_hook
+ 
++    def _prepare_project_index_scopes(self, admitted_roots):
++        """Retire registry handles opened by scope preparation, including guards."""
++        from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
++
++        try:
++            service = get_project_index_service(self.app)
++            with service.registry_connection_scope():
++                return self._prepare_project_index_scopes_owned(admitted_roots)
++        except Exception:
++            logger.debug("Project index preparation unavailable")
++            return None, {}
++
++    def _prepare_project_index_scopes_owned(self, admitted_roots):
++        """Read compatible immutable scopes off-loop after exact run capture."""
++        from types import MappingProxyType
++        from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
++        from tldw_chatbook.Workspaces.project_index.runtime import (
++            get_project_index_service,
++            project_index_key,
++        )
++
++        scopes = {}
++        service = None
++        for authority in admitted_roots:
++            if is_remote(authority.root):
++                continue
++            try:
++                if not authority.guard(False):
++                    continue
++                root = local_root_path(
++                    authority.root, site="project index scope preparation"
++                )
++                key = project_index_key(
++                    self.app, authority.workspace_id, authority.binding_id, root
++                )
++                service = get_project_index_service(self.app)
++                status = service.status(key)
++                compatible = status.state in {"Ready", "Partial"}
++                if status.state == "Building" and status.indexed > 0:
++                    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
++
++                    paths = authority.exclusions_provider() if authority.exclusions_provider else ()
++                    floor = tuple(
++                        SensitiveExclusion("subtree", Path(path).relative_to(root).as_posix())
++                        for path in paths
++                    )
++                    compatible = service.building_coverage(status.scope, floor)
++                if compatible and authority.guard(False):
++                    scopes[authority.alias] = status.scope
++            except Exception:  # unavailable optional capability grants no authority
++                logger.debug("Project index unavailable for this run binding")
++        return service, MappingProxyType(scopes)
++
+     def _compose_local_provider(
+         self,
+         session_id: str | None = None,
+@@ -15505,6 +15579,8 @@ class ConsoleChatController:
+         project_root_guard: Callable[[], bool] | None = None,
+         admitted_roots: Sequence[Any] | None = None,
+         local_kill_switch: "LocalKillSwitchRead | None" = None,
++        project_index_service: Any = None,
++        project_index_scopes: Mapping[str, Any] | None = None,
+     ) -> tuple[
+         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
+     ]:
+@@ -15763,6 +15839,8 @@ class ConsoleChatController:
+             watchlists_service=watchlists_service,
+             watchlists_command_service=watchlists_command_service,
+             admitted_roots=admitted_roots,
++            project_index_service=project_index_service,
++            project_index_scopes=project_index_scopes,
+             **self._todo_wiring(session_id),
+             **self._ask_user_wiring(session_id),
+             **self._character_wiring(session_id),
+@@ -22473,8 +22551,10 @@ class ConsoleChatController:
+     def _prepend_evidence_context(
+         provider_messages: list[dict[str, Any]],
+         context: str,
++        *,
++        instructions: tuple[str, ...] = (),
+     ) -> list[dict[str, Any]]:
+-        """Prefix exact evidence to the final provider-only user message."""
++        """Prefix optional guidance and exact evidence to the provider-only message."""
+ 
+         final_index = next(
+             (
+@@ -22486,7 +22566,12 @@ class ConsoleChatController:
+         )
+         if final_index is None:
+             return provider_messages
+-        prefix = f"Evidence: {context}\n\n---\n\n"
++        guidance = (
++            "[Citation instructions]\n" + "\n".join(instructions) + "\n\n"
++            if instructions
++            else ""
++        )
++        prefix = f"{guidance}Evidence: {context}\n\n---\n\n"
+         message = provider_messages[final_index]
+         content = message.get("content")
+         if isinstance(content, str):
+diff --git a/tldw_chatbook/UI/Console_Modules/workspace.py b/tldw_chatbook/UI/Console_Modules/workspace.py
+index 5e67f1af45..61c60709f8 100644
+--- a/tldw_chatbook/UI/Console_Modules/workspace.py
++++ b/tldw_chatbook/UI/Console_Modules/workspace.py
+@@ -27,6 +27,7 @@ from contextlib import contextmanager, nullcontext
+ from dataclasses import dataclass, field, replace
+ from datetime import datetime, timezone
+ from functools import partial
++from pathlib import Path
+ from types import FunctionType, MappingProxyType, ModuleType
+ from typing import TYPE_CHECKING, Any, Optional
+ 
+@@ -1108,6 +1109,25 @@ class ConsoleWorkspaceController:
+             )
+             for binding in bindings
+         )
++        def index_status(binding):
++            from ...Workspaces.project_index.runtime import get_project_index_service, project_index_key
++            from ...Widgets.Settings_Widgets.project_index_binding_card import index_status_copy
++
++            scope = binding.scope
++            if scope is None:
++                return "Keyword index unavailable. Check folder access in Settings."
++            service = get_project_index_service(self.app_instance)
++            with service.registry_connection_scope():
++                key = project_index_key(self.app_instance, inspected_workspace_id,
++                                        binding.binding_id, Path(scope.canonical_root))
++                status, _, requires_upgrade = get_project_index_service(self.app_instance).management_snapshot(key)
++                return index_status_copy(status, requires_upgrade)
++
++        def index_settings():
++            from ...Constants import TAB_SETTINGS
++            from ..Navigation.main_navigation import NavigateToScreen
++            self._screen.post_message(NavigateToScreen(TAB_SETTINGS, screen_context={"category": "workspaces"}))
++
+         modal = ConsoleWorkspaceFilesModal(
+             inspector=inspector,
+             inspected_workspace_id=inspected_workspace_id,
+@@ -1115,6 +1135,8 @@ class ConsoleWorkspaceController:
+             active_workspace_id=active_workspace_id,
+             active_workspace_name=active_workspace_name,
+             bindings=safe_bindings,
++            index_status_reader=index_status,
++            on_index_settings=index_settings,
+             attention=attention,
+             on_back_to_console=on_back_to_console,
+             on_visit_closed=on_visit_closed,
+diff --git a/tldw_chatbook/UI/Screens/settings_screen.py b/tldw_chatbook/UI/Screens/settings_screen.py
+index e99561db4f..0869f96e60 100644
+--- a/tldw_chatbook/UI/Screens/settings_screen.py
++++ b/tldw_chatbook/UI/Screens/settings_screen.py
+@@ -2485,7 +2485,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
+         ),
+         (
+             "Boundary",
+-            "lifecycle and folder bindings apply immediately; there is no draft state here",
++            "lifecycle and folder bindings apply immediately; index processing choices require Apply",
+         ),
+     ),
+     SettingsCategoryId.TOOL_PROFILES: (
+@@ -6943,7 +6943,7 @@ class SettingsScreen(BaseAppScreen):
+                 writes_allowed=True,
+                 runtime_owner="Workspace registry (immediate actions)",
+                 boundary_copy=(
+-                    "Lifecycle and folder bindings apply immediately; no draft state."
++                    "Lifecycle and folder bindings apply immediately; index processing choices require Apply."
+                 ),
+                 recovery_copy=(
+                     "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
+@@ -21730,6 +21730,8 @@ class SettingsScreen(BaseAppScreen):
+         active = registry.get_active_workspace()
+         active_id = active.workspace_id if active is not None else None
+         yield Button("Create workspace…", id="settings-workspace-create", compact=True)
++        yield Button("Retry removed-folder cache cleanup", id="settings-project-index-cleanup", compact=True)
++        yield Static("", id="settings-project-index-cleanup-result", classes="settings-status-row", markup=False)
+         yield StateCheckbox(
+             "Show archived", show_archived, id="settings-workspaces-show-archived"
+         )
+@@ -21766,6 +21768,29 @@ class SettingsScreen(BaseAppScreen):
+                 )
+         yield from self._render_workspace_card(registry, active_id)
+ 
++    @on(Button.Pressed, "#settings-project-index-cleanup")
++    def _retry_removed_folder_index_cleanup(self, event: Button.Pressed) -> None:
++        event.stop()
++        self._set_static_text("#settings-project-index-cleanup-result", "Checking removed-folder caches…")
++        app = self.app_instance
++
++        async def retry():
++            from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
++
++            def owned():
++                return get_project_index_service(app).retry_detached_cleanup()
++
++            try:
++                result = await asyncio.to_thread(owned)
++                text = (f"Cache cleanup: {result['completed']} completed; {result['pending']} pending; "
++                        f"{result['refused']} could not be verified. Retry pending cleanup after current work finishes.")
++            except Exception:
++                text = "Cache cleanup unavailable. Restart Chatbook and retry; cached content may remain."
++            if self.is_attached:
++                self._set_static_text("#settings-project-index-cleanup-result", text)
++
++        self.run_worker(retry(), group="project-index-cleanup", exclusive=True, exit_on_error=False)
++
+     def _render_workspace_card(
+         self,
+         registry: LocalWorkspaceRegistryService,
+@@ -22129,6 +22154,8 @@ class SettingsScreen(BaseAppScreen):
+         Unexclude button shares the folder-remove CSS class, and the
+         class-selected folder handler must stay a no-op on it).
+         """
++        from tldw_chatbook.Widgets.Settings_Widgets.project_index_binding_card import ProjectIndexBindingCard
++
+         yield Static("Folders (agent file-tool access)", classes="destination-section")
+         for binding in registry.list_folder_bindings(workspace_id):
+             access = binding.metadata.get("access", "ro")
+@@ -22159,6 +22186,10 @@ class SettingsScreen(BaseAppScreen):
+                 remove_button.binding_id = binding.binding_id
+                 yield remove_button
+             yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
++            yield ProjectIndexBindingCard(
++                binding.binding_id, workspace_id=workspace_id, root=binding.locator,
++                available=binding.status == RuntimeBindingStatus.READY,
++            )
+             # Defensive reader (never the raw metadata list): malformed
+             # persisted exclusions must render as "Excluded (0)" rather than
+             # crash pane composition.
+@@ -22288,6 +22319,7 @@ class SettingsScreen(BaseAppScreen):
+         yield Static(
+             "SSH folders (remote agent file-tool access)", classes="destination-section"
+         )
++        yield Static("Keyword indexing is unavailable for SSH folders.", classes="settings-detail-row")
+         for binding in registry.list_ssh_bindings(workspace_id):
+             access = binding.metadata.get("access", "ro")
+             status_word = cached_status_display(str(binding.binding_id))
+diff --git a/tldw_chatbook/app_lifecycle.py b/tldw_chatbook/app_lifecycle.py
+index 2fed7bd355..cb8ba76a02 100644
+--- a/tldw_chatbook/app_lifecycle.py
++++ b/tldw_chatbook/app_lifecycle.py
+@@ -693,6 +693,9 @@ class LifecycleMixin:
+ 
+     async def _shutdown_app_owned_lifecycles(self) -> None:
+         """Drain durable app-owned work before Textual closes screen state."""
++        from .Workspaces.project_index.runtime import close_project_index_service
++
++        await close_project_index_service(self)
+         actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
+         await self._shutdown_workflow_session()
+         self._mcp_local_config_saves_closed = True

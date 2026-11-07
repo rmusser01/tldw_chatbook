@@ -1,0 +1,21 @@
+{
+  "validation": "All exact absolute targets validated before any deletion, strict user-home parent and disposable prefix, no reparse entries, no owned process running.",
+  "roots": [
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-b35doo95",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-ql_4ed29",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-yb29u666",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-zointmpe",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-0nciejej",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-_ac52_1b",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-bprrke8u",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-kow5ypep",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-o8va96q3",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-p0s_n4eo",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-qj6can7h",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-tryjqpg1",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-u5_ky8f5",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-vfdt8my_"
+  ],
+  "all_absent": true,
+  "retained": "Only exact roots recorded by this task were removed; an earlier setup-refused fixture whose exact root was not retained was not inferred or deleted."
+}

@@ -1,0 +1,4 @@
+{
+  "sha256": "12fed3b0d0426a00fbcceaa9ef6a920d5c68e24cea6573ff4ea7ad2e6669a6aa",
+  "raw_text": ".                                                                        [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f0a-ui18-42od1l_t/ordered-green.xml -\n============================= slowest 25 durations =============================\n6.32s call     Tests/UI/test_console_idle_heap_refreeze.py::test_mounted_received_custody_blocks_completion_and_idle_timer_reclaims\n\n(2 durations < 1s hidden.)\n1 passed in 8.27s\n"
+}

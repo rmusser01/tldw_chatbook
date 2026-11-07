@@ -55,9 +55,7 @@ def _messages(count: int, *, prefix: str = "m") -> list[ConsoleChatMessage]:
 
 
 def _mounted_message_ids(transcript: ConsoleTranscript) -> list[str]:
-    return [
-        row.message_id for row in transcript.query(".console-transcript-message")
-    ]
+    return [row.message_id for row in transcript.query(".console-transcript-message")]
 
 
 async def _wait_for(pilot, predicate, *, attempts: int = 80) -> bool:
@@ -72,7 +70,10 @@ def _top_visible_message_id(transcript: ConsoleTranscript) -> str | None:
     viewport_top = transcript.content_region.y
     viewport_bottom = viewport_top + transcript.content_region.height
     for row in transcript.query(".console-transcript-message"):
-        if row.region.y + row.region.height > viewport_top and row.region.y < viewport_bottom:
+        if (
+            row.region.y + row.region.height > viewport_top
+            and row.region.y < viewport_bottom
+        ):
             return row.message_id
     return None
 
@@ -137,7 +138,9 @@ async def test_long_session_swap_batches_row_mounts_and_removals(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_scroll_boundary_hydrates_earlier_rows_and_preserves_reader_state() -> None:
+async def test_scroll_boundary_hydrates_earlier_rows_and_preserves_reader_state() -> (
+    None
+):
     app = WindowHarness()
     history = _messages(180)
 
@@ -210,9 +213,9 @@ async def test_hydration_still_obeys_mounted_height_watermarks() -> None:
 
         app.app_config["chat_defaults"]["prune_high_watermark"] = 70
         await transcript.refresh_messages()
-        assert await _wait_for(
-            pilot, lambda: transcript.virtual_size.height <= 70
-        ), "hydrated rows escaped the configured height watermark"
+        assert await _wait_for(pilot, lambda: transcript.virtual_size.height <= 70), (
+            "hydrated rows escaped the configured height watermark"
+        )
 
         assert transcript._messages == history
         assert len(transcript._pruned_message_ids) > hidden_after_hydration

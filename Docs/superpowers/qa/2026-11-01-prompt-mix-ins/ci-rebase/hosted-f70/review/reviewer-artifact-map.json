@@ -1,0 +1,47 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-f70-landing-review/report.md",
+      "bytes": 6803,
+      "sha256": "fc9f245ffdb3272f6bed5ef9d1c35c2826e414614b12faf429ed2517a8579fe1"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-landing-review/reviewed-sources-before.json",
+      "bytes": 1536,
+      "sha256": "810e2da90f16091205fb1a141ed498dc0f94ceb8cb4153724f2c39e9c1024191"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-landing-review/candidate-review.md",
+      "bytes": 6838,
+      "sha256": "13e2ee036c2fcb049eefcd1f69499dad15acff0cb15d5d333d51d4c1763bf125"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-landing-review/reviewed-candidate-sources.json",
+      "bytes": 875,
+      "sha256": "291c7897e176595bf55e040bddd94f8ad7edf601be952d48c1e9b5f5ef21a257"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-landing-review/reviewed-evidence.json",
+      "bytes": 3844,
+      "sha256": "d66be809479ffb220154530165f00389ce797dd78060b7fb37aab6d7b079ac34"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-landing-review/root-gates-addendum.md",
+      "bytes": 5268,
+      "sha256": "b1497f698e7fe0b1794c831a42860c91c47c0870ad66021b16400bdf7544b77b"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-landing-review/reviewed-root-evidence.json",
+      "bytes": 4423,
+      "sha256": "50c22f6ef062287d8759e65ac23601744292c71be2f67c740815638cf458752d"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-landing-review/final-review-proof.json",
+      "bytes": 1713,
+      "sha256": "07b20b9d2512041d37a3022d3ce19eb649be3bdd11725b20d1140ca7e609d926"
+    }
+  ],
+  "file_count": 8,
+  "bytes": 31300,
+  "self_excluded": "reviewer-artifact-map.json describes all eight review payloads; its own digest is intentionally not recursive"
+}

@@ -113,7 +113,8 @@ def _disposable_repository(
     service_environment = {
         key: value
         for key, value in environment.items()
-        if key not in {
+        if key
+        not in {
             "GIT_CONFIG_GLOBAL",
             "GIT_CONFIG_SYSTEM",
             "GIT_CONFIG_NOSYSTEM",
@@ -349,8 +350,7 @@ async def test_status_rejects_linked_worktree_gitdir_rebinding(
     status_calls = runner.calls[call_boundary:]
     assert status_calls
     assert all(
-        len(call) > 1 and os.fsdecode(call[1]) == "rev-parse"
-        for call in status_calls
+        len(call) > 1 and os.fsdecode(call[1]) == "rev-parse" for call in status_calls
     )
     await service.shutdown()
 
@@ -506,12 +506,15 @@ async def test_stage_bulk_exact_paths_preserves_unrelated_index_and_worktree(
         "created.md",
         "deleted.md",
     ).stdout.splitlines() == [b"created.md", b"deleted.md", b"tracked.md"]
-    assert repository.run(
-        "ls-files",
-        "--stage",
-        "--",
-        "unrelated.md",
-    ).stdout == unrelated_index_before
+    assert (
+        repository.run(
+            "ls-files",
+            "--stage",
+            "--",
+            "unrelated.md",
+        ).stdout
+        == unrelated_index_before
+    )
     stage_calls = [
         call
         for call in runner.calls
@@ -571,10 +574,7 @@ async def test_stage_update_retains_original_baseline_and_expands_owned_content(
 
     assert second.state == "success"
     second_ownership = owner.snapshot(binding).staging_ownership[1]
-    assert (
-        second_ownership.original_baselines
-        == first_ownership.original_baselines
-    )
+    assert second_ownership.original_baselines == first_ownership.original_baselines
     assert second_ownership.post_stage_entries != first_ownership.post_stage_entries
     baseline = second_ownership.original_baselines["tracked.md"].entry
     assert baseline is not None
@@ -624,17 +624,23 @@ async def test_unstage_restores_saved_baseline_and_keeps_newer_worktree_edits(
     assert result.action == "unstage"
     assert result.state == "success"
     assert result.unstaged_group_ids == (1,)
-    assert repository.run(
-        "diff",
-        "--cached",
-        "--",
-        "tracked.md",
-    ).stdout == b""
-    assert b"newer unstaged edit" in repository.run(
-        "diff",
-        "--",
-        "tracked.md",
-    ).stdout
+    assert (
+        repository.run(
+            "diff",
+            "--cached",
+            "--",
+            "tracked.md",
+        ).stdout
+        == b""
+    )
+    assert (
+        b"newer unstaged edit"
+        in repository.run(
+            "diff",
+            "--",
+            "tracked.md",
+        ).stdout
+    )
     assert 1 not in owner.snapshot(binding).staging_ownership
     action_calls = runner.calls[call_boundary:]
     update_calls = [
@@ -648,11 +654,7 @@ async def test_unstage_restores_saved_baseline_and_keeps_newer_worktree_edits(
         "restore",
         "reset",
         "read-tree",
-    }.intersection(
-        os.fsdecode(argument)
-        for call in action_calls
-        for argument in call
-    )
+    }.intersection(os.fsdecode(argument) for call in action_calls for argument in call)
     await service.shutdown()
 
 
@@ -689,21 +691,22 @@ async def test_unstage_execution_preserves_exact_filename_bytes_in_stdin(
 
     assert result.state == "success"
     payloads = [
-        payload
-        for payload in runner.stdins[stdin_boundary:]
-        if payload is not None
+        payload for payload in runner.stdins[stdin_boundary:] if payload is not None
     ]
     assert payloads == [
         b"0 " + b"0" * 40 + b"\t" + raw_name + b"\0",
     ]
     assert payloads[0].count(b"\0") == 1
     assert note.read_bytes() == b"session bytes\n"
-    assert repository.run(
-        "ls-files",
-        "-z",
-        "--",
-        relative_path,
-    ).stdout == b""
+    assert (
+        repository.run(
+            "ls-files",
+            "-z",
+            "--",
+            relative_path,
+        ).stdout
+        == b""
+    )
     await service.shutdown()
 
 
@@ -744,12 +747,15 @@ async def test_stage_preflight_blocks_partially_staged_same_path(
     assert result.state == "blocked"
     assert result.blocked_group_ids == (1,)
     assert not owner.snapshot(binding).staging_ownership
-    assert repository.run(
-        "ls-files",
-        "--stage",
-        "--",
-        "tracked.md",
-    ).stdout == index_before
+    assert (
+        repository.run(
+            "ls-files",
+            "--stage",
+            "--",
+            "tracked.md",
+        ).stdout
+        == index_before
+    )
     assert not any(
         "add" in tuple(os.fsdecode(argument) for argument in call)
         for call in runner.calls
@@ -807,13 +813,16 @@ async def test_stage_nonzero_result_claims_no_ownership(
     assert result.state == "error"
     assert not result.staged_group_ids
     assert not owner.snapshot(binding).staging_ownership
-    assert repository.run(
-        "diff",
-        "--cached",
-        "--name-only",
-        "--",
-        "tracked.md",
-    ).stdout == b""
+    assert (
+        repository.run(
+            "diff",
+            "--cached",
+            "--name-only",
+            "--",
+            "tracked.md",
+        ).stdout
+        == b""
+    )
     await service.shutdown()
 
 
@@ -1037,19 +1046,25 @@ async def test_stage_update_blocks_move_to_newly_ignored_destination_before_add(
 
     assert result.state == "blocked"
     assert result.blocked_group_ids == (1,)
-    assert sum(
-        "add" in tuple(os.fsdecode(argument) for argument in call)
-        for call in runner.calls
-    ) == add_calls_before
+    assert (
+        sum(
+            "add" in tuple(os.fsdecode(argument) for argument in call)
+            for call in runner.calls
+        )
+        == add_calls_before
+    )
     assert 1 not in owner.snapshot(binding).staging_ownership
-    assert repository.run(
-        "diff",
-        "--cached",
-        "--name-only",
-        "--",
-        "tracked.md",
-        "ignored.md",
-    ).stdout == b"tracked.md\n"
+    assert (
+        repository.run(
+            "diff",
+            "--cached",
+            "--name-only",
+            "--",
+            "tracked.md",
+            "ignored.md",
+        ).stdout
+        == b"tracked.md\n"
+    )
     await service.shutdown()
 
 
@@ -1146,9 +1161,7 @@ async def test_status_maps_repo_above_notes_and_supports_weird_filenames(
     assert status.state == "ready"
     assert status.repository == discovery.repository
     assert status.head is not None
-    assert {row.group.current_path for row in status.rows} == set(
-        requested_paths
-    )
+    assert {row.group.current_path for row in status.rows} == set(requested_paths)
     assert {row.state for row in status.rows} == {"unstaged"}
     assert all(
         "unrelated" not in row.group.current_path
@@ -1690,9 +1703,7 @@ async def test_unstage_bulk_restores_modify_create_delete_restore_mode_and_move(
     assert discovery.repository is not None
     assert owner.publish_trust(binding, discovery.repository)
     requested = tuple(range(1, 7))
-    assert (
-        await service.start_stage(binding, requested)
-    ).staged_group_ids == requested
+    assert (await service.start_stage(binding, requested)).staged_group_ids == requested
     assert repository.run("diff", "--cached").stdout
 
     result = await service.start_unstage(binding, requested)
@@ -1793,9 +1804,7 @@ async def test_unstage_reverses_owned_file_directory_replacement_exactly(
     assert result.state == "success"
     assert repository.run("diff", "--cached").stdout == b""
     payloads = [
-        payload
-        for payload in runner.stdins[stdin_boundary:]
-        if payload is not None
+        payload for payload in runner.stdins[stdin_boundary:] if payload is not None
     ]
     assert len(payloads) == 1
     assert payloads[0].startswith(b"0 " + b"0" * 40 + b"\t")
@@ -1884,12 +1893,15 @@ async def test_unstage_blocks_unexpected_external_replacement_closure_before_std
         for call in runner.calls[call_boundary:]
     )
     assert all(payload is None for payload in runner.stdins[stdin_boundary:])
-    assert repository.run(
-        "ls-files",
-        "--stage",
-        "--",
-        "tree/external.md",
-    ).stdout == external_index_before
+    assert (
+        repository.run(
+            "ls-files",
+            "--stage",
+            "--",
+            "tree/external.md",
+        ).stdout
+        == external_index_before
+    )
     assert 1 in owner.snapshot(binding).staging_ownership
     await service.shutdown()
 
@@ -1946,13 +1958,16 @@ async def test_unstage_revokes_external_index_semantic_or_head_change(
         for call in runner.calls[call_boundary:]
     )
     assert all(payload is None for payload in runner.stdins[stdin_boundary:])
-    assert repository.run(
-        "ls-files",
-        "--stage",
-        "-v",
-        "--",
-        "tracked.md",
-    ).stdout == index_before
+    assert (
+        repository.run(
+            "ls-files",
+            "--stage",
+            "-v",
+            "--",
+            "tracked.md",
+        ).stdout
+        == index_before
+    )
     await service.shutdown()
 
 
@@ -1980,12 +1995,15 @@ async def test_unstage_raw_conflict_stages_block_before_stdin_and_revoke(
     assert owner.publish_trust(binding, discovery.repository)
     tracked.write_text("owned stage\n", encoding="utf-8")
     assert (await service.start_stage(binding, (1,))).state == "success"
-    owned_entry = owner.snapshot(binding).staging_ownership[1].post_stage_entries[
-        "tracked.md"
-    ]
-    baseline_entry = owner.snapshot(binding).staging_ownership[
-        1
-    ].original_baselines["tracked.md"].entry
+    owned_entry = (
+        owner.snapshot(binding).staging_ownership[1].post_stage_entries["tracked.md"]
+    )
+    baseline_entry = (
+        owner.snapshot(binding)
+        .staging_ownership[1]
+        .original_baselines["tracked.md"]
+        .entry
+    )
     assert owned_entry is not None
     assert baseline_entry is not None
     conflict_payload = (
@@ -2021,12 +2039,15 @@ async def test_unstage_raw_conflict_stages_block_before_stdin_and_revoke(
         for call in runner.calls[call_boundary:]
     )
     assert all(payload is None for payload in runner.stdins[stdin_boundary:])
-    assert repository.run(
-        "ls-files",
-        "--stage",
-        "--",
-        "tracked.md",
-    ).stdout == conflict_before
+    assert (
+        repository.run(
+            "ls-files",
+            "--stage",
+            "--",
+            "tracked.md",
+        ).stdout
+        == conflict_before
+    )
     await service.shutdown()
 
 
@@ -2135,12 +2156,15 @@ async def test_unstage_conflict_replacement_closure_blocks_before_stdin(
         for call in runner.calls[call_boundary:]
     )
     assert all(payload is None for payload in runner.stdins[stdin_boundary:])
-    assert repository.run(
-        "ls-files",
-        "--stage",
-        "--",
-        conflict_path,
-    ).stdout == conflict_before
+    assert (
+        repository.run(
+            "ls-files",
+            "--stage",
+            "--",
+            conflict_path,
+        ).stdout
+        == conflict_before
+    )
     await service.shutdown()
 
 
@@ -2197,18 +2221,24 @@ async def test_unstage_preserves_unrelated_preexisting_conflict_stages(
 
     assert result.state == "success"
     assert result.unstaged_group_ids == (1,)
-    assert repository.run(
-        "ls-files",
-        "--stage",
-        "--",
-        "unrelated.md",
-    ).stdout == conflict_before
-    assert repository.run(
-        "diff",
-        "--cached",
-        "--",
-        "tracked.md",
-    ).stdout == b""
+    assert (
+        repository.run(
+            "ls-files",
+            "--stage",
+            "--",
+            "unrelated.md",
+        ).stdout
+        == conflict_before
+    )
+    assert (
+        repository.run(
+            "diff",
+            "--cached",
+            "--",
+            "tracked.md",
+        ).stdout
+        == b""
+    )
     await service.shutdown()
 
 
@@ -2295,12 +2325,15 @@ async def test_stage_update_then_unstage_restores_earliest_saved_baseline(
     result = await service.start_unstage(binding, (1,))
 
     assert result.state == "success"
-    assert repository.run(
-        "ls-files",
-        "--stage",
-        "--",
-        "tracked.md",
-    ).stdout == baseline
+    assert (
+        repository.run(
+            "ls-files",
+            "--stage",
+            "--",
+            "tracked.md",
+        ).stdout
+        == baseline
+    )
     assert tracked.read_text(encoding="utf-8") == "stage update\n"
     await service.shutdown()
 
@@ -2340,11 +2373,14 @@ async def test_selected_and_bulk_unstage_include_only_valid_owned_groups(
 
     assert selected.unstaged_group_ids == (1,)
     assert set(owner.snapshot(binding).staging_ownership) == {2}
-    assert repository.run(
-        "diff",
-        "--cached",
-        "--name-only",
-    ).stdout == b"second.md\n"
+    assert (
+        repository.run(
+            "diff",
+            "--cached",
+            "--name-only",
+        ).stdout
+        == b"second.md\n"
+    )
 
     bulk = await service.start_unstage(binding, (1, 2))
 
@@ -2426,9 +2462,11 @@ async def test_unstage_postflight_mismatch_revokes_without_claiming_success(
     assert result.state == "uncertain"
     assert result.unstaged_group_ids == ()
     assert set(owner.snapshot(binding).staging_ownership) == {2}
-    assert set(repository.run(
-        "diff",
-        "--cached",
-        "--name-only",
-    ).stdout.splitlines()) == {b"second.md", b"tracked.md"}
+    assert set(
+        repository.run(
+            "diff",
+            "--cached",
+            "--name-only",
+        ).stdout.splitlines()
+    ) == {b"second.md", b"tracked.md"}
     await service.shutdown()

@@ -260,12 +260,10 @@ async def test_a_source_created_under_a_watchlist_scope_joins_that_watchlist():
     host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted_with_css(host, pilot)
-        screen._notify_watchlists = (
-            lambda message, severity="information", **kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **kwargs: (
+            notices.append(message)
         )
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause(0.2)
 
         pane = await _open_create_form(host, pilot, screen)
@@ -306,18 +304,16 @@ async def test_choosing_unassigned_really_leaves_the_source_unassigned():
     host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted_with_css(host, pilot)
-        screen._notify_watchlists = (
-            lambda message, severity="information", **kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **kwargs: (
+            notices.append(message)
         )
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause(0.2)
 
         pane = await _open_create_form(host, pilot, screen)
-        pane.query_one("#sources-create-watchlist", Select).value = (
-            SourcesPane.UNASSIGNED_DESTINATION
-        )
+        pane.query_one(
+            "#sources-create-watchlist", Select
+        ).value = SourcesPane.UNASSIGNED_DESTINATION
         await pilot.pause(0.2)
         assert "Unassigned" in _destination_label(pane)
 
@@ -454,9 +450,9 @@ async def test_the_ignore_selectors_block_is_absent_for_feed_types():
         screen = await _mounted_with_css(host, pilot)
         pane = await _open_create_form(host, pilot, screen)
 
-        assert (
-            pane.query_one("#sources-create-type", Select).value == "rss"
-        ), "precondition: the form opens on a feed type"
+        assert pane.query_one("#sources-create-type", Select).value == "rss", (
+            "precondition: the form opens on a feed type"
+        )
         assert not pane.query("#sources-create-ignore-selectors"), (
             "the noise field is on screen for a feed type it cannot affect"
         )
@@ -596,10 +592,8 @@ async def test_a_destination_that_vanished_before_submit_is_reported_as_news():
     host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted_with_css(host, pilot)
-        screen._notify_watchlists = (
-            lambda message, severity="information", **kwargs: notices.append(
-                (message, severity)
-            )
+        screen._notify_watchlists = lambda message, severity="information", **kwargs: (
+            notices.append((message, severity))
         )
         screen._apply_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=ids["Doomed"])
@@ -664,9 +658,7 @@ async def test_deleting_the_destination_watchlist_under_an_open_form_degrades():
         screen._load_tree_data()
         for _ in range(200):
             await pilot.pause(0.02)
-            if ids["Doomed"] not in {
-                int(w["id"]) for w in screen._tree_watchlists
-            }:
+            if ids["Doomed"] not in {int(w["id"]) for w in screen._tree_watchlists}:
                 break
 
         # Any recompose of the pane -- here the Filters toggle, a real button.
@@ -717,9 +709,7 @@ async def test_a_watchlist_created_mid_session_reaches_the_next_form():
         screen._load_tree_data()
         for _ in range(200):
             await pilot.pause(0.02)
-            if int(created["id"]) in {
-                int(w["id"]) for w in screen._tree_watchlists
-            }:
+            if int(created["id"]) in {int(w["id"]) for w in screen._tree_watchlists}:
                 break
         await pilot.pause(0.2)
 

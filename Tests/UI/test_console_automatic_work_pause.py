@@ -56,9 +56,11 @@ class _ConcurrentGateway(_RecordingWakeGateway):
 def _painted_notice(host, console):
     notice = console.query_one("#console-inspector-section-agent-fleet-notice")
     region = notice.region
+    # The App in the ancestor walk has no region: name it, never raise on it.
     assert region.width > 0 and region.height > 0, [
-        (type(n).__name__, n.id, n.region, str(n.styles.display))
+        (type(n).__name__, n.id, getattr(n, "region", None), str(n.styles.display))
         for n in [notice, *notice.ancestors]
+        if n is not host
     ]
     strips = host.screen._compositor.render_strips()
     return " ".join(
@@ -86,7 +88,7 @@ async def _rig(host, pilot):
     controller = console._ensure_console_chat_controller()
     bridge = console._ensure_console_agent_bridge()
     assert bridge is not None
-    _select_llamacpp_console(console)
+    await _select_llamacpp_console(console)
     gateway = _ConcurrentGateway()
     console._console_provider_gateway = gateway
     controller.provider_gateway = gateway
@@ -153,12 +155,26 @@ async def test_pause_copy_is_painted_with_no_live_children_and_survives_view_cle
         section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
+        if reason != "history_unavailable":  # that one has no rows to open
+            # A populated fleet auto-opens once, after its rows land; close
+            # it after that, or the auto-open undoes this close (TASK-39044).
+            assert await _settle(
+                pilot, lambda: console._console_fleet_section_auto_opened
+            ), "the populated fleet section never auto-opened"
         section.set_open(False)
+        # Closing recomposes the section; its toggle is back once that lands.
+        assert await _settle(
+            pilot,
+            lambda: bool(console.query("#console-inspector-section-agent-fleet-toggle")),
+        ), "the closed fleet section never recomposed its toggle"
         await _scroll_into_view(
             pilot, console, "#console-inspector-section-agent-fleet-toggle"
         )
         await pilot.click("#console-inspector-section-agent-fleet-toggle")
-        await pilot.pause()
+        notice = console.query_one("#console-inspector-section-agent-fleet-notice")
+        assert await _settle(pilot, lambda: notice.region.area > 0), (
+            "the pause notice was never laid out after the expanding click"
+        )
 
         painted = _painted_notice(host, console)
         assert "Paused:" in painted, (

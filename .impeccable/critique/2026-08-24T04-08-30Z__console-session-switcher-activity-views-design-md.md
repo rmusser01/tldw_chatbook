@@ -140,7 +140,7 @@ badges rather than separate sections.
 
 - `Finished unseen` is internal language; `New results` is clearer.
 - The placeholder becomes inaccurate if workflow runs are searchable.
-- F3 conflicts with ADR-031's blanket single-letter screen-action wording; the
+- F3 conflicts with ADR-299's blanket single-letter screen-action wording; the
   ADR or modal-scoped exception must be clarified before implementation.
 - Current History persistence is offset-based and has no result generation;
   keyset/generation behavior is a real new service contract, not widget work.

@@ -1,0 +1,27 @@
+[
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--check",
+      "--",
+      "tldw_chatbook/DB/prompt_export.py"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--no-index",
+      "--check",
+      "/dev/null",
+      "Tests/Prompts_DB/test_prompt_export_mixins.py"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": ""
+  }
+]

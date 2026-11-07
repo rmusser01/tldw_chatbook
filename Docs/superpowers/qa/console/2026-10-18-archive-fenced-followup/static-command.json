@@ -1,0 +1,18 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "Docs/superpowers/qa/console/2026-10-18-archive-fenced-followup/check-scope.py"
+  ],
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "interpreter": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "exit": 1,
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "486ba42b2148148fe8c78cf921eb56b909cc4fc6c1e9336267e40c9178de1c76",
+    "Tests/Chat/test_console_archive_recovery_followup.py": "1e45b56d9eb42498c872d358f157775212feb3f10f2c024a54f533ba2de2884a"
+  },
+  "log_sha256": "b055f6fc435cc6e7f1c4a13f0329ab557ae513febc34fbf4fa6d6074364d5e91"
+}

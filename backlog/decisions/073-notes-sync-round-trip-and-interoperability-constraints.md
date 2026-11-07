@@ -152,7 +152,7 @@ folder-table transaction.
 
 - [ADR-008: Sync-v2 Client M1 Contract Alignment](008-sync-v2-client-m1-contract-alignment.md)
 - [ADR-021: File-Backed Notes Disk Authority and Recovery](021-file-backed-notes-disk-authority-and-recovery.md)
-- [ADR-027: Portable Database Note Session Coordinator](027-portable-database-note-session-coordinator.md)
+- [ADR-293: Portable Database Note Session Coordinator](293-portable-database-note-session-coordinator.md)
 - [ADR-029: Local Private Data Boundary](029-local-private-data-boundary.md)
 - [ADR-055: Library Destructive Action Reversibility](055-library-destructive-action-reversibility-rule.md)
 - [ADR-059: Notes Folder Import and Device-Local Sync Ownership](059-notes-folder-import-and-device-local-sync-ownership.md)

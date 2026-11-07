@@ -1,0 +1,656 @@
+{
+  "canvas": [
+    {
+      "job": "Derived artifacts reproduce from their sources",
+      "step": "Canvas Mermaid assets reproduce from pinned public inputs",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121065617025"
+    }
+  ],
+  "head": "6ffb773dbd0647a33b5ce5d4e346fe43dfba3685",
+  "run": "40157060718",
+  "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718",
+  "conclusion": "success",
+  "jobs": [
+    {
+      "name": "PR Fast Lane (admission-sensitive 2)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582454"
+    },
+    {
+      "name": "UI Fast Lane (6)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582591"
+    },
+    {
+      "name": "PR Fast Lane (admission-sensitive)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582598"
+    },
+    {
+      "name": "Dreams tracking tests",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582603"
+    },
+    {
+      "name": "Dreams and Guardian boundary contracts",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582646"
+    },
+    {
+      "name": "UI Fast Lane (4)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582711"
+    },
+    {
+      "name": "PR Fast Lane",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582731"
+    },
+    {
+      "name": "UI Fast Lane (2)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582776"
+    },
+    {
+      "name": "UI Fast Lane (14)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582777"
+    },
+    {
+      "name": "UI Fast Lane (3)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582778"
+    },
+    {
+      "name": "UI Fast Lane (10)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582821"
+    },
+    {
+      "name": "UI Fast Lane (5)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582831"
+    },
+    {
+      "name": "UI Fast Lane (13)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582858"
+    },
+    {
+      "name": "UI Fast Lane (12)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582862"
+    },
+    {
+      "name": "UI Fast Lane (16)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582882"
+    },
+    {
+      "name": "UI Fast Lane (15)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582889"
+    },
+    {
+      "name": "UI Fast Lane (9)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582890"
+    },
+    {
+      "name": "UI Fast Lane (8)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582895"
+    },
+    {
+      "name": "UI Fast Lane (17)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582899"
+    },
+    {
+      "name": "UI Fast Lane (7)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582910"
+    },
+    {
+      "name": "UI Fast Lane (1)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582914"
+    },
+    {
+      "name": "Console P0 regression gate",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582938"
+    },
+    {
+      "name": "UI Fast Lane (11)",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582998"
+    },
+    {
+      "name": "Derived artifacts reproduce from their sources",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121065617025"
+    },
+    {
+      "name": "Merge queue tick",
+      "conclusion": "success",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121066616556"
+    }
+  ],
+  "ui_cases_executed": 81,
+  "parser_cases_executed": 20,
+  "parser_execution_line": "2026-10-25T03:11:46.0046388Z Tests/MCP/test_mcp_import_shapes.py ....................                 [ 38%]",
+  "ui_shards": [
+    {
+      "name": "UI Fast Lane (6)",
+      "wall_seconds": 917.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582591",
+      "log_sha256": "2ca519d1add2e2978dc083ed1a5d3db75611c20ea7a80f466d1d1f4bea307f9a"
+    },
+    {
+      "name": "UI Fast Lane (4)",
+      "wall_seconds": 922.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582711",
+      "log_sha256": "837c08fce8cac4a1714d760af395321e233f0a24b4921a2d3f706a4d819c15fe"
+    },
+    {
+      "name": "UI Fast Lane (2)",
+      "wall_seconds": 862.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582776",
+      "log_sha256": "77143e09f9c377a98329aba3cfe3e1ec02bad3baa8e68a369f8664fcd9596589"
+    },
+    {
+      "name": "UI Fast Lane (14)",
+      "wall_seconds": 774.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582777",
+      "log_sha256": "727c11e21887f134177eb65862d49a2ef5b9276c3a22eb7b6d63a47849d0d444"
+    },
+    {
+      "name": "UI Fast Lane (3)",
+      "wall_seconds": 931.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582778",
+      "log_sha256": "643fea1795fd5d3fbece0a2bd44794d50362f68fe3f92108f57966c8587dce7d"
+    },
+    {
+      "name": "UI Fast Lane (10)",
+      "wall_seconds": 881.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582821",
+      "log_sha256": "224bb115e6509bce4a76929ae028a370d18595f6f7c579fe68ec42462a00f769"
+    },
+    {
+      "name": "UI Fast Lane (5)",
+      "wall_seconds": 677.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582831",
+      "log_sha256": "9283895609bf5d7b5b5b78f6a920f86342c759aa437ba8e1b2a6ff2238a0c088"
+    },
+    {
+      "name": "UI Fast Lane (13)",
+      "wall_seconds": 896.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582858",
+      "log_sha256": "d00cf6299ffaa84b6b1a5d15f03a278d8218a9e0e2b686a53623cba395906b4a"
+    },
+    {
+      "name": "UI Fast Lane (12)",
+      "wall_seconds": 949.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582862",
+      "log_sha256": "43114ae8020a062608a77aa289df5e3b01efdbdd84e74eaed50121906f1c0b1f"
+    },
+    {
+      "name": "UI Fast Lane (16)",
+      "wall_seconds": 898.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582882",
+      "log_sha256": "2391ac3dbbba0d0b1807a0970122858ab56a9894417586e364176edfb9583f57"
+    },
+    {
+      "name": "UI Fast Lane (15)",
+      "wall_seconds": 991.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582889",
+      "log_sha256": "ab67e954a619ebf47484e2458df2e5d201be2161bb46a2bc766547397e11b4a2"
+    },
+    {
+      "name": "UI Fast Lane (9)",
+      "wall_seconds": 900.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582890",
+      "log_sha256": "05dec00692bbd7c44c7e20bd7940e90c3973e7dbfa7230d25ee19edd435f20ef"
+    },
+    {
+      "name": "UI Fast Lane (8)",
+      "wall_seconds": 869.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582895",
+      "log_sha256": "99071ce4a8703224829a8b6c6d16f2748cd7536e941c1b9b270c2c97150f82c0"
+    },
+    {
+      "name": "UI Fast Lane (17)",
+      "wall_seconds": 795.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582899",
+      "log_sha256": "0e28d85fbd322da2b5bd5c5d887a7d483d24b2757a94d22584e890a565d6b5bb"
+    },
+    {
+      "name": "UI Fast Lane (7)",
+      "wall_seconds": 845.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582910",
+      "log_sha256": "03ec3739311b5a3cf999811c562f1e6d7f2e0e6f698aa5105b6f16a1bcabe293"
+    },
+    {
+      "name": "UI Fast Lane (1)",
+      "wall_seconds": 970.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582914",
+      "log_sha256": "8c3eeea907d5fdda607d4d226ab987f961a9a9e915d980b398526f14c5e1bb54"
+    },
+    {
+      "name": "UI Fast Lane (11)",
+      "wall_seconds": 772.0,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582998",
+      "log_sha256": "69635b4ca2aaa793ac57b1f569001c1e47ccaecc72e4e1deedc916137b707b51"
+    }
+  ],
+  "maximum_ui_job_seconds": 991.0,
+  "ui_selectors": {
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_failure_preserves_authored_recovery[size-sample-file]": {
+      "seconds": 7.47,
+      "job": "UI Fast Lane (6)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582591"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_picker_file_validation_preserves_raw_draft[outside]": {
+      "seconds": 7.09,
+      "job": "UI Fast Lane (6)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582591"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[copy-button]": {
+      "seconds": 5.65,
+      "job": "UI Fast Lane (6)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582591"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_canceled_demo_without_replacement_cannot_publish[unmount-error]": {
+      "seconds": 5.46,
+      "job": "UI Fast Lane (6)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582591"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_unstarted_departure_and_repeated_cleanup_never_construct_service": {
+      "seconds": 5.2,
+      "job": "UI Fast Lane (6)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582591"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_pending_read_sees_keys_before_parent_changed_delivery[typing]": {
+      "seconds": 8.24,
+      "job": "UI Fast Lane (4)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582711"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_failure_preserves_authored_recovery[missing-sample-file]": {
+      "seconds": 7.12,
+      "job": "UI Fast Lane (4)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582711"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_pause_and_resume_each_deliver_once": {
+      "seconds": 6.69,
+      "job": "UI Fast Lane (4)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582711"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_unmount_retires_before_awaiting_settings_flush": {
+      "seconds": 6.11,
+      "job": "UI Fast Lane (4)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582711"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_canceled_demo_without_replacement_cannot_publish[cancel-error]": {
+      "seconds": 5.23,
+      "job": "UI Fast Lane (4)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582711"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_newer_mcp_file_selection_supersedes_pending_read": {
+      "seconds": 8.28,
+      "job": "UI Fast Lane (2)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582776"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_newer_sample_read_supersedes_older_completion[sample-file]": {
+      "seconds": 6.3,
+      "job": "UI Fast Lane (2)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582776"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_active_departure_retires_capture_without_ui_thread_join[shutdown]": {
+      "seconds": 5.25,
+      "job": "UI Fast Lane (2)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582776"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_superseded_demo_cannot_publish_after_new_request[publication-error]": {
+      "seconds": 5.24,
+      "job": "UI Fast Lane (2)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582776"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_stop_cannot_bubble_and_restart_capture[enter]": {
+      "seconds": 5.18,
+      "job": "UI Fast Lane (2)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582776"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_preserves_newer_draft[untouched]": {
+      "seconds": 6.99,
+      "job": "UI Fast Lane (14)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582777"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[text-excerpt]": {
+      "seconds": 6.0,
+      "job": "UI Fast Lane (14)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582777"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_stop_after_pause_preserves_finalized_text_and_releases_capture": {
+      "seconds": 5.33,
+      "job": "UI Fast Lane (14)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582777"
+    },
+    "Tests/UI/test_mcp_import_validation_recovery.py::test_preview_rejects_malformed_fields_and_recovers[args-empty-object]": {
+      "seconds": 4.37,
+      "job": "UI Fast Lane (14)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582777"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_file_selection_captures_draft_before_worker_admission": {
+      "seconds": 8.93,
+      "job": "UI Fast Lane (3)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582778"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_newer_sample_read_supersedes_older_completion[excerpt]": {
+      "seconds": 7.63,
+      "job": "UI Fast Lane (3)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582778"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_departed_callbacks_cannot_publish_into_old_or_replacement_view": {
+      "seconds": 6.58,
+      "job": "UI Fast Lane (3)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582778"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_stop_cannot_bubble_and_restart_capture[space]": {
+      "seconds": 6.52,
+      "job": "UI Fast Lane (3)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582778"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_canceled_demo_without_replacement_cannot_publish[cancel-success]": {
+      "seconds": 5.84,
+      "job": "UI Fast Lane (3)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582778"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_sees_keyboard_edit_before_parent_changed_delivery": {
+      "seconds": 7.04,
+      "job": "UI Fast Lane (10)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582821"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_rejects_direct_panel_retirement[hide]": {
+      "seconds": 6.86,
+      "job": "UI Fast Lane (10)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582821"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_callback_entered_before_retirement_cannot_publish_after_it[replacement]": {
+      "seconds": 6.47,
+      "job": "UI Fast Lane (10)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582821"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_unknown_child_and_container_back_keep_routing": {
+      "seconds": 5.75,
+      "job": "UI Fast Lane (10)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582821"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_demo_completion_during_native_pruning_cannot_publish[error]": {
+      "seconds": 5.28,
+      "job": "UI Fast Lane (10)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582821"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_pending_read_sees_keys_before_parent_changed_delivery[empty-again]": {
+      "seconds": 5.56,
+      "job": "UI Fast Lane (5)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582831"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_failure_preserves_authored_recovery[missing-excerpt]": {
+      "seconds": 4.75,
+      "job": "UI Fast Lane (5)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582831"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_explicit_stop_preserves_result_and_cleanup_is_idempotent": {
+      "seconds": 4.0,
+      "job": "UI Fast Lane (5)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582831"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[dictation-clear-btn]": {
+      "seconds": 3.78,
+      "job": "UI Fast Lane (5)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582831"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_canceled_demo_without_replacement_cannot_publish[unmount-success]": {
+      "seconds": 3.45,
+      "job": "UI Fast Lane (5)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582831"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[text-sample-file]": {
+      "seconds": 7.73,
+      "job": "UI Fast Lane (13)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582858"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_newer_failed_read_revokes_older_sample_intent[excerpt]": {
+      "seconds": 7.57,
+      "job": "UI Fast Lane (13)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582858"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_queued_old_capture_command_cannot_publish_into_restarted_capture": {
+      "seconds": 6.62,
+      "job": "UI Fast Lane (13)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582858"
+    },
+    "Tests/UI/test_mcp_import_validation_recovery.py::test_preview_rejects_malformed_fields_and_recovers[env-list]": {
+      "seconds": 5.38,
+      "job": "UI Fast Lane (13)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582858"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_retains_unrelated_recipe_edit[excerpt]": {
+      "seconds": 8.62,
+      "job": "UI Fast Lane (12)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582862"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_newer_failed_read_revokes_older_sample_intent[sample-file]": {
+      "seconds": 7.5,
+      "job": "UI Fast Lane (12)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582862"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[untouched-excerpt]": {
+      "seconds": 7.44,
+      "job": "UI Fast Lane (12)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582862"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_explicit_stop_keeps_processor_tail_result_after_queued_callbacks": {
+      "seconds": 6.19,
+      "job": "UI Fast Lane (12)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582862"
+    },
+    "Tests/UI/test_mcp_import_validation_recovery.py::test_preview_rejects_malformed_fields_and_recovers[args-number]": {
+      "seconds": 5.23,
+      "job": "UI Fast Lane (12)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582862"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[clear-excerpt]": {
+      "seconds": 8.07,
+      "job": "UI Fast Lane (16)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582882"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_preserves_newer_draft[clear]": {
+      "seconds": 7.69,
+      "job": "UI Fast Lane (16)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582882"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_start_and_distinct_stop_each_deliver_once[enter]": {
+      "seconds": 6.37,
+      "job": "UI Fast Lane (16)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582882"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_superseded_demo_cannot_publish_after_new_request[provider-success]": {
+      "seconds": 5.76,
+      "job": "UI Fast Lane (16)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582882"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_preserves_newer_draft[typing]": {
+      "seconds": 9.26,
+      "job": "UI Fast Lane (15)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582889"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[clear-sample-file]": {
+      "seconds": 8.21,
+      "job": "UI Fast Lane (15)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582889"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_start_and_distinct_stop_each_deliver_once[mouse]": {
+      "seconds": 6.75,
+      "job": "UI Fast Lane (15)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582889"
+    },
+    "Tests/UI/test_mcp_import_validation_recovery.py::test_preview_rejects_malformed_fields_and_recovers[env-empty-list]": {
+      "seconds": 5.53,
+      "job": "UI Fast Lane (15)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582889"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_picker_file_validation_preserves_raw_draft[utf8]": {
+      "seconds": 8.15,
+      "job": "UI Fast Lane (9)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582890"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_failure_preserves_authored_recovery[utf8-excerpt]": {
+      "seconds": 7.29,
+      "job": "UI Fast Lane (9)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582890"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_callback_entered_before_retirement_cannot_publish_after_it[cleanup]": {
+      "seconds": 6.38,
+      "job": "UI Fast Lane (9)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582890"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[troubleshoot-btn]": {
+      "seconds": 5.91,
+      "job": "UI Fast Lane (9)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582890"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_demo_completion_during_native_pruning_cannot_publish[success]": {
+      "seconds": 5.52,
+      "job": "UI Fast Lane (9)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582890"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_failure_preserves_authored_recovery[utf8-sample-file]": {
+      "seconds": 7.58,
+      "job": "UI Fast Lane (8)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582895"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_picker_file_validation_preserves_raw_draft[size]": {
+      "seconds": 7.29,
+      "job": "UI Fast Lane (8)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582895"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_initialized_idle_departure_never_opens_recorder": {
+      "seconds": 5.26,
+      "job": "UI Fast Lane (8)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582895"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_serial_demo_and_palette_route_publish_current_outcome[error]": {
+      "seconds": 5.06,
+      "job": "UI Fast Lane (8)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582895"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[save-md-button]": {
+      "seconds": 4.88,
+      "job": "UI Fast Lane (8)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582895"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_preserves_newer_draft[empty-again]": {
+      "seconds": 6.62,
+      "job": "UI Fast Lane (17)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582899"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[back-to-baseline-sample-file]": {
+      "seconds": 5.83,
+      "job": "UI Fast Lane (17)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582899"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_start_and_distinct_stop_each_deliver_once[space]": {
+      "seconds": 4.79,
+      "job": "UI Fast Lane (17)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582899"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_active_departure_retires_capture_without_ui_thread_join[leave]": {
+      "seconds": 4.76,
+      "job": "UI Fast Lane (17)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582899"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_superseded_demo_cannot_publish_after_new_request[provider-error]": {
+      "seconds": 4.67,
+      "job": "UI Fast Lane (17)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582899"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_failure_preserves_authored_recovery[size-excerpt]": {
+      "seconds": 7.04,
+      "job": "UI Fast Lane (7)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582910"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_picker_file_validation_preserves_raw_draft[missing]": {
+      "seconds": 6.43,
+      "job": "UI Fast Lane (7)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582910"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_failed_start_still_retires_owned_processor": {
+      "seconds": 5.7,
+      "job": "UI Fast Lane (7)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582910"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_serial_demo_and_palette_route_publish_current_outcome[success]": {
+      "seconds": 5.14,
+      "job": "UI Fast Lane (7)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582910"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_other_handled_buttons_execute_once[save-text-button]": {
+      "seconds": 4.87,
+      "job": "UI Fast Lane (7)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582910"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[back-to-baseline-excerpt]": {
+      "seconds": 8.54,
+      "job": "UI Fast Lane (1)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582914"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_cannot_replace_reopened_panel": {
+      "seconds": 8.02,
+      "job": "UI Fast Lane (1)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582914"
+    },
+    "Tests/UI/test_dictation_button_delivery.py::test_stop_cannot_bubble_and_restart_capture[mouse]": {
+      "seconds": 6.73,
+      "job": "UI Fast Lane (1)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582914"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_active_departure_retires_capture_without_ui_thread_join[unmount]": {
+      "seconds": 6.35,
+      "job": "UI Fast Lane (1)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582914"
+    },
+    "Tests/UI/test_image_gen_demo_request_lifetime.py::test_superseded_demo_cannot_publish_after_new_request[publication-success]": {
+      "seconds": 6.16,
+      "job": "UI Fast Lane (1)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582914"
+    },
+    "Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_rejects_direct_panel_retirement[replace]": {
+      "seconds": 6.51,
+      "job": "UI Fast Lane (11)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582998"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_retains_unrelated_recipe_edit[sample-file]": {
+      "seconds": 6.48,
+      "job": "UI Fast Lane (11)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582998"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_rechecks_intent_after_queued_transition_computes": {
+      "seconds": 5.54,
+      "job": "UI Fast Lane (11)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582998"
+    },
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[untouched-sample-file]": {
+      "seconds": 5.5,
+      "job": "UI Fast Lane (11)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582998"
+    },
+    "Tests/UI/test_dictation_view_retirement.py::test_live_background_callbacks_publish_on_ui_thread": {
+      "seconds": 4.9,
+      "job": "UI Fast Lane (11)",
+      "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157060718/job/121060582998"
+    }
+  }
+}

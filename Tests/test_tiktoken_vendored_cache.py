@@ -67,7 +67,9 @@ def _runtime_module() -> Any:
     return importlib.import_module("tldw_chatbook.Utils.tiktoken_runtime")
 
 
-def _run_source_child(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_source_child(
+    script: str, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
     child_env = env.copy()
     child_env["PYTHONPATH"] = str(REPO_ROOT)
     return subprocess.run(
@@ -279,7 +281,9 @@ def isolated_bundle(
     runtime._manifest_by_url.cache_clear()
 
 
-def test_bundled_reader_normalizes_missing_asset(isolated_bundle: tuple[Any, dict[str, str]]) -> None:
+def test_bundled_reader_normalizes_missing_asset(
+    isolated_bundle: tuple[Any, dict[str, str]],
+) -> None:
     runtime, entry = isolated_bundle
     with pytest.raises(runtime.BundledTiktokenAssetError, match="missing|read"):
         runtime._read_bundled_file(entry["url"], entry["sha256"])

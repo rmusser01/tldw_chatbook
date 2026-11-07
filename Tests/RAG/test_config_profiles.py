@@ -4,10 +4,16 @@ import json as _json
 import pytest
 
 from tldw_chatbook.RAG_Search.config_profiles import (
-    ConfigProfileManager, ProfileConfig, get_profile_manager, reset_profile_manager_cache,
+    ConfigProfileManager,
+    ProfileConfig,
+    get_profile_manager,
+    reset_profile_manager_cache,
 )
 from tldw_chatbook.RAG_Search.simplified.config import (
-    RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig,
+    RAGConfig,
+    EmbeddingConfig,
+    ChunkingConfig,
+    VectorStoreConfig,
 )
 from tldw_chatbook.Chunking.Chunk_Lib import MAX_CHUNK_SIZE_PARAGRAPHS
 
@@ -23,7 +29,9 @@ def _profile():
         # json.dumps below for reasons unrelated to what this test checks.
         vector_store=VectorStoreConfig(type="memory"),
     )
-    return ProfileConfig(name="RT", description="d", profile_type="custom", rag_config=rag)
+    return ProfileConfig(
+        name="RT", description="d", profile_type="custom", rag_config=rag
+    )
 
 
 def test_round_trip_reconstructs_nested_dataclasses():
@@ -45,13 +53,15 @@ def _mgr(tmp_path):
 def test_builtins_apply_declared_settings(tmp_path):
     m = _mgr(tmp_path)
     fast = m.get_profile("fast_search")
-    assert fast.rag_config.chunking.chunk_size == 256      # was silently 400 (dead attr)
+    assert fast.rag_config.chunking.chunk_size == 256  # was silently 400 (dead attr)
     assert fast.rag_config.chunking.chunk_overlap == 32
     assert fast.rag_config.search.default_top_k == 5
 
     # Builtins are meaningfully differentiated, not all default:
-    sizes = {name: m.get_profile(name).rag_config.chunking.chunk_size
-             for name in ("fast_search", "high_accuracy", "long_context")}
+    sizes = {
+        name: m.get_profile(name).rag_config.chunking.chunk_size
+        for name in ("fast_search", "high_accuracy", "long_context")
+    }
     assert len(set(sizes.values())) == 3, sizes
 
 
@@ -91,8 +101,15 @@ def test_high_accuracy_has_no_stray_method_attr(tmp_path):
 # raises InvalidChunkingMethodError the moment the enhanced/full chunker
 # path (Chunker.chunk_text) is exercised for it -- see task-484.
 RUNTIME_VALID_CHUNKING_METHODS = {
-    "words", "sentences", "paragraphs", "tokens", "semantic",
-    "json", "ebook_chapters", "xml", "rolling_summarize",
+    "words",
+    "sentences",
+    "paragraphs",
+    "tokens",
+    "semantic",
+    "json",
+    "ebook_chapters",
+    "xml",
+    "rolling_summarize",
 }
 
 
@@ -152,16 +169,21 @@ def test_builtins_are_read_only_with_ids(tmp_path):
 def test_profileconfig_id_backfilled_and_round_trips():
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig, _slugify
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, VectorStoreConfig
+
     # Pin vector_store to "memory" (see _profile() above): with the "auto"
     # default, VectorStoreConfig.__post_init__ resolves to "chroma" (and a
     # real PosixPath persist_directory) whenever the embeddings_rag optional
     # deps happen to be installed, which breaks json.dumps below for reasons
     # unrelated to what this test checks (id/read_only round-tripping).
-    p = ProfileConfig(name="My Cool Profile", description="d",
-                      profile_type="custom",
-                      rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")))
+    p = ProfileConfig(
+        name="My Cool Profile",
+        description="d",
+        profile_type="custom",
+        rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
+    )
     assert p.id == _slugify("My Cool Profile")  # auto-derived when not given
     import json
+
     restored = ProfileConfig.from_dict(json.loads(json.dumps(p.to_dict())))
     assert restored.id == p.id
     assert restored.read_only is False
@@ -176,8 +198,10 @@ def test_user_profile_saved_as_own_file(tmp_path):
     m = _mgr(tmp_path)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
-    p = ProfileConfig(name="Sales RAG", description="d", profile_type="custom",
-                      rag_config=RAGConfig())
+
+    p = ProfileConfig(
+        name="Sales RAG", description="d", profile_type="custom", rag_config=RAGConfig()
+    )
     m._save_one(p)  # (Task 5 adds save_profile; Task 4 uses _save_one directly)
     assert (tmp_path / "profiles" / f"{p.id}.json").exists()
     # A fresh manager over the same dir loads it back, correctly:
@@ -192,10 +216,16 @@ def test_legacy_blob_migrated_to_per_file(tmp_path):
     pdir.mkdir(parents=True)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
-    legacy = ProfileConfig(name="Legacy One", description="d",
-                           profile_type="custom", rag_config=RAGConfig())
+
+    legacy = ProfileConfig(
+        name="Legacy One",
+        description="d",
+        profile_type="custom",
+        rag_config=RAGConfig(),
+    )
     (pdir / "custom_profiles.json").write_text(
-        _json.dumps({"profiles": [legacy.to_dict()]}, default=str))
+        _json.dumps({"profiles": [legacy.to_dict()]}, default=str)
+    )
     m = _mgr(tmp_path)  # construction triggers load+migrate
     assert m.get_profile(legacy.id) is not None
     assert (pdir / f"{legacy.id}.json").exists()
@@ -228,11 +258,14 @@ def test_legacy_blob_migration_isolates_per_entry_failures(tmp_path):
         "rag_config": {"embedding": {"nonexistent_field_xyz": True}},
     }
     valid = ProfileConfig(
-        name="Still Good", description="d", profile_type="custom",
+        name="Still Good",
+        description="d",
+        profile_type="custom",
         rag_config=RAGConfig(),
     )
     (pdir / "custom_profiles.json").write_text(
-        _json.dumps({"profiles": [bad_entry, valid.to_dict()]}, default=str))
+        _json.dumps({"profiles": [bad_entry, valid.to_dict()]}, default=str)
+    )
 
     m = _mgr(tmp_path)  # construction must not raise / must not abort entirely
 
@@ -286,7 +319,10 @@ def test_clone_builtin_creates_writable_copy(tmp_path):
     clone = m.clone_profile("high_accuracy", "My Accuracy")
     assert clone.read_only is False
     assert clone.id != "high_accuracy"
-    assert clone.rag_config.chunking.chunk_size == m.get_profile("high_accuracy").rag_config.chunking.chunk_size
+    assert (
+        clone.rag_config.chunking.chunk_size
+        == m.get_profile("high_accuracy").rag_config.chunking.chunk_size
+    )
     assert (tmp_path / "profiles" / f"{clone.id}.json").exists()
     # Editing the clone does not touch the builtin. 300 (not just any value
     # like 111) is deliberate: high_accuracy's builtin chunk_overlap is 128,
@@ -334,7 +370,7 @@ def test_rename_keeps_id_and_file(tmp_path):
     c = m.clone_profile("hybrid_basic", "Before")
     old_id = c.id
     renamed = m.rename_profile(c.id, "After")
-    assert renamed.id == old_id                 # id stable across rename
+    assert renamed.id == old_id  # id stable across rename
     assert renamed.name == "After"
     assert (tmp_path / "profiles" / f"{old_id}.json").exists()
 
@@ -369,11 +405,14 @@ def test_save_profile_rejects_id_collision_with_readonly_builtin(tmp_path):
     m = _mgr(tmp_path)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
     builtin = m.get_profile("high_accuracy")
     assert builtin.read_only is True
 
     colliding = ProfileConfig(
-        name="High Accuracy", description="d", profile_type="custom",
+        name="High Accuracy",
+        description="d",
+        profile_type="custom",
         rag_config=RAGConfig(),
     )
     assert colliding.id == "high_accuracy"
@@ -423,12 +462,16 @@ def test_legacy_blob_migration_does_not_shadow_readonly_builtin(tmp_path):
     pdir.mkdir(parents=True)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
     legacy_user_profile = ProfileConfig(
-        name="High Accuracy", description="user's own", profile_type="custom",
+        name="High Accuracy",
+        description="user's own",
+        profile_type="custom",
         rag_config=RAGConfig(),
     )
     (pdir / "custom_profiles.json").write_text(
-        _json.dumps({"profiles": [legacy_user_profile.to_dict()]}, default=str))
+        _json.dumps({"profiles": [legacy_user_profile.to_dict()]}, default=str)
+    )
 
     m = _mgr(tmp_path)  # construction triggers load+migrate
 
@@ -441,8 +484,11 @@ def test_legacy_blob_migration_does_not_shadow_readonly_builtin(tmp_path):
         m.delete_profile("high_accuracy")
 
     # The migrated user profile must be present under a DIFFERENT, writable id.
-    others = [p for pid, p in m._profiles.items()
-              if pid != "high_accuracy" and p.name == "High Accuracy"]
+    others = [
+        p
+        for pid, p in m._profiles.items()
+        if pid != "high_accuracy" and p.name == "High Accuracy"
+    ]
     assert len(others) == 1
     assert others[0].read_only is False
     assert others[0].id != "high_accuracy"
@@ -458,12 +504,18 @@ def test_hand_placed_file_named_like_builtin_id_is_self_healed(tmp_path):
     pdir.mkdir(parents=True)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
     colliding = ProfileConfig(
-        id="high_accuracy", name="High Accuracy", description="hand placed",
-        profile_type="custom", rag_config=RAGConfig(), read_only=False,
+        id="high_accuracy",
+        name="High Accuracy",
+        description="hand placed",
+        profile_type="custom",
+        rag_config=RAGConfig(),
+        read_only=False,
     )
     (pdir / "high_accuracy.json").write_text(
-        _json.dumps(colliding.to_dict(), default=str))
+        _json.dumps(colliding.to_dict(), default=str)
+    )
 
     m = _mgr(tmp_path)
 
@@ -474,8 +526,11 @@ def test_hand_placed_file_named_like_builtin_id_is_self_healed(tmp_path):
     with pytest.raises(ValueError):
         m.delete_profile("high_accuracy")
 
-    others = [p for pid, p in m._profiles.items()
-              if pid != "high_accuracy" and p.name == "High Accuracy"]
+    others = [
+        p
+        for pid, p in m._profiles.items()
+        if pid != "high_accuracy" and p.name == "High Accuracy"
+    ]
     assert len(others) == 1
     assert others[0].read_only is False
     new_id = others[0].id
@@ -493,8 +548,10 @@ def test_create_custom_profile_returns_fully_built_rag_config(tmp_path):
     m = _mgr(tmp_path)
     created = m.create_custom_profile("X", base_profile="balanced")
     assert isinstance(created.rag_config.chunking.chunk_size, int)
-    assert (created.rag_config.chunking.chunk_size
-            == m.get_profile("balanced").rag_config.chunking.chunk_size)
+    assert (
+        created.rag_config.chunking.chunk_size
+        == m.get_profile("balanced").rag_config.chunking.chunk_size
+    )
 
 
 def test_save_reload_round_trips_explicit_persist_directory(tmp_path):
@@ -503,12 +560,16 @@ def test_save_reload_round_trips_explicit_persist_directory(tmp_path):
     # deps are installed, by pinning vector_store explicitly instead of
     # relying on auto-resolution.
     from pathlib import Path
+
     m = _mgr(tmp_path)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, VectorStoreConfig
+
     persist_dir = tmp_path / "chroma_store"
     p = ProfileConfig(
-        name="Chroma Explicit", description="d", profile_type="custom",
+        name="Chroma Explicit",
+        description="d",
+        profile_type="custom",
         rag_config=RAGConfig(
             vector_store=VectorStoreConfig(type="chroma", persist_directory=persist_dir)
         ),
@@ -521,7 +582,9 @@ def test_save_reload_round_trips_explicit_persist_directory(tmp_path):
     assert reloaded.rag_config.vector_store.persist_directory == persist_dir
 
 
-def test_load_does_not_clobber_unrelated_profile_on_disk_during_self_heal(tmp_path, monkeypatch):
+def test_load_does_not_clobber_unrelated_profile_on_disk_during_self_heal(
+    tmp_path, monkeypatch
+):
     # Regression test (SP2a review): _load_custom_profiles's self-heal branch
     # reassigns a builtin-colliding profile's id via _unique_id, which only
     # checks self._profiles -- the in-memory dict being built INCREMENTALLY
@@ -541,20 +604,30 @@ def test_load_does_not_clobber_unrelated_profile_on_disk_during_self_heal(tmp_pa
     pdir.mkdir(parents=True)
 
     collider = ProfileConfig(
-        id="high_accuracy", name="Collider", description="hand placed",
-        profile_type="custom", read_only=False,
+        id="high_accuracy",
+        name="Collider",
+        description="hand placed",
+        profile_type="custom",
+        read_only=False,
         rag_config=RAGConfig(embedding=EmbeddingConfig(model="collider-marker-model")),
     )
     (pdir / "high_accuracy.json").write_text(
-        _json.dumps(collider.to_dict(), default=str))
+        _json.dumps(collider.to_dict(), default=str)
+    )
 
     legit = ProfileConfig(
-        id="high_accuracy_2", name="Legit Other Profile", description="unrelated",
-        profile_type="custom", read_only=False,
-        rag_config=RAGConfig(embedding=EmbeddingConfig(model="legit-other-marker-model")),
+        id="high_accuracy_2",
+        name="Legit Other Profile",
+        description="unrelated",
+        profile_type="custom",
+        read_only=False,
+        rag_config=RAGConfig(
+            embedding=EmbeddingConfig(model="legit-other-marker-model")
+        ),
     )
     (pdir / "high_accuracy_2.json").write_text(
-        _json.dumps(legit.to_dict(), default=str))
+        _json.dumps(legit.to_dict(), default=str)
+    )
 
     # Force the collider-first glob order (the order under which the bug
     # manifests) so this test doesn't depend on filesystem-specific readdir
@@ -579,7 +652,8 @@ def test_load_does_not_clobber_unrelated_profile_on_disk_during_self_heal(tmp_pa
     # and "high_accuracy_2" (already claimed on disk by the unrelated
     # profile) -- landing on a third id.
     reassigned = [
-        p for p in m._profiles.values()
+        p
+        for p in m._profiles.values()
         if p.rag_config.embedding.model == "collider-marker-model"
     ]
     assert len(reassigned) == 1
@@ -615,7 +689,9 @@ def _force_glob_order(monkeypatch, first_name):
     monkeypatch.setattr(Path, "glob", ordered_glob)
 
 
-def test_load_does_not_clobber_sibling_file_that_slugifies_to_same_id(tmp_path, monkeypatch):
+def test_load_does_not_clobber_sibling_file_that_slugifies_to_same_id(
+    tmp_path, monkeypatch
+):
     # Regression test (SP2a review, second clobber hole): the self-heal in
     # _load_custom_profiles fires _save_one whenever canonical_path != path,
     # but the OLD code only reassigns/uniquifies the id inside the
@@ -637,15 +713,21 @@ def test_load_does_not_clobber_sibling_file_that_slugifies_to_same_id(tmp_path, 
     pdir.mkdir(parents=True)
 
     profile_a = ProfileConfig(
-        id="foo-bar", name="Profile A", description="dash-named",
-        profile_type="custom", read_only=False,
+        id="foo-bar",
+        name="Profile A",
+        description="dash-named",
+        profile_type="custom",
+        read_only=False,
         rag_config=RAGConfig(embedding=EmbeddingConfig(model="profile-a-marker-model")),
     )
     (pdir / "foo-bar.json").write_text(_json.dumps(profile_a.to_dict(), default=str))
 
     profile_b = ProfileConfig(
-        id="foo_bar", name="Profile B", description="underscore-named",
-        profile_type="custom", read_only=False,
+        id="foo_bar",
+        name="Profile B",
+        description="underscore-named",
+        profile_type="custom",
+        read_only=False,
         rag_config=RAGConfig(embedding=EmbeddingConfig(model="profile-b-marker-model")),
     )
     (pdir / "foo_bar.json").write_text(_json.dumps(profile_b.to_dict(), default=str))
@@ -655,13 +737,19 @@ def test_load_does_not_clobber_sibling_file_that_slugifies_to_same_id(tmp_path, 
     m = _mgr(tmp_path)
 
     loaded = list(m._profiles.values())
-    a_matches = [p for p in loaded if p.rag_config.embedding.model == "profile-a-marker-model"]
-    b_matches = [p for p in loaded if p.rag_config.embedding.model == "profile-b-marker-model"]
+    a_matches = [
+        p for p in loaded if p.rag_config.embedding.model == "profile-a-marker-model"
+    ]
+    b_matches = [
+        p for p in loaded if p.rag_config.embedding.model == "profile-b-marker-model"
+    ]
 
     # Both distinctive profiles must survive, each exactly once, under
     # different ids.
     assert len(a_matches) == 1, "Profile A missing or duplicated after self-heal"
-    assert len(b_matches) == 1, "Profile B missing or duplicated after self-heal (clobbered)"
+    assert len(b_matches) == 1, (
+        "Profile B missing or duplicated after self-heal (clobbered)"
+    )
     assert a_matches[0].id != b_matches[0].id
 
     # Neither on-disk file was overwritten with the other's content.
@@ -686,15 +774,21 @@ def test_load_does_not_clobber_sibling_file_reverse_glob_order(tmp_path, monkeyp
     pdir.mkdir(parents=True)
 
     profile_a = ProfileConfig(
-        id="foo-bar", name="Profile A", description="dash-named",
-        profile_type="custom", read_only=False,
+        id="foo-bar",
+        name="Profile A",
+        description="dash-named",
+        profile_type="custom",
+        read_only=False,
         rag_config=RAGConfig(embedding=EmbeddingConfig(model="profile-a-marker-model")),
     )
     (pdir / "foo-bar.json").write_text(_json.dumps(profile_a.to_dict(), default=str))
 
     profile_b = ProfileConfig(
-        id="foo_bar", name="Profile B", description="underscore-named",
-        profile_type="custom", read_only=False,
+        id="foo_bar",
+        name="Profile B",
+        description="underscore-named",
+        profile_type="custom",
+        read_only=False,
         rag_config=RAGConfig(embedding=EmbeddingConfig(model="profile-b-marker-model")),
     )
     (pdir / "foo_bar.json").write_text(_json.dumps(profile_b.to_dict(), default=str))
@@ -704,11 +798,17 @@ def test_load_does_not_clobber_sibling_file_reverse_glob_order(tmp_path, monkeyp
     m = _mgr(tmp_path)
 
     loaded = list(m._profiles.values())
-    a_matches = [p for p in loaded if p.rag_config.embedding.model == "profile-a-marker-model"]
-    b_matches = [p for p in loaded if p.rag_config.embedding.model == "profile-b-marker-model"]
+    a_matches = [
+        p for p in loaded if p.rag_config.embedding.model == "profile-a-marker-model"
+    ]
+    b_matches = [
+        p for p in loaded if p.rag_config.embedding.model == "profile-b-marker-model"
+    ]
 
     assert len(a_matches) == 1, "Profile A missing or duplicated after self-heal"
-    assert len(b_matches) == 1, "Profile B missing or duplicated after self-heal (clobbered)"
+    assert len(b_matches) == 1, (
+        "Profile B missing or duplicated after self-heal (clobbered)"
+    )
     assert a_matches[0].id != b_matches[0].id
 
     disk_models = {
@@ -725,10 +825,23 @@ def test_save_profile_allows_user_over_user_same_id(tmp_path):
     m = _mgr(tmp_path)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
-    first = ProfileConfig(id="shared_id", name="First", description="d",
-                          profile_type="custom", rag_config=RAGConfig(), read_only=False)
-    second = ProfileConfig(id="shared_id", name="Second", description="d",
-                           profile_type="custom", rag_config=RAGConfig(), read_only=False)
+
+    first = ProfileConfig(
+        id="shared_id",
+        name="First",
+        description="d",
+        profile_type="custom",
+        rag_config=RAGConfig(),
+        read_only=False,
+    )
+    second = ProfileConfig(
+        id="shared_id",
+        name="Second",
+        description="d",
+        profile_type="custom",
+        rag_config=RAGConfig(),
+        read_only=False,
+    )
     m.save_profile(first)
     m.save_profile(second)  # must not raise
     assert m.get_profile("shared_id").name == "Second"
@@ -766,8 +879,12 @@ def test_hand_edited_id_path_traversal_is_neutralized_by_filename_authority(tmp_
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 
     evil = ProfileConfig(
-        id="../../pwned", name="Evil", description="d",
-        profile_type="custom", rag_config=RAGConfig(), read_only=False,
+        id="../../pwned",
+        name="Evil",
+        description="d",
+        profile_type="custom",
+        rag_config=RAGConfig(),
+        read_only=False,
     )
     (pdir / "evil.json").write_text(_json.dumps(evil.to_dict(), default=str))
 
@@ -800,8 +917,12 @@ def test_load_uses_filename_stem_as_authoritative_id(tmp_path):
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 
     mismatched = ProfileConfig(
-        id="b", name="Mismatched", description="d",
-        profile_type="custom", rag_config=RAGConfig(), read_only=False,
+        id="b",
+        name="Mismatched",
+        description="d",
+        profile_type="custom",
+        rag_config=RAGConfig(),
+        read_only=False,
     )
     (pdir / "a.json").write_text(_json.dumps(mismatched.to_dict(), default=str))
 
@@ -820,7 +941,9 @@ def test_load_uses_filename_stem_as_authoritative_id(tmp_path):
     assert m2.get_profile("b") is None
 
 
-def test_stray_file_named_custom_profiles_json_is_not_destroyed_as_legacy_blob(tmp_path):
+def test_stray_file_named_custom_profiles_json_is_not_destroyed_as_legacy_blob(
+    tmp_path,
+):
     # Review finding (PR #780 residual): a profile whose display name
     # slugifies to "custom_profiles" (create_custom_profile("Custom
     # Profiles"), or a hand-placed custom-profiles.json file) can end up
@@ -847,9 +970,14 @@ def test_stray_file_named_custom_profiles_json_is_not_destroyed_as_legacy_blob(t
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, EmbeddingConfig
 
     stray = ProfileConfig(
-        id="custom_profiles", name="Custom Profiles", description="hand placed",
-        profile_type="custom", read_only=False,
-        rag_config=RAGConfig(embedding=EmbeddingConfig(model="stray-single-profile-marker")),
+        id="custom_profiles",
+        name="Custom Profiles",
+        description="hand placed",
+        profile_type="custom",
+        read_only=False,
+        rag_config=RAGConfig(
+            embedding=EmbeddingConfig(model="stray-single-profile-marker")
+        ),
     )
     blob_path = pdir / "custom_profiles.json"
     migrated_path = pdir / "custom_profiles.json.migrated"
@@ -859,7 +987,9 @@ def test_stray_file_named_custom_profiles_json_is_not_destroyed_as_legacy_blob(t
         assert blob_path.exists(), "custom_profiles.json must not be renamed/removed"
         assert not migrated_path.exists(), "must not be treated as a legacy blob"
         on_disk = json.loads(blob_path.read_text())
-        assert on_disk["rag_config"]["embedding"]["model"] == "stray-single-profile-marker"
+        assert (
+            on_disk["rag_config"]["embedding"]["model"] == "stray-single-profile-marker"
+        )
 
     _mgr(tmp_path)  # boot 1
     assert_survives()
@@ -868,7 +998,9 @@ def test_stray_file_named_custom_profiles_json_is_not_destroyed_as_legacy_blob(t
     assert_survives()
 
 
-def test_create_custom_profile_never_canonicalizes_onto_reserved_blob_filename(tmp_path):
+def test_create_custom_profile_never_canonicalizes_onto_reserved_blob_filename(
+    tmp_path,
+):
     # Companion fix: creating a profile whose display name slugifies to
     # "custom_profiles" must never be allowed to land on
     # custom_profiles.json -- that's the reserved legacy-blob filename, and
@@ -904,6 +1036,7 @@ def _isolated_default_profile_manager(tmp_path, monkeypatch):
     file, so no manager or profile file leaks across tests.
     """
     import tldw_chatbook.RAG_Search.config_profiles as cp
+
     reset_profile_manager_cache()
     monkeypatch.setattr(cp, "get_user_data_dir", lambda: tmp_path / "default_user_data")
     yield
@@ -937,8 +1070,12 @@ def test_cached_default_manager_sees_mutations_from_other_default_dir_callers():
     default-dir callers now share one instance, a profile saved through one
     no-arg get_profile_manager() call must be visible to another."""
     mgr_a = get_profile_manager()
-    p = ProfileConfig(name="Shared", description="d", profile_type="custom",
-                      rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")))
+    p = ProfileConfig(
+        name="Shared",
+        description="d",
+        profile_type="custom",
+        rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
+    )
     mgr_a.save_profile(p)
 
     mgr_b = get_profile_manager()
@@ -1027,10 +1164,15 @@ def test_concurrent_first_touch_constructs_exactly_one_manager(monkeypatch):
 # the save failed). ---
 
 
-def test_save_profile_does_not_register_when_the_disk_write_fails(tmp_path, monkeypatch):
+def test_save_profile_does_not_register_when_the_disk_write_fails(
+    tmp_path, monkeypatch
+):
     m = _mgr(tmp_path)
     p = ProfileConfig(
-        id="my_profile", name="Mine", description="d", profile_type="custom",
+        id="my_profile",
+        name="Mine",
+        description="d",
+        profile_type="custom",
         rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
         read_only=False,
     )
@@ -1060,7 +1202,10 @@ def test_save_profile_rejects_hard_invalid_rag_config(tmp_path):
     # chunk_overlap >= chunk_size is one of RAGConfig.validate()'s checks.
     m = _mgr(tmp_path)
     bad = ProfileConfig(
-        id="bad_profile", name="Bad", description="d", profile_type="custom",
+        id="bad_profile",
+        name="Bad",
+        description="d",
+        profile_type="custom",
         rag_config=RAGConfig(
             chunking=ChunkingConfig(chunk_size=10, chunk_overlap=20),
             vector_store=VectorStoreConfig(type="memory"),
@@ -1082,7 +1227,10 @@ def test_save_profile_accepts_a_valid_rag_config(tmp_path):
     # Companion happy-path: a config with no validate() errors is unaffected.
     m = _mgr(tmp_path)
     good = ProfileConfig(
-        id="good_profile", name="Good", description="d", profile_type="custom",
+        id="good_profile",
+        name="Good",
+        description="d",
+        profile_type="custom",
         rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
         read_only=False,
     )
@@ -1100,7 +1248,10 @@ def test_load_degrades_gracefully_on_hand_corrupted_profile_json(tmp_path):
     pdir = tmp_path / "profiles"
     pdir.mkdir(parents=True)
     corrupted = ProfileConfig(
-        id="corrupted", name="Corrupted", description="d", profile_type="custom",
+        id="corrupted",
+        name="Corrupted",
+        description="d",
+        profile_type="custom",
         rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
         read_only=False,
     )
@@ -1120,7 +1271,9 @@ def test_load_degrades_gracefully_on_hand_corrupted_profile_json(tmp_path):
         logger.remove(sink_id)
 
     loaded = m.get_profile("corrupted")
-    assert loaded is not None, "a validate()-invalid (but structurally parseable) profile must still load"
+    assert loaded is not None, (
+        "a validate()-invalid (but structurally parseable) profile must still load"
+    )
     assert loaded.rag_config.vector_store.type == "not_a_real_store"
     assert loaded.rag_config.search.default_top_k == -5
 

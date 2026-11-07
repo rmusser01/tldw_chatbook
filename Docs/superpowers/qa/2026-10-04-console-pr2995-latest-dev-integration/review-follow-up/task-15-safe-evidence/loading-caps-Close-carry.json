@@ -1,0 +1,36 @@
+{
+  "task14_receipt_sha256": "61b0cd2eb33ffdc24d0bd0b2b87c6258f7bdb3dc9052aaf89ebc65e4a4193706",
+  "caps": {
+    "cap_source_files": {
+      "Tests/Architecture/test_module_size_ratchet.py": "c6edcb0356dcb454a2a35838e7ab9be72731cd40b4ec6090572a864019bdbd2e",
+      "Tests/Architecture/test_screen_size_ratchet.py": "3a5eab2d853c7e21a079fdb271f964d9ade977ec572f16219968a2a33d4b2bfb",
+      "Tests/Performance/test_app_import_weight.py": "c98f0e9378897ceea76b77547925737e377904f7d0bb4650fc7f069ce3378219",
+      "Tests/Performance/test_ui_ready_module_census.py": "08bb8725611f069fd42d87f11fed813969fa44ac154fedf803cbd04d66ff6117",
+      "Tests/Performance/test_screen_preimport_payload_budget.py": "27f92d64015b5d598ed5b204d6443820c2e0316c1ae2205db189060d3bddba4c",
+      "Tests/Performance/test_boot_css_byte_budget.py": "f02d7f710ae102d4032238373439caa7e1e3e5771716b49e248af9662dbb0080"
+    },
+    "controller_lines_cap": 29301,
+    "store_lines_cap": 22344,
+    "interrupt_lines_cap": 6479,
+    "compaction_lines_cap": 4185,
+    "screen_lines_cap": 25218,
+    "screen_method_cap": 759,
+    "screen_actual_lines_historical": 25192,
+    "screen_actual_methods_historical": 759,
+    "slack_rule": 50,
+    "historical_app_import_modules": "681/686",
+    "historical_ui_ready_modules": "1033/1033",
+    "historical_preimport_modules": "557/557",
+    "historical_boot_css_bytes": "607326/608090"
+  },
+  "historical_warnings": [
+    "app681/686",
+    "ready1033/1033",
+    "preimport557/557;415310/425347LOC;library127527/135111LOC",
+    "CSS607326/608090bytes",
+    "Task13 FD start14/end383,growth369 over200; unsuppressed; no new attribution"
+  ],
+  "historical35_loading_evidence_unmodified": true,
+  "fresh_loading_pass_claim": false,
+  "all_controller_store_native_Close_import_authority_paths_outside_five_exact": true
+}

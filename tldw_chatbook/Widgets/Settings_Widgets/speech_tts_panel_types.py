@@ -21,7 +21,7 @@ remains the SAME class object -- the identity checks above and the panel's own
 tests keep working unchanged.
 
 Nothing here performs widget, filesystem, config, or provider I/O; the only
-non-stdlib dependency is ``UI/Screens/settings_speech_tts``, the pure
+non-stdlib dependency is ``UI/Speech/settings_speech_tts``, the pure
 Speech/TTS settings model, which is already on the app import path through
 ``Event_Handlers/STTS_Events/stts_events``.
 """
@@ -32,7 +32,7 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import cast
 
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     GlobalSpeechTTSCredentialState,

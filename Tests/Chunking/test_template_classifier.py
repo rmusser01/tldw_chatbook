@@ -18,7 +18,9 @@ def test_template_classifier_scores_basic_matches():
             "priority": 1,
         }
     }
-    s = TemplateClassifier.score(cfg, media_type="document", title="My Report 2024", url=None, filename=None)
+    s = TemplateClassifier.score(
+        cfg, media_type="document", title="My Report 2024", url=None, filename=None
+    )
     assert s >= 0.1
 
 
@@ -37,7 +39,13 @@ def test_template_processor_hierarchical_returns_dict_chunks():
                         "config": {
                             "hierarchical": True,
                             "hierarchical_template": {
-                                "boundaries": [{"kind": "header_atx", "pattern": r"^#\\s+", "flags": "m"}]
+                                "boundaries": [
+                                    {
+                                        "kind": "header_atx",
+                                        "pattern": r"^#\\s+",
+                                        "flags": "m",
+                                    }
+                                ]
                             },
                         },
                     }

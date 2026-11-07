@@ -3,14 +3,15 @@
 import tomllib
 
 import tldw_chatbook.config as config_module
-from tldw_chatbook.Utils.library_rail_width import LIBRARY_REFERENCE_WIDTH
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.UI.Screens.settings_appearance_defaults import (
     load_appearance_defaults,
 )
+from tldw_chatbook.Utils.library_rail_width import LIBRARY_REFERENCE_WIDTH
 
 
 def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    select_config_source(monkeypatch, str(tmp_path / "missing-config.toml"), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -59,7 +60,7 @@ def test_fresh_profile_uses_template_reference_without_materializing_shared_read
     tmp_path, monkeypatch
 ):
     config_path = tmp_path / "fresh-config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
     written = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -104,7 +105,7 @@ items_width = 45
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     monkeypatch.setenv("TLDW_LIBRARY_READER_LIBRARY_OPEN", "false")
     monkeypatch.setenv("TLDW_LIBRARY_READER_CUSTOM_WIDTHS_ENABLED", "true")
     monkeypatch.setenv("TLDW_LIBRARY_READER_LIBRARY_WIDTH", "36")
@@ -154,7 +155,7 @@ def test_load_settings_coerces_library_scan_limit(tmp_path, monkeypatch):
         "[library]\ningest_directory_scan_limit = 2500\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -163,7 +164,7 @@ def test_load_settings_coerces_library_scan_limit(tmp_path, monkeypatch):
 
 def test_load_settings_rejects_invalid_library_scan_limit(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     for raw_value in ("true", "0", "-5"):
         config_path.write_text(
@@ -182,7 +183,7 @@ def test_load_settings_reads_persisted_ingest_options(tmp_path, monkeypatch):
         '[library.ingest_options.pdf]\npdf_engine = "docling"\nocr = true\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -209,7 +210,7 @@ items_width = 20
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     library = config_module.load_settings(force_reload=True)["library"]
 
@@ -245,7 +246,7 @@ items_width = 64
 future_key = "keep"
 """
     config_path.write_text(original, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     library = config_module.load_settings(force_reload=True)["library"]
 
@@ -280,7 +281,7 @@ items_width = 64
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     library = config_module.load_settings(force_reload=True)["library"]
 
@@ -299,7 +300,7 @@ custom_widths_enabled = false
 library_width = 28
 """
     config_path.write_text(original, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
     defaults = load_appearance_defaults(settings)
@@ -329,7 +330,7 @@ custom_widths_enabled = false
 library_width = 28
 """
     config_path.write_text(original, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
     defaults = load_appearance_defaults(settings)
@@ -376,7 +377,7 @@ future_key = "keep"
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     library = config_module.load_settings(force_reload=True)["library"]
 
@@ -412,7 +413,7 @@ files_tree_width = 500
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     notes_reader = config_module.load_settings(force_reload=True)["library"][
         "notes_reader"
@@ -441,7 +442,7 @@ items_width = true
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     media_reader = config_module.load_settings(force_reload=True)["library"][
         "media_reader"

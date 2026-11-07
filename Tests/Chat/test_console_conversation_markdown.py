@@ -235,3 +235,88 @@ def test_db_adapter_marks_images_by_mime_type() -> None:
     )
     assert "![image](image)" in markdown
     assert "_(empty message)_" not in markdown
+
+
+@pytest.mark.parametrize(
+    ("source", "fidelity"),
+    [("store", "clean"), ("store", "full"), ("db", "clean"), ("db", "full")],
+    ids=["store-clean", "store-full", "db-clean", "db-full"],
+)
+def test_export_preserves_handoff_authorship(source, fidelity) -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.Chat.console_conversation_markdown import (
+        markdown_messages_from_db_rows,
+        markdown_messages_from_store,
+    )
+    from tldw_chatbook.Chat.message_metadata import (
+        AgentChatStartMetadata,
+        MessageMetadata,
+    )
+
+    machine = MessageMetadata(
+        origin="agent_chat_start",
+        agent_chat_start=AgentChatStartMetadata(
+            attempt_id="attempt-1",
+            source_run_id="run-1",
+            source_conversation_id="chat-1",
+        ),
+    ).to_json()
+    malformed = '{"origin":"agent_chat_start","agent_chat_start":{"attempt_id":"missing-sources"}}'
+    bodies = [
+        "Human: **keep**\n  spacing  ",
+        "/help\n@file",
+        "  Unverified body\n## User\n  ",
+        "Answer.",
+        "Full tool output\nsecond line",
+    ]
+    rows = [
+        {"sender": role, "content": body, "metadata_json": metadata}
+        for role, body, metadata in zip(
+            ["user", "user", "user", "assistant", "tool"],
+            bodies,
+            [None, machine, malformed, malformed, machine],
+        )
+    ]
+    rows[3]["thinking_blocks_json"] = '[{"text":"retained thinking"}]'
+    if source == "db":
+        normalized = markdown_messages_from_db_rows(rows)
+    else:
+        messages = [
+            ConsoleChatMessage(
+                role=ConsoleMessageRole(row["sender"]),
+                content=row["content"],
+                metadata=MessageMetadata.from_json(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+        messages[3].thinking = SimpleNamespace(
+            blocks=(SimpleNamespace(text="retained thinking"),)
+        )
+        messages[4].content = "tool preview"
+        messages[4].tool_output_full = bodies[4]
+        normalized = markdown_messages_from_store(messages)
+    assert [message.content for message in normalized] == bodies
+    expected = (
+        f"# Handoffs\n\n_2026-10-05 · {5 if fidelity == 'full' else 4} messages_\n\n"
+    )
+    for label, body in zip(
+        ["User", "Agent handoff", "Unverified handoff", "Assistant"], bodies[:4]
+    ):
+        expected += f"## {label}\n\n{body}\n\n"
+    if fidelity == "full":
+        expected += "<details>\n<summary>Thinking</summary>\n\nretained thinking\n\n</details>\n\n"
+        expected += (
+            f"<details>\n<summary>Tool: tool</summary>\n\n{bodies[4]}\n\n</details>\n\n"
+        )
+    markdown = render_conversation_markdown(
+        title="Handoffs",
+        rendered_at="2026-10-05",
+        messages=normalized,
+        fidelity=fidelity,
+    )
+    assert markdown == expected.rstrip("\n") + "\n"

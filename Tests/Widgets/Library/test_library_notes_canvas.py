@@ -1259,3 +1259,211 @@ async def test_source_empty_with_loading_root_slices_suppresses_empty_line(
             "#library-notes-pager-folders-root", Button
         )
         assert "Loading" in str(pager.label)
+
+
+# -- TASK-34000.2 (review finding N-02): a held sync folder outranks "Ready"/"Saved".
+
+
+async def test_list_status_names_a_held_sync_folder_instead_of_ready(
+    widget_pilot,  # noqa: F811
+):
+    """The list's idle "Ready" was the finding's own lie over a wedged folder.
+
+    A held folder replaces the idle wording and its next action names the
+    control that resolves it; a running operation's own status still wins.
+    """
+    held = replace(_list_state(), sync_attention=True)
+    async with await widget_pilot(LibraryNotesCanvas, list_state=held) as pilot:
+        await pilot.pause()
+        authority = pilot.app.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text == (
+            "Library notes · ⚠ A sync folder needs attention · "
+            "Next: Open Manage sync folders."
+        )
+        assert "Ready" not in text
+
+    running = replace(held, operation_running=True, operation_status="")
+    async with await widget_pilot(LibraryNotesCanvas, list_state=running) as pilot:
+        await pilot.pause()
+        authority = pilot.app.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text == "Library notes · Updating notes…"
+
+
+async def test_the_authority_line_promises_autosave_only_while_one_is_scheduled(
+    widget_pilot,  # noqa: F811
+):
+    """TASK-34000.9 (review N-06): "changes save automatically" read only
+    ``dirty``. A dirty note whose timer a modal had stopped kept the promise
+    for 20 s over a row that never changed. The promise now follows the
+    scheduled flag; a dirty note with nothing armed names the control that
+    saves, and a clean note keeps the future-tense promise (the next
+    keystroke arms it).
+    """
+    clean = _editor_state()
+    dirty = replace(
+        clean,
+        status_line="Unsaved changes",
+        snapshot=replace(clean.snapshot, dirty=True, status_message=""),
+    )
+    unscheduled = replace(dirty, autosave_scheduled=False)
+    async with await widget_pilot(
+        LibraryNotesCanvas, mode="editor", presentation_state=unscheduled
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        authority = canvas.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith(
+            "Unsaved changes · Next: Keep editing; press Save to save now."
+        ), text
+        assert "save automatically" not in text, text
+
+        canvas.apply_session_state(replace(dirty, autosave_scheduled=True))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith(
+            "Unsaved changes · Next: Keep editing; changes save automatically."
+        ), text
+
+        canvas.apply_session_state(replace(clean, autosave_scheduled=False))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith(
+            "Saved · Next: Keep editing; changes save automatically."
+        ), text
+
+
+_DUPLICATE_VETO = "Keywords contain a case-insensitive duplicate — remove one to save."
+_WHITESPACE_VETO = "Title begins or ends with whitespace — remove it to save."
+_FIELD_HINTS = (
+    "#library-note-title-hint",
+    "#library-note-keywords-hint",
+    "#library-note-context-keywords-hint",
+    "#library-note-body-hint",
+)
+
+
+async def test_a_vetoed_field_is_marked_with_its_reason_under_it(
+    widget_pilot,  # noqa: F811
+):
+    """TASK-34000.10 (review N-07): a veto used to style nothing but the
+    status row. The vetoed field now carries ``library-note-field-invalid``
+    and the coordinator's own message is shown in a hint directly under it;
+    the other hints stay hidden. Both keyword boxes carry the keywords mark
+    (only one is ever displayed), and the authority line names the way out
+    without promising a save that cannot land.
+    """
+    clean = _editor_state()
+    vetoed = replace(
+        clean,
+        status_line=_DUPLICATE_VETO,
+        validation=True,
+        validation_field="keywords",
+        validation_message=_DUPLICATE_VETO,
+        autosave_scheduled=False,
+        snapshot=replace(clean.snapshot, dirty=True, status_message=_DUPLICATE_VETO),
+    )
+    async with await widget_pilot(
+        LibraryNotesCanvas, mode="editor", presentation_state=vetoed
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        # Composed from the state: the mount-time apply never runs
+        # (TASK-34000.25), so a veto standing when the editor composes must
+        # already be marked.
+        for selector in ("#library-note-keywords", "#library-note-context-keywords"):
+            assert canvas.query_one(selector).has_class("library-note-field-invalid"), selector
+        assert not canvas.query_one("#library-note-title").has_class(
+            "library-note-field-invalid"
+        )
+        shown = {
+            selector
+            for selector in _FIELD_HINTS
+            if canvas.query_one(selector, Static).display
+        }
+        assert shown == {
+            "#library-note-keywords-hint",
+            "#library-note-context-keywords-hint",
+        }, shown
+        hint = canvas.query_one("#library-note-keywords-hint", Static)
+        assert getattr(hint.renderable, "plain", str(hint.renderable)) == _DUPLICATE_VETO
+        authority = canvas.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith(
+            f"{_DUPLICATE_VETO} · Next: Fix the marked field, or press Save to go to it."
+        ), text
+        assert "save automatically" not in text, text
+
+        # The mark follows the state: a title veto moves it, a keystroke
+        # (validation cleared) removes it, and no hint is left showing.
+        canvas.apply_session_state(
+            replace(
+                vetoed,
+                status_line=_WHITESPACE_VETO,
+                validation_field="title",
+                validation_message=_WHITESPACE_VETO,
+            )
+        )
+        assert canvas.query_one("#library-note-title").has_class(
+            "library-note-field-invalid"
+        )
+        assert not canvas.query_one("#library-note-keywords").has_class(
+            "library-note-field-invalid"
+        )
+        assert canvas.query_one("#library-note-title-hint", Static).display
+        assert not canvas.query_one("#library-note-keywords-hint", Static).display
+
+        canvas.apply_session_state(
+            replace(clean, snapshot=replace(clean.snapshot, dirty=True), autosave_scheduled=True)
+        )
+        for selector in (
+            "#library-note-title",
+            "#library-note-keywords",
+            "#library-note-context-keywords",
+            "#library-note-body",
+        ):
+            assert not canvas.query_one(selector).has_class(
+                "library-note-field-invalid"
+            ), selector
+        assert not any(
+            canvas.query_one(selector, Static).display for selector in _FIELD_HINTS
+        )
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text.endswith("Next: Keep editing; changes save automatically."), text
+
+
+async def test_editor_status_says_a_held_sync_folder_needs_attention(
+    widget_pilot,  # noqa: F811
+):
+    """"Saved · Next: Keep editing" over a held folder told the user the file
+    had the text; it has the Notes copy only. The held state is said, the
+    save is scoped to Notes, and the next action names the resolving control.
+    A note with no file, or an unheld folder, keeps the healthy wording.
+    """
+    held = replace(
+        _editor_state(),
+        location_path="/vault/quotes.md",
+        location_written="2026-10-03 13:49",
+        location_attention=True,
+    )
+    async with await widget_pilot(
+        LibraryNotesCanvas, mode="editor", presentation_state=held
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        authority = canvas.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "Saved in Notes" in text, text
+        assert "⚠ Sync needs attention" in text, text
+        assert "Next: Open Manage sync folders." in text, text
+        assert "Keep editing" not in text, text
+
+        canvas.apply_session_state(replace(held, location_attention=False))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "needs attention" not in text, text
+        assert "Next: Keep editing; changes save automatically." in text, text
+
+        # No file: the flag is meaningless and must not paint a warning.
+        canvas.apply_session_state(replace(held, location_path=""))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "needs attention" not in text, text

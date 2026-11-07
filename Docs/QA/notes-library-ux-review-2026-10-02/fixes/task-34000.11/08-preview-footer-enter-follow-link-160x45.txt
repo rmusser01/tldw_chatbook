@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Press Edit to change this note.                                      │
+│   a  │ Library notes · Ready                                        │  o    ‹ Notes   Verifier link test                                                     │
+│   v  │ Notes (123)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                              │
+│      │                                                              │         Edit     Preview     Info                                                      │
+│      │ Filter                                                       │         Save     Use in Console                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │ ▊ Advisor 2026-09-24                                       ▎ │     ┃Verifier link test                                                              ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┃ See Advisor meeting 2026-09-24                                                 ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │    New     ○ Sort: Newest     Select                         │     ┃                                                                                ┃ │
+│ ---> │    Add from files…     Export                                │     ┃                                                                                ┃ │
+│      │ Folders & placement                                          │     ┃                                                                                ┃ │
+│      │    New folder     Add to folder     Move note                │     ┃                                                                                ┃ │
+│      │    ○ Remove placement                                        │     ┃                                                                                ┃ │
+│      │ Sort unavailable — clear the filter                          │     ┃                                                                                ┃ │
+│      │ filter: Advisor 2026-09-24 · 3 results                       │<--- ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │   Clear filter                                               │     ┃                                                                                ┃ │
+│      │  ▾ Meetings                                                  │     ┃                                                                                ┃ │
+│      │    Advisor meeting 2026-09-24 · Meetings · 5m                │     ┃                                                                                ┃ │
+│ ---> │  ▾ Projects                                                  │     ┃                                                                                ┃ │
+│      │    ▾ Thesis                                                  │     ┃                                                                                ┃ │
+│      │      Thesis outline — retrieval-augmented tutoring · Proje…  │     ┃                                                                                ┃ │
+│      │  ▾ Unfiled                                                   │     ┃                                                                                ┃ │
+│      │    Verifier link test · Unfiled · 1m                         │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      └──────────────────────────────────────────────────────────────┘                                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  pgup/pgdn scroll | enter follow link | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

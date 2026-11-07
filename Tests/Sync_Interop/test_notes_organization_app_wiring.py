@@ -76,12 +76,20 @@ def test_local_runtime_wiring_seeds_agent_lessons_after_schema_readiness(tmp_pat
 
     _wire_notes_sync_services(app)
 
-    folder = notes.get_connection().execute(
-        "SELECT name FROM note_folders WHERE parent_id IS NULL AND deleted = 0"
-    ).fetchone()
-    seed = notes.get_connection().execute(
-        "SELECT profile_id, dataset_id, scope_mode, state FROM agent_lessons_seed_state"
-    ).fetchone()
+    folder = (
+        notes.get_connection()
+        .execute(
+            "SELECT name FROM note_folders WHERE parent_id IS NULL AND deleted = 0"
+        )
+        .fetchone()
+    )
+    seed = (
+        notes.get_connection()
+        .execute(
+            "SELECT profile_id, dataset_id, scope_mode, state FROM agent_lessons_seed_state"
+        )
+        .fetchone()
+    )
     assert folder["name"] == "Agent_Lessons"
     assert tuple(seed) == ("local", "local", "local_only", "seeded")
     notes.close_connection()
@@ -131,8 +139,7 @@ async def test_production_shaped_wiring_replaces_none_seam_before_note_mutation(
     assert scope.sync_v2_notes_producer.notes_db is notes
     assert isinstance(scope.organization_sync_service, NotesOrganizationSyncService)
     assert (
-        scope.organization_sync_service.notes_producer
-        is scope.sync_v2_notes_producer
+        scope.organization_sync_service.notes_producer is scope.sync_v2_notes_producer
     )
     assert app.notes_organization_repository.db is notes
     assert app.notes_organization_repository.server_profile_id == "server-a"

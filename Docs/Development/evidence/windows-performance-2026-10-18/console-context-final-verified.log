@@ -1,0 +1,20 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+......................................                                   [100%]
+============================== warnings summary ===============================
+Tests/Performance/test_console_skill_context_owned.py::test_original_context_read_is_responsive_owned_and_custom_affine
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+41.44s call     Tests/Performance/test_console_skill_context_owned.py::test_original_context_read_is_responsive_owned_and_custom_affine
+2.91s call     Tests/Chat/test_console_cold_trust_preparation.py::test_resident_proof_rejects_changed_helper_before_invoking_it[wrapper]
+2.90s call     Tests/Chat/test_console_cold_trust_preparation.py::test_resident_proof_rejects_changed_helper_before_invoking_it[binding]
+2.90s call     Tests/Chat/test_console_cold_trust_preparation.py::test_resident_proof_rejects_changed_helper_before_invoking_it[body]
+2.88s call     Tests/Chat/test_console_cold_trust_preparation.py::test_resident_proof_rejects_changed_helper_before_invoking_it[defaults]
+
+(20 durations < 1s hidden.  Use -vv to show these durations.)
+38 passed, 1 warning in 60.00s (0:01:00)

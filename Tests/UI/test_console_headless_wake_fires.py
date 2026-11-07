@@ -29,8 +29,8 @@ Rig notes:
   (`on_fleet_drained`), exactly as `ConsoleAgentBridge` delivers it;
 * Console is left through the REAL navigation API (`NavigateToScreen` +
   the real "Leave Console?" dialog), so `ChatScreen.on_unmount` runs and
-  `leave_console_runtime` genuinely ends the visit -- nothing is
-  monkeypatched and no gate is suppressed;
+  `leave_console_runtime` detaches the view (since b7dd8e53f2 it no longer
+  ends the visit) -- nothing is monkeypatched and no gate is suppressed;
 * every durable surface is a real on-disk DB (ChaChaNotes, `agent_runs`,
   the conversation marks store).
 """
@@ -153,6 +153,26 @@ def _adopt_live_vllm(store, session_id: str):
     )
 
 
+async def _seed_console_through_route(app, pilot):
+    """Open Console through its route and send once; return the live handles.
+
+    The chat route reuses one screen instance (fed0b7257a), so returning
+    through the same route later brings back the screen the turn ran in.
+    """
+    from Tests.UI.test_destination_shells import _wait_for_selector
+
+    chat = await _navigate(app, pilot, "chat", expect="ChatScreen")
+    await _wait_for_selector(chat, pilot, "#console-native-composer")
+    controller = chat._ensure_console_chat_controller()
+    store = chat._console_chat_store
+    session_id = store.sessions()[0].id
+    outcome = await controller.submit_draft(SEEDED_USER, session_id=session_id)
+    assert outcome.accepted, "harness precondition: the seeding send must be accepted"
+    conversation_id = store.sessions()[0].persisted_conversation_id
+    assert conversation_id, "harness precondition: the conversation must PERSIST"
+    return chat, controller, store, session_id, conversation_id
+
+
 @pytest.mark.asyncio
 async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
     tmp_path,
@@ -182,9 +202,13 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
     app, gateway = _build_console_app(tmp_path)
 
     async with app.run_test(size=(160, 48)) as pilot:
-        chat, controller, store, session_id, conversation_id = await _seed_console(
-            app, pilot, gateway
-        )
+        (
+            chat,
+            controller,
+            store,
+            session_id,
+            conversation_id,
+        ) = await _seed_console_through_route(app, pilot)
         wake = controller.fleet_wake
         runs_db = controller._agent_bridge.runs_db
         run_id = _terminal_survivor_run(runs_db, conversation_id)
@@ -202,10 +226,12 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
         assert controller is app.console_runtime.chat_controller, (
             "harness precondition: the runtime must OUTLIVE the screen"
         )
-        assert controller._shutdown_requested.is_set(), (
-            "harness precondition: leaving Console must have ended the visit -- "
-            "that set Event is exactly the state the old gate refused, so a "
-            "test that never reached it would prove nothing"
+        # Since b7dd8e53f2 leaving Console only detaches its view; the visit
+        # flag the old gate refused on is no longer set by a navigation, so
+        # the gate cannot be what stops this wake (TASK-39044).
+        assert not controller._shutdown_requested.is_set(), (
+            "harness precondition: a navigation detaches the view without "
+            "ending the visit"
         )
         assert controller._disposed is False, (
             "harness precondition: a navigation is not an app exit"
@@ -219,9 +245,7 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
         )
 
         # (1) exactly one wake turn reached the provider.
-        assert await _settle(
-            lambda: len(gateway.payloads) > before, seconds=10.0
-        ), (
+        assert await _settle(lambda: len(gateway.payloads) > before, seconds=10.0), (
             "a background sub-agent settled while NO Console screen was mounted "
             "and no wake turn ever reached the provider"
         )
@@ -243,13 +267,15 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
 
         # (2) both rows landed in the app-owned store AND in ChaChaNotes.
         assert await _settle(
-            lambda: any(
-                m.content.startswith(WAKE_NOTICE_HEADER)
-                for m in store.messages_for_session(session_id)
-            )
-            and any(
-                m.content == WAKE_REPLY
-                for m in store.messages_for_session(session_id)
+            lambda: (
+                any(
+                    m.content.startswith(WAKE_NOTICE_HEADER)
+                    for m in store.messages_for_session(session_id)
+                )
+                and any(
+                    m.content == WAKE_REPLY
+                    for m in store.messages_for_session(session_id)
+                )
             ),
             seconds=10.0,
         ), (
@@ -284,9 +310,13 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
         assert contents[2].startswith(WAKE_NOTICE_HEADER)
         assert contents[3] == WAKE_REPLY
 
-        # (3) the ledger is stamped exactly once, and stays that way.
+        # (3) the ledger is stamped exactly once, and stays that way. The
+        # stamp is the delivery's last durable step, after the rows above.
+        assert await _settle(
+            lambda: (runs_db.get_run(run_id) or {}).get("wake_delivered_at"),
+            seconds=10.0,
+        ), "the headless delivery never stamped agent_runs.wake_delivered_at"
         stamp = (runs_db.get_run(run_id) or {}).get("wake_delivered_at")
-        assert stamp, "the headless delivery never stamped agent_runs.wake_delivered_at"
         _drain_from_child_thread(
             wake, _drain(conversation_id, _survivor(run_id, session_id=session_id))
         )
@@ -323,17 +353,16 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
             "user has no way to learn the supervisor turn ever ran"
         )
 
-        # (6) returning to Console shows the delivered turn.
+        # (6) returning to Console shows the delivered turn. The route
+        # reuses its screen (fed0b7257a), so this is the screen the seeded
+        # turn ran in (TASK-39044).
         chat2 = await _navigate(app, pilot, "chat", expect="ChatScreen")
         assert isinstance(chat2, ChatScreen), type(chat2).__name__
-        assert chat2 is not chat, "screens are never cached"
+        assert chat2 is chat, "the chat route must bring back its own screen"
         await pilot.pause()
         assert await _settle(
             lambda: WAKE_REPLY in _rendered_text(chat2), seconds=10.0
-        ), (
-            "the headless wake turn is not in the transcript the returning user "
-            "sees"
-        )
+        ), "the headless wake turn is not in the transcript the returning user sees"
         rendered = _rendered_text(chat2)
         assert WAKE_NOTICE_HEADER in rendered, (
             "the wake notice never rendered for the returning user"
@@ -345,9 +374,9 @@ async def test_headless_wake_uses_active_live_only_vllm_endpoint(tmp_path):
     """An unmounted wake resolves the process-local endpoint, not config."""
 
     app, seed_gateway = _build_console_app(tmp_path)
-    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})[
-        "api_url"
-    ] = CONFIGURED_VLLM_URL
+    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})["api_url"] = (
+        CONFIGURED_VLLM_URL
+    )
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
@@ -386,9 +415,9 @@ async def test_headless_wake_blocks_after_real_vllm_rollback_conflict(tmp_path):
     """A real metadata winner prevents an unmounted wake from misrouting."""
 
     app, seed_gateway = _build_console_app(tmp_path)
-    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})[
-        "api_url"
-    ] = CONFIGURED_VLLM_URL
+    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})["api_url"] = (
+        CONFIGURED_VLLM_URL
+    )
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(

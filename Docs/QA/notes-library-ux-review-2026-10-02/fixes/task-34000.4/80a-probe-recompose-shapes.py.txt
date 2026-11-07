@@ -1,0 +1,132 @@
+"""Textual 8.2.8 probe v2: outcome of each awaited-removal shape vs. the
+candidate guard predicate evaluated at the removal seam.
+
+Predicate under test (evaluated immediately before the awaited removal):
+  PUMP   -- the current asyncio task is the message-pump task of a STRICT
+            descendant of a removal root (Widget._message_loop_exit gathers
+            its children's pump tasks with no timeout -> cycle).
+  WORKER -- the current task is a worker owned by a node inside the removed
+            subtree (unmount cancels the node's workers mid-swap).
+"""
+import asyncio
+import os
+import sys
+
+from textual import on
+from textual._context import active_message_pump
+from textual.app import App, ComposeResult
+from textual.containers import Vertical
+from textual.screen import Screen
+from textual.widgets import Button, Static
+from textual.worker import NoActiveWorker, get_current_worker
+
+MODE = sys.argv[1]
+OBS: dict = {}
+
+
+def predicate(roots) -> str:
+    current = asyncio.current_task()
+    for root in roots:
+        for node in root.walk_children(with_self=False):
+            if node._task is current:
+                return f"PUMP:{type(node).__name__}"
+    try:
+        worker = get_current_worker()
+    except NoActiveWorker:
+        worker = None
+    if worker is not None:
+        for root in roots:
+            if worker.node is root or root in worker.node.ancestors:
+                return f"WORKER:{type(worker.node).__name__}"
+    return "clear"
+
+
+class Canvas(Vertical):
+    def compose(self) -> ComposeResult:
+        yield Button("Export", id="export")
+
+    @on(Button.Pressed, "#export")
+    async def pressed(self, event: Button.Pressed) -> None:
+        screen = self.screen
+        if MODE == "descendant_awaits_screen_recompose":
+            await self._swap()
+        elif MODE == "root_awaits_parent_remove_children":
+            OBS["predicate"] = predicate([self])
+            await self.parent.remove_children([self])
+            await screen.query_one("#host").mount(Static("swapped", id="swapped"))
+        elif MODE == "descendant_call_later_self":
+            self.call_later(self._swap)
+        elif MODE == "descendant_call_after_refresh_self":
+            self.call_after_refresh(self._swap)
+        elif MODE == "descendant_call_later_screen":
+            screen.call_later(self._swap)
+        elif MODE == "descendant_call_after_refresh_screen":
+            screen.call_after_refresh(self._swap)
+        elif MODE == "descendant_worker":
+            self.run_worker(self._swap())
+        elif MODE == "screen_worker":
+            screen.run_worker(self._swap())
+
+    async def _swap(self) -> None:
+        screen = self.screen
+        OBS["predicate"] = predicate(list(screen.children))
+        try:
+            ctx = active_message_pump.get()
+        except LookupError:
+            ctx = None
+        OBS["ctx_pump"] = type(ctx).__name__
+        try:
+            await screen.recompose()
+        except asyncio.CancelledError:
+            OBS["swap"] = "CANCELLED mid-recompose"
+            raise
+        OBS["swap"] = "returned"
+
+
+class Shell(Vertical):
+    def compose(self) -> ComposeResult:
+        yield Canvas(id="canvas")
+
+
+class Main(Screen):
+    composed = 0
+
+    def compose(self) -> ComposeResult:
+        Main.composed += 1
+        if MODE == "root_awaits_parent_remove_children":
+            with Vertical(id="host"):
+                yield Canvas(id="canvas")
+        else:
+            yield Shell(id="shell")
+
+
+class Probe(App):
+    def on_mount(self) -> None:
+        self.push_screen(Main())
+
+
+async def main() -> None:
+    app = Probe()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        before = Main.composed
+        app.screen.query_one("#export", Button).press()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 4.0
+        done = False
+        while loop.time() < deadline:
+            await asyncio.sleep(0.05)
+            if MODE == "root_awaits_parent_remove_children":
+                done = bool(app.screen.query("#swapped"))
+            else:
+                done = Main.composed > before and bool(app.screen.query("#export"))
+            if done:
+                break
+        verdict = "COMPLETED" if done else "NEVER LANDED (bounded 4s)"
+        with open("results.txt", "a") as fh:
+            fh.write(f"{MODE:42s} {verdict:28s} {OBS}\n")
+        if not done:
+            os._exit(3)  # run_test teardown would wait on the dead pumps
+
+
+asyncio.run(main())

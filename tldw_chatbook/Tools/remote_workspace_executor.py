@@ -138,6 +138,7 @@ _EXCLUSION_CARRYING_OPERATIONS = frozenset(
         "fs_grep",
         "fs_write",
         "fs_edit",
+        "fs_mkdir",
         "fs_patch",
         "git_status",
         "git_diff",

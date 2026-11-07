@@ -14,16 +14,24 @@ from urllib.parse import urlsplit
 import keyring
 from loguru import logger
 
-from tldw_chatbook.Media_Generation.config_machinery import ModalityConfigTables, SecretSpec
+from tldw_chatbook.Media_Generation.config_machinery import (
+    ModalityConfigTables,
+    SecretSpec,
+)
 from tldw_chatbook.Media_Generation.config_machinery import coerce_bool_flag_or_warn
 from tldw_chatbook.Media_Generation.config_machinery import coerce_choice
 from tldw_chatbook.Media_Generation.config_machinery import coerce_float
 from tldw_chatbook.Media_Generation.config_machinery import coerce_int
 from tldw_chatbook.Media_Generation.config_machinery import get_config_value
-from tldw_chatbook.Media_Generation.config_machinery import keyring_get as media_keyring_get
+from tldw_chatbook.Media_Generation.config_machinery import (
+    keyring_get as media_keyring_get,
+)
 from tldw_chatbook.Media_Generation.config_machinery import load_generation_section
 from tldw_chatbook.Media_Generation.config_machinery import parse_list
-from tldw_chatbook.Media_Generation.config_machinery import resolve_secret, warn_unknown_top_level_keys
+from tldw_chatbook.Media_Generation.config_machinery import (
+    resolve_secret,
+    warn_unknown_top_level_keys,
+)
 # ADR-176: the mechanics below live in Media_Generation.config_machinery;
 
 
@@ -101,76 +109,100 @@ DEFAULT_COMFYUI_IMAGE_TOTAL_DEADLINE_SECONDS = 1800.0
 # for backward compatibility with any config hand-written against the
 # pre-fix (undocumented, but functional for every OTHER backend) behavior.
 _SECRETS = {
-    "swarmui":     ("swarmui_swarm_token",        ["SWARMUI_TOKEN"],                       "swarmui",     "swarm_token"),
-    "openrouter":  ("openrouter_image_api_key",   ["OPENROUTER_API_KEY"],                  "openrouter",  "api_key"),
-    "novita":      ("novita_image_api_key",       ["NOVITA_API_KEY"],                      "novita",      "api_key"),
-    "together":    ("together_image_api_key",     ["TOGETHER_API_KEY"],                    "together",    "api_key"),
-    "modelstudio": ("modelstudio_image_api_key",  ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],   "modelstudio", "api_key"),
-    "fal":         ("fal_image_api_key",          ["FAL_KEY"],                             "fal",         "api_key"),
-    "gemini":      ("gemini_image_api_key",       ["GEMINI_API_KEY", "GOOGLE_API_KEY"],    "gemini",      "api_key"),
+    "swarmui": ("swarmui_swarm_token", ["SWARMUI_TOKEN"], "swarmui", "swarm_token"),
+    "openrouter": (
+        "openrouter_image_api_key",
+        ["OPENROUTER_API_KEY"],
+        "openrouter",
+        "api_key",
+    ),
+    "novita": ("novita_image_api_key", ["NOVITA_API_KEY"], "novita", "api_key"),
+    "together": ("together_image_api_key", ["TOGETHER_API_KEY"], "together", "api_key"),
+    "modelstudio": (
+        "modelstudio_image_api_key",
+        ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
+        "modelstudio",
+        "api_key",
+    ),
+    "fal": ("fal_image_api_key", ["FAL_KEY"], "fal", "api_key"),
+    "gemini": (
+        "gemini_image_api_key",
+        ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "gemini",
+        "api_key",
+    ),
 }
 # Non-secret nested keys: (backend, toml_key) -> flat_field_name
 # NOTE: `reference_image_supported_models` is intentionally NOT mapped here —
 # reference-image support is deferred (reference_images.py was dropped in Phase 1),
 # so the dataclass field correctly defaults to {} until a later phase wires it.
 _NON_SECRET = {
-    ("stable_diffusion_cpp", "binary_path"):          "sd_cpp_binary_path",
+    ("stable_diffusion_cpp", "binary_path"): "sd_cpp_binary_path",
     ("stable_diffusion_cpp", "diffusion_model_path"): "sd_cpp_diffusion_model_path",
-    ("stable_diffusion_cpp", "model_path"):           "sd_cpp_model_path",
-    ("stable_diffusion_cpp", "llm_path"):             "sd_cpp_llm_path",
-    ("stable_diffusion_cpp", "vae_path"):             "sd_cpp_vae_path",
-    ("stable_diffusion_cpp", "lora_paths"):           "sd_cpp_lora_paths",
-    ("stable_diffusion_cpp", "device"):               "sd_cpp_device",
-    ("stable_diffusion_cpp", "default_steps"):        "sd_cpp_default_steps",
-    ("stable_diffusion_cpp", "default_cfg_scale"):    "sd_cpp_default_cfg_scale",
-    ("stable_diffusion_cpp", "default_sampler"):      "sd_cpp_default_sampler",
-    ("stable_diffusion_cpp", "timeout_seconds"):      "sd_cpp_timeout_seconds",
+    ("stable_diffusion_cpp", "model_path"): "sd_cpp_model_path",
+    ("stable_diffusion_cpp", "llm_path"): "sd_cpp_llm_path",
+    ("stable_diffusion_cpp", "vae_path"): "sd_cpp_vae_path",
+    ("stable_diffusion_cpp", "lora_paths"): "sd_cpp_lora_paths",
+    ("stable_diffusion_cpp", "device"): "sd_cpp_device",
+    ("stable_diffusion_cpp", "default_steps"): "sd_cpp_default_steps",
+    ("stable_diffusion_cpp", "default_cfg_scale"): "sd_cpp_default_cfg_scale",
+    ("stable_diffusion_cpp", "default_sampler"): "sd_cpp_default_sampler",
+    ("stable_diffusion_cpp", "timeout_seconds"): "sd_cpp_timeout_seconds",
     ("stable_diffusion_cpp", "allowed_extra_params"): "sd_cpp_allowed_extra_params",
-    ("swarmui", "base_url"):              "swarmui_base_url",
-    ("swarmui", "default_model"):         "swarmui_default_model",
-    ("swarmui", "timeout_seconds"):       "swarmui_timeout_seconds",
-    ("swarmui", "allowed_extra_params"):  "swarmui_allowed_extra_params",
-    ("openrouter", "base_url"):              "openrouter_image_base_url",
-    ("openrouter", "default_model"):         "openrouter_image_default_model",
-    ("openrouter", "timeout_seconds"):       "openrouter_image_timeout_seconds",
-    ("openrouter", "allowed_extra_params"):  "openrouter_image_allowed_extra_params",
-    ("novita", "base_url"):              "novita_image_base_url",
-    ("novita", "default_model"):         "novita_image_default_model",
-    ("novita", "timeout_seconds"):       "novita_image_timeout_seconds",
+    ("swarmui", "base_url"): "swarmui_base_url",
+    ("swarmui", "default_model"): "swarmui_default_model",
+    ("swarmui", "timeout_seconds"): "swarmui_timeout_seconds",
+    ("swarmui", "allowed_extra_params"): "swarmui_allowed_extra_params",
+    ("openrouter", "base_url"): "openrouter_image_base_url",
+    ("openrouter", "default_model"): "openrouter_image_default_model",
+    ("openrouter", "timeout_seconds"): "openrouter_image_timeout_seconds",
+    ("openrouter", "allowed_extra_params"): "openrouter_image_allowed_extra_params",
+    ("novita", "base_url"): "novita_image_base_url",
+    ("novita", "default_model"): "novita_image_default_model",
+    ("novita", "timeout_seconds"): "novita_image_timeout_seconds",
     ("novita", "poll_interval_seconds"): "novita_image_poll_interval_seconds",
-    ("novita", "allowed_extra_params"):  "novita_image_allowed_extra_params",
-    ("together", "base_url"):              "together_image_base_url",
-    ("together", "default_model"):         "together_image_default_model",
-    ("together", "timeout_seconds"):       "together_image_timeout_seconds",
-    ("together", "allowed_extra_params"):  "together_image_allowed_extra_params",
-    ("modelstudio", "base_url"):              "modelstudio_image_base_url",
-    ("modelstudio", "default_model"):         "modelstudio_image_default_model",
-    ("modelstudio", "region"):                "modelstudio_image_region",
-    ("modelstudio", "mode"):                  "modelstudio_image_mode",
+    ("novita", "allowed_extra_params"): "novita_image_allowed_extra_params",
+    ("together", "base_url"): "together_image_base_url",
+    ("together", "default_model"): "together_image_default_model",
+    ("together", "timeout_seconds"): "together_image_timeout_seconds",
+    ("together", "allowed_extra_params"): "together_image_allowed_extra_params",
+    ("modelstudio", "base_url"): "modelstudio_image_base_url",
+    ("modelstudio", "default_model"): "modelstudio_image_default_model",
+    ("modelstudio", "region"): "modelstudio_image_region",
+    ("modelstudio", "mode"): "modelstudio_image_mode",
     ("modelstudio", "poll_interval_seconds"): "modelstudio_image_poll_interval_seconds",
-    ("modelstudio", "timeout_seconds"):       "modelstudio_image_timeout_seconds",
-    ("modelstudio", "allowed_extra_params"):  "modelstudio_image_allowed_extra_params",
-    ("fal", "base_url"):              "fal_image_base_url",
-    ("fal", "default_model"):         "fal_image_default_model",
+    ("modelstudio", "timeout_seconds"): "modelstudio_image_timeout_seconds",
+    ("modelstudio", "allowed_extra_params"): "modelstudio_image_allowed_extra_params",
+    ("fal", "base_url"): "fal_image_base_url",
+    ("fal", "default_model"): "fal_image_default_model",
     ("fal", "poll_interval_seconds"): "fal_image_poll_interval_seconds",
-    ("fal", "timeout_seconds"):       "fal_image_timeout_seconds",
-    ("gemini", "base_url"):           "gemini_image_base_url",
-    ("gemini", "default_model"):      "gemini_image_default_model",
-    ("gemini", "timeout_seconds"):    "gemini_image_timeout_seconds",
-    ("comfyui", "base_url"):                "comfyui_image_base_url",
+    ("fal", "timeout_seconds"): "fal_image_timeout_seconds",
+    ("gemini", "base_url"): "gemini_image_base_url",
+    ("gemini", "default_model"): "gemini_image_default_model",
+    ("gemini", "timeout_seconds"): "gemini_image_timeout_seconds",
+    ("comfyui", "base_url"): "comfyui_image_base_url",
     ("comfyui", "request_timeout_seconds"): "comfyui_image_request_timeout_seconds",
     ("comfyui", "connect_timeout_seconds"): "comfyui_image_connect_timeout_seconds",
-    ("comfyui", "poll_interval_seconds"):    "comfyui_image_poll_interval_seconds",
-    ("comfyui", "total_deadline_seconds"):   "comfyui_image_total_deadline_seconds",
-    ("comfyui", "default_seed"):             "comfyui_image_default_seed",
-    ("comfyui", "default_steps"):            "comfyui_image_default_steps",
-    ("comfyui", "default_sampler"):          "comfyui_image_default_sampler",
+    ("comfyui", "poll_interval_seconds"): "comfyui_image_poll_interval_seconds",
+    ("comfyui", "total_deadline_seconds"): "comfyui_image_total_deadline_seconds",
+    ("comfyui", "default_seed"): "comfyui_image_default_seed",
+    ("comfyui", "default_steps"): "comfyui_image_default_steps",
+    ("comfyui", "default_sampler"): "comfyui_image_default_sampler",
 }
 _GLOBAL_KEYS = [
-    "default_backend", "enabled_backends", "max_width", "max_height",
-    "max_pixels", "max_steps", "max_prompt_length", "inline_max_bytes",
-    "default_batch", "max_variants_per_message",
-    "context_llm_enabled", "context_llm_turns", "context_llm_timeout_seconds",
+    "default_backend",
+    "enabled_backends",
+    "max_width",
+    "max_height",
+    "max_pixels",
+    "max_steps",
+    "max_prompt_length",
+    "inline_max_bytes",
+    "default_batch",
+    "max_variants_per_message",
+    "context_llm_enabled",
+    "context_llm_turns",
+    "context_llm_timeout_seconds",
 ]
 
 # task-621: flat_field_name -> (backend, toml_key), derived by reversing
@@ -180,27 +212,25 @@ _GLOBAL_KEYS = [
 # itself (decision: warn-on-unknown-key, not flat aliases, to avoid two
 # spellings of the same setting needing a collision-precedence rule).
 _FLAT_MAP: dict[str, tuple[str, str]] = {
-    flat_field: (backend, toml_key) for (backend, toml_key), flat_field in _NON_SECRET.items()
+    flat_field: (backend, toml_key)
+    for (backend, toml_key), flat_field in _NON_SECRET.items()
 }
-_FLAT_MAP.update({
-    flat_field: (backend, config_key)
-    for backend, (flat_field, _env_vars, _kr_id, config_key) in _SECRETS.items()
-})
+_FLAT_MAP.update(
+    {
+        flat_field: (backend, config_key)
+        for backend, (flat_field, _env_vars, _kr_id, config_key) in _SECRETS.items()
+    }
+)
 
 # Known [image_generation.<backend>] subsection names.
 _BACKEND_NAMES = set(_SECRETS) | {backend for backend, _toml_key in _NON_SECRET}
 
 
-
 def _read_image_generation_toml() -> dict:
     """Return the raw [image_generation] section dict (nested). Patch point in tests."""
     from tldw_chatbook.config import load_settings
+
     return load_settings().get("image_generation", {}) or {}
-
-
-
-
-
 
 
 # these delegates keep the module-level names as test patch points and
@@ -242,6 +272,8 @@ def _load_image_generation_section() -> tuple[dict, dict[str, str]]:
     return load_generation_section(
         _TABLES, read_toml=_read_image_generation_toml, keyring_lookup=_keyring_get
     )
+
+
 @dataclass(frozen=True)
 class ImageGenerationConfig:
     default_backend: str | None
@@ -329,17 +361,13 @@ _IMAGE_GENERATION_CONFIG_SNAPSHOT = threading.local()
 _NO_CONFIG_SNAPSHOT = object()
 
 
-
-
 def _coerce_positive_float(value: Any, default: float) -> float:
     """Return a finite positive float, otherwise the documented default."""
     parsed = _coerce_float(value, default)
     return parsed if math.isfinite(parsed) and parsed > 0 else default
 
 
-def _optional_int(
-    section: dict[str, Any], key: str, *, minimum: int
-) -> int | None:
+def _optional_int(section: dict[str, Any], key: str, *, minimum: int) -> int | None:
     """Parse an optional integer without silently replacing invalid values."""
     raw = section.get(key)
     if raw is None or (isinstance(raw, str) and not raw.strip()):
@@ -353,9 +381,7 @@ def _optional_int(
             f"[image_generation.comfyui] {key} must be an integer"
         ) from None
     if value < minimum:
-        raise ValueError(
-            f"[image_generation.comfyui] {key} must be at least {minimum}"
-        )
+        raise ValueError(f"[image_generation.comfyui] {key} must be at least {minimum}")
     return value
 
 
@@ -407,8 +433,6 @@ def normalize_comfyui_image_origin(value: Any) -> str:
     return f"{scheme}://{normalized_host}{normalized_port}"
 
 
-
-
 def _parse_mapping_of_lists(value: Any) -> dict[str, list[str]]:
     if value is None:
         return {}
@@ -444,12 +468,13 @@ def _parse_mapping_of_lists(value: Any) -> dict[str, list[str]]:
                 except Exception:
                     candidate = None
                 if isinstance(candidate, list):
-                    items = [str(item).strip() for item in candidate if str(item).strip()]
+                    items = [
+                        str(item).strip() for item in candidate if str(item).strip()
+                    ]
                 else:
                     items = [item.strip() for item in raw.split(",") if item.strip()]
         result[key] = items
     return result
-
 
 
 def _get_image_generation_config_unlocked(
@@ -469,10 +494,19 @@ def _get_image_generation_config_unlocked(
     inline_max_bytes_raw = _get_config_value(section, "inline_max_bytes")
     inline_max_bytes = DEFAULT_INLINE_MAX_BYTES
     if inline_max_bytes_raw is not None:
-        inline_max_bytes = max(1, _coerce_int(inline_max_bytes_raw, DEFAULT_INLINE_MAX_BYTES))
+        inline_max_bytes = max(
+            1, _coerce_int(inline_max_bytes_raw, DEFAULT_INLINE_MAX_BYTES)
+        )
 
-    default_batch = max(1, _coerce_int(section.get("default_batch"), DEFAULT_IMAGE_BATCH))
-    max_variants_per_message = max(1, _coerce_int(section.get("max_variants_per_message"), DEFAULT_MAX_VARIANTS_PER_MESSAGE))
+    default_batch = max(
+        1, _coerce_int(section.get("default_batch"), DEFAULT_IMAGE_BATCH)
+    )
+    max_variants_per_message = max(
+        1,
+        _coerce_int(
+            section.get("max_variants_per_message"), DEFAULT_MAX_VARIANTS_PER_MESSAGE
+        ),
+    )
 
     context_llm_enabled = coerce_bool_flag_or_warn(
         section.get("context_llm_enabled"),
@@ -480,9 +514,15 @@ def _get_image_generation_config_unlocked(
         section="image_generation",
         key="context_llm_enabled",
     )
-    context_llm_turns = max(1, _coerce_int(section.get("context_llm_turns"), DEFAULT_CONTEXT_LLM_TURNS))
+    context_llm_turns = max(
+        1, _coerce_int(section.get("context_llm_turns"), DEFAULT_CONTEXT_LLM_TURNS)
+    )
     context_llm_timeout_seconds = max(
-        0.1, _coerce_float(section.get("context_llm_timeout_seconds"), DEFAULT_CONTEXT_LLM_TIMEOUT_SECONDS)
+        0.1,
+        _coerce_float(
+            section.get("context_llm_timeout_seconds"),
+            DEFAULT_CONTEXT_LLM_TIMEOUT_SECONDS,
+        ),
     )
 
     config = ImageGenerationConfig(
@@ -492,31 +532,56 @@ def _get_image_generation_config_unlocked(
         max_height=_coerce_int(section.get("max_height"), DEFAULT_MAX_HEIGHT),
         max_pixels=_coerce_int(section.get("max_pixels"), DEFAULT_MAX_PIXELS),
         max_steps=_coerce_int(section.get("max_steps"), DEFAULT_MAX_STEPS),
-        max_prompt_length=_coerce_int(section.get("max_prompt_length"), DEFAULT_MAX_PROMPT_LENGTH),
+        max_prompt_length=_coerce_int(
+            section.get("max_prompt_length"), DEFAULT_MAX_PROMPT_LENGTH
+        ),
         inline_max_bytes=inline_max_bytes,
-        sd_cpp_diffusion_model_path=_get_config_value(section, "sd_cpp_diffusion_model_path"),
+        sd_cpp_diffusion_model_path=_get_config_value(
+            section, "sd_cpp_diffusion_model_path"
+        ),
         sd_cpp_llm_path=_get_config_value(section, "sd_cpp_llm_path"),
         sd_cpp_binary_path=_get_config_value(section, "sd_cpp_binary_path"),
         sd_cpp_model_path=_get_config_value(section, "sd_cpp_model_path"),
         sd_cpp_vae_path=_get_config_value(section, "sd_cpp_vae_path"),
         sd_cpp_lora_paths=_parse_list(section.get("sd_cpp_lora_paths")),
-        sd_cpp_allowed_extra_params=_parse_list(section.get("sd_cpp_allowed_extra_params")),
-        sd_cpp_default_steps=_coerce_int(section.get("sd_cpp_default_steps"), DEFAULT_SD_CPP_STEPS),
-        sd_cpp_default_cfg_scale=_coerce_float(section.get("sd_cpp_default_cfg_scale"), DEFAULT_SD_CPP_CFG_SCALE),
-        sd_cpp_default_sampler=_get_config_value(section, "sd_cpp_default_sampler") or DEFAULT_SD_CPP_SAMPLER,
-        sd_cpp_device=_get_config_value(section, "sd_cpp_device") or DEFAULT_SD_CPP_DEVICE,
-        sd_cpp_timeout_seconds=_coerce_int(section.get("sd_cpp_timeout_seconds"), DEFAULT_SD_CPP_TIMEOUT_SECONDS),
-        swarmui_base_url=_get_config_value(section, "swarmui_base_url") or DEFAULT_SWARMUI_BASE_URL,
+        sd_cpp_allowed_extra_params=_parse_list(
+            section.get("sd_cpp_allowed_extra_params")
+        ),
+        sd_cpp_default_steps=_coerce_int(
+            section.get("sd_cpp_default_steps"), DEFAULT_SD_CPP_STEPS
+        ),
+        sd_cpp_default_cfg_scale=_coerce_float(
+            section.get("sd_cpp_default_cfg_scale"), DEFAULT_SD_CPP_CFG_SCALE
+        ),
+        sd_cpp_default_sampler=_get_config_value(section, "sd_cpp_default_sampler")
+        or DEFAULT_SD_CPP_SAMPLER,
+        sd_cpp_device=_get_config_value(section, "sd_cpp_device")
+        or DEFAULT_SD_CPP_DEVICE,
+        sd_cpp_timeout_seconds=_coerce_int(
+            section.get("sd_cpp_timeout_seconds"), DEFAULT_SD_CPP_TIMEOUT_SECONDS
+        ),
+        swarmui_base_url=_get_config_value(section, "swarmui_base_url")
+        or DEFAULT_SWARMUI_BASE_URL,
         swarmui_default_model=_get_config_value(section, "swarmui_default_model"),
         swarmui_swarm_token=_get_config_value(section, "swarmui_swarm_token"),
-        swarmui_allowed_extra_params=_parse_list(section.get("swarmui_allowed_extra_params")),
-        swarmui_timeout_seconds=_coerce_int(section.get("swarmui_timeout_seconds"), DEFAULT_SWARMUI_TIMEOUT_SECONDS),
-        openrouter_image_base_url=_get_config_value(section, "openrouter_image_base_url")
+        swarmui_allowed_extra_params=_parse_list(
+            section.get("swarmui_allowed_extra_params")
+        ),
+        swarmui_timeout_seconds=_coerce_int(
+            section.get("swarmui_timeout_seconds"), DEFAULT_SWARMUI_TIMEOUT_SECONDS
+        ),
+        openrouter_image_base_url=_get_config_value(
+            section, "openrouter_image_base_url"
+        )
         or DEFAULT_OPENROUTER_IMAGE_BASE_URL,
         openrouter_image_api_key=_get_config_value(section, "openrouter_image_api_key"),
-        openrouter_image_default_model=_get_config_value(section, "openrouter_image_default_model")
+        openrouter_image_default_model=_get_config_value(
+            section, "openrouter_image_default_model"
+        )
         or DEFAULT_OPENROUTER_IMAGE_MODEL,
-        openrouter_image_allowed_extra_params=_parse_list(section.get("openrouter_image_allowed_extra_params")),
+        openrouter_image_allowed_extra_params=_parse_list(
+            section.get("openrouter_image_allowed_extra_params")
+        ),
         openrouter_image_timeout_seconds=_coerce_int(
             section.get("openrouter_image_timeout_seconds"),
             DEFAULT_OPENROUTER_IMAGE_TIMEOUT_SECONDS,
@@ -524,9 +589,13 @@ def _get_image_generation_config_unlocked(
         novita_image_base_url=_get_config_value(section, "novita_image_base_url")
         or DEFAULT_NOVITA_IMAGE_BASE_URL,
         novita_image_api_key=_get_config_value(section, "novita_image_api_key"),
-        novita_image_default_model=_get_config_value(section, "novita_image_default_model")
+        novita_image_default_model=_get_config_value(
+            section, "novita_image_default_model"
+        )
         or DEFAULT_NOVITA_IMAGE_MODEL,
-        novita_image_allowed_extra_params=_parse_list(section.get("novita_image_allowed_extra_params")),
+        novita_image_allowed_extra_params=_parse_list(
+            section.get("novita_image_allowed_extra_params")
+        ),
         novita_image_timeout_seconds=_coerce_int(
             section.get("novita_image_timeout_seconds"),
             DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
@@ -541,16 +610,26 @@ def _get_image_generation_config_unlocked(
         together_image_base_url=_get_config_value(section, "together_image_base_url")
         or DEFAULT_TOGETHER_IMAGE_BASE_URL,
         together_image_api_key=_get_config_value(section, "together_image_api_key"),
-        together_image_default_model=_get_config_value(section, "together_image_default_model")
+        together_image_default_model=_get_config_value(
+            section, "together_image_default_model"
+        )
         or DEFAULT_TOGETHER_IMAGE_MODEL,
-        together_image_allowed_extra_params=_parse_list(section.get("together_image_allowed_extra_params")),
+        together_image_allowed_extra_params=_parse_list(
+            section.get("together_image_allowed_extra_params")
+        ),
         together_image_timeout_seconds=_coerce_int(
             section.get("together_image_timeout_seconds"),
             DEFAULT_TOGETHER_IMAGE_TIMEOUT_SECONDS,
         ),
-        modelstudio_image_base_url=_get_config_value(section, "modelstudio_image_base_url"),
-        modelstudio_image_api_key=_get_config_value(section, "modelstudio_image_api_key"),
-        modelstudio_image_default_model=_get_config_value(section, "modelstudio_image_default_model")
+        modelstudio_image_base_url=_get_config_value(
+            section, "modelstudio_image_base_url"
+        ),
+        modelstudio_image_api_key=_get_config_value(
+            section, "modelstudio_image_api_key"
+        ),
+        modelstudio_image_default_model=_get_config_value(
+            section, "modelstudio_image_default_model"
+        )
         or DEFAULT_MODELSTUDIO_IMAGE_MODEL,
         modelstudio_image_region=_coerce_choice(
             _get_config_value(section, "modelstudio_image_region"),
@@ -573,10 +652,14 @@ def _get_image_generation_config_unlocked(
             section.get("modelstudio_image_timeout_seconds"),
             DEFAULT_MODELSTUDIO_IMAGE_TIMEOUT_SECONDS,
         ),
-        modelstudio_image_allowed_extra_params=_parse_list(section.get("modelstudio_image_allowed_extra_params")),
-        fal_image_base_url=_get_config_value(section, "fal_image_base_url") or DEFAULT_FAL_IMAGE_BASE_URL,
+        modelstudio_image_allowed_extra_params=_parse_list(
+            section.get("modelstudio_image_allowed_extra_params")
+        ),
+        fal_image_base_url=_get_config_value(section, "fal_image_base_url")
+        or DEFAULT_FAL_IMAGE_BASE_URL,
         fal_image_api_key=_get_config_value(section, "fal_image_api_key"),
-        fal_image_default_model=_get_config_value(section, "fal_image_default_model") or DEFAULT_FAL_IMAGE_MODEL,
+        fal_image_default_model=_get_config_value(section, "fal_image_default_model")
+        or DEFAULT_FAL_IMAGE_MODEL,
         fal_image_poll_interval_seconds=max(
             1,
             _coerce_int(
@@ -588,9 +671,12 @@ def _get_image_generation_config_unlocked(
             section.get("fal_image_timeout_seconds"),
             DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS,
         ),
-        gemini_image_base_url=_get_config_value(section, "gemini_image_base_url") or DEFAULT_GEMINI_IMAGE_BASE_URL,
+        gemini_image_base_url=_get_config_value(section, "gemini_image_base_url")
+        or DEFAULT_GEMINI_IMAGE_BASE_URL,
         gemini_image_api_key=_get_config_value(section, "gemini_image_api_key"),
-        gemini_image_default_model=_get_config_value(section, "gemini_image_default_model")
+        gemini_image_default_model=_get_config_value(
+            section, "gemini_image_default_model"
+        )
         or DEFAULT_GEMINI_IMAGE_MODEL,
         gemini_image_timeout_seconds=_coerce_int(
             section.get("gemini_image_timeout_seconds"),
@@ -625,7 +711,9 @@ def _get_image_generation_config_unlocked(
         comfyui_image_default_sampler=_optional_string(
             section, "comfyui_image_default_sampler"
         ),
-        reference_image_supported_models=_parse_mapping_of_lists(section.get("reference_image_supported_models")),
+        reference_image_supported_models=_parse_mapping_of_lists(
+            section.get("reference_image_supported_models")
+        ),
         key_sources=key_sources,
         default_batch=default_batch,
         max_variants_per_message=max_variants_per_message,
@@ -643,9 +731,7 @@ def _use_image_generation_config_snapshot(
     config: ImageGenerationConfig,
 ) -> Iterator[None]:
     """Make one registry-owned config visible to constructors on this thread."""
-    previous = getattr(
-        _IMAGE_GENERATION_CONFIG_SNAPSHOT, "config", _NO_CONFIG_SNAPSHOT
-    )
+    previous = getattr(_IMAGE_GENERATION_CONFIG_SNAPSHOT, "config", _NO_CONFIG_SNAPSHOT)
     _IMAGE_GENERATION_CONFIG_SNAPSHOT.config = config
     try:
         yield

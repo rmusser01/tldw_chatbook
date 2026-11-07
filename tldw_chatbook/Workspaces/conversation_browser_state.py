@@ -145,6 +145,79 @@ CONSOLE_DEFAULT_CONVERSATION_DETAIL = "saved chat"
 #: so ``_selected_summary`` can recognize the bucket (TASK-2154.3, LY-05).
 _CHATS_BUCKET_LABEL = "Chats"
 
+# --- TASK-18924: Chats date dividers -------------------------------------
+#
+# Hermes-parity sidebar date headers. Buckets are computed from each row's
+# last-activity timestamp (``updated_sort``) against the builder's reference
+# ``now``, in UTC calendar dates (the same clock ``parse_browser_timestamp``
+# normalizes to). Boundaries are deterministic: Today = same UTC date,
+# Yesterday = exactly one UTC date back, This week = 2-6 dates back, Older =
+# everything earlier. A missing/unparseable timestamp falls to Older; a
+# future timestamp (clock skew) counts as Today so it never sorts into Older.
+
+DATE_BUCKET_TODAY = "Today"
+DATE_BUCKET_YESTERDAY = "Yesterday"
+DATE_BUCKET_THIS_WEEK = "This week"
+DATE_BUCKET_OLDER = "Older"
+
+
+def console_conversation_date_bucket(value: str, *, now: datetime) -> str:
+    """Return the date-bucket label for one row timestamp (TASK-18924).
+
+    Args:
+        value: ISO-8601-ish timestamp text (``updated_sort``); naive values
+            are treated as UTC by ``parse_browser_timestamp``.
+        now: Reference time; a naive value is treated as UTC.
+
+    Returns:
+        One of the four bucket labels; ``DATE_BUCKET_OLDER`` for a
+        missing/unparseable timestamp, ``DATE_BUCKET_TODAY`` for a future
+        one.
+    """
+    parsed = parse_browser_timestamp(value)
+    if parsed is None:
+        return DATE_BUCKET_OLDER
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if parsed > now:
+        return DATE_BUCKET_TODAY
+    day_delta = (now.date() - parsed.date()).days
+    if day_delta <= 0:
+        return DATE_BUCKET_TODAY
+    if day_delta == 1:
+        return DATE_BUCKET_YESTERDAY
+    if day_delta < 7:
+        return DATE_BUCKET_THIS_WEEK
+    return DATE_BUCKET_OLDER
+
+
+def console_conversation_date_dividers(
+    rows: Iterable[ConsoleConversationBrowserInputRow], *, now: datetime
+) -> tuple[tuple[int, str], ...]:
+    """Compute ``(row_index, label)`` divider pairs for a visible row order.
+
+    A divider renders before the first row of every bucket run: whenever a
+    row's bucket differs from the previous row's, a divider is emitted at
+    that row's index. The order of ``rows`` is the caller's display order,
+    so this is correct for recency sorts, starred-first sorts, and filtered
+    subsets alike; a single-bucket list still gets its one leading divider
+    (the "Today" header at the top of the list), and empty buckets never
+    appear because only buckets with rows emit dividers.
+
+    TASK-18924 AC#2 decision (pinned by tests): dividers STAY while search
+    filtering is active — the display order remains recency-based under a
+    filter, so the buckets stay truthful, and the list keeps its structure
+    instead of reflowing the moment a query is typed.
+    """
+    dividers: list[tuple[int, str]] = []
+    previous: str | None = None
+    for index, row in enumerate(rows):
+        bucket = console_conversation_date_bucket(row.updated_sort, now=now)
+        if bucket != previous:
+            dividers.append((index, bucket))
+            previous = bucket
+    return tuple(dividers)
+
 
 def console_conversation_status_detail(status: str) -> str:
     """Return the shared friendly state label for a conversation row status.
@@ -446,6 +519,13 @@ class ConsoleConversationBrowserSection:
     run_marker: str = ""
     attention: tuple[ConversationAttentionFact, ...] = ()
     capped_run_marker: str = ""
+    #: TASK-18924: ``(row_index, label)`` date-divider pairs for the Chats
+    #: section — a divider renders immediately before ``rows[index]``.
+    #: Indices address the VISIBLE (post-cap, non-collapsed) row tuple.
+    #: Empty for every other section and for a collapsed one (no rows are
+    #: visible, so no dividers either). Part of section value equality so a
+    #: row aging across a date boundary repaints the tray.
+    date_dividers: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -453,7 +533,10 @@ class ConsoleConversationBrowserState:
     """Immutable grouped Console conversation browser display state.
 
     Attributes:
-        query: Normalized active search query.
+        query: The active search text exactly as the user typed it (case
+            and spacing kept; TASK-33622.6). A rebuilt filter input is
+            seeded from it, so it is never normalized here; matching
+            normalizes its own copy.
         sections: Ordered browser sections.
         selected_summary: Human-readable summary of the active row.
         status_copy: Search/result status copy.
@@ -496,8 +579,8 @@ def build_console_conversation_browser_state(
         active_workspace_id: Retained compatibility input; ownership no longer
             depends on the active named workspace.
         group_collapse_preferences: Flat Chats collapse preference mapping.
-        query: Search text matched against row title, workspace, status, and
-            scope copy.
+        query: Search text, matched against row titles only (TASK-33622.6;
+            see ``console_conversation_title_matches_query``).
         marks_available: Whether local star state is available for rendering.
         error_copy: Optional scoped recovery copy.
         result_total_count: Total matched rows when the caller already knows a
@@ -547,6 +630,7 @@ def build_console_conversation_browser_state(
         empty_copy="No Default or unassigned conversations. Named-workspace conversations are under Workspaces.",
         counts=counts,
         progress_counts=progress_counts,
+        now=reference_now,
     )
 
     sections = (chats_section,)
@@ -563,7 +647,9 @@ def build_console_conversation_browser_state(
     )
 
     return ConsoleConversationBrowserState(
-        query=normalized_query,
+        # TASK-33622.6: the raw text, not `normalized_query` -- a rebuilt
+        # filter input shows this value, and 'OK' must not come back as 'ok'.
+        query=str(query or ""),
         sections=sections,
         selected_summary=_selected_summary(prepared_rows),
         status_copy=status_copy,
@@ -661,11 +747,24 @@ def _build_row_section(
     empty_copy: str,
     counts: Mapping[str, int] | None = None,
     progress_counts: Mapping[str, int] | None = None,
+    now: datetime | None = None,
 ) -> ConsoleConversationBrowserSection:
     collapsed = preference_collapsed and not (query_active and bool(rows))
     visible_rows, hidden_count = _visible_rows(
         rows, collapsed, group_row_limit, counts, progress_counts
     )
+    # TASK-18924: date dividers address the VISIBLE row tuple, so they are
+    # computed over the same slice `_visible_rows` shows (post-cap, and
+    # nothing while collapsed). Chats-only: the Starred section pins rows
+    # across workspaces and Workspaces groups own their rows, so date
+    # headers would mislead there.
+    date_dividers: tuple[tuple[int, str], ...] = ()
+    if section_id == "chats" and not collapsed and visible_rows:
+        reference_now = now or datetime.now(timezone.utc)
+        visible_input = rows[:group_row_limit] if group_row_limit else rows
+        date_dividers = console_conversation_date_dividers(
+            visible_input, now=reference_now
+        )
     return ConsoleConversationBrowserSection(
         section_id=section_id,
         label=label,
@@ -682,6 +781,7 @@ def _build_row_section(
         # helper, same `rows[group_row_limit:]` slice source `_visible_rows`
         # uses, computed unconditionally regardless of collapse state.
         capped_run_marker=_capped_run_marker(rows, group_row_limit),
+        date_dividers=date_dividers,
     )
 
 
@@ -955,28 +1055,29 @@ def _workspace_group_sort_key(
     return (not is_active, ReverseKey(latest_sort), label.casefold(), group_id)
 
 
+def console_conversation_title_matches_query(title: str, query: str) -> bool:
+    """Return whether the rail's 'Filter visible titles' text matches ``title``.
+
+    TASK-33622.6 (owner decision 2026-10-27): the filter matches titles only,
+    as a case-insensitive literal substring of the trimmed query -- the rule
+    its result count follows too (``title_only`` on the conversation search).
+    Message-content search stays in 'Search all chats…' / Ctrl+K.
+
+    Args:
+        title: The conversation title.
+        query: The filter text as typed; blank matches everything.
+
+    Returns:
+        True when ``title`` contains the trimmed query, ignoring case.
+    """
+    needle = str(query or "").strip().lower()
+    return not needle or needle in str(title or "").lower()
+
+
 def _row_matches(
     row: ConsoleConversationBrowserInputRow, normalized_query: str
 ) -> bool:
-    haystack = " ".join(
-        (
-            row.title,
-            row.workspace_label,
-            row.status,
-            _scope_copy(row),
-        )
-    ).lower()
-    return normalized_query in haystack
-
-
-def _scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
-    if row.scope_type == "global":
-        return "global chats"
-    if row.workspace_id == DEFAULT_WORKSPACE_ID:
-        return "default workspace chats"
-    if row.workspace_id:
-        return f"workspace {row.workspace_label}"
-    return "chats"
+    return console_conversation_title_matches_query(row.title, normalized_query)
 
 
 def _belongs_to_chats(row: ConsoleConversationBrowserInputRow) -> bool:

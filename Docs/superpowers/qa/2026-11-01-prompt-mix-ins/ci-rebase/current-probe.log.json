@@ -1,0 +1,4 @@
+{
+  "sha256": "007b11a09d4681a6c508d49e982d53f42e6452d9a4426e3211e21632f064fbaf",
+  "raw_text": ".                                                                        [100%]\n============================= slowest 25 durations =============================\n44.90s call     Tests/Performance/test_ui_latency_guardrails.py::test_destination_tour_stays_under_switch_budgets\n\n(2 durations < 1s hidden.)\n1 passed in 45.36s\n"
+}

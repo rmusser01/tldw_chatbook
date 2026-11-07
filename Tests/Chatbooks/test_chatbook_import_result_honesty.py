@@ -1144,7 +1144,9 @@ def test_the_importer_does_not_report_an_unsupported_chatbook_as_having_no_items
     assert status.outcome == IMPORT_OUTCOME_EXCLUDED, status.to_dict()
     # The warnings the run already produced are still there and now agree with
     # the headline instead of contradicting it.
-    assert any("not supported by the importer" in warning for warning in status.warnings)
+    assert any(
+        "not supported by the importer" in warning for warning in status.warnings
+    )
 
 
 @pytest.mark.asyncio

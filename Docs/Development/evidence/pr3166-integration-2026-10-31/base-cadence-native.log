@@ -1,0 +1,82 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 90.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 7 items
+
+Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run PASSED [ 14%]
+Tests/Backup_Recovery/test_native_files.py::test_private_creation_and_native_identity FAILED [ 28%]
+Tests/Backup_Recovery/test_native_files.py::test_unqualified_operations_and_symlink_storage_are_visible FAILED [ 42%]
+Tests/Backup_Recovery/test_native_files.py::test_non_private_staged_objects_are_refused[symlink] FAILED [ 57%]
+Tests/Backup_Recovery/test_native_files.py::test_non_private_staged_objects_are_refused[fifo] FAILED [ 71%]
+Tests/Backup_Recovery/test_native_files.py::test_directory_publication_refuses_linked_payload FAILED [ 85%]
+Tests/Backup_Recovery/test_native_files.py::test_preexisting_target_of_any_type_is_preserved[symlink] FAILED [100%]
+
+================================== FAILURES ===================================
+__________________ test_private_creation_and_native_identity __________________
+Tests\Backup_Recovery\test_native_files.py:109: in test_private_creation_and_native_identity
+    assert directory.stat().st_mode & 0o777 == 0o700
+E   AssertionError: assert (16895 & 511) == 448
+E    +  where 16895 = os.stat_result(st_mode=16895, st_ino=562949959304443, st_dev=10718190542197972492, st_nlink=1, st_uid=0, st_gid=0, st_size=0, st_atime=1793475198, st_mtime=1793475198, st_ctime=1793475198).st_mode
+E    +    where os.stat_result(st_mode=16895, st_ino=562949959304443, st_dev=10718190542197972492, st_nlink=1, st_uid=0, st_gid=0, st_size=0, st_atime=1793475198, st_mtime=1793475198, st_ctime=1793475198) = stat()
+E    +      where stat = WindowsPath('C:/Users/GDesktop-1/.tmp-pr3166-integration-8a0311d68721/temp/pytest-of-GDesktop-1/pytest-0/test_private_creation_and_nati0/private').stat
+_________ test_unqualified_operations_and_symlink_storage_are_visible _________
+Tests\Backup_Recovery\test_native_files.py:138: in test_unqualified_operations_and_symlink_storage_are_visible
+    alias.symlink_to(tmp_path, target_is_directory=True)
+C:\Python312\Lib\pathlib.py:1386: in symlink_to
+    os.symlink(target, self, target_is_directory)
+E   OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-8a0311d68721\\temp\\pytest-of-GDesktop-1\\pytest-0\\test_unqualified_operations_an0' -> 'C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-8a0311d68721\\temp\\pytest-of-GDesktop-1\\pytest-0\\test_unqualified_operations_an0\\alias'
+____________ test_non_private_staged_objects_are_refused[symlink] _____________
+Tests\Backup_Recovery\test_native_files.py:153: in test_non_private_staged_objects_are_refused
+    stage.symlink_to(original)
+C:\Python312\Lib\pathlib.py:1386: in symlink_to
+    os.symlink(target, self, target_is_directory)
+E   OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-8a0311d68721\\temp\\pytest-of-GDesktop-1\\pytest-0\\test_non_private_staged_object0\\original' -> 'C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-8a0311d68721\\temp\\pytest-of-GDesktop-1\\pytest-0\\test_non_private_staged_object0\\stage'
+______________ test_non_private_staged_objects_are_refused[fifo] ______________
+Tests\Backup_Recovery\test_native_files.py:157: in test_non_private_staged_objects_are_refused
+    os.mkfifo(stage)
+E   AttributeError: module 'os' has no attribute 'mkfifo'
+______________ test_directory_publication_refuses_linked_payload ______________
+Tests\Backup_Recovery\test_native_files.py:227: in test_directory_publication_refuses_linked_payload
+    (stage / "payload").symlink_to(external)
+C:\Python312\Lib\pathlib.py:1386: in symlink_to
+    os.symlink(target, self, target_is_directory)
+E   OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-8a0311d68721\\temp\\pytest-of-GDesktop-1\\pytest-0\\test_directory_publication_ref0\\external' -> 'C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-8a0311d68721\\temp\\pytest-of-GDesktop-1\\pytest-0\\test_directory_publication_ref0\\stage\\payload'
+__________ test_preexisting_target_of_any_type_is_preserved[symlink] __________
+Tests\Backup_Recovery\test_native_files.py:240: in test_preexisting_target_of_any_type_is_preserved
+    target.symlink_to(original)
+C:\Python312\Lib\pathlib.py:1386: in symlink_to
+    os.symlink(target, self, target_is_directory)
+E   OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-8a0311d68721\\temp\\pytest-of-GDesktop-1\\pytest-0\\test_preexisting_target_of_any0\\original' -> 'C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-8a0311d68721\\temp\\pytest-of-GDesktop-1\\pytest-0\\test_preexisting_target_of_any0\\target'
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+39.09s call     Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run
+
+(20 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Backup_Recovery/test_native_files.py::test_private_creation_and_native_identity
+FAILED Tests/Backup_Recovery/test_native_files.py::test_unqualified_operations_and_symlink_storage_are_visible
+FAILED Tests/Backup_Recovery/test_native_files.py::test_non_private_staged_objects_are_refused[symlink]
+FAILED Tests/Backup_Recovery/test_native_files.py::test_non_private_staged_objects_are_refused[fifo]
+FAILED Tests/Backup_Recovery/test_native_files.py::test_directory_publication_refuses_linked_payload
+FAILED Tests/Backup_Recovery/test_native_files.py::test_preexisting_target_of_any_type_is_preserved[symlink]
+================== 6 failed, 1 passed, 2 warnings in 55.78s ===================

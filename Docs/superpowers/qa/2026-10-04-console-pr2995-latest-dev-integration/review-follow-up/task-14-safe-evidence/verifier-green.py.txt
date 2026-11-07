@@ -1,0 +1,6 @@
+from common import *
+pre=json.loads((S/'task-14-latest-dev-preflight-selection.json').read_text());selectors=[s for g in pre['selection_groups'] for s in g['selectors']];assert len(selectors)==15
+dump('authorized-selection-at-execution.json',{'together_selectors':selectors,'expected_together_cases':20,'selection_source_sha256':sha((S/'task-14-latest-dev-preflight-selection.json').read_bytes())})
+assert run('together',[P,'-m','pytest','-q','-p','no:randomly','--basetemp=/private/tmp/pr2995-task14/together',*selectors,'--junitxml='+str(O/'together.xml')])==0
+ui=['Tests/UI/test_console_runtime_ownership.py::'+n for n in ('test_idle_reconciled_view_does_not_admit_transcript_poll','test_reconciled_view_keeps_each_live_poll_reason_and_one_timer','test_captured_attach_timer_overlap_rearms_real_sync_worker')]
+assert run('reconciliation',[P,'-m','pytest','-q','-p','no:randomly','--basetemp=/private/tmp/pr2995-task14/reconciliation',*ui,'--junitxml='+str(O/'reconciliation.xml')])==0

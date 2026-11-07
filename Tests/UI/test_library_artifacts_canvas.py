@@ -15,14 +15,16 @@ pytestmark = pytest.mark.ui
 
 
 @asynccontextmanager
-async def artifact_library(tmp_path, *, size=(160, 50), theme="textual-dark"):
+async def artifact_library(
+    tmp_path, *, size=(160, 50), theme="textual-dark", reports=3
+):
     app = _build_test_app(configured_default="library")
     db = CharactersRAGDB(tmp_path / "library.sqlite", client_id="artifact-ui")
     app.chachanotes_db = db
     watch = int(
         WatchlistBundleService(app.subscriptions_db).create("Weekly reading")["id"]
     )
-    for index in range(3):
+    for index in range(reports):
         record = app.subscriptions_db.insert_briefing(watch)
         app.subscriptions_db.update_briefing(
             record,
@@ -38,7 +40,10 @@ async def artifact_library(tmp_path, *, size=(160, 50), theme="textual-dark"):
             for _ in range(100):
                 await pilot.pause(0.03)
                 controller = getattr(screen, "_artifacts_controller", None)
-                if controller and controller.detail is not None:
+                if controller and (
+                    controller.detail is not None
+                    or (not reports and controller.page is not None)
+                ):
                     break
             yield screen, pilot
     finally:

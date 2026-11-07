@@ -96,7 +96,9 @@ class WatchlistsOperationCard(Vertical):
         elif isinstance(collection, Mapping):
             title = collection.get("name") or "News briefing"
         else:
-            title = "News briefing" if self.destination == "artifacts" else "Source check"
+            title = (
+                "News briefing" if self.destination == "artifacts" else "Source check"
+            )
         self.query_one(".watchlists-operation-title", Static).update(str(title)[:120])
         error = str(operation.get("error_category") or "")[:164]
         error_widget = self.query_one(".watchlists-operation-error", Static)
@@ -113,7 +115,9 @@ class WatchlistsOperationCard(Vertical):
         event.stop()
         button = event.button
         if button.has_class("watchlists-operation-inspect"):
-            self.post_message(self.InspectRequested(self.operation_id, self.destination))
+            self.post_message(
+                self.InspectRequested(self.operation_id, self.destination)
+            )
         elif button.has_class("watchlists-operation-stop-following"):
             self.post_message(self.StopFollowingRequested(self.operation_id))
         elif button.has_class("watchlists-operation-retry"):

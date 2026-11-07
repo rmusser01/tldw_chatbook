@@ -1,0 +1,62 @@
+{
+  "task1-format-baseline.json": {
+    "bytes": 3951,
+    "sha256": "43ac258f53d0ec90f98037d3c5e7a7f85dc0332b0031356af699ac8cd0ecb48f",
+    "preserved_path": "format-baselines/task1-format-baseline.json"
+  },
+  "task2-fix1-format-metadata-test.json": {
+    "bytes": 865,
+    "sha256": "dac8f2291259a5536230508b0167fa67d02529935047c9585a8a18ce2c70f129",
+    "preserved_path": "format-baselines/task2-fix1-format-metadata-test.json"
+  },
+  "task2-fix1-format-queue-ui.json": {
+    "bytes": 971,
+    "sha256": "3d84215dc2a4bf112d4074534b5ea38550f435d0b0ba0d6f7492c1d78749adc9",
+    "preserved_path": "format-baselines/task2-fix1-format-queue-ui.json"
+  },
+  "task2-fix1-format-switcher.json": {
+    "bytes": 900,
+    "sha256": "38632b811c3fc844f0fe53de66266312b3150d15b02c621355c59f8516c246b6",
+    "preserved_path": "format-baselines/task2-fix1-format-switcher.json"
+  },
+  "task2-fix1-format.json": {
+    "bytes": 16271,
+    "sha256": "4478dd7e3b104c36c253cf296f70884b0c71ab861c9d0c6a0ab845fd0d6a135d",
+    "preserved_path": "format-baselines/task2-fix1-format.json"
+  },
+  "task2-fix2-format.json": {
+    "bytes": 7080,
+    "sha256": "3f982f51d9ad6ad0baa9b318c5a6797a2fc7983a8479fd197cd91f991971dc7f",
+    "preserved_path": "format-baselines/task2-fix2-format.json"
+  },
+  "task2-format-composer.json": {
+    "bytes": 820,
+    "sha256": "5417ddddd07da1989ea852ddf14d4bdd736e51a1e3b7b40420990ee9847948ea",
+    "preserved_path": "format-baselines/task2-format-composer.json"
+  },
+  "task2-format-extra.json": {
+    "bytes": 3779,
+    "sha256": "4d5badc8bedddb2775efa538ec32a1f5854794d8b3a13bebc15eb8c42537fe40",
+    "preserved_path": "format-baselines/task2-format-extra.json"
+  },
+  "task2-format-queue-ui.json": {
+    "bytes": 1021,
+    "sha256": "d6fe4bd6598962f80192c79e852d47c464f17fbb810ea9854aa3ea020b5caee8",
+    "preserved_path": "format-baselines/task2-format-queue-ui.json"
+  },
+  "task2-format.json": {
+    "bytes": 32997,
+    "sha256": "e686db85c21b996cf94cdd6f16cf059f99eeaeb8ce72de11daf1375d0af3f917",
+    "preserved_path": "format-baselines/task2-format.json"
+  },
+  "final-fix-format-schema-test.json": {
+    "bytes": 837,
+    "sha256": "712428871b8b0b3cab2cd7420780b569f39610b8265aaec8bead757e8644cfad",
+    "preserved_path": "format-baselines/final-fix-format-schema-test.json"
+  },
+  "final-fix-format.json": {
+    "bytes": 11247,
+    "sha256": "4e392f48e389d484d5ac894a4567cf2334ce9f6b5aad6c472df939b02afa6b45",
+    "preserved_path": "format-baselines/final-fix-format.json"
+  }
+}

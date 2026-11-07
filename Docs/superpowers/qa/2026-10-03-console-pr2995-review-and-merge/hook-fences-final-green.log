@@ -1,0 +1,6 @@
+......................                                                   [100%]
+============================= slowest 25 durations =============================
+1.31s call     Tests/Chat/test_console_hook_admission.py::test_pending_review_refuses_before_echo_then_approved_send_succeeds
+
+(24 durations < 1s hidden.)
+22 passed in 14.66s

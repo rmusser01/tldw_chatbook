@@ -37,6 +37,8 @@ async def main():
         '_run_speech_initialization', '_speech_initialization_allowed', '_speech_initialization_close_admission',
         '_speech_initialization_drain', '_speech_initialization_resume',
         '_settle_speech_initialization',
+        '_shutdown_actor_pack_recovery', '_close_boot_worker_gate',
+        '_stop_boot_worker_reconcile', '_shutdown_workflow_session',
     ):
         if hasattr(TldwCli, name):
             setattr(app, name, MethodType(getattr(TldwCli, name), app))

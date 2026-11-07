@@ -1,0 +1,524 @@
+# Review package: 9c0aa539712a2e2659a2b355d531228408932a83..eb7cb871390616de22d28c7a6679bbc9202841d7
+
+## Commits
+eb7cb87139 fix(console): retain uncertain-start denial with captured store identity
+41155ce71e docs: scope persistent chat-start restriction failure repair
+
+## Files changed
+ .../2026-10-03-console-pr2995-review-and-merge.md  |  10 ++
+ Tests/Chat/test_console_chat_start.py              | 197 +++++++++++++++++++++
+ Tests/DB/test_automatic_chat_starts.py             | 108 +++++++++++
+ ...t-starts-with-current-dev-before-publication.md |   4 +-
+ tldw_chatbook/Chat/console_chat_start.py           |  15 ++
+ tldw_chatbook/DB/automatic_work.py                 |  35 ++--
+ 6 files changed, 357 insertions(+), 12 deletions(-)
+
+## Diff
+diff --git a/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md b/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
+index 605f65ecaf..30d5de603b 100644
+--- a/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
++++ b/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
+@@ -488,10 +488,20 @@ Reason: restore existing physical custody, exact cleanup and original charged/pa
+ 
+ One fresh implementer follows approved Task14 handoff as sole tracked/index/HEAD writer; no child agents. Read own-SDD task-15-qodo-cleanup-preflight.md and original private probes (diagnosis only), current Qodo inline comments4179166071/4179166076/4179166078, ADR219 and the existing _native_start_rig/ledger controls. No broad feature/provider/schema/fork/scanner review or replay. Only Chat/console_chat_start.py, DB/automatic_work.py, Chat/console_chat_fork.py and exact Tests/Chat/test_console_chat_start.py / Tests/DB/test_automatic_chat_starts.py controls are owned.
+ 
+ - [ ] Verify/freeze real RED controls before implementation. Cover both failing restriction registration sites, exact commit/provider physical drain under repeated cancellation, outcome resolution and captured-token release; real trigger rollback with zero attempts/reservations and unrelated second-handle admission; prepared commit-then-raise versus accepted commit-then-raise; failed absence observation and present/foreign/stale/missing runtime owner. Include another-attempt restriction and replacement-token controls. Use actual native rig/real SQLite and existing thread-worker mechanisms, not only the private preflight surrogates. Record original failure causes distinctly from new test setup failures.
+ - [ ] Protect both registration calls with a narrowly scoped nonthrowing cleanup helper using phase/type-only logging. Preserve installed restrictions and reattempt registration on durable uncertainty. Independently drain both existing physical owners before final cleanup/release; repeated cancellation must not free capacity early. After physical exit, nested try/finally preserves outcome fallback, exact active-item removal and captured owner/token release even if outcome publication, abandonment or run-state cleanup fails. Keep source/target/revision/currentness and replacement-item/preparation fences. No retry of opening text, new authority floor or generic registry redesign.
+ - [ ] Preserve strict public abort_chat_start bool semantics, unknown/foreign-owner behavior and existing patch seam. Add only a private transaction-confirmed missing-attempt predicate: existing FULL/BEGIN IMMEDIATE transaction; require a present matching durable runtime owner; query exact attempt ID; return True only after successful transaction exit. Any row, absent/mismatched runtime owner, begin/read/commit/policy-restoration failure remains false or raises. No reservation/attempt mutation, schema/version, new outcome vocabulary or wildcard/root-policy change.
+ - [ ] Invoke absence confirmation only after ordinary failed settlement of an unaccepted/context-unavailable/unreceipted preparation and after all owned physical operations drain. Confirmed absence clears only that attempt/captured owner's restriction and uses existing not_started/start_failed. A Python exception, local flags, false abort, exception text or uncertain transaction is never positive absence. Prepared persisted work retains ordinary exact refund; accepted persisted work stays charged and root-paused/review_required; unrelated roots remain admitted when settlement is positively known. Preserve all clock anchors/counters/dual-store acceptance/receipt boundaries.
+ - [ ] Expand only console_fork_visible_selection's docstring with accurate Google Args/Returns/Raises sections for its actual parameters, result and ValueError branches. Preserve executable AST, signature, returns and all other fork helpers; no whole-fork suite replay for doc-only work. No tests that mirror doc text.
+ - [ ] Run new RED/GREEN selectors and only the16 exact existing covering selectors listed in the preflight (actual parameter expansion must be recorded). Use shared Python3.12/WT PYTHONPATH/canonical private profiles/existing300s timeout; preserve every original assertion/wait/marker and warning. Do not repeat passed unrelated cohorts or install deps. Freeze/attribute any new failure before expansion. Scoped independent review and source maps must prove exact public abort/body/import/authority/custody/Close/Task14 carry, only authorized changes and unchanged caps. Run fatal Ruff, changed-hunk formatting/inherited debt attribution and whitespace.
+ - [ ] Freeze source-specific report task-15-report.md, safe manifests/carry maps and actual closed-process source handoff; commit only owned source/tests. Root then exports only new bounded additive reports/maps, replies/resolves current findings, publishes, requests fresh current-head Qodo, and waits for normal current CI/PerfGuard/latest-dev ancestry before exact-head merge. Preserve2118 original ZIP entry bytes/all visible archival reports and olderQA; never rerun the flat exporter or relabel historical35 loading evidence.
++
++### Task15 fix round1: Retain denial through persistent registration and settlement failure
++
++ADR required: no new ADR
++ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md
++Reason: restore its same-owner/store charged-and-paused uncertainty contract with the existing canonical keys, memory UUID identity and snapshot tokens; no new schema, public abort, root scope or authority policy. This amends the original Task15 retained-limit selection after independent Important I1.
++
++- [ ] Same implementer owns only the existing five files. Freeze actual RED for persistent failure at both ordinary registration sites plus failed durable settlement; after actual physical worker exit, accepted authority remains charged and second-handle sibling admission must refuse while exact capacity/outcome/replacement state retire safely. Cover real canonical-key resolution failure as the concrete production surface, not solely an arbitrary exception stub. Preserve initial69artifacts/61case receipts and the copied before-I1 brief/report/manifest; never rewrite old evidence or relabel its source.
++- [ ] Establish the existing canonical database restriction identity before automatic authority. Keep exact alias equivalence and shared per-memory-DB private UUID; unresolved initial identity refuses authority. Cleanup/lookup/clear/recovery must reuse that captured identity without filesystem observation under the restriction lock. Add only a small pure insertion fallback using the same captured identity/map/owner/attempt/chain semantics when ordinary registration raises, so persistent ordinary-registration failure plus failed SQL settlement still leaves conservative denial. Preserve recovery snapshot-token fencing, unrelated database/owner isolation and physical drains/exact-token release; do not invent lexical/object-ID file keys, a second registry, new wildcard policy or schema. If no bounded repair preserves these contracts, freeze and escalate.
++- [ ] Qualify only new I1/key/alias/memory/initial-failure controls, affected existing registration controls, exact existing same-owner/store/recovery controls named in the fix brief. Preserve original assertions/markers/timeouts and all other61case receipt/custody/publicabort/import/Close/Task14/QA/ZIP/cap carry; no whole31/61/cohort/loading replay. Run fatal Ruff, changed-file/hunk format and whitespace; freeze a separate R1safe directory/manifest and append the fix report. Root performs one scoped re-review of I1 and new breakage.
+diff --git a/Tests/Chat/test_console_chat_start.py b/Tests/Chat/test_console_chat_start.py
+index 8266c39b8f..e903a5e1c6 100644
+--- a/Tests/Chat/test_console_chat_start.py
++++ b/Tests/Chat/test_console_chat_start.py
+@@ -3702,10 +3702,207 @@ async def test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release(
+         controller.fleet_wake._automatic_primary_claims.pop(target.id, None)
+         start.cancel()
+         await asyncio.gather(start, return_exceptions=True)
+         if "preparation" in saved:
+             abandon(saved["preparation"].preparation_id)
+         if "replacement_preparation" in saved:
+             abandon(saved["replacement_preparation"].preparation_id)
+         await controller.shutdown()
+         runs.close()
+         store.persistence.db.close_connection()
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
++@pytest.mark.parametrize("worker", ["commit", "provider"])
++@pytest.mark.parametrize("replacement", [False, True])
++async def test_persistent_registration_and_settlement_failure_retains_native_denial(
++    tmp_path, monkeypatch, failure, worker, replacement
++):
++    """Drained accepted work remains charged and denied despite both cleanup faults."""
++    import asyncio
++    from copy import copy
++    from pathlib import Path
++    import sys
++    from threading import Event
++    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
++    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
++
++    controller, store, runs, source, target, chain, request = await _native_start_rig(
++        tmp_path
++    )
++    ledger = runs.automatic_work
++    owner = controller.fleet_wake.runtime_owner_id
++    ledger.recover(current_owner_id=owner)
++    unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
++    alias = tmp_path / "alias"
++    alias.mkdir()
++    peer = AgentRunsDB(
++        alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False
++    )
++    peer_ledger = peer.automatic_work
++    entered, release, exited = Event(), Event(), Event()
++    original = (
++        store.commit_durable_turn
++        if worker == "commit"
++        else controller._agent_bridge.run_reply
++    )
++
++    def held(*args, **kwargs):
++        entered.set()
++        try:
++            assert release.wait(10)
++            return original(*args, **kwargs)
++        finally:
++            exited.set()
++
++    monkeypatch.setattr(
++        store if worker == "commit" else controller._agent_bridge,
++        "commit_durable_turn" if worker == "commit" else "run_reply",
++        held,
++    )
++    # Real SQLite rejects the durable settlement transaction, after acceptance.
++    with runs.transaction() as conn:
++        conn.execute(
++            "CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END"
++        )
++    resolve = Path.resolve
++
++    def fail_resolution(path, *args, **kwargs):
++        if (
++            path == runs.db_path
++            and sys._getframe(1).f_globals.get("__name__")
++            == "tldw_chatbook.DB.automatic_work"
++        ):
++            raise OSError("private canonical identity failure")
++        return resolve(path, *args, **kwargs)
++
++    registrations = []
++
++    def fail_registration(*args, **kwargs):
++        registrations.append(kwargs["chain_id"])
++        raise OSError("private persistent registration failure")
++
++    start = asyncio.create_task(controller._chat_start.start(request))
++    try:
++        assert await asyncio.to_thread(entered.wait, 5)
++        item = controller._chat_start._active[target.id]
++        captured_owner, token = item.capacity_owner, item.token
++        if worker == "provider":
++            assert (await start).launch_status == "started"
++            item.receipted = False
++        # Identity is known before this real filesystem failure starts.
++        monkeypatch.setattr(Path, "resolve", fail_resolution)
++        if failure == "persistent_registration":
++            monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
++        item.task.cancel()
++        await asyncio.sleep(0.05)
++        item.task.cancel()
++        await asyncio.sleep(0.05)
++        assert captured_owner._automatic_primary_claims[target.id] is token
++        assert not item.task.done() and not exited.is_set()
++        if worker == "commit":
++            assert not item.outcome.done()
++        if replacement:
++            replacement_item = copy(item)
++            replacement_item.token = object()
++            controller._chat_start._active[target.id] = replacement_item
++            captured_owner._automatic_primary_claims[target.id] = replacement_item.token
++        release.set()
++        assert await asyncio.gather(item.task, return_exceptions=True) == [None]
++        assert exited.is_set() and item.outcome.done()
++        if worker == "commit":
++            outcome = await start
++            assert (outcome.launch_status, outcome.reason) == (
++                "review_required",
++                "settlement_unconfirmed",
++            )
++        if replacement:
++            assert controller._chat_start._active[target.id] is replacement_item
++            assert (
++                captured_owner._automatic_primary_claims[target.id]
++                is replacement_item.token
++            )
++        else:
++            assert target.id not in controller._chat_start._active
++            assert target.id not in captured_owner._automatic_primary_claims
++        if failure == "persistent_registration":
++            assert len(registrations) == 2
++        assert (
++            ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state
++            == "accepted"
++        )
++        assert ledger.snapshot(chain).used["generation"] == 1
++        assert ledger.snapshot(chain).status == "active"
++        # Only transient same-key denial can protect this healthy alias handle.
++        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
++            peer_ledger.check_active(chain, owner_id=owner)
++        peer_ledger.check_active(unrelated, owner_id=owner)
++    finally:
++        release.set()
++        monkeypatch.setattr(Path, "resolve", resolve)
++        start.cancel()
++        await asyncio.gather(start, return_exceptions=True)
++        await asyncio.gather(*controller._chat_start.tasks(), return_exceptions=True)
++        controller._chat_start._active.pop(target.id, None)
++        controller.fleet_wake._automatic_primary_claims.pop(target.id, None)
++        ledger._clear_chat_start_restriction(request.attempt_id, owner_id=owner)
++        peer.close()
++        await controller.shutdown()
++        runs.close()
++        store.persistence.db.close_connection()
++
++
++@pytest.mark.asyncio
++async def test_initial_identity_failure_precedes_native_start_authority(
++    tmp_path, monkeypatch
++):
++    """An unresolved canonical key refuses start before a slot or attempt exists."""
++    from pathlib import Path
++    import sys
++
++    controller, store, runs, source, target, chain, request = await _native_start_rig(
++        tmp_path
++    )
++    # The real start boundary must construct a fresh ledger, as on first access.
++    ledger = runs.__dict__.pop("automatic_work")
++    resolve = Path.resolve
++
++    def fail_resolution(path, *args, **kwargs):
++        if (
++            path == runs.db_path
++            and sys._getframe(1).f_globals.get("__name__")
++            == "tldw_chatbook.DB.automatic_work"
++        ):
++            raise OSError("private initial identity failure")
++        return resolve(path, *args, **kwargs)
++
++    monkeypatch.setattr(Path, "resolve", fail_resolution)
++    try:
++        with pytest.raises(OSError):
++            await controller._chat_start.start(request)
++        assert not controller._chat_start._active
++        assert not controller._chat_start.tasks()
++        assert not controller.fleet_wake._automatic_primary_claims
++        with runs.connection() as conn:
++            assert (
++                conn.execute(
++                    "SELECT count(*) FROM automatic_chat_start_attempts"
++                ).fetchone()[0]
++                == 0
++            )
++            assert (
++                conn.execute(
++                    "SELECT count(*) FROM automatic_work_reservations"
++                ).fetchone()[0]
++                == 0
++            )
++        assert target.draft == "original"
++        assert not store.persistence.db.get_messages_for_conversation(
++            request.conversation_id
++        )
++    finally:
++        monkeypatch.setattr(Path, "resolve", resolve)
++        runs.__dict__["automatic_work"] = ledger
++        await controller.shutdown()
++        runs.close()
++        store.persistence.db.close_connection()
+diff --git a/Tests/DB/test_automatic_chat_starts.py b/Tests/DB/test_automatic_chat_starts.py
+index 79692d136e..5599710f8d 100644
+--- a/Tests/DB/test_automatic_chat_starts.py
++++ b/Tests/DB/test_automatic_chat_starts.py
+@@ -739,10 +739,118 @@ def test_missing_start_confirmation_requires_successful_owned_transaction(
+             == before
+         )
+         assert (
+             tuple(
+                 tuple(row)
+                 for row in conn.execute("SELECT * FROM automatic_work_reservations")
+             )
+             == reservations
+         )
+     assert ledger.snapshot(root).used["generation"] == 0
++
++
++@pytest.mark.parametrize("memory", [False, True])
++def test_restriction_identity_is_captured_for_aliases_and_memory_peers(
++    tmp_path, monkeypatch, memory
++):
++    """Cleanup and admission keep the same key when filesystem observation fails."""
++    from pathlib import Path
++    import sys
++    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
++    from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
++
++    db = AgentRunsDB(
++        ":memory:" if memory else tmp_path / "identity.sqlite", client_id="identity"
++    )
++    other = AgentRunsDB(
++        ":memory:" if memory else tmp_path / "other.sqlite", client_id="other"
++    )
++    peer = None
++    ledger = db.automatic_work
++    ledger.recover(current_owner_id="owner")
++    root, _ = source_run(db)
++    other_root, _ = source_run(other)
++    if memory:
++        sibling = AutomaticWorkLedger(db)
++        assert ledger._restriction_database().startswith("memory:")
++        assert (
++            ledger._restriction_database()
++            != other.automatic_work._restriction_database()
++        )
++    else:
++        alias = tmp_path / "alias"
++        alias.mkdir()
++        peer = AgentRunsDB(
++            alias / ".." / db.db_path.name, client_id="alias", reconcile_on_init=False
++        )
++        sibling = peer.automatic_work
++    assert sibling._restriction_database() == ledger._restriction_database()
++    resolve = Path.resolve
++
++    def fail_resolution(path, *args, **kwargs):
++        if (
++            path == db.db_path or (peer is not None and path == peer.db_path)
++        ) and sys._getframe(1).f_globals.get(
++            "__name__"
++        ) == "tldw_chatbook.DB.automatic_work":
++            raise OSError("private canonical identity failure")
++        return resolve(path, *args, **kwargs)
++
++    monkeypatch.setattr(Path, "resolve", fail_resolution)
++    try:
++        ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
++        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
++            sibling.check_active(root, owner_id="owner")
++        other.automatic_work.check_active(other_root, owner_id="owner")
++        sibling.recover(current_owner_id="owner")
++        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
++            sibling.check_active(root, owner_id="owner")
++        sibling._clear_chat_start_restriction("uncertain", owner_id="owner")
++        ledger.check_active(root, owner_id="owner")
++        ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
++        sibling.recover(current_owner_id="replacement")
++        sibling.check_active(root, owner_id="replacement")
++        assert ledger._restriction_database() == sibling._restriction_database()
++    finally:
++        monkeypatch.setattr(Path, "resolve", resolve)
++        ledger._clear_chat_start_restriction("uncertain", owner_id="owner")
++        if peer is not None:
++            peer.close()
++        db.close()
++        other.close()
++
++
++def test_initial_restriction_identity_failure_refuses_automatic_authority(
++    tmp_path, monkeypatch
++):
++    """A failed initial canonical key must not produce an authority-capable ledger."""
++    from pathlib import Path
++    import sys
++    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
++
++    db = AgentRunsDB(tmp_path / "uncertain.sqlite", client_id="identity")
++    resolve = Path.resolve
++
++    def fail_resolution(path, *args, **kwargs):
++        if (
++            path == db.db_path
++            and sys._getframe(1).f_globals.get("__name__")
++            == "tldw_chatbook.DB.automatic_work"
++        ):
++            raise OSError("private initial identity failure")
++        return resolve(path, *args, **kwargs)
++
++    monkeypatch.setattr(Path, "resolve", fail_resolution)
++    try:
++        with pytest.raises(OSError):
++            db.automatic_work
++        assert "automatic_work" not in db.__dict__
++        with db.connection() as conn:
++            for table in (
++                "automatic_work_chains",
++                "automatic_work_reservations",
++                "automatic_chat_start_attempts",
++            ):
++                assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
++    finally:
++        monkeypatch.setattr(Path, "resolve", resolve)
++        db.close()
+diff --git a/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md b/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md
+index b9dde0c58f..cc31d8d9ce 100644
+--- a/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md	
++++ b/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md	
+@@ -1,18 +1,18 @@
+ ---
+ id: TASK-34215.2
+ title: Integrate Console chat starts with current dev before publication
+ status: In Progress
+ assignee:
+   - '@codex'
+ created_date: '2026-10-03 14:59'
+-updated_date: '2026-10-04 21:35'
++updated_date: '2026-10-04 22:08'
+ labels:
+   - console
+   - integration
+ dependencies: []
+ parent_task_id: TASK-34215
+ ---
+ 
+ ## Description
+ 
+ <!-- SECTION:DESCRIPTION:BEGIN -->
+@@ -136,13 +136,15 @@ Task12 bda1dbf34b independently Compliant/Approved, no Critical/Important.83 sel
+ 
+ Root loading at a6887fdb89:35 cases pass with exact7689 source hashes and unchanged limits; warnings retained. Dev then advanced to8f83422 (PR3005, sixcommits/17paths/tenproduction owners). Task13 written scope preserves four combined feature methods, upstream trace/refusal/custody repair and all frozen evidence, lowers only controller row to actual measured shrink under existing50line slack rule, and qualifies51 proposed behavior cases/four ratchets. Original35 loading receipts remain historical with scoped import/worker/public/Close carry, no automatic replay. Independent review and current-head Qodo/CI/merge remain open.
+ 
+ Latest dev publication continuation: documentation-only PR3012 adds15 Backlog files across threecommits. Clean root rebase a54f2b3594 ontoa7d9bca5da retains all8123 qualified source/test hashes and2111 initial QA archive hashes. Source review remains9445ed93ed, with no new source/test/config/UI/ADR change or test replay. See the additive publication-continuation.md receipt and complete62-ruling ledger. Current-head Qodo/CI/PerfGuard and actual normal merge remain open.
+ 
+ Lossless QA packaging: preserved all 2,118 original checkpoint files in a 63,166,118-byte ZIP with verified entry hashes; 95 Markdown reports and four original manifest/audit/continuation records remain visible. All 8,123 qualified source/test hashes stay exact and older QA is unchanged. The observed 4,147-file PR and missing PerfGuard are consistent with documented diff filtering limits; packaging restores normal source enumeration without changing source, workflows, tests, permissions or budgets. All 63 ordered rulings are archived. Fresh published-head Qodo, both UI shards, required CI, actual PerfGuard execution, latest dev ancestry and confirmed normal merge still gate completion.
+ 
+ Current-head Qodo review completed on b1ef and reports three new actionable findings: fork helper doc sections, restriction-registration cleanup escape, and confirmed missing-attempt owner-wide denial. Real SQLite preflight distinguishes rolled-back absence from prepared/accepted commit-then-raise. PR Fast Lane has six stale fakeSession consumer failures while both UI shards and PerfGuard pass. Latest dev49206 PR3014 adds Together discovery/stream fixes with only a lesson-append conflict. Tasks14/15 in the existing plan scope exact incoming preservation, two fixture callbacks, physical-drain cleanup and strict transaction-confirmed absence; all previous QA/ZIP/markers/caps remain intact. Source reviews/current-head checks and actual merge remain required.
+ 
+ Task14 source34cf170802 integrates dev49206 with all12 incoming files exact and the specified two-lesson append union. Only two fakeSession consumers repair six CI polling failures;20 Together cases and6 polling cases pass, one existing strictxfail stays unchanged. Independent Spec Compliant/Quality Approved;69 evidence pins,8124 source hashes,13 incoming candidates,10409 initialQA,12337 historicalQA and original ZIP verify. Inherited formatter/PyAudio/FD/headroom warnings remain disclosed. Task15 Qodo cleanup/doc findings and current-head external/merge gates remain open; no new loading pass or suite replay.
++
++Task15 source9c0aa53971 has61 unique targeted passes and static/source/QA preservation checks. Independent review found ImportantI1: persistent restriction registration plus failed durable settlement can release accepted work without sibling denial. Root selected a scoped same-identity denial fallback with canonical key captured before authority; original69 artifacts/61 cases remain frozen in before-I1 snapshots and R1 adds focused native/second-handle/alias/memory/recovery controls. Source remains unapproved/unpublished pending correction and scoped re-review; merge gates remain open.
+ <!-- SECTION:NOTES:END -->
+ 
+ Current-dev publication identity: 34215.2 replaces unmerged 33805.2. The landed TASK33802 census keeps its identity; the design/foundation/feature chain moved together to preserve dependency ordering. Historical QA retains original identifiers and bytes. Current evidence: Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/README.md.
+diff --git a/tldw_chatbook/Chat/console_chat_start.py b/tldw_chatbook/Chat/console_chat_start.py
+index cc6b21c973..241cfb9f29 100644
+--- a/tldw_chatbook/Chat/console_chat_start.py
++++ b/tldw_chatbook/Chat/console_chat_start.py
+@@ -368,20 +368,35 @@ class ConsoleChatStartCoordinator:
+             item.ledger._restrict_chat_start(
+                 item.request.attempt_id,
+                 owner_id=item.runtime_owner_id,
+                 chain_id=item.context.chain_id if item.context is not None else None,
+             )
+         except BaseException as exc:
+             logger.warning(
+                 "Chat start failed (phase=restriction, exception_type={})",
+                 type(exc).__name__,
+             )
++            try:
++                # Ordinary registration may fail repeatedly. Preserve denial
++                # with the same pre-established key, without filesystem or SQL.
++                item.ledger._retain_chat_start_restriction(
++                    item.request.attempt_id,
++                    owner_id=item.runtime_owner_id,
++                    chain_id=item.context.chain_id
++                    if item.context is not None
++                    else None,
++                )
++            except BaseException as retain_error:
++                logger.warning(
++                    "Chat start failed (phase=restriction_fallback, exception_type={})",
++                    type(retain_error).__name__,
++                )
+ 
+     async def _run(self, item: AgentChatStartAuthorization) -> None:
+         from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+         from .console_chat_models import (
+             ConsoleSubmissionOrigin,
+             ConsoleRunState,
+             ConsoleRunStatus,
+         )
+ 
+         controller, request = self._controller, item.request
+diff --git a/tldw_chatbook/DB/automatic_work.py b/tldw_chatbook/DB/automatic_work.py
+index 7404c41c7f..45ff19e293 100644
+--- a/tldw_chatbook/DB/automatic_work.py
++++ b/tldw_chatbook/DB/automatic_work.py
+@@ -56,39 +56,52 @@ class AutomaticWorkLedger:
+         self,
+         db: AgentRunsDB,
+         *,
+         wall_clock: Callable[[], float] = time.time,
+         monotonic_clock: Callable[[], float] = time.monotonic,
+     ) -> None:
+         self._db = db
+         self._wall_clock = wall_clock
+         self._monotonic_clock = monotonic_clock
+ 
++        # Establish the existing canonical key before this ledger can authorize
++        # work. Cleanup must never need a fresh filesystem observation.
++        if not db.is_memory_db:
++            self._restriction_database_id = str(db.db_path.resolve())
++        else:
++            # Independent memory stores retain private UUIDs; ledgers for the
++            # same store share the identity even if the property is rebuilt.
++            with _UNCONFIRMED_STARTS_LOCK:
++                identity = getattr(db, "_automatic_work_restriction_id", None)
++                if identity is None:
++                    identity = "memory:" + uuid4().hex
++                    db._automatic_work_restriction_id = identity
++                self._restriction_database_id = identity
++
+     def _restriction_database(self) -> str:
+-        if not self._db.is_memory_db:
+-            return str(self._db.db_path.resolve())
+-        # Repeated :memory: names and eventual Python object-ID reuse must not
+-        # couple independent stores. A ledger shares its DB's private identity.
+-        with _UNCONFIRMED_STARTS_LOCK:
+-            identity = getattr(self._db, "_automatic_work_restriction_id", None)
+-            if identity is None:
+-                identity = "memory:" + uuid4().hex
+-                self._db._automatic_work_restriction_id = identity
+-            return identity
++        return self._restriction_database_id
+ 
+     def _restrict_chat_start(
+         self, attempt_id: str, *, owner_id: str, chain_id: str | None
+     ) -> None:
+         """Retain uncertain authority before settlement I/O, without reading DB."""
++        self._retain_chat_start_restriction(
++            attempt_id, owner_id=owner_id, chain_id=chain_id
++        )
++
++    def _retain_chat_start_restriction(
++        self, attempt_id: str, *, owner_id: str, chain_id: str | None
++    ) -> None:
++        """Insert denial using only captured identity and the existing registry."""
+         with _UNCONFIRMED_STARTS_LOCK:
+             _UNCONFIRMED_STARTS[
+-                (self._restriction_database(), owner_id, attempt_id)
++                (self._restriction_database_id, owner_id, attempt_id)
+             ] = (chain_id, object())
+ 
+     def _clear_chat_start_restriction(self, attempt_id: str, *, owner_id: str) -> None:
+         with _UNCONFIRMED_STARTS_LOCK:
+             _UNCONFIRMED_STARTS.pop(
+                 (self._restriction_database(), owner_id, attempt_id), None
+             )
+ 
+     def _check_unconfirmed_starts(
+         self, conn: sqlite3.Connection, chain_id: str

@@ -207,9 +207,7 @@ def test_explicit_data_dir_override_relocates_export_directory(
     assert first_resolved == first_expected
 
     second_root = tmp_path / "root-two"
-    monkeypatch.setattr(
-        database_paths.config, "get_user_data_dir", lambda: second_root
-    )
+    monkeypatch.setattr(database_paths.config, "get_user_data_dir", lambda: second_root)
     second_resolved = window_factory()
     second_expected = database_paths.get_private_chatbooks_dir()
     assert second_resolved == second_expected

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from tldw_profile_core import ProposalState, SyncMode
 
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
@@ -10,7 +11,6 @@ from tldw_chatbook.Personal_Context.service import (
     RecordMutation,
 )
 from tldw_chatbook.Personal_Context.sync_outbox import ProfileSyncOutbox
-
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 
@@ -90,9 +90,7 @@ def test_device_only_record_never_enters_profile_sync_outbox(
     record = record.model_copy(update={"scope_id": service.list_scopes()[0].scope_id})
     service.create_record(record)
 
-    assert all(
-        entry.object_id != record.record_id for entry in outbox.list_pending()
-    )
+    assert all(entry.object_id != record.record_id for entry in outbox.list_pending())
 
 
 def test_pending_device_only_proposal_never_enters_profile_sync_outbox(
@@ -155,9 +153,7 @@ def test_interview_batch_journals_advanced_manifest_with_records(
         ("manifest", manifest.profile_id),
         ("record", record.record_id),
     }
-    manifest_entry = next(
-        entry for entry in entries if entry.object_type == "manifest"
-    )
+    manifest_entry = next(entry for entry in entries if entry.object_type == "manifest")
     assert outbox.read_body(manifest_entry.outbox_id) == {
         "version": 1,
         "manifest": next_manifest.model_dump(mode="json"),
@@ -292,17 +288,51 @@ def test_acknowledgement_records_receipt_and_crypto_shreds_body(
 
 
 def test_poisoned_outbox_body_is_quarantined_content_free_and_shredded(
-    tmp_path, memory_protector
+    tmp_path, memory_protector, record_factory
 ) -> None:
     service = _service(tmp_path, memory_protector)
     service.create_profile()
     outbox = ProfileSyncOutbox(service._repository)
-    outbox_id = service._repository.commit_outbox_body(
-        object_type="record",
-        object_id="poison-record",
-        version_id="poison-version",
-        body={"version": 1, "record": {"private": "DO-NOT-PERSIST"}},
+    from Tests.Personal_Context.native_barrier_helpers import (
+        replace_sealed_body,
+        sql_state,
     )
+    from tldw_chatbook.Personal_Context.native_compatibility import (
+        ProfileCompatibilityError,
+    )
+
+    repository = service._repository
+    poisoned = {"version": 1, "record": {"private": "DO-NOT-PERSIST"}}
+    before = sql_state(repository)
+    with pytest.raises(ProfileCompatibilityError):
+        repository.commit_outbox_body(
+            object_type="record",
+            object_id="poison-record",
+            version_id="poison-version",
+            body=poisoned,
+        )
+    assert sql_state(repository) == before
+    record = record_factory(repository.get_manifest().profile_id)
+    outbox_id = repository.commit_outbox_body(
+        object_type="record",
+        object_id=record.record_id,
+        version_id=record.version_id,
+        body={"version": 1, "record": record.model_dump(mode="json")},
+    )
+    # Simulate an authenticated pre-barrier poisoned journal without using ingress.
+    with repository._transaction() as connection:
+        version = connection.execute(
+            "SELECT envelope_version FROM encrypted_outbox WHERE outbox_id=?",
+            (outbox_id,),
+        ).fetchone()[0]
+    replace_sealed_body(
+        repository,
+        object_type="outbox",
+        object_id=outbox_id,
+        version_id=version,
+        raw=repository._canonical_payload(poisoned),
+    )
+    assert outbox.read_body(outbox_id) == poisoned
 
     outbox.quarantine(outbox_id, "invalid_canonical_object")
 

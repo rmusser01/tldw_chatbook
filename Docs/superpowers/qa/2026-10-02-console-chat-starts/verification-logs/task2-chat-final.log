@@ -1,0 +1,37 @@
+........................................................................ [ 10%]
+........................................................................ [ 20%]
+........................................................................ [ 30%]
+........................................................................ [ 41%]
+........................................................................ [ 51%]
+........................................................................ [ 61%]
+........................................................................ [ 72%]
+........................................................................ [ 82%]
+........................................................................ [ 92%]
+....................................................                     [100%]
+============================= slowest 25 durations =============================
+3.38s setup    Tests/Chat/test_chat_persistence_service.py::TestChatPersistenceService::test_create_conversation_supports_non_default_creation_models[None-None-None-New Chat]
+3.33s call     Tests/Chat/test_console_fleet_wake.py::test_one_conversations_failed_delivery_does_not_strand_anothers
+2.50s call     Tests/Chat/test_console_chat_store.py::test_hidden_db_legacy_post_cas_reader_failure_reconciles_committed_owner[stale-select]
+2.47s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_refuses_instructions_on_character_chat
+2.43s call     Tests/Chat/test_console_fleet_wake.py::test_a_refused_wake_loses_nothing_and_is_retried
+2.33s setup    Tests/Chat/test_chat_persistence_service.py::TestChatPersistenceService::test_update_without_fingerprint_key_invalidates_owner_and_keeps_message_edit
+2.05s call     Tests/Chat/test_console_fleet_wake.py::test_children_finishing_inside_their_turn_never_wake
+1.99s call     Tests/Chat/test_console_fleet_wake.py::test_a_busy_session_defers_the_wake_until_its_terminal_transition
+1.98s call     Tests/Chat/test_console_fleet_wake.py::test_a_pending_run_the_ledger_shows_delivered_is_dropped_not_reannounced
+1.96s call     Tests/Chat/test_console_fleet_wake.py::test_a_queue_owned_session_defers_the_wake
+1.88s call     Tests/Chat/test_console_chat_start.py::test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds[source_stop]
+1.86s call     Tests/Chat/test_console_chat_start.py::test_live_machine_retry_starts_manual_work_without_reassigning_old_allowance
+1.83s call     Tests/Chat/test_console_chat_start.py::test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[source_stop]
+1.81s call     Tests/Chat/test_console_chat_start.py::test_manual_send_withdraws_prepared_start_before_busy_gate
+1.79s call     Tests/Chat/test_console_fleet_wake.py::test_post_durable_runtime_failure_settles_bound_wake_once
+1.78s call     Tests/Chat/test_console_fleet_wake.py::test_dispose_fences_delivery_completion_after_its_await
+1.75s call     Tests/Chat/test_console_chat_start.py::test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[target_stop]
+1.74s call     Tests/Chat/test_console_fleet_wake.py::test_agent_wake_origin_is_unreachable_without_the_coordinator_token
+1.73s setup    Tests/Chat/test_chat_persistence_service.py::TestChatPersistenceService::test_create_conversation_persists_persona_memory_mode
+1.73s call     Tests/Chat/test_console_fleet_wake.py::test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice
+1.72s setup    Tests/Chat/test_chat_persistence_service.py::TestConsoleConversationAppearance::test_batched_read_sanitizes_malformed_metadata
+1.71s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[/help]
+1.71s call     Tests/Chat/test_console_fleet_wake.py::test_user_wins_ties_a_composer_draft_defers_the_wake
+1.71s call     Tests/Chat/test_console_fleet_wake.py::test_children_settling_during_a_wake_turn_ride_the_next_wake
+1.70s call     Tests/Chat/test_console_fleet_wake.py::test_the_global_cap_defers_a_wake_like_any_other_send
+700 passed in 410.88s (0:06:50)

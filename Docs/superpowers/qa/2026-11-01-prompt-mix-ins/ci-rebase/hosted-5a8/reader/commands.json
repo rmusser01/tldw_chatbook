@@ -1,0 +1,96 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "published_base": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+  "commands": [
+    {
+      "phase": "red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys -q --tb=long -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/red-tmp > /private/tmp/mixins-reader-restore-final/red.log 2>&1",
+      "result": "1 failed in 10.77s",
+      "qualification": "UNQUALIFIED setup error: sketch referenced Find token on screen rather than its current Media controller owner"
+    },
+    {
+      "phase": "red-valid",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys -q --tb=long -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/red-valid-tmp > /private/tmp/mixins-reader-restore-final/red-valid.log 2>&1",
+      "result": "1 failed in 41.29s",
+      "qualification": "UNQUALIFIED setup timeout: initial resize suppression clears only real input; not a product RED"
+    },
+    {
+      "phase": "setup-probe",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys -q --tb=short -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/setup-probe-tmp > /private/tmp/mixins-reader-restore-final/setup-probe.log 2>&1",
+      "result": "1 failed in 38.78s",
+      "qualification": "UNQUALIFIED setup diagnostic: only resize_settling remained true; observer wrapper replaced with official hook, snapshot diagnostics removed"
+    },
+    {
+      "phase": "red-native",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys -q --tb=long -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/red-native-tmp > /private/tmp/mixins-reader-restore-final/red-native.log 2>&1",
+      "result": "1 failed in 9.89s",
+      "qualification": "VALID intermediate old-owner wrong-ID RED; final test bytes later formatted and supplemented"
+    },
+    {
+      "phase": "green",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys -q --tb=long -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/green-tmp > /private/tmp/mixins-reader-restore-final/green.log 2>&1",
+      "result": "1 passed in 12.62s",
+      "qualification": "VALID intermediate native default-writer + genuine keys GREEN; not final source qualification"
+    },
+    {
+      "phase": "final-bytes-red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-reader-restore-final/old_restore_owner.py > /private/tmp/mixins-reader-restore-final/final-bytes-red.log 2>&1",
+      "result": "1 failed in 15.60s",
+      "qualification": "VALID intermediate exact old-method import overlay; not final test bytes"
+    },
+    {
+      "phase": "frozen-old-red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-reader-restore-final/old_restore_owner.py > /private/tmp/mixins-reader-restore-final/frozen-old-red.log 2>&1",
+      "result": "1 failed in 12.99s",
+      "qualification": "VALID intermediate exact old-method import overlay; not final complete test bytes"
+    },
+    {
+      "phase": "qualification-old-red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-reader-restore-final/old_restore_owner.py > /private/tmp/mixins-reader-restore-final/qualification-old-red.log 2>&1",
+      "result": "1 failed in 9.74s",
+      "qualification": "VALID intermediate exact old-method overlay before permanent failure tests and final approved combined source"
+    },
+    {
+      "phase": "final-approved-old-red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-reader-restore-final/old_restore_owner.py > /private/tmp/mixins-reader-restore-final/final-approved-old-red.log 2>&1",
+      "result": "1 failed in 9.61s",
+      "qualification": "AUTHORITATIVE final four-file identities: exact old restore body compiled in original globals; no repository edits, no runtime handler wrapper; same final test bytes"
+    },
+    {
+      "phase": "frozen-green",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_rail_switch_keeps_reader_and_note.py -q --tb=long -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/frozen-green-tmp > /private/tmp/mixins-reader-restore-final/frozen-green.log 2>&1",
+      "result": "4 passed in 33.54s",
+      "qualification": "VALID intermediate original three journeys plus new native case; superseded by final five-case module run"
+    },
+    {
+      "phase": "wiring",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/Architecture/test_library_media_wiring.py -q --tb=short -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/wiring-tmp > /private/tmp/mixins-reader-restore-final/wiring.log 2>&1",
+      "result": "13 passed in 1.51s",
+      "qualification": "Controller/public wiring; prior to AST-identical helper signature formatting"
+    },
+    {
+      "phase": "exact-final-green",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_n_in_the_reader_creates_a_note_naming_the_document_and_the_reader_keeps_its_place -q --tb=long -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/exact-final-green-tmp > /private/tmp/mixins-reader-restore-final/exact-final-green.log 2>&1",
+      "result": "2 passed in 17.79s",
+      "qualification": "VALID intermediate before explicit expected-lambda binding and permanent marker test; superseded"
+    },
+    {
+      "phase": "final-approved-green",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_rail_switch_keeps_reader_and_note.py -q --tb=long -p no:cacheprovider --basetemp=/private/tmp/mixins-reader-restore-final/final-approved-green-tmp > /private/tmp/mixins-reader-restore-final/final-approved-green.log 2>&1",
+      "result": "5 passed in 34.91s",
+      "qualification": "AUTHORITATIVE ordinary native run, final source, normal bootstrap_profile admission; original handlers intact"
+    },
+    {
+      "phase": "private-marker-self-check",
+      "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-reader-restore-final/marker_lifetime_self_check.py > /private/tmp/mixins-reader-restore-final/marker-lifetime.log 2>&1",
+      "result": "10 exact-helper self-check modes passed",
+      "qualification": "Private branch contract only; four essential modes now permanently covered by final test module"
+    },
+    {
+      "phase": "frozen-static-proof",
+      "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-reader-restore-final/verify_frozen.py > /private/tmp/mixins-reader-restore-final/final-frozen-verification.log 2>&1",
+      "result": "Passed; exact final source hashes, AST reversal, original test byte prefix, facade signature/doc, expected single Screen delta, new-block formatting and published lint parity"
+    }
+  ],
+  "note": "Intermediate RED overlay scripts used their then-owned basetemp values recorded in logs; the current saved script is exactly the final-approved overlay. Only final-approved-old-red/green + final-frozen-proof qualify final source."
+}

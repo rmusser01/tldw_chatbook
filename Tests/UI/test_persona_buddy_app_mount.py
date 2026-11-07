@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import threading
+from dataclasses import replace
 
 import pytest
 from textual.app import ComposeResult
@@ -12,6 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Persona_Buddy import (
     PersonaBuddyController,
     PersonaBuddyPreferences,
@@ -21,7 +22,9 @@ from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
     PersonaBuddyWidget,
 )
-from tldw_chatbook.app import TldwCli
+
+# Real config readers retain the profile admitted at collection.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
@@ -251,6 +254,8 @@ async def test_cancelled_delayed_mount_cleans_only_the_created_view(monkeypatch)
     app = _BuddyApp(PersonaBuddyPreferences())
     # This case controls/cancels the explicit reconcile caller, not the worker.
     app.persona_buddy_controller._on_change = None
+    # This case owns one explicit reconcile, excluding automatic screen requests.
+    monkeypatch.setattr(app, "_schedule_persona_buddy_overlay", lambda *_args: None)
     async with app.run_test(size=(100, 30)):
         screen = app.screen
         preferences = _enabled_preferences()
@@ -281,6 +286,8 @@ async def test_delayed_mount_with_superseded_generation_removes_stale_created_vi
 ):
     app = _BuddyApp(PersonaBuddyPreferences())
     app.persona_buddy_controller._on_change = None
+    # This case owns one explicit reconcile, excluding automatic screen requests.
+    monkeypatch.setattr(app, "_schedule_persona_buddy_overlay", lambda *_args: None)
     async with app.run_test(size=(100, 30)):
         screen = app.screen
         await app.persona_buddy_controller.update_preferences(_enabled_preferences())
@@ -496,7 +503,6 @@ async def test_modal_dismiss_reconciles_same_screen_and_restarts_resolution():
     async def counted_resolution(*, cols: int, lines: int):
         nonlocal calls
         calls += 1
-        return None
 
     controller.resolve_current_visual = counted_resolution
     async with app.run_test(size=(100, 30)):

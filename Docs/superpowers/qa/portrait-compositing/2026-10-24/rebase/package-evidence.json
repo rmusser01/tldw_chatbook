@@ -1,0 +1,430 @@
+{
+  "dev_commit": "2f0b142d42cfff88ad4cd44aa04cd9afe068fdf4",
+  "files_per_wheel": 50,
+  "wheels": [
+    {
+      "journey": "installed_authoring_console",
+      "wheel_sha256": "cb5835f24013e7964316bb4b65ca9e27a7657fb4c8ae19cad8b07f7f63293aee",
+      "matched_production_files": [
+        {
+          "path": "tldw_chatbook/Audio/speech_presentation.py",
+          "sha256": "d94f15502294469fb9250da955e597d51d6e451d12fb2b71efbe4ef83df1da94"
+        },
+        {
+          "path": "tldw_chatbook/Audio/streaming_sink.py",
+          "sha256": "cd5dd7d831739b084a8a91d12ed931bdc5ca8dab31890abb9721aaf5fd90bbfb"
+        },
+        {
+          "path": "tldw_chatbook/Character_Chat/expression_generation.py",
+          "sha256": "daf2d4f0a6a5d1ee1464642b8114d285045eecd81e2152f32ab0175bb7f45a25"
+        },
+        {
+          "path": "tldw_chatbook/Character_Chat/portrait_compositing.py",
+          "sha256": "7233dd53ba2df3d06b86d269626ffa03c6f90f99b597fb024946d8973577f9c2"
+        },
+        {
+          "path": "tldw_chatbook/Character_Chat/portrait_performance.py",
+          "sha256": "a794dbfd9ad2b8d643152d4ebe279f646c44ef9f68c4f0950738441401390dcd"
+        },
+        {
+          "path": "tldw_chatbook/Character_Chat/portrait_performance_authoring.py",
+          "sha256": "82df90f4d8ee8898427526d560ab13d69338713aba2960380ecd92a979ddba2b"
+        },
+        {
+          "path": "tldw_chatbook/Chat/character_expression_playback.py",
+          "sha256": "9c9ba98b14b7f4a2aa46c387ed37dd10567e74332af68736c8592073499621cb"
+        },
+        {
+          "path": "tldw_chatbook/Chat/portrait_performance_state.py",
+          "sha256": "aa1e7b651e5136b5ace607097ed7044607c9172e4715a5c0146281eb2a90ed42"
+        },
+        {
+          "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+          "sha256": "8564e9ff217015cb9ab9ea941160ba34a5939f911cf2fbedb9ef362c9e0b7f7c"
+        },
+        {
+          "path": "tldw_chatbook/DB/migrations/chachanotes_v82_to_v83_portrait_performance.sql",
+          "sha256": "dd91852a82cb6feaee86b3d446cdb2cd7102a4cacd41fc34db139cfeaa2d1853"
+        },
+        {
+          "path": "tldw_chatbook/DB/migrations/chachanotes_v83_to_v84_portrait_regions.sql",
+          "sha256": "d14cc8659526c656df2fd8117c2ed20f8c65dad47990909944bd30a29e24e1d5"
+        },
+        {
+          "path": "tldw_chatbook/DB/portrait_region_settings.py",
+          "sha256": "8543b2cd5cc9a29c36f5e2781aa1426897fb3e4ac7f699492d4a0fa5cccdac13"
+        },
+        {
+          "path": "tldw_chatbook/DB/recovery_core.py",
+          "sha256": "3872a04de3130703c84fca73740b70d8d5eeb21b2b1ee1df40e1ae91cd5a096f"
+        },
+        {
+          "path": "tldw_chatbook/DB/recovery_core_schema.py",
+          "sha256": "ac96481309910842edacd64abe13b9ca9cb7220133418db2e3c8e61eedd4cb82"
+        },
+        {
+          "path": "tldw_chatbook/DB/sql_validation.py",
+          "sha256": "2a502590681089586df7b44ebe3b18ae1b803b0fed1236161f713bd36d81846a"
+        },
+        {
+          "path": "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
+          "sha256": "495066a5ba65fb5c81584e1e926e9291163fffb1b8646f2984632017e0b5b463"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/character.py",
+          "sha256": "47d0fac190b486a95744dc21d36aeefcab2c36dfbae4712f96d5137ae8209dc5"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/hands_free.py",
+          "sha256": "c47157113f14054481516378c0a155393c9106b3f5828d60560097739bc6154c"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/left_rail.py",
+          "sha256": "980e880b2f609ccb537cb02832ddb45703410219f673f596bcc8d1563cce82d7"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/message.py",
+          "sha256": "d1d349ee7886f243a43d7bddf347956fd0cda8d453ef5fceb5f77bcaaf5d0032"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+          "sha256": "7e28cfa9efa3720cae297f4a8d204975f14828c63af427a48f07251999d6ca36"
+        },
+        {
+          "path": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+          "sha256": "ce6fc980a9b5f75ccf5cf37def6d7e8df3266687e1fbdb3463022c3951a8fd53"
+        },
+        {
+          "path": "tldw_chatbook/UI/Persona_Modules/portrait_composition_generation.py",
+          "sha256": "93d8b04b775ae754fa8261a086f535cfd9cacdd28c521a1974da2f438a4b10a0"
+        },
+        {
+          "path": "tldw_chatbook/UI/Persona_Modules/portrait_performance.py",
+          "sha256": "f15e8a2dbcdcc38c5ee519d4015160526f827a8c0e25d4296a39cbe7754e0997"
+        },
+        {
+          "path": "tldw_chatbook/UI/Persona_Modules/portrait_regions.py",
+          "sha256": "7403a6c9b910b07ef4abe1fd6651b57feb05fbd8c8a6cce4502bd037cd08140e"
+        },
+        {
+          "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+          "sha256": "70a7f953e6a65358f29e34fe42731150008803a9e2077c8354055b8a601afc45"
+        },
+        {
+          "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+          "sha256": "d24ce62e47884a012062f67ff9c5cc646904e8815d26eaea8c2bef50b38a6668"
+        },
+        {
+          "path": "tldw_chatbook/Utils/mosaic_render.py",
+          "sha256": "b87f203cd3d3da47c6d5b4b225c7399e8d4eb5853de5d5bbb2bd8294bacf6293"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Console/character_expression_avatar.py",
+          "sha256": "25aa95f05530cd7f82195bcba8b474514387b366b047173f90c55012f490e494"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Console/portrait_radio.py",
+          "sha256": "608aa0a0244e8758eb1a324fd61b7b2025223021af425a863835cf1af52e345d"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py",
+          "sha256": "bf5e05b0361990cb6d16815f08ff6697ab7f7e49e7cc21350ff8fe834a19fe76"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py",
+          "sha256": "b668352550fb9e705c8a95314dee63e1a11c8b731a8ce152fa9a8bac972cce00"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py",
+          "sha256": "d58102100d587d01ef8a1d854124677166d627a0b918da34991555ecd922e6ad"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_performance_editor.py",
+          "sha256": "d868d2519b957f629caadbe1a9cc5bb30eaa8e587a86e2ad1e1d848d054e5632"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py",
+          "sha256": "43bee9455dd34b4af7284103e941dc6de5984f0c8f30691e24acaacce73f9e7b"
+        },
+        {
+          "path": "tldw_chatbook/app_speech.py",
+          "sha256": "ae79743eac651bf5a54373fbe8a960b985f3e338ab61a12b3fb734d7a052b73b"
+        },
+        {
+          "path": "tldw_chatbook/css/core/_variables.tcss",
+          "sha256": "8bc3638aa291ac26e8b71b5224aabe4d3e5fabf7c1fdb39f3c0e6640cec5669d"
+        },
+        {
+          "path": "tldw_chatbook/css/features/_console_panels.tcss",
+          "sha256": "ac4b4f41af7b231977405dae84059dc27d6dd9dac81004492e4a185fa3105a68"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_agentic_library.tcss",
+          "sha256": "068e2977990bbba8d063bb1ccf5358f60adb6b3b002831014cf650f8bbd93863"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_agentic_settings.tcss",
+          "sha256": "89bdf9b747d127ec2007d7204fa4e6d72347ee9a28cb5965e1f5cc4b7e8f659e"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_evals.tcss",
+          "sha256": "8fad238aaa58b64ccd1c78d9b816e0353dbdcd7de16068414914b670d1715df0"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_roleplay.tcss",
+          "sha256": "53910cdb7747759b2f68bfb74af2f85401a720020c3212ccb41b598970c63962"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_scheduling.tcss",
+          "sha256": "52f10741486c25234f5023b1d8df271a56e1232be4c70926ae5a67642aafb72c"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_watchlists.tcss",
+          "sha256": "0832b77f31ea6c6a742273c18416108bf3fddf22ab819237553639af557aed87"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_workflows.tcss",
+          "sha256": "1e1f92e2070a7ef40e67db7011a1065146cc156f13eb9cf60ebde01c3f1cf6e0"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss",
+          "sha256": "db23f9bb8d64d5670c0c3611467096864adb9fe2b784a8e100a6bf2e418dd5db"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_modal_file_notes_history.tcss",
+          "sha256": "73859f09db56219d2c27e3f8a33b20c4f48296b3cc7582ffedf2d06793de31cd"
+        },
+        {
+          "path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+          "sha256": "8a512e5c719842427ec7d35d9f40d656bf10c9f95c2ab20ed60a56e8d99894bb"
+        },
+        {
+          "path": "tldw_chatbook/css/widget_defaults_scoped.tcss",
+          "sha256": "60f78d12c4df1b215da95b6f592e3d714068f55e5c48e116aeb1309eccfc0b9e"
+        },
+        {
+          "path": "tldw_chatbook/css/widget_defaults_self.tcss",
+          "sha256": "62167400cc73c62065df4ac5a9372548547bc886ed60839e2dfe177b05776d14"
+        }
+      ],
+      "schema_version": 84,
+      "migration_chain": [
+        "81\u219282 Canvas",
+        "82\u219283 portrait performance",
+        "83\u219284 portrait regions"
+      ]
+    },
+    {
+      "journey": "native_restore_edit",
+      "wheel_sha256": "27d72448e3d3beee8efcc493fc7501c9fc1aaf809fd5de03dbc74bd653581e69",
+      "matched_production_files": [
+        {
+          "path": "tldw_chatbook/Audio/speech_presentation.py",
+          "sha256": "d94f15502294469fb9250da955e597d51d6e451d12fb2b71efbe4ef83df1da94"
+        },
+        {
+          "path": "tldw_chatbook/Audio/streaming_sink.py",
+          "sha256": "cd5dd7d831739b084a8a91d12ed931bdc5ca8dab31890abb9721aaf5fd90bbfb"
+        },
+        {
+          "path": "tldw_chatbook/Character_Chat/expression_generation.py",
+          "sha256": "daf2d4f0a6a5d1ee1464642b8114d285045eecd81e2152f32ab0175bb7f45a25"
+        },
+        {
+          "path": "tldw_chatbook/Character_Chat/portrait_compositing.py",
+          "sha256": "7233dd53ba2df3d06b86d269626ffa03c6f90f99b597fb024946d8973577f9c2"
+        },
+        {
+          "path": "tldw_chatbook/Character_Chat/portrait_performance.py",
+          "sha256": "a794dbfd9ad2b8d643152d4ebe279f646c44ef9f68c4f0950738441401390dcd"
+        },
+        {
+          "path": "tldw_chatbook/Character_Chat/portrait_performance_authoring.py",
+          "sha256": "82df90f4d8ee8898427526d560ab13d69338713aba2960380ecd92a979ddba2b"
+        },
+        {
+          "path": "tldw_chatbook/Chat/character_expression_playback.py",
+          "sha256": "9c9ba98b14b7f4a2aa46c387ed37dd10567e74332af68736c8592073499621cb"
+        },
+        {
+          "path": "tldw_chatbook/Chat/portrait_performance_state.py",
+          "sha256": "aa1e7b651e5136b5ace607097ed7044607c9172e4715a5c0146281eb2a90ed42"
+        },
+        {
+          "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+          "sha256": "8564e9ff217015cb9ab9ea941160ba34a5939f911cf2fbedb9ef362c9e0b7f7c"
+        },
+        {
+          "path": "tldw_chatbook/DB/migrations/chachanotes_v82_to_v83_portrait_performance.sql",
+          "sha256": "dd91852a82cb6feaee86b3d446cdb2cd7102a4cacd41fc34db139cfeaa2d1853"
+        },
+        {
+          "path": "tldw_chatbook/DB/migrations/chachanotes_v83_to_v84_portrait_regions.sql",
+          "sha256": "d14cc8659526c656df2fd8117c2ed20f8c65dad47990909944bd30a29e24e1d5"
+        },
+        {
+          "path": "tldw_chatbook/DB/portrait_region_settings.py",
+          "sha256": "8543b2cd5cc9a29c36f5e2781aa1426897fb3e4ac7f699492d4a0fa5cccdac13"
+        },
+        {
+          "path": "tldw_chatbook/DB/recovery_core.py",
+          "sha256": "3872a04de3130703c84fca73740b70d8d5eeb21b2b1ee1df40e1ae91cd5a096f"
+        },
+        {
+          "path": "tldw_chatbook/DB/recovery_core_schema.py",
+          "sha256": "ac96481309910842edacd64abe13b9ca9cb7220133418db2e3c8e61eedd4cb82"
+        },
+        {
+          "path": "tldw_chatbook/DB/sql_validation.py",
+          "sha256": "2a502590681089586df7b44ebe3b18ae1b803b0fed1236161f713bd36d81846a"
+        },
+        {
+          "path": "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
+          "sha256": "495066a5ba65fb5c81584e1e926e9291163fffb1b8646f2984632017e0b5b463"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/character.py",
+          "sha256": "47d0fac190b486a95744dc21d36aeefcab2c36dfbae4712f96d5137ae8209dc5"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/hands_free.py",
+          "sha256": "c47157113f14054481516378c0a155393c9106b3f5828d60560097739bc6154c"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/left_rail.py",
+          "sha256": "980e880b2f609ccb537cb02832ddb45703410219f673f596bcc8d1563cce82d7"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/message.py",
+          "sha256": "d1d349ee7886f243a43d7bddf347956fd0cda8d453ef5fceb5f77bcaaf5d0032"
+        },
+        {
+          "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+          "sha256": "7e28cfa9efa3720cae297f4a8d204975f14828c63af427a48f07251999d6ca36"
+        },
+        {
+          "path": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+          "sha256": "ce6fc980a9b5f75ccf5cf37def6d7e8df3266687e1fbdb3463022c3951a8fd53"
+        },
+        {
+          "path": "tldw_chatbook/UI/Persona_Modules/portrait_composition_generation.py",
+          "sha256": "93d8b04b775ae754fa8261a086f535cfd9cacdd28c521a1974da2f438a4b10a0"
+        },
+        {
+          "path": "tldw_chatbook/UI/Persona_Modules/portrait_performance.py",
+          "sha256": "f15e8a2dbcdcc38c5ee519d4015160526f827a8c0e25d4296a39cbe7754e0997"
+        },
+        {
+          "path": "tldw_chatbook/UI/Persona_Modules/portrait_regions.py",
+          "sha256": "7403a6c9b910b07ef4abe1fd6651b57feb05fbd8c8a6cce4502bd037cd08140e"
+        },
+        {
+          "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+          "sha256": "70a7f953e6a65358f29e34fe42731150008803a9e2077c8354055b8a601afc45"
+        },
+        {
+          "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+          "sha256": "d24ce62e47884a012062f67ff9c5cc646904e8815d26eaea8c2bef50b38a6668"
+        },
+        {
+          "path": "tldw_chatbook/Utils/mosaic_render.py",
+          "sha256": "b87f203cd3d3da47c6d5b4b225c7399e8d4eb5853de5d5bbb2bd8294bacf6293"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Console/character_expression_avatar.py",
+          "sha256": "25aa95f05530cd7f82195bcba8b474514387b366b047173f90c55012f490e494"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Console/portrait_radio.py",
+          "sha256": "608aa0a0244e8758eb1a324fd61b7b2025223021af425a863835cf1af52e345d"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py",
+          "sha256": "bf5e05b0361990cb6d16815f08ff6697ab7f7e49e7cc21350ff8fe834a19fe76"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py",
+          "sha256": "b668352550fb9e705c8a95314dee63e1a11c8b731a8ce152fa9a8bac972cce00"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py",
+          "sha256": "d58102100d587d01ef8a1d854124677166d627a0b918da34991555ecd922e6ad"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_performance_editor.py",
+          "sha256": "d868d2519b957f629caadbe1a9cc5bb30eaa8e587a86e2ad1e1d848d054e5632"
+        },
+        {
+          "path": "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py",
+          "sha256": "43bee9455dd34b4af7284103e941dc6de5984f0c8f30691e24acaacce73f9e7b"
+        },
+        {
+          "path": "tldw_chatbook/app_speech.py",
+          "sha256": "ae79743eac651bf5a54373fbe8a960b985f3e338ab61a12b3fb734d7a052b73b"
+        },
+        {
+          "path": "tldw_chatbook/css/core/_variables.tcss",
+          "sha256": "8bc3638aa291ac26e8b71b5224aabe4d3e5fabf7c1fdb39f3c0e6640cec5669d"
+        },
+        {
+          "path": "tldw_chatbook/css/features/_console_panels.tcss",
+          "sha256": "ac4b4f41af7b231977405dae84059dc27d6dd9dac81004492e4a185fa3105a68"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_agentic_library.tcss",
+          "sha256": "068e2977990bbba8d063bb1ccf5358f60adb6b3b002831014cf650f8bbd93863"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_agentic_settings.tcss",
+          "sha256": "89bdf9b747d127ec2007d7204fa4e6d72347ee9a28cb5965e1f5cc4b7e8f659e"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_evals.tcss",
+          "sha256": "8fad238aaa58b64ccd1c78d9b816e0353dbdcd7de16068414914b670d1715df0"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_roleplay.tcss",
+          "sha256": "53910cdb7747759b2f68bfb74af2f85401a720020c3212ccb41b598970c63962"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_scheduling.tcss",
+          "sha256": "52f10741486c25234f5023b1d8df271a56e1232be4c70926ae5a67642aafb72c"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_watchlists.tcss",
+          "sha256": "0832b77f31ea6c6a742273c18416108bf3fddf22ab819237553639af557aed87"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_feature_workflows.tcss",
+          "sha256": "1e1f92e2070a7ef40e67db7011a1065146cc156f13eb9cf60ebde01c3f1cf6e0"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss",
+          "sha256": "db23f9bb8d64d5670c0c3611467096864adb9fe2b784a8e100a6bf2e418dd5db"
+        },
+        {
+          "path": "tldw_chatbook/css/screen_modal_file_notes_history.tcss",
+          "sha256": "73859f09db56219d2c27e3f8a33b20c4f48296b3cc7582ffedf2d06793de31cd"
+        },
+        {
+          "path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+          "sha256": "8a512e5c719842427ec7d35d9f40d656bf10c9f95c2ab20ed60a56e8d99894bb"
+        },
+        {
+          "path": "tldw_chatbook/css/widget_defaults_scoped.tcss",
+          "sha256": "60f78d12c4df1b215da95b6f592e3d714068f55e5c48e116aeb1309eccfc0b9e"
+        },
+        {
+          "path": "tldw_chatbook/css/widget_defaults_self.tcss",
+          "sha256": "62167400cc73c62065df4ac5a9372548547bc886ed60839e2dfe177b05776d14"
+        }
+      ],
+      "schema_version": 84,
+      "migration_chain": [
+        "81\u219282 Canvas",
+        "82\u219283 portrait performance",
+        "83\u219284 portrait regions"
+      ]
+    }
+  ]
+}

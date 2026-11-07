@@ -643,7 +643,9 @@ def test_child_spawned_mid_turn_resolves_a_mutating_builtin_tool_and_the_parents
         # one honored for the parent's own remaining call afterward.
         return {p.llm_name: "approve_once" for p in pending}
 
-    review_hook = build_tool_review_hook(gate, builtin_provider, None, request_approvals)
+    review_hook = build_tool_review_hook(
+        gate, builtin_provider, None, request_approvals
+    )
 
     spawn_call = ToolCall(
         name=SPAWN_TOOL_NAME, args={"task": "write the other thing"}, call_id="p-spawn"
@@ -733,7 +735,9 @@ def test_child_spawned_mid_turn_without_stamp_scope_keeps_the_parents_approval(
     def request_approvals(pending):
         return {p.llm_name: "approve_once" for p in pending}
 
-    review_hook = build_tool_review_hook(gate, builtin_provider, None, request_approvals)
+    review_hook = build_tool_review_hook(
+        gate, builtin_provider, None, request_approvals
+    )
 
     spawn_call = ToolCall(
         name=SPAWN_TOOL_NAME, args={"task": "write the other thing"}, call_id="p-spawn"

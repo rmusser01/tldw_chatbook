@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[fenced]",
+    "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[native]",
+    "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[compact-recovery]",
+    "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[wrong-family]",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/fixed-all-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/fixed-all.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 0,
+  "elapsed": 109.06999670807272
+}

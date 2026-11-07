@@ -1,0 +1,37 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 19
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_library_landing_recompose_publication.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport dataclasses\n\nimport pytest\nfrom textual.widgets import Button, Static\n\nfrom Tests.UI.test_library_entry_compose_once import (\n    _landing_state,\n    _LandingCanvasHarness,\n)\nfrom tldw_chatbook.Library.library_rail_state import LibraryLifecycle\nfrom tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES\nfrom tldw_chatbook.Widgets.Library import (\n    LibraryLandingCanvas,\n    LibraryLandingContinueAction,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 21
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  }
+]

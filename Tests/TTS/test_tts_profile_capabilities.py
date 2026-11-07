@@ -316,9 +316,7 @@ class _AvailabilityRepository:
     async def create_profile(self, *_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("availability must not create profiles")
 
-    async def create_profile_with_reference(
-        self, *_args: Any, **_kwargs: Any
-    ) -> Any:
+    async def create_profile_with_reference(self, *_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("availability must not create profile references")
 
     async def update_profile(self, *_args: Any, **_kwargs: Any) -> Any:

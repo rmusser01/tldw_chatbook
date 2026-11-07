@@ -1,0 +1,13 @@
+                                        │                                                     Search & RAG                                                     │
+                                        │                                                                                                                      │
+                                        │  Embedding dependencies are installed. Pick a default model, or skip.                                                │
+                                        │                                                                                                                      │
+                                        │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │
+                                        │  │ ▐○▌ multilingual-e5-large-instruct                                                                             │  │
+                                        │  │ ▐○▌ my-local-nomic-model                                                                                       │  │
+                                        │  │ ▐○▌ openai-ada-002                                                                                             │  │
+                                        │  │ ▐○▌ openai-text-embedding-3-large                                                                            ▇ │  │
+                                        │  │ █▐●▌ openai-text-embedding-3-small                                                                             │  │
+                                        │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │

@@ -109,9 +109,7 @@ def test_mixed_legacy_blob_and_new_appends_return_in_order(db):
             (json.dumps(legacy_steps), run_id),
         )
 
-    db.append_steps(
-        run_id, [{"index": 1, "kind": "tool_call", "tool_name": "calc"}]
-    )
+    db.append_steps(run_id, [{"index": 1, "kind": "tool_call", "tool_name": "calc"}])
     db.append_steps(run_id, [{"index": 2, "kind": "model", "summary": "done"}])
 
     steps = db.get_run(run_id)["steps"]
@@ -223,8 +221,7 @@ def test_batch_hydrate_survives_more_run_ids_than_the_old_param_ceiling(db):
     and prove nothing about the machines that actually break.
     """
     run_ids = [
-        db.create_run(conversation_id="c", agent_kind="primary")
-        for _ in range(5)
+        db.create_run(conversation_id="c", agent_kind="primary") for _ in range(5)
     ]
     for i, rid in enumerate(run_ids):
         db.append_steps(rid, [{"index": 0, "kind": "model", "summary": str(i)}])
@@ -253,8 +250,7 @@ def test_batch_hydrate_groups_correctly_across_chunk_boundaries(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db = AgentRunsDB(Path(tmp) / "chunks.db", client_id="test")
         run_ids = [
-            db.create_run(conversation_id="c", agent_kind="primary")
-            for _ in range(7)
+            db.create_run(conversation_id="c", agent_kind="primary") for _ in range(7)
         ]
         for i, rid in enumerate(run_ids):
             db.append_steps(

@@ -1,0 +1,6 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+1.14s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history
+
+(14 durations < 1s hidden.)
+5 passed in 2.09s

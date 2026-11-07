@@ -1,0 +1,73 @@
+{
+  "base_ref": "2c949c7d72",
+  "base_sha": "2c949c7d7293509f2088661fc7988ba0d35ac1a7",
+  "baseline_red_paths": [
+    "tldw_chatbook/Chat/chat_persistence_service.py",
+    "tldw_chatbook/Chat/console_chat_store.py"
+  ],
+  "files": {
+    "tldw_chatbook/Chat/chat_persistence_service.py": {
+      "debt_units": 19,
+      "formatter_required": true,
+      "normalized_diff_sha256": "2da905addc3849790a4e01f64c9968da2395775662349edc14a2a8d212c31d56",
+      "source_hunks": [
+        [
+          78,
+          83
+        ],
+        [
+          357,
+          362
+        ],
+        [
+          470,
+          475
+        ],
+        [
+          495,
+          503
+        ],
+        [
+          556,
+          561
+        ],
+        [
+          645,
+          650
+        ],
+        [
+          874,
+          879
+        ],
+        [
+          3990,
+          4000
+        ]
+      ],
+      "source_sha256": "97630f863e34dcad983be527efcd6159a486beb94343b4ad51d7b4c65fa515d7"
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "debt_units": 2,
+      "formatter_required": true,
+      "normalized_diff_sha256": "d88b293c90fdc6aacea18596c90fd1b0cf73871d8604ed611d9cf1f559ef2eb0",
+      "source_hunks": [
+        [
+          13902,
+          13907
+        ],
+        [
+          15718,
+          15723
+        ]
+      ],
+      "source_sha256": "4385d6daa9acfa7f91716084b36d1e6d032573cedbcfd91e5a2ee5495d613834"
+    }
+  },
+  "generated_at_utc": "2026-10-04T19:39:22.827933+00:00",
+  "paths": [
+    "tldw_chatbook/Chat/chat_persistence_service.py",
+    "tldw_chatbook/Chat/console_chat_store.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

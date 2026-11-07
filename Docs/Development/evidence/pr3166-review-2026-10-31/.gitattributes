@@ -1,0 +1,4 @@
+# Keep hash-addressed tested-source patches and exact raw receipts unchanged.
+*.patch -text
+*.log -text
+*.log.gz -text

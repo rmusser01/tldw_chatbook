@@ -13,6 +13,7 @@ and the vector leg's `source_id`/`source_type` spread from
 now depends on that metadata, and hand-built rows with empty metadata (the
 sibling `test_hybrid_fusion_metadata.py` oracle) exercise only the fallback.
 """
+
 import pytest
 
 from tldw_chatbook.RAG_Search.simplified.citations import (
@@ -80,9 +81,7 @@ def _vector_row(media_id: int, chunk_index: int, title: str, text: str, score: f
 def test_same_document_across_legs_merges():
     """One document found by both legs is ONE fused row carrying both legs."""
     keyword = [_keyword_row(15, "Beekeeping Basics", "hive frames and supers")]
-    semantic = [
-        _vector_row(15, 0, "Beekeeping Basics", "hive frames and supers", 0.83)
-    ]
+    semantic = [_vector_row(15, 0, "Beekeeping Basics", "hive frames and supers", 0.83)]
     # The naive alternatives both fail on these real rows: the ids live in
     # different spaces, and so does `doc_id` (bare vs prefixed). Only
     # (source_type, source_id-or-doc_id) with source_id winning matches.
@@ -258,7 +257,9 @@ def test_merged_citations_survive_a_leg_without_citations():
             id="media_15_chunk_0",
             score=0.83,
             document="hive frames",
-            metadata=_vector_row(15, 0, "Beekeeping Basics", "hive frames", 0.83).metadata,
+            metadata=_vector_row(
+                15, 0, "Beekeeping Basics", "hive frames", 0.83
+            ).metadata,
             citations=[
                 Citation(
                     document_id="media_15",

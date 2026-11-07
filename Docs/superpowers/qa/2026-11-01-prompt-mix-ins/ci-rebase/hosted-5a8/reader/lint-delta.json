@@ -1,0 +1,15 @@
+{
+  "before_total": 229,
+  "after_total": 228,
+  "added": [],
+  "removed": [
+    [
+      [
+        "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_library_rail_switch_keeps_reader_and_note.py",
+        "F401",
+        "`Tests.UI.test_library_shell.StaticLibraryMediaScopeService` imported but unused"
+      ],
+      1
+    ]
+  ]
+}

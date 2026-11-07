@@ -186,7 +186,9 @@ async def test_grep_files_returns_error_dict_when_sandbox_root_is_unusable(monke
 
 
 @pytest.mark.asyncio
-async def test_grep_files_resolves_sensitive_context_once_per_call(sandbox, monkeypatch):
+async def test_grep_files_resolves_sensitive_context_once_per_call(
+    sandbox, monkeypatch
+):
     from tldw_chatbook.Utils import sensitive_paths
 
     real_resolve = sensitive_paths.resolve_sensitive_context
@@ -202,12 +204,16 @@ async def test_grep_files_resolves_sensitive_context_once_per_call(sandbox, monk
 
     result = await fot.GrepFiles().execute(pattern="DEBUG", glob="**/*.py")
 
-    assert len(calls) == 1, "sensitive-path set must be resolved once per call, not per candidate"
+    assert len(calls) == 1, (
+        "sensitive-path set must be resolved once per call, not per candidate"
+    )
     assert len(result["matches"]) >= 50
 
 
 @pytest.mark.asyncio
-async def test_glob_files_resolves_sensitive_context_once_per_call(sandbox, monkeypatch):
+async def test_glob_files_resolves_sensitive_context_once_per_call(
+    sandbox, monkeypatch
+):
     from tldw_chatbook.Utils import sensitive_paths
 
     real_resolve = sensitive_paths.resolve_sensitive_context
@@ -223,7 +229,9 @@ async def test_glob_files_resolves_sensitive_context_once_per_call(sandbox, monk
 
     result = await fot.GlobFiles().execute(pattern="**/*.py")
 
-    assert len(calls) == 1, "sensitive-path set must be resolved once per call, not per candidate"
+    assert len(calls) == 1, (
+        "sensitive-path set must be resolved once per call, not per candidate"
+    )
     assert len(result["matches"]) >= 50
 
 
@@ -457,7 +465,9 @@ async def test_grep_files_refuses_a_dotted_sandbox_root(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_glob_files_consistent_with_read_file_on_a_dotted_root(tmp_path, monkeypatch):
+async def test_glob_files_consistent_with_read_file_on_a_dotted_root(
+    tmp_path, monkeypatch
+):
     """Both must refuse -- neither leaking (glob_files) nor over-refusing
     silently different from its sibling (read_file). Pins the two tools to
     the SAME observable behavior on the identical misconfiguration.
@@ -501,7 +511,9 @@ async def test_glob_files_consistent_with_read_file_on_a_dotted_root(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_grep_files_search_input_is_bounded_to_a_capped_line_length(sandbox, monkeypatch):
+async def test_grep_files_search_input_is_bounded_to_a_capped_line_length(
+    sandbox, monkeypatch
+):
     """A pattern that is pathological against the FULL line completes
     quickly once the regex only ever sees a length-capped slice of it.
     """
@@ -519,12 +531,16 @@ async def test_grep_files_search_input_is_bounded_to_a_capped_line_length(sandbo
     # position in the full line is immediately followed by end-of-string.
     # Either symptom alone would catch a removed cap; asserting both pins
     # the fix precisely rather than one that could pass by coincidence.
-    assert elapsed < 2.0, f"regex.search took {elapsed:.2f}s -- is the line-length cap applied?"
+    assert elapsed < 2.0, (
+        f"regex.search took {elapsed:.2f}s -- is the line-length cap applied?"
+    )
     assert len(result["matches"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_grep_files_bounds_total_lines_scanned_across_the_whole_call(sandbox, monkeypatch):
+async def test_grep_files_bounds_total_lines_scanned_across_the_whole_call(
+    sandbox, monkeypatch
+):
     """`_MAX_GREP_LINES_SCANNED` bounds AGGREGATE lines read across every
     file in one invocation. `_MAX_MATCHES` and `_MAX_CANDIDATES` are both
     set generously high here so neither of those -- not this new cap --
@@ -558,7 +574,10 @@ def test_grep_files_timeout_resolves_through_the_tool_catalog_registry():
     `ToolCatalogRegistry.timeout_for`) must actually carry `GrepFiles`'s
     value end to end -- not just be readable on the class directly.
     """
-    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+    from tldw_chatbook.Agents.tool_catalog import (
+        BuiltinToolProvider,
+        ToolCatalogRegistry,
+    )
 
     provider = BuiltinToolProvider()
     provider._tools["grep_files"] = GrepFiles()
@@ -621,7 +640,9 @@ def test_grep_subprocess_kills_the_worker_process_on_timeout(tmp_path, monkeypat
     # Bounded near the 1.5s ceiling -- NOT the ~11.7s this exact pattern
     # takes to complete uncapped (see the module-level comment on
     # `_MAX_GREP_LINE_SEARCH_CHARS` for that measurement).
-    assert elapsed < 4.0, f"took {elapsed:.2f}s -- is the subprocess actually being killed?"
+    assert elapsed < 4.0, (
+        f"took {elapsed:.2f}s -- is the subprocess actually being killed?"
+    )
     assert "pid" in captured
     assert not psutil.pid_exists(captured["pid"]), (
         "child process must be killed on timeout, not left running"
@@ -764,7 +785,9 @@ def _load_worker_module():
     import importlib.util
 
     worker_path = Path(fot.__file__).with_name("_grep_worker.py")
-    spec = importlib.util.spec_from_file_location("_grep_worker_under_test", worker_path)
+    spec = importlib.util.spec_from_file_location(
+        "_grep_worker_under_test", worker_path
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -1108,8 +1131,7 @@ def test_run_grep_subprocess_rejects_a_malformed_match_entry(monkeypatch):
 
         def communicate(self, input=None, timeout=None):
             return (
-                '{"matches": [{"path": "x.txt", "line": "hi"}], '
-                '"lines_scanned": 1}',
+                '{"matches": [{"path": "x.txt", "line": "hi"}], "lines_scanned": 1}',
                 "",
             )
 

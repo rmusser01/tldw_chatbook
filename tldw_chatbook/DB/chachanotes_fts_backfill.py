@@ -172,9 +172,8 @@ def backfill_chachanotes_messages_fts(
                 chunk_size=chunk_size, after_rowid=cursor
             )
         except Exception as exc:
-            if (
-                _is_lock_queue_timeout(exc)
-                and locked_retries < len(_LOCKED_RETRY_BACKOFF_SECONDS)
+            if _is_lock_queue_timeout(exc) and locked_retries < len(
+                _LOCKED_RETRY_BACKOFF_SECONDS
             ):
                 backoff = _LOCKED_RETRY_BACKOFF_SECONDS[locked_retries]
                 locked_retries += 1

@@ -183,8 +183,16 @@ async def test_settings_hosted_provider_switch_isolates_drafts_and_keeps_old_mod
         # The builder client-side-rejects reasoning_effort for moonshot-v1:
         # outside the kimi series the generic list is unchanged behavior.
         ("Moonshot", "moonshot-v1-8k", None),
-        ("ZAI", "glm-5.2", ("none", "minimal", "low", "medium", "high", "xhigh", "max")),
-        ("ZAI", "glm-5.3", ("none", "minimal", "low", "medium", "high", "xhigh", "max")),
+        (
+            "ZAI",
+            "glm-5.2",
+            ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+        ),
+        (
+            "ZAI",
+            "glm-5.3",
+            ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+        ),
         (
             "ZAI",
             "glm-5.2-air",

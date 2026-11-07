@@ -1,0 +1,123 @@
+{
+  "python": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "normal_environment": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONWARNINGS": "ignore"
+  },
+  "normal_pytest_prefix": [
+    "-m",
+    "pytest",
+    "-q",
+    "-x",
+    "-p",
+    "no:cacheprovider",
+    "--tb=short"
+  ],
+  "runs": [
+    {
+      "artifact": "current-exact-normal.log",
+      "targets": [
+        "Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[ancestry-size1]"
+      ],
+      "result": "1 passed12.47s",
+      "qualification": "Possible overlap with prior UI31 app run; normal bootstrap, no instrumentation."
+    },
+    {
+      "artifact": "current-observed.log",
+      "command": [
+        "diagnose.py"
+      ],
+      "used_source": "diagnose-initial-used.py",
+      "result": "1 passed11.75s",
+      "qualification": "Private callable observation wrappers can alter stock-method source identities and scheduling. Final saved events reduced full_source repr to presence flag; not a stock-authority or performance qualification."
+    },
+    {
+      "artifact": "b110-profile.log",
+      "command": [
+        "baseline_overlay.py",
+        "--observe"
+      ],
+      "tag": "b110-profile",
+      "result": "1 failed105.45s at original modal wait then WorkerFailed old-session KeyError",
+      "qualification": "All11 changed production Python blobs supplied at b110; original callable identities/assertions30s action limits retained. Substantial whole-interpreter profile overhead; causal schedule only, not normal-speed baseline CI."
+    },
+    {
+      "artifact": "current-lifecycle.log",
+      "command": [
+        "lifecycle_probe.py"
+      ],
+      "tag": "current-lifecycle",
+      "result": "1 diagnostic passed7.70s",
+      "qualification": "In-memory selected callable replacement preserving original normal UI fixture/markers. Original tree-read Event hold+original close; expected KeyError recorded. Outer90s process bound not reached."
+    },
+    {
+      "artifact": "permanent-red.log",
+      "targets": [
+        "Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft"
+      ],
+      "result": "1 failed19.00s at original close\u2192old-visible snapshot read",
+      "qualification": "Permanent normal-bootstrap regression before product repair. Outer90s process bound not reached."
+    },
+    {
+      "artifact": "repair-green.log",
+      "targets": [
+        "Tests/UI/test_response_rules_end_to_end.py",
+        "Tests/UI/test_console_saved_projection_switch_window.py",
+        "Tests/UI/test_console_initial_draft_ownership.py::test_initial_handoff_receipt_only_consumes_its_original_draft",
+        "Tests/UI/test_console_received_intent_feedback.py::test_switch_settlement_send_refuses_stale_draft_without_consumption",
+        "Tests/UI/test_console_received_intent_feedback.py::test_pressed_capture_survives_identical_retyping_before_promotion"
+      ],
+      "exact_nodeids": [
+        "Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[history-size0]",
+        "Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[history-size1]",
+        "Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[ancestry-size0]",
+        "Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[ancestry-size1]",
+        "Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft",
+        "Tests/UI/test_console_saved_projection_switch_window.py::test_saved_projection_preserves_new_tab_settle_window_typing[fallback]",
+        "Tests/UI/test_console_saved_projection_switch_window.py::test_saved_projection_preserves_new_tab_settle_window_typing[received]",
+        "Tests/UI/test_console_saved_projection_switch_window.py::test_saved_projection_preserves_new_tab_settle_window_typing[received-unpressed]",
+        "Tests/UI/test_console_initial_draft_ownership.py::test_initial_handoff_receipt_only_consumes_its_original_draft[False]",
+        "Tests/UI/test_console_initial_draft_ownership.py::test_initial_handoff_receipt_only_consumes_its_original_draft[True]",
+        "Tests/UI/test_console_received_intent_feedback.py::test_switch_settlement_send_refuses_stale_draft_without_consumption",
+        "Tests/UI/test_console_received_intent_feedback.py::test_pressed_capture_survives_identical_retyping_before_promotion[False]",
+        "Tests/UI/test_console_received_intent_feedback.py::test_pressed_capture_survives_identical_retyping_before_promotion[True]"
+      ],
+      "result": "13 passed125.26s",
+      "qualification": "Frozen repaired source, normal bootstrap, no diagnostic observer/source overlays/profile marker changes."
+    },
+    {
+      "artifact": "repair-static-guards.log",
+      "targets": [
+        "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Console_Modules/session.py]",
+        "Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/UI/Console_Modules/session.py]",
+        "Tests/Architecture/test_console_wave6_inventory.py",
+        "Tests/Architecture/test_console_wave6_closeout_inventory.py"
+      ],
+      "result": "2 passed; stopped at1 unrelated historical wave6 screen-size failure2.18s",
+      "qualification": "Both exact original session size guards passed. Historical guard first predicate fails identically at dev88af/b110/head5a8 by read-only proof; later tests not run/claimed."
+    }
+  ],
+  "format_checks": {
+    "test_whole_file": "Tests/UI/test_response_rules_end_to_end.py",
+    "source_ranges": {
+      "tldw_chatbook/UI/Console_Modules/session.py": [
+        "5487-5493",
+        "5602-5613"
+      ],
+      "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": [
+        "897-924"
+      ]
+    },
+    "ruff_format_check": "passed",
+    "owned_git_diff_check": "passed"
+  },
+  "lint": "lint-comparison.json:54 baseline/current diagnostics across owned scope; one AST-identical SIM102 relocates files; test0/0. No suppression or behavior rewrite.",
+  "not_run": [
+    "full suite",
+    "startup/performance guards",
+    "real provider/model inference",
+    "native PTY tour"
+  ],
+  "ledger_scope": "Qualification commands and proof artifacts; routine read-only source/log searches are not enumerated as test runs."
+}

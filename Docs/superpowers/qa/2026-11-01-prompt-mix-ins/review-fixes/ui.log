@@ -1,0 +1,24 @@
+........................................................................ [ 97%]
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+5.89s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]
+5.55s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]
+5.38s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]
+4.64s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_create_and_filtered_pagination_totals
+3.98s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[save_as_new]
+3.94s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size2]
+3.66s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_conflict_export_and_dirty_escape
+3.54s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate]
+3.37s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size1]
+3.32s call     Tests/UI/test_library_prompt_mixins.py::test_real_console_mixin_consumer_enables_without_touching_composer_or_system
+3.29s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_ack_preserves_newer_literal_draft
+3.23s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size0]
+2.24s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+1.65s call     Tests/UI/test_library_prompt_mixins.py::test_unavailable_stored_mixin_never_opens_blank_create_editor[3]
+1.25s call     Tests/UI/test_library_prompt_mixins.py::test_unavailable_stored_mixin_never_opens_blank_create_editor[4]
+1.14s call     Tests/UI/test_console_prompt_mixins.py::test_shared_editor_dirty_close_invalid_save_and_version_change_preserve_draft
+1.13s call     Tests/UI/test_console_prompt_mixins.py::test_deleted_disabled_and_enabled_choices_keep_count_and_preview_is_read_only
+1.07s call     Tests/UI/test_library_prompt_mixins.py::test_editor_preserves_literal_body
+
+(7 durations < 1s hidden.)
+74 passed in 98.14s (0:01:38)

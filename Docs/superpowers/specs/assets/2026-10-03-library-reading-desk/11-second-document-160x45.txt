@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Spaced repetition, explained                                                             │
+│   a  │  ‹ Items  Retrieval practice — lit review  cites 2 ▾   │  o  N. Ahmed                                                                                 │
+│   v  │ Quoted ¶3 of Spaced repetition, explained              │  t    Find  Read later  Use in Console  Note  More                                           │
+│      │                                                        │  e    Read (selected)  Analysis  Highlights  Info                                            │
+│      │   Edit (selected)  Preview  Info                Save   │                                                                              ¶3 of 7  Quote  │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │ ▊ ## Key claims                                      ▎ │     ┃   Spaced repetition schedules reviews of the same material at growing intervals      ┃ │
+│      │ ▊                                                    ▎ │     ┃   instead of all at once.                                                            ┃ │
+│      │ ▊ - Retrieval beats rereading at one week, in        ▎ │     ┃                                                                                      ┃ │
+│      │ ▊ every subject tested.                              ▎ │     ┃   The idea is old: early memory studies measured how quickly unrehearsed material    ┃ │
+│      │ ▊ - Spacing the reviews over several days adds to    ▎ │     ┃   was forgotten, and how much a later review restored it.                            ┃ │
+│      │ ▊ the effect.                                        ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃ █ Spacing the same study time across several days produced better recall at one      ┃ │
+│ ---> │ ▊ > Results. Retrieval practice improved 7-day       ▎ │     ┃ █ month than massing it into one session.                                            ┃ │
+│      │ ▊ retention by 21 percentage points.                 ▎ │     ┃                                                                                      ┃ │
+│      │ ▊ > — paper-retrieval-practice, ¶12 ↗                ▎ │     ┃   The best gap depends on how long you need to remember: longer retention intervals  ┃ │
+│      │ ▊                                                    ▎ │     ┃   favour longer gaps between reviews.                                                ┃ │
+│      │ ▊ > Spacing the same study time across several       ▎ │     ┃                                                                                      ┃ │
+│      │ ▊ days produced better recall at one month than      ▎ │<--- ┃   Combining spacing with retrieval, testing yourself at each review, helps more      ┃ │
+│      │ ▊ massing it into one session.                       ▎ │     ┃   than either alone.                                                                 ┃ │
+│      │ ▊ > — Spaced repetition, explained, ¶3 ↗             ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃   Flashcard software automates the schedule, but the evidence comes from classroom   ┃ │
+│      │ ▊                                                    ▎ │     ┃   and lab studies, not from any one app.                                             ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│ ---> │ ▊                                                    ▎ │     ┃   Open questions remain about complex material, where what to review matters as      ┃ │
+│      │ ▊                                                    ▎ │     ┃   much as when.                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                       58 words · 12:1  │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      └────────────────────────────────────────────────────────┘                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  n note beside | q quote | j/k paragraph | ]/[ next item | esc close desk | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

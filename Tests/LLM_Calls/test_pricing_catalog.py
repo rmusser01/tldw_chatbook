@@ -422,7 +422,9 @@ def test_cost_for_usage_realtime_transcription_seconds_billed_at_whisper_rate():
     assert cost.total == cost.transcription_cost
 
 
-def _alternative_realtime_total(usage: ProviderUsage, pricing, audio_from_cache: int) -> float:
+def _alternative_realtime_total(
+    usage: ProviderUsage, pricing, audio_from_cache: int
+) -> float:
     """Independently re-derive ``cost_for_usage``'s realtime-input total for
     ONE choice of how much of ``audio_input`` is attributed to
     ``cache_read`` vs ``uncached_input``.
@@ -455,8 +457,11 @@ def test_cost_for_usage_realtime_picks_the_cost_maximizing_audio_split():
     # test's own headline bug before this fix) fails on the property
     # itself, not on a magic number that happens to mirror the bug.
     usage = ProviderUsage(
-        uncached_input=2000, cache_read=8000, audio_input=500,
-        provider="openai", model="gpt-realtime",
+        uncached_input=2000,
+        cache_read=8000,
+        audio_input=500,
+        provider="openai",
+        model="gpt-realtime",
     )
     catalog = _catalog()
     pricing = catalog.get_pricing("openai", "gpt-realtime")

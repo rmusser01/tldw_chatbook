@@ -268,7 +268,9 @@ class FakePromptService(_Recorded):
         self._record("get_library_prompt_overview", {"uuid": prompt_uuid})
         return self._overview
 
-    async def get_library_prompt_section(self, prompt_uuid, section, *, start, max_chars):
+    async def get_library_prompt_section(
+        self, prompt_uuid, section, *, start, max_chars
+    ):
         self._record(
             "get_library_prompt_section",
             {
@@ -282,7 +284,9 @@ class FakePromptService(_Recorded):
 
 
 class FakeSkillsService(_Recorded):
-    def __init__(self, *, items=(), total=0, detail=None, file_segment=None, error=None):
+    def __init__(
+        self, *, items=(), total=0, detail=None, file_segment=None, error=None
+    ):
         super().__init__()
         self._items = list(items)
         self._total = total
@@ -475,7 +479,14 @@ def test_media_chunk_tools_without_chunk_service_map_to_feature_unavailable():
 
 def test_media_chunk_service_error_payloads_pass_through_unchanged():
     chunk = FakeMediaChunkService(
-        payload={"error": {"code": "not_found", "message": "m", "retryable": False, "details": {}}}
+        payload={
+            "error": {
+                "code": "not_found",
+                "message": "m",
+                "retryable": False,
+                "details": {},
+            }
+        }
     )
     service = _service(media_chunk_service=chunk)
 
@@ -899,9 +910,7 @@ class FakeSaveNotesBackend(_Recorded):
 
     def save_note_with_organization(self, user_id, **arguments):
         """Atomic Notes-owned seam consumed by the public Library service."""
-        self._record(
-            "save_note_with_organization", {"user_id": user_id, **arguments}
-        )
+        self._record("save_note_with_organization", {"user_id": user_id, **arguments})
         if self.save_error is not None:
             raise self.save_error
         note_id = arguments.get("note_id")
@@ -1416,7 +1425,9 @@ def test_save_note_returns_pending_and_placement_review_states():
         result = original(user_id, **arguments)
         result["receipt_state"] = arguments["title"]
         result["organization_state"] = (
-            "pending" if arguments["title"] == "pending_organization" else "placement_review"
+            "pending"
+            if arguments["title"] == "pending_organization"
+            else "placement_review"
         )
         return result
 
@@ -1518,7 +1529,9 @@ def test_save_note_create_returns_id_version_and_created_flag():
 
 
 def test_save_note_update_bumps_version_and_reports_not_created():
-    notes = FakeSaveNotesBackend(notes={"note-1": {"title": "Old", "content": "old", "version": 1}})
+    notes = FakeSaveNotesBackend(
+        notes={"note-1": {"title": "Old", "content": "old", "version": 1}}
+    )
     service = _save_service(notes_service=notes)
 
     result = service.invoke(
@@ -1543,7 +1556,9 @@ def test_save_note_update_bumps_version_and_reports_not_created():
 
 
 def test_save_note_stale_version_maps_to_content_changed():
-    notes = FakeSaveNotesBackend(notes={"note-1": {"title": "T", "content": "c", "version": 7}})
+    notes = FakeSaveNotesBackend(
+        notes={"note-1": {"title": "T", "content": "c", "version": 7}}
+    )
     service = _save_service(notes_service=notes)
 
     result = service.invoke(
@@ -2002,9 +2017,7 @@ def test_get_prompt_rejects_unknown_section():
 
 def test_get_prompt_overview_missing_returns_not_found():
     service = _service(prompt_service=FakePromptService(overview=None))
-    result = service.invoke(
-        "library_get_prompt", {"id": _public_id("prompt", "gone")}
-    )
+    result = service.invoke("library_get_prompt", {"id": _public_id("prompt", "gone")})
     assert _error_code(result) == "not_found"
 
 
@@ -2272,11 +2285,7 @@ def test_get_conversation_message_revision_mismatch_is_content_changed():
     assert state["mid"] == "msg-0"
 
     conversations._detail = _conv_detail(
-        [
-            _message(
-                0, "XXXXX", char_start=5, total_chars=10, revision="rev-new"
-            )
-        ],
+        [_message(0, "XXXXX", char_start=5, total_chars=10, revision="rev-new")],
         total=1,
     )
     result = service.invoke(
@@ -2486,9 +2495,7 @@ def test_real_note_continuation_detects_content_change(chacha_db):
     assert first["content"]["returned_chars"] == 8_000
     assert first["content"]["has_more"] is True
 
-    assert chacha_db.update_note(
-        note_id, {"content": "y" * 100}, expected_version=1
-    )
+    assert chacha_db.update_note(note_id, {"content": "y" * 100}, expected_version=1)
     result = service.invoke(
         "library_get_note", {"id": public, "cursor": first["content"]["next_cursor"]}
     )

@@ -194,7 +194,9 @@ def test_verified_legacy_library_and_console_calls_share_snapshot_and_options(
         "active_managed_parakeet_dir",
         lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(parakeet_dispatch, "parakeet_v2_install_dir", lambda: legacy_root)
+    monkeypatch.setattr(
+        parakeet_dispatch, "parakeet_v2_install_dir", lambda: legacy_root
+    )
     monkeypatch.setattr(
         parakeet_dispatch,
         "verify_parakeet_v2_bundle",

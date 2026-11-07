@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  🔎│Search for commands…                                                                                                                                     │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Developer/Debug Commands: Open Log File
+  Navigate to application logs
+  Developer/Debug Commands: Show App Info
+  Display application version and build info
+  Developer/Debug Commands: Show Keybindings
+  Display all keyboard shortcuts
+  Theme: Change Theme
+  Open theme selection menu
+  Setup: Run setup wizard…
+  Walk through providers, models, and app configuration
+  Character/Persona Management: Open Character Tab
+  Navigate to Character Chat tab
+  Character/Persona Management: Create New Character                                                                                                          ▅▅
+  Create a new character or persona
+  Character/Persona Management: Show All Characters
+  Display all available characters
+  Quick Actions: New Chat Conversation
+  Start a new chat conversation
+  Quick Actions: New Note
+  Create a new note
+  Quick Actions: Search All Content
+  Search across all content
+  Quick Actions: Import Media File
+  Import a new media file for processing
+  Quick Actions: Toggle Focus Mode
+  Hide or restore the Console's nav bar and header (Ctrl+Shift+F)
+  Tab Navigation: Switch to Home
+  Open Home for Dashboard, notifications, status, and next actions.
+  Tab Navigation: Switch to Console
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+│ │    Import…                     ││                                                                                                                        │ │
+│ │  ▸ Export                      ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Details                    ▸   ││                                                                                                                        │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to Media | F1 help · Ctrl+P palette · Ctrl+Q quit

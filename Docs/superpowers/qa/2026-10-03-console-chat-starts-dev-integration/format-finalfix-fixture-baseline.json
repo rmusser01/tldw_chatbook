@@ -1,0 +1,31 @@
+{
+  "base_ref": "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+  "base_sha": "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+  "baseline_red_paths": [
+    "Tests/UI/test_console_session_controller.py"
+  ],
+  "files": {
+    "Tests/UI/test_console_session_controller.py": {
+      "debt_units": 8,
+      "formatter_required": true,
+      "normalized_diff_sha256": "875fe8dedca544873b4b781725787c81f18d7c351cd6b13b42057b1cb0e9aa50",
+      "source_hunks": [
+        [
+          251,
+          259
+        ],
+        [
+          319,
+          327
+        ]
+      ],
+      "source_sha256": "0d162e6b63343c6609125016659f28de5a35eb62be1f3499bddb8fbdb86ebe48"
+    }
+  },
+  "generated_at_utc": "2026-10-03T21:33:44.079864+00:00",
+  "paths": [
+    "Tests/UI/test_console_session_controller.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

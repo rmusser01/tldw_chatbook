@@ -1,0 +1,12 @@
+2026-10-02 21:52:49 [INFO    ] tldw_chatbook.Chunking.engine.base:651 - ChunkerConfig initialized with method=words, max_size=400, overlap=200
+2026-10-02 21:52:57 [INFO    ] tldw_chatbook.DB.Client_Media_DB_v2:651 - Media search completed (mode=%s, limit=%s, offset=%s, sort=%s, summary=true).
+2026-10-02 21:52:58 [INFO    ] tldw_chatbook.DB.Client_Media_DB_v2:651 - Distinct media types loaded (result_count=%s, include_deleted=%s, include_trash=%s).
+2026-10-02 21:52:59 [INFO    ] tldw_chatbook.Utils.db_status_manager:651 - DB sizes: Prompts: 156.0 KB | Chats/Notes: 4.2 MB | Media: 1.7 MB
+2026-10-02 21:53:27 [ERROR   ] root:1368 - Transaction failed; rolling back (error_type=IntegrityError).
+2026-10-02 21:53:27 [ERROR   ] tldw_chatbook.DB.Client_Media_DB_v2:5892 - Database error updating media metadata: UNIQUE constraint failed: Media.url
+Traceback (most recent call last):
+  File "~/Documents/GitHub/tldw_chatbook/.worktrees/notes-library-ux-review/tldw_chatbook/DB/Client_Media_DB_v2.py", line 5775, in update_media_metadata
+    cursor.execute(update_sql, update_params)
+sqlite3.IntegrityError: UNIQUE constraint failed: Media.url
+2026-10-02 21:53:27 [WARNING ] tldw_chatbook.UI.Screens.library_screen:644 - Failed to save Library media edit for 'local:media:5'.
+Traceback (most recent call last):

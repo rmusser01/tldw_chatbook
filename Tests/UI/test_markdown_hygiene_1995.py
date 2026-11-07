@@ -6,7 +6,7 @@
    fenced code blocks untouched.
 """
 
-from tldw_chatbook.UI.Tools_Settings_Window import ABOUT_MARKDOWN
+from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN
 from tldw_chatbook.Widgets.Media.media_viewer_panel import (
     _fenced_ranges,
     format_reading_text,

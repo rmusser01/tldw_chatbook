@@ -30,8 +30,8 @@ class _ExpectationProbe:
     async def to_have_class(self, _pattern, *, timeout: float) -> None:
         self._calls.append(("first output", self._locator, timeout))
 
-    async def to_contain_text(self, _text: str, *, timeout: float) -> None:
-        self._calls.append(("Composer", self._locator, timeout))
+    async def wait_for_text(self, _text: str, *, timeout_ms: float) -> None:
+        self._calls.append(("Composer", self._locator, timeout_ms))
 
 
 async def test_shared_deadline_passes_initial_and_consumed_literal_budgets(
@@ -45,11 +45,16 @@ async def test_shared_deadline_passes_initial_and_consumed_literal_budgets(
         "expect",
         lambda locator: _ExpectationProbe(locator, calls),
     )
+    monkeypatch.setattr(
+        served_flow,
+        "terminal_observer",
+        lambda _page: _ExpectationProbe("#terminal", calls),
+    )
 
     page = _PageProbe()
     await served_flow._wait_for_initial_console_ready(page)
 
-    assert page.selectors == ["body", "#terminal"]
+    assert page.selectors == ["body"]
     assert calls == [
         ("first output", "body", 45_000.0),
         ("Composer", "#terminal", 43_750.0),
@@ -117,7 +122,7 @@ async def test_cancellation_propagates_without_dispatching_terminal_assertion(
     assert calls == ["first output"]
 
 
-async def test_real_dom_requires_first_output_and_terminal_composer() -> None:
+async def test_startup_refuses_missing_first_output_or_terminal_content() -> None:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(
             headless=True,

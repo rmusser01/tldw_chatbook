@@ -52,6 +52,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -207,10 +208,19 @@ class TestEmbeddedDefaultParsedOnce:
         real_loads = config_mod.tomllib.loads
 
         def _counting_loads(s, *a, **kw):
-            calls.append(s)
+            # Only re-parses of the embedded default count (TASK-38754 review):
+            # a reload may legitimately parse other TOML text.
+            if s == config_mod.CONFIG_TOML_CONTENT:
+                calls.append(s)
             return real_loads(s, *a, **kw)
 
-        monkeypatch.setattr(config_mod.tomllib, "loads", _counting_loads)
+        # config.py's own `tomllib` name only (TASK-38754): the stdlib module
+        # is process-wide, so patching it would count every thread's parses.
+        monkeypatch.setattr(
+            config_mod,
+            "tomllib",
+            SimpleNamespace(**{**vars(config_mod.tomllib), "loads": _counting_loads}),
+        )
 
         config_path = tmp_path / "parse-count-config.toml"
         config_path.write_text('[general]\ndefault_tab = "chat"\n', encoding="utf-8")
@@ -222,7 +232,9 @@ class TestEmbeddedDefaultParsedOnce:
         # DEFAULT_CONFIG_FROM_TOML was already computed once at import time,
         # long before this test's monkeypatch was installed -- a forced
         # reload of both loaders must not call tomllib.loads() again at all.
-        assert len(calls) <= 1, (
+        # (TASK-38754: counted through config.py's own name the reload makes
+        # none; the old `<= 1` let one re-parse of the default through.)
+        assert len(calls) == 0, (
             f"tomllib.loads() (embedded-TOML parser) called {len(calls)} times "
             f"during a forced full reload; expected the module-level "
             f"DEFAULT_CONFIG_FROM_TOML constant to be reused, not re-parsed."
@@ -262,7 +274,11 @@ class TestEmbeddedDefaultParsedOnce:
             calls.append(getattr(fp, "name", None))
             return real_load(fp, *a, **kw)
 
-        monkeypatch.setattr(config_mod.tomllib, "load", _counting_load)
+        monkeypatch.setattr(
+            config_mod,
+            "tomllib",
+            SimpleNamespace(**{**vars(config_mod.tomllib), "load": _counting_load}),
+        )
 
         # Mirrors config.py's own startup sequence (module-scope lines near
         # the bottom of the file) exactly: no force_reload argument on

@@ -1,0 +1,6 @@
+{
+  "receipt": "red-corrected.xml",
+  "cause": "Global Path.resolve injection also prevents unrelated Backup_Recovery storage admission and subsequent row observation. It proves resolution failure but is not isolated I1 second-handle evidence.",
+  "correction": "Inject Path.resolve OSError only when called by DB.automatic_work, leaving real SQL, native workers and second-handle admission observable.",
+  "scope": "test fault injection only; no production or storage-admission changes"
+}

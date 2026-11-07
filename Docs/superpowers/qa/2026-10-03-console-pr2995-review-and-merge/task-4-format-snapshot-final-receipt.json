@@ -1,0 +1,50 @@
+{
+  "name": "format-snapshot-final",
+  "revision": "fc1627e99b8722a0a69812530d950410e8356ba0",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/terminal_qualification/format_ratchet.py",
+    "snapshot",
+    "--base",
+    "fc1627e99b8722a0a69812530d950410e8356ba0",
+    "--output",
+    ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-format-baseline-final.json",
+    "--path",
+    "tldw_chatbook/Chat/console_chat_start.py",
+    "--path",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "--path",
+    "tldw_chatbook/Chat/message_metadata.py",
+    "--path",
+    "tldw_chatbook/DB/automatic_work.py",
+    "--path",
+    "Tests/Chat/test_console_chat_start.py",
+    "--path",
+    "Tests/DB/test_automatic_chat_starts.py",
+    "--path",
+    "Tests/Chat/test_console_durable_commit_offload.py",
+    "--path",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py",
+    "--path",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py",
+    "--path",
+    "Tests/Agents/test_automatic_child_scope.py"
+  ],
+  "environment": {
+    "TLDW_TEST_CONFIG_ROOT": null
+  },
+  "sha256": {
+    "tldw_chatbook/Chat/console_chat_start.py": "d0cd0a4da8dd3a4cd2f185b2323d26a3517a975bc2860cf815f8437cea300c0a",
+    "tldw_chatbook/Chat/console_chat_controller.py": "c61b7eef26668563ce94dc27fe9d3f9ce180183b06b735aa367b163ed7511b03",
+    "tldw_chatbook/Chat/message_metadata.py": "c8aa1bdf33d9297dce415cc0332460f89f3720bdb3cedab6c872171ca61a99a0",
+    "tldw_chatbook/DB/automatic_work.py": "05c65a259f916744541e569b5f6f4812d0a3add79016a40bd23a69f16318617b",
+    "Tests/Chat/test_console_chat_start.py": "c293994106834cbc20b631117206134ad1e656a91ae76d0ba527edf8bd30388b",
+    "Tests/DB/test_automatic_chat_starts.py": "3ae9ac9a670793ffb905252e451d6b31a44c15b44b429102ad1ea9eda704d276",
+    "Tests/Agents/test_automatic_child_scope.py": "2c3dff836b1218230893dc50663536bd79047f854b7dbc421f3283344a8bca0c",
+    "Tests/Chat/test_console_durable_commit_offload.py": "347156b6e1faec1be189fd0a9b55e7e3389e40bfc54d569177cf1a687b2cdfcb",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py": "897e290fcfd6ce0393579d60857c3a64bbeb00f9bd2522b2279f2a66a327c72a",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py": "f4dcfe727f4903ce5778e786ba8087ff63df3f2db1d739bff5729486eb6adabc"
+  },
+  "exit": 0
+}

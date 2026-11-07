@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                  Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | first question                                                                                                                                     │
+                         Context ◂  │    ● first question    ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Conversations                 ▾    │                                                                                                                                                                   │
+        Archive this chat           │                                                                                                                                                                   │
+          Archived chats            │                                                                                                                                                                   │
+        Search all chats…           │                                                                                                                                                                   │
+   first question                   │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                                   │
+  ▊  Filter visible     ▎           │                                                                                                                                                                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                    │   User                                                                                                                                                            │◂ Inspect
+  Chats                        ▾    │   first question                                                                                                                                                  │
+   first question             ⟳     │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                    │  ▊ Assistant                                                                                                                                                      │
+ ─────────────────────────────────  │  ▊                                                                                                                                                                │
+ Character · No chats          ▸    │  ▊  Stub reply #1 from the scratch stub.                                                                                                                          │
+ ─────────────────────────────────  │  ▊                                                                                                                                                                │
+ Model                         ▸    │  ▊                                                                                                                                                                │
+ ─────────────────────────────────  │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ Agent                         ▸    │   User                                                                                                                                                            │
+ ─────────────────────────────────  │   second question                                                                                                                                                 │
+ Details                       ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                    │  ▊ Assistant  Generating…                                                                                                                                         │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ running
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                                    Type to queue      Queue         Dictate   Redirect  Stop
+
+  Ctrl+G stop run | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

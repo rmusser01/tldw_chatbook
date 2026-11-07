@@ -134,6 +134,63 @@ class _SpyRagService:
             }
         )
         if self._results_by_call:
+            results = self._results_by_call.pop(0)
+            # The real engine trims to top_k (that contract moved fully
+            # inside `_semantic_search_scoped` with review-B B2), so the
+            # double honors it too.
+            return results[:top_k] if top_k else results
+        return []
+
+
+_QUERY_EMBEDDING_UNPASSED = object()
+"""Sentinel distinguishing "the kwarg was not sent" from an explicit ``None``
+in the task-34390 spy's recorded calls."""
+
+
+class _CountingEmbeddings:
+    """Embeddings-wrapper double: counts ``create_embeddings_async`` calls
+    and returns one fixed vector, so identity of the passed-through embedding
+    is assertable (task-34390)."""
+
+    def __init__(self) -> None:
+        self.calls: List[List[str]] = []
+
+    async def create_embeddings_async(self, texts: List[str]) -> List[List[float]]:
+        self.calls.append(list(texts))
+        return [[1.0, 2.0]]
+
+
+class _EmbeddingSpyRagService(_SpyRagService):
+    """``_SpyRagService`` that also models the ``embeddings`` wrapper seam
+    and records each ``search()`` call's ``query_embedding`` kwarg
+    (task-34390)."""
+
+    def __init__(self, results_by_call: Optional[List[List[_RagResult]]] = None):
+        super().__init__(results_by_call)
+        self.embeddings = _CountingEmbeddings()
+
+    async def search(
+        self,
+        query,
+        top_k=None,
+        search_type="semantic",
+        filter_metadata=None,
+        include_citations=None,
+        score_threshold=None,
+        *,
+        metadata_allowlist=None,
+        query_embedding=_QUERY_EMBEDDING_UNPASSED,
+    ):
+        self.search_calls.append(
+            {
+                "query": query,
+                "top_k": top_k,
+                "search_type": search_type,
+                "metadata_allowlist": metadata_allowlist,
+                "query_embedding": query_embedding,
+            }
+        )
+        if self._results_by_call:
             return self._results_by_call.pop(0)
         return []
 
@@ -389,11 +446,21 @@ class TestConversationsLegExclusion:
 
 class TestSemanticLegAllowlists:
     @pytest.mark.asyncio
-    async def test_scoped_semantic_runs_one_query_per_type_and_merges_by_score(self):
+    async def test_scoped_semantic_sends_one_union_call_merged_by_score(self):
+        """Review-B B2: ONE engine search carries the WHOLE union allowlist.
+
+        The caller used to loop one full search (one query embedding) per
+        entry; the union now reaches `_semantic_search_scoped` in a single
+        call, which runs the per-entry store queries and merges by score
+        itself. The spy's single result list is what the engine hands back
+        after that internal merge.
+        """
         spy = _SpyRagService(
             results_by_call=[
-                [_RagResult("m1", score=0.4)],
-                [_RagResult("n1", score=0.9)],
+                [
+                    _RagResult("n1", score=0.9),
+                    _RagResult("m1", score=0.4),
+                ]
             ]
         )
         app = _App(rag_service=spy)
@@ -403,15 +470,13 @@ class TestSemanticLegAllowlists:
             app, "query", {"media": True}, limit=10, scope=eff
         )
 
-        assert len(spy.search_calls) == 2
-        assert spy.search_calls[0]["metadata_allowlist"] == {
-            "source_type": {SOURCE_TYPE_MEDIA},
-            "source_id": {"m1"},
-        }
-        assert spy.search_calls[1]["metadata_allowlist"] == {
-            "source_type": {SOURCE_TYPE_NOTE},
-            "source_id": {"n1"},
-        }
+        assert len(spy.search_calls) == 1
+        # The union arrives in `build_semantic_allowlists`' order (entries
+        # sorted by source type), not flattened into a single mapping.
+        assert spy.search_calls[0]["metadata_allowlist"] == [
+            {"source_type": {SOURCE_TYPE_MEDIA}, "source_id": {"m1"}},
+            {"source_type": {SOURCE_TYPE_NOTE}, "source_id": {"n1"}},
+        ]
         # Merged by score descending: n1 (0.9) before m1 (0.4).
         assert [r.id for r in results] == ["n1", "m1"]
 
@@ -419,8 +484,10 @@ class TestSemanticLegAllowlists:
     async def test_scoped_semantic_trims_merged_results_to_limit(self):
         spy = _SpyRagService(
             results_by_call=[
-                [_RagResult("m1", score=0.4)],
-                [_RagResult("n1", score=0.9)],
+                [
+                    _RagResult("n1", score=0.9),
+                    _RagResult("m1", score=0.4),
+                ]
             ]
         )
         app = _App(rag_service=spy)
@@ -448,8 +515,10 @@ class TestSemanticLegAllowlists:
         """Scope contains media id "42" AND note id "42"; both results appear in output."""
         spy = _SpyRagService(
             results_by_call=[
-                [_RagResult("42", score=0.5)],  # media type, id="42"
-                [_RagResult("42", score=0.7)],  # note type, id="42"
+                [
+                    _RagResult("42", score=0.7),  # note type, id="42"
+                    _RagResult("42", score=0.5),  # media type, id="42"
+                ]
             ]
         )
         app = _App(rag_service=spy)
@@ -472,8 +541,10 @@ class TestSemanticLegAllowlists:
         """Two results with equal scores from different types; order is deterministic."""
         spy = _SpyRagService(
             results_by_call=[
-                [_RagResult("m1", score=0.5)],
-                [_RagResult("n1", score=0.5)],  # Same score as m1
+                [
+                    _RagResult("m1", score=0.5),
+                    _RagResult("n1", score=0.5),  # Same score as m1
+                ]
             ]
         )
         app = _App(rag_service=spy)
@@ -486,8 +557,10 @@ class TestSemanticLegAllowlists:
 
         spy2 = _SpyRagService(
             results_by_call=[
-                [_RagResult("m1", score=0.5)],
-                [_RagResult("n1", score=0.5)],
+                [
+                    _RagResult("m1", score=0.5),
+                    _RagResult("n1", score=0.5),
+                ]
             ]
         )
         app2 = _App(rag_service=spy2)
@@ -495,7 +568,10 @@ class TestSemanticLegAllowlists:
             app2, "query", {"media": True}, limit=10, scope=eff
         )
 
-        # Order should be deterministic and match
+        # Order should be deterministic and match. The engine's per-entry
+        # merge consumes the entries in `build_semantic_allowlists` order
+        # (media sorted before note) and its stable descending sort keeps
+        # that order for equal scores, so the tie stays media-first.
         ids_1 = [r.id for r in results_1]
         ids_2 = [r.id for r in results_2]
         assert ids_1 == ids_2
@@ -504,7 +580,8 @@ class TestSemanticLegAllowlists:
 
     @pytest.mark.asyncio
     async def test_single_type_scope_issues_one_search_call(self):
-        """Scope with only media ids; spy receives exactly ONE search call."""
+        """Scope with only media ids; spy receives exactly ONE search call
+        carrying the one-entry union (still a list, not a flat mapping)."""
         spy = _SpyRagService(
             results_by_call=[
                 [_RagResult("m1", score=0.5)],
@@ -519,7 +596,78 @@ class TestSemanticLegAllowlists:
 
         # Only one search call should be issued
         assert len(spy.search_calls) == 1
+        assert spy.search_calls[0]["metadata_allowlist"] == [
+            {"source_type": {SOURCE_TYPE_MEDIA}, "source_id": {"m1"}}
+        ]
         assert [r.id for r in results] == ["m1"]
+
+
+class TestSemanticLegSingleEmbed:
+    """task-34390: a scoped semantic search embeds the query ONCE for the
+    whole per-source-type fan-out and passes the vector through the
+    service's ``query_embedding`` seam, instead of re-embedding the
+    identical query text once per allowlist."""
+
+    @pytest.mark.asyncio
+    async def test_scoped_semantic_embeds_query_once_across_allowlists(self):
+        spy = _EmbeddingSpyRagService(
+            results_by_call=[
+                [_RagResult("m1", score=0.4)],
+                [_RagResult("n1", score=0.9)],
+            ]
+        )
+        app = _App(rag_service=spy)
+        eff = _scoped(media={"m1"}, note={"n1"})
+
+        results = await pfs.search_semantic(
+            app, "query", {"media": True}, limit=10, scope=eff
+        )
+
+        # Exactly ONE query embedding for TWO store queries.
+        assert len(spy.embeddings.calls) == 1
+        assert spy.embeddings.calls[0] == ["query"]
+        # Both store queries received that same precomputed vector...
+        assert len(spy.search_calls) == 2
+        passed_vector = spy.search_calls[0]["query_embedding"]
+        assert passed_vector == [1.0, 2.0]
+        assert spy.search_calls[1]["query_embedding"] is passed_vector
+        # ...and the merge-by-score behavior is unchanged.
+        assert [r.id for r in results] == ["n1", "m1"]
+
+    @pytest.mark.asyncio
+    async def test_unscoped_semantic_does_not_preembed(self):
+        """Zero drift: the single unscoped store query embeds inside the
+        service; the pipeline neither embeds nor forwards a vector."""
+        spy = _EmbeddingSpyRagService(results_by_call=[[_RagResult("v1")]])
+        app = _App(rag_service=spy)
+
+        results = await pfs.search_semantic(app, "query", {"media": True}, limit=10)
+
+        assert spy.embeddings.calls == []
+        assert spy.search_calls[0]["query_embedding"] is _QUERY_EMBEDDING_UNPASSED
+        assert [r.id for r in results] == ["v1"]
+
+    @pytest.mark.asyncio
+    async def test_service_without_embeddings_wrapper_keeps_old_contract(self):
+        """A service advertising no embeddings wrapper (this file's plain
+        ``_SpyRagService`` -- its ``search`` does not even accept the kwarg)
+        must keep the old embed-per-call contract: no ``query_embedding``
+        kwarg is sent, so nothing TypeErrors."""
+        spy = _SpyRagService(
+            results_by_call=[
+                [_RagResult("m1", score=0.4)],
+                [_RagResult("n1", score=0.9)],
+            ]
+        )
+        app = _App(rag_service=spy)
+        eff = _scoped(media={"m1"}, note={"n1"})
+
+        results = await pfs.search_semantic(
+            app, "query", {"media": True}, limit=10, scope=eff
+        )
+
+        assert [r.id for r in results] == ["n1", "m1"]
+        assert len(spy.search_calls) == 2
 
 
 # === Custom-pipeline inheritance (self-enforcement proof) ===
@@ -546,8 +694,10 @@ class TestCustomPipelineInheritance:
         )
         spy = _SpyRagService(
             results_by_call=[
-                [_RagResult(media_ids[0], score=0.5)],
-                [_RagResult(note_ids[0], score=0.7)],
+                [
+                    _RagResult(media_ids[0], score=0.5),
+                    _RagResult(note_ids[0], score=0.7),
+                ]
             ]
         )
         app = SimpleNamespace(
@@ -592,7 +742,8 @@ class TestCustomPipelineInheritance:
         assert [entry["reason"] for entry in scope_entries] == [
             SCOPE_REASON_CONVERSATIONS_EXCLUDED
         ]
-        assert len(spy.search_calls) == 2  # one per source_type, not one flat call
+        assert len(spy.search_calls) == 1  # one union call; the per-type
+        # store queries and the merge moved inside the engine (review-B B2)
 
     @pytest.mark.asyncio
     async def test_custom_pipeline_unscoped_is_zero_drift(self, media_db, cha_db):
@@ -2804,6 +2955,7 @@ class TestCapturePromptBoundaryFreshAuthority:
         assert [candidate.rank for candidate in candidates] == [2]
 
 
+@pytest.mark.bootstrap_profile
 class TestActiveConsoleSessionRealGlue:
     """Integration coverage for ``chat_rag_events._active_console_session``'s
     REAL chain: ``app.screen`` -> ``isinstance(screen, ChatScreen)`` ->

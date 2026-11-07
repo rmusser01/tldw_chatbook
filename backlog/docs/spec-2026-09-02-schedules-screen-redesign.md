@@ -27,7 +27,7 @@ transfer, results) instead of bolting them onto the old tab IA.
 
 1. **Editing = hybrid.** In-pane quick edits for single-value rows; the
    modal survives for create, for multi-field surgery ("Edit in full…"),
-   and as the narrow-width fallback. Ships as an ADR-099 amendment (§10).
+   and as the narrow-width fallback. Ships as an ADR-339 amendment (§10).
 2. **List = unified schedulables.** Reminders + `recurring_question`
    definitions (+ `agent_task` later), both owners mixed. Briefing and
    watchlist projections stay out. Conflicts, run history, and the
@@ -135,7 +135,7 @@ read-only with a reason.
 > field exists to push. `recurring_question` definitions do carry a real
 > notifications toggle and edit in place per §6.
 
-## 6. Editing model (ADR-099 amendment)
+## 6. Editing model (ADR-339 amendment)
 
 - In-pane quick edits cover single-value rows only. Each row commit goes
   through the existing seams immediately — `save_definition(definition_id=…)`
@@ -146,7 +146,7 @@ read-only with a reason.
 - Multi-field surgery (question text, scope rework, custom cron) and all
   creation stay in the modals ("Edit in full…" from the kebab).
 - Narrow widths: Enter on a list row opens the modal as today. This IS
-  the two-code-path cost ADR-099 warned about, accepted deliberately:
+  the two-code-path cost ADR-339 warned about, accepted deliberately:
   the pane rows and the modal share the same facade seams and
   validators, so the second path is thin. The amendment (§10) names
   this.
@@ -201,11 +201,11 @@ read-only with a reason.
   110/111/112 claimed as of 2026-09-02):** "Schedules unified workbench" — the
   one-list IA, chip vocabulary, inspector-pane grammar, and the
   retirement of the tab bar.
-- **ADR-099 amendment** (same PR): hybrid editing — in-pane single-value
+- **ADR-339 amendment** (same PR): hybrid editing — in-pane single-value
   rows + modal for create/full-edit/narrow fallback; names the accepted
   two-path cost and the shared-seam rationale.
 - **Errata:** dev carries ADR filename collisions on `099`
-  (`099-schedule-editor-shape.md` vs
+  (`339-schedule-editor-shape.md` vs
   `099-persistent-terminal-session-runtime-boundary.md`), and the same on
   `098`, `102` and `104`; this program cites by FILENAME, and renumbering
   is deliberately left to the in-flight `docs/lesson-adr-number-collisions`
@@ -230,7 +230,7 @@ After the handoff program:
   2. Unified list + chips + rail chrome + cross-owner reminder listing
      seam + relative-time ticker.
   3. In-pane editing + owner-row transfer + lifecycle pull-guard +
-     ADR-099 amendment + new ADR.
+     ADR-339 amendment + new ADR.
   4. Responsive floor (pushed detail Screen — same widget class,
      fresh instance, NOT reparenting), keyboard map, retire old tabs +
      the trimmed Results tab, polish + live verification.
@@ -240,7 +240,7 @@ After the handoff program:
 `1-4` or `f` cycle chips · `/` search · `n` create · Enter open/edit ·
 `p` pause/resume · `m` move owner · `r` mark read · Esc back/close ·
 Up/Down traverse detail rows when the pane has focus. Footer-visible key
-hints extend ADR-099's parity requirement to the pane.
+hints extend ADR-339's parity requirement to the pane.
 
 **PR-4 amendment (2026-09-04).** `Enter` is honored only below the
 responsive floor's 84-column threshold, where it PUSHES the row's detail

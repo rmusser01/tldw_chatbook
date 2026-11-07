@@ -1,0 +1,14 @@
+{
+  "tldw_chatbook/UI/Console_Modules/session.py": {
+    "sha256": "859502c11af84d244ecd08fddddba37ef5cb27d19883b818e14942ff8103efa8",
+    "lines": 6973
+  },
+  "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": {
+    "sha256": "cbc38d9ae3a0049b832709c3ac89d7a42a9dc00cbfebbd1cc68800211306f81d",
+    "lines": 1567
+  },
+  "Tests/UI/test_response_rules_end_to_end.py": {
+    "sha256": "88728a989d0b4f04117cd05232a494cc99e853cba351d98970a2ad821bef2860",
+    "lines": 241
+  }
+}

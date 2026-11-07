@@ -1,0 +1,62 @@
+tldw_chatbook/Chat/console_chat_controller.py: 72 -> 73 diagnostic call(s)
+  moved/re-indented only: 1   removed: 0   added: 1
+
+= moved or re-indented -- statement text is unchanged, NO review needed:
+  = exception 76eabbbf22df7511 -> 067b985f642cbc47  (line 20347 -> 20693)
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + info 1f2e337c96f32ffd (now line 20689)
+      | logger.info(
+      |     "Console mix-in preview unavailable; refresh or disable unavailable selections"
+      | )
+
+tldw_chatbook/DB/keyword_store.py: 19 -> 19 diagnostic call(s)
+  moved/re-indented only: 0   removed: 5   added: 5
+
+- REMOVED -- these statements no longer exist:
+  - info ecfa6a9509b0c071 (was line 166)
+      | logger.info(
+      |     f"Undeleting keyword '{keyword}' (ID: {kw_id}). New ver: {new_version}"
+      | )
+  - debug 4ad3e5e7b22a580a (was line 200)
+      | logger.debug(f"Keyword '{keyword}' already active.")
+  - info c0e768827727c4da (was line 205)
+      | logger.info(f"Adding new keyword '{keyword}' UUID {new_uuid}")
+  - error afe6c3c8b86d1fb9 (was line 234)
+      | logger.opt(exception=True).error(
+      |     f"Error in add_keyword for '{keyword}': {e}"
+      | )
+  - error 0fc1c4c18947be4b (was line 551)
+      | logger.opt(exception=True).error(
+      |     f"Error updating keywords {entity_label} {entity_id}: {e}"
+      | )
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + info fa6b59af0e098e2a (now line 166)
+      | logger.info("Keyword undeleted.")
+  + debug ee3364584b8f0376 (now line 198)
+      | logger.debug("Keyword already active.")
+  + info 3cc860388aab792b (now line 203)
+      | logger.info("Adding new keyword.")
+  + error be2a0483e3b8548b (now line 232)
+      | logger.error("Keyword write failed category={}", type(e).__name__)
+  + error 81027c4730828108 (now line 547)
+      | logger.error(
+      |     "{} keyword membership update failed category={}",
+      |     self.spec.entity_label,
+      |     type(e).__name__,
+      | )
+
+tldw_chatbook/Prompt_Management/Prompts_Interop.py: 93 -> 95 diagnostic call(s)
+  moved/re-indented only: 3   removed: 0   added: 2
+
+= moved or re-indented -- statement text is unchanged, NO review needed:
+  = info b99a0d44f84d0455 -> 66877fd61ee961d8  (line 1147 -> 1181)
+  = error b75ad84a015ccfd6 -> da225089b30866e7  (line 1161 -> 1201)
+  = error f57306ed2213ce72 -> 78da1f229d56eaae  (line 1173 -> 1206)
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + info b21c83aef4b40733 (now line 1179)
+      | logger.info("Mix-in import completed.")
+  + error bbeea2bdeb1aeb21 (now line 1196)
+      | logger.error("Mix-in import failed category=database.")

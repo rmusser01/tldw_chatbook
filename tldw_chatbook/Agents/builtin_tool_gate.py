@@ -769,18 +769,17 @@ class ToolGate:
         group: ``"builtin"`` (the ``_GATEABLE_BUILTINS`` rows) or ``
             "local"`` (the local-workspace-tool group: its master switch
             plus ``web_deep_search``, which shares the group it masters).
-        restart_required: True only when the gate ALSO decides something
-            built once per process start, so THAT half cannot pick the
-            change up until a relaunch (task-32284). Every provider behind
-            this pane is rebuilt per Console agent run
-            (``Chat/console_agent_bridge.py``'s
+        effect_scope: task-35153 -- WHEN flipping the gate takes effect,
+            the one truth every gate surface renders (hub pane, Settings
+            Tools & MCP category, first-run Tools step). ``next-chat``
+            because every provider behind this pane is rebuilt per Console
+            agent run (``Chat/console_agent_bridge.py``'s
             ``_compose_run_registry_and_allowed`` constructs
             ``BuiltinToolProvider``; ``console_chat_controller.py``'s
-            ``_compose_local_provider`` constructs ``LocalToolProvider``),
-            so the agent half of every gate applies on the next run -- the
-            flag is about external MCP publication (only reached at all
-            when ``[mcp] expose_local_tools`` is on), whose tool list
-            ``MCPServer`` builds when it starts.
+            ``_compose_local_provider`` constructs ``LocalToolProvider``);
+            ``restart`` only for a gate that ALSO decides something built
+            once per process start (external MCP publication, whose tool
+            list ``MCPServer`` builds when it starts).
     """
 
     section: str
@@ -790,7 +789,18 @@ class ToolGate:
     description: str
     enabled: bool
     group: str
-    restart_required: bool = False
+    effect_scope: str = "next-chat"
+
+    @property
+    def restart_required(self) -> bool:
+        """Whether this gate also decides something built once per process start.
+
+        task-35153: DERIVED from ``effect_scope`` (the single truth), kept
+        because the hub pane's external-publication note reads it. Never
+        re-add an independent ``restart_required`` field -- two flags over
+        one fact is exactly the drift this task retired.
+        """
+        return self.effect_scope == EFFECT_SCOPE_RESTART
 
 
 #: The local group's master-switch config key, named so it isn't re-typed
@@ -798,6 +808,89 @@ class ToolGate:
 #: the Servers-mode UI's master-vs-dependent branching).
 LOCAL_TOOLS_MASTER_KEY = "local_tools_enabled"
 LOCAL_TOOLS_DEFAULT_ENABLED = True
+
+#: task-35153: the two effect scopes a gate can have. ``next-chat`` -- the
+#: Console rebuilds its tool catalog every agent run, so the flip is live
+#: for the next chat. ``restart`` -- the gate ALSO decides something built
+#: once per process start (the external MCP server's published tool list),
+#: so that half needs a relaunch.
+EFFECT_SCOPE_NEXT_CHAT = "next-chat"
+EFFECT_SCOPE_RESTART = "restart"
+
+#: task-35153: ONE short human string per scope (TASK-35018/35019
+#: plain-language copy rules: one truth, no jargon). Rendered through
+#: ``tool_gate_effect_suffix`` only -- never re-spelled at a call site.
+EFFECT_SCOPE_LABELS: dict[str, str] = {
+    EFFECT_SCOPE_NEXT_CHAT: "next chat",
+    EFFECT_SCOPE_RESTART: "restart to apply",
+}
+
+
+def tool_gate_effect_suffix(effect_scope: str) -> str:
+    """The ONE rendering of one scope as a label suffix.
+
+    Args:
+        effect_scope: A scope from ``EFFECT_SCOPE_LABELS``.
+
+    Returns:
+        ``" (next chat)"`` / ``" (restart to apply)"``, or ``""`` for an
+        unknown scope (renders nothing rather than a wrong promise).
+    """
+    label = EFFECT_SCOPE_LABELS.get(effect_scope)
+    return f" ({label})" if label else ""
+
+
+def gate_effect_scopes() -> dict[tuple[str, str], str]:
+    """Every gate's ``(section, key)`` -> effect scope, without reading config.
+
+    task-35153: THE single scope assignment. ``all_tool_gates()`` rows take
+    their ``effect_scope`` from this map, so the field can never disagree
+    with itself; a new gate added to the enumerator without a scope here
+    fails loudly (``KeyError``) instead of shipping an unlabeled row.
+    Config-free on purpose: the first-run wizard renders scope suffixes
+    from it without a disk read (its gate STATE deliberately comes from the
+    in-memory ``app_config`` prefill, not the loader).
+
+    Returns:
+        One ``(section, key) -> scope`` entry per gate, covering exactly
+        ``_gate_key_pairs()``.
+    """
+    from .code_review_models import CODE_REVIEW_GATE_KEY
+    from .local_tool_provider import (
+        ASK_USER_GATE_KEY,
+        CHARACTER_TOOLS_GATE_KEY,
+        WEB_DEEP_SEARCH_GATE_KEY,
+    )
+    from .tool_catalog import _GATEABLE_BUILTINS
+
+    # Every builtin row and the local group's master/ask_user/character
+    # gates are read at provider construction, once per Console agent run.
+    # The one exception: web_deep_search -- its `[tools]` key is also read
+    # by `MCP/local_server_tools.py::build_server_local_provider()`, which
+    # the external MCP server runs once at startup (MCP/server.py), so
+    # flipping it needs a restart for the external half.
+    scopes: dict[tuple[str, str], str] = {
+        ("tools", entry.gate_key): EFFECT_SCOPE_NEXT_CHAT
+        for entry in _GATEABLE_BUILTINS
+    }
+    scopes.update(
+        {
+            ("console", LOCAL_TOOLS_MASTER_KEY): EFFECT_SCOPE_NEXT_CHAT,
+            # Read when each Console turn composes the review provider.
+            ("tools", CODE_REVIEW_GATE_KEY): EFFECT_SCOPE_NEXT_CHAT,
+            ("tools", WEB_DEEP_SEARCH_GATE_KEY): EFFECT_SCOPE_RESTART,
+            ("tools", ASK_USER_GATE_KEY): EFFECT_SCOPE_NEXT_CHAT,
+            ("tools", CHARACTER_TOOLS_GATE_KEY): EFFECT_SCOPE_NEXT_CHAT,
+        }
+    )
+    # TASK-34100.5.3: Full agent tools is read on every Console send
+    # (ConsoleRuntime's light-surface reader) and decides nothing the
+    # external MCP server publishes.
+    from .plain_chat_tool_surface import FULL_AGENT_TOOLS_GATE_KEY
+
+    scopes[("tools", FULL_AGENT_TOOLS_GATE_KEY)] = EFFECT_SCOPE_NEXT_CHAT
+    return scopes
+
 
 #: task-32284: the master switch's display name -- the raw config key is
 #: unreadable as a label. Lives here, beside the enumerator that hands it
@@ -807,7 +900,8 @@ LOCAL_TOOLS_MASTER_TITLE = "Local workspace, web, and Watchlists tools (master s
 #: task-32284: where the Tool gates pane actually is. Shared by the
 #: Permissions legend's breadcrumb so the count never points at a place
 #: the user has to guess ("the built-in server detail" named no pane).
-TOOL_GATES_PANE_PATH = "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+#: TASK-36387: MCP is a Settings category (task-35150), not a screen.
+TOOL_GATES_PANE_PATH = "Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates"
 
 #: Hand-written description for the local group's master switch -- it has
 #: no corresponding Tool instance to read a description off of (it gates a
@@ -822,10 +916,11 @@ TOOL_GATES_PANE_PATH = "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
 #: behavior change.
 _LOCAL_TOOLS_MASTER_DESCRIPTION = (
     "Master switch for workspace, web, and Watchlists tools in the "
-    "Console/agent path. On by default; every call still follows the MCP "
-    "permission state, and web_deep_search also needs its individual gate. "
-    "Does NOT govern exposure to external MCP clients -- that's the separate "
-    "[mcp] expose_local_tools switch."
+    "Console/agent path. On by default, but plain chat gets these tools only "
+    "with Full agent tools on (ask_user and an opted-in web_deep_search need "
+    "this switch either way); every call still follows the MCP permission "
+    "state. Does NOT govern exposure to external MCP clients -- that's the "
+    "separate [mcp] expose_local_tools switch."
 )
 
 #: Hand-written description for web_deep_search -- also has no Tool
@@ -835,6 +930,15 @@ _WEB_DEEP_SEARCH_DESCRIPTION = (
     "Multi-query web research; costs real money on paid providers. "
     "Applies to the next Console agent run; its publication to external "
     "MCP clients applies on their next client launch."
+)
+
+#: Hand-written like web_deep_search's -- native review is a tool provider,
+#: not a Tool ABC subclass, so it has no _GATEABLE_BUILTINS row. Default ON
+#: (CODE_REVIEW_DEFAULT_ENABLED): the guide alone starts no paid work.
+_CODE_REVIEW_DESCRIPTION = (
+    "Lets the Console assistant run a multi-model review of the bound "
+    "workspace's changes with your saved reviewer team. On by default; "
+    "reviewer runs still follow routing, consent and permission checks."
 )
 
 #: PRD Feature A (A12): hand-written like web_deep_search's -- ask_user is a
@@ -851,9 +955,30 @@ _ASK_USER_DESCRIPTION = (
 #: CHARACTER_TOOLS_GATE_KEY): every save still asks via the mutates floor.
 _CHARACTER_TOOLS_DESCRIPTION = (
     "Lets the Console assistant search, read, create, and update your local "
-    "character cards (and set their avatars). On by default; every save asks "
-    "for your approval first."
+    "character cards (and set their avatars) when Full agent tools is on. On "
+    "by default; every save asks for your approval first."
 )
+
+
+#: The web_deep_search gate's row title, shared by ``all_tool_gates()`` and
+#: ``local_opt_in_gates()``.
+WEB_DEEP_SEARCH_GATE_TITLE = "Deep web research (web_deep_search)"
+
+
+def local_opt_in_gates() -> dict[str, tuple[str, str]]:
+    """Local tools with their OWN default-off ``[tools]`` gate, without config.
+
+    TASK-34100.5.3 review round 1: setup's Summary names these from the gate
+    table, and must stay pure -- ``all_tool_gates()`` loads the live config,
+    so the Summary (which reads the persisted mapping it is given) reads this
+    instead.
+
+    Returns:
+        ``{tool name: (gate key, gate row title)}``.
+    """
+    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    return {"web_deep_search": (WEB_DEEP_SEARCH_GATE_KEY, WEB_DEEP_SEARCH_GATE_TITLE)}
 
 
 def _gate_config_snapshot() -> tuple[dict, dict]:
@@ -889,10 +1014,9 @@ def all_tool_gates() -> list[ToolGate]:
     then the local group (group ``"local"``) -- its master switch
     (``[console] local_tools_enabled``) listed FIRST, since it masters the
     gate listed right after it, then ``web_deep_search``'s own gate.
-    ``Tools_Settings_Window``'s separate hand-wiring is untouched and NOT
-    extended from here -- that surface stays deprecated (see its module
-    docstring); this enumerator is a new, independent consumer of the same
-    underlying config keys.
+    The legacy settings window used to hand-wire its own copy of these
+    switches; it was removed (TASK-33244), so this enumerator is the only
+    gate surface over these config keys.
 
     A builtin row's ``title``/``description`` come from its
     ``_GATEABLE_BUILTINS`` row (task-32284), not from a constructed Tool
@@ -901,11 +1025,16 @@ def all_tool_gates() -> list[ToolGate]:
     retires the "Unavailable on this system." degrade path this used to
     need when an optional tool would not construct.
 
+    TASK-34100.5.3 appends the ``"agent"`` group's one gate last:
+    ``[tools] full_agent_tools_enabled``, the switch that gives plain Console
+    chat the full agent surface (``plain_chat_tool_surface``).
+
     Returns:
         Every gate in the order described above (the `_GATEABLE_BUILTINS`
-        rows, then the local group's two).
+        rows, then the local group's, then Full agent tools).
     """
     from ..config import coerce_bool_setting
+    from .code_review_models import CODE_REVIEW_DEFAULT_ENABLED, CODE_REVIEW_GATE_KEY
     from .local_tool_provider import (
         ASK_USER_DEFAULT_ENABLED,
         ASK_USER_GATE_KEY,
@@ -916,6 +1045,9 @@ def all_tool_gates() -> list[ToolGate]:
     from .tool_catalog import _GATEABLE_BUILTINS
 
     tools_cfg, console_cfg = _gate_config_snapshot()
+    # task-35153: the ONE scope assignment (see `gate_effect_scopes`) --
+    # rows read their scope from it, never from a per-row literal here.
+    scopes = gate_effect_scopes()
     gates: list[ToolGate] = []
     for entry in _GATEABLE_BUILTINS:
         gates.append(
@@ -929,8 +1061,24 @@ def all_tool_gates() -> list[ToolGate]:
                     tools_cfg.get(entry.gate_key, False), False
                 ),
                 group="builtin",
+                effect_scope=scopes[("tools", entry.gate_key)],
             )
         )
+    gates.append(
+        ToolGate(
+            section="tools",
+            key=CODE_REVIEW_GATE_KEY,
+            tool_name="code_review_guide",
+            title="Multi-model code review (code_review_*)",
+            description=_CODE_REVIEW_DESCRIPTION,
+            enabled=coerce_bool_setting(
+                tools_cfg.get(CODE_REVIEW_GATE_KEY, CODE_REVIEW_DEFAULT_ENABLED),
+                CODE_REVIEW_DEFAULT_ENABLED,
+            ),
+            group="builtin",
+            effect_scope=scopes[("tools", CODE_REVIEW_GATE_KEY)],
+        )
+    )
 
     gates.append(
         ToolGate(
@@ -940,12 +1088,11 @@ def all_tool_gates() -> list[ToolGate]:
             title=LOCAL_TOOLS_MASTER_TITLE,
             description=_LOCAL_TOOLS_MASTER_DESCRIPTION,
             enabled=coerce_bool_setting(
-                console_cfg.get(
-                    LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED
-                ),
+                console_cfg.get(LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED),
                 LOCAL_TOOLS_DEFAULT_ENABLED,
             ),
             group="local",
+            effect_scope=scopes[("console", LOCAL_TOOLS_MASTER_KEY)],
         )
     )
     gates.append(
@@ -953,19 +1100,21 @@ def all_tool_gates() -> list[ToolGate]:
             section="tools",
             key=WEB_DEEP_SEARCH_GATE_KEY,
             tool_name="web_deep_search",
-            title="Deep web research (web_deep_search)",
+            title=WEB_DEEP_SEARCH_GATE_TITLE,
             description=_WEB_DEEP_SEARCH_DESCRIPTION,
             enabled=coerce_bool_setting(
                 tools_cfg.get(WEB_DEEP_SEARCH_GATE_KEY, False), False
             ),
             group="local",
-            # The one gate here that also decides what the built-in MCP
-            # SERVER publishes: `build_server_local_provider()` filters
-            # `_default_specs()` for CONSOLE_AND_EXTERNAL_MCP exposure once,
-            # when that server starts (MCP/server.py), so external clients
-            # see the change only on their next launch. The Console/agent
-            # half applies on the next run like every other gate.
-            restart_required=True,
+            # The one restart-scoped gate here: it also decides what the
+            # built-in MCP SERVER publishes -- `build_server_local_provider()`
+            # filters `_default_specs()` for CONSOLE_AND_EXTERNAL_MCP exposure
+            # once, when that server starts (MCP/server.py), so external
+            # clients see the change only on their next launch. The
+            # Console/agent half applies on the next run like every other
+            # gate (task-35153's suffix says "restart to apply" for the
+            # external half; the pane's restart note below explains it).
+            effect_scope=scopes[("tools", WEB_DEEP_SEARCH_GATE_KEY)],
         )
     )
     gates.append(
@@ -980,6 +1129,7 @@ def all_tool_gates() -> list[ToolGate]:
                 ASK_USER_DEFAULT_ENABLED,
             ),
             group="local",
+            effect_scope=scopes[("tools", ASK_USER_GATE_KEY)],
         )
     )
     gates.append(
@@ -990,10 +1140,32 @@ def all_tool_gates() -> list[ToolGate]:
             title="Character cards (character_*)",
             description=_CHARACTER_TOOLS_DESCRIPTION,
             enabled=coerce_bool_setting(
-                tools_cfg.get(CHARACTER_TOOLS_GATE_KEY, CHARACTER_TOOLS_DEFAULT_ENABLED),
+                tools_cfg.get(
+                    CHARACTER_TOOLS_GATE_KEY, CHARACTER_TOOLS_DEFAULT_ENABLED
+                ),
                 CHARACTER_TOOLS_DEFAULT_ENABLED,
             ),
             group="local",
+            effect_scope=scopes[("tools", CHARACTER_TOOLS_GATE_KEY)],
+        )
+    )
+    from .plain_chat_tool_surface import (
+        FULL_AGENT_TOOLS_DESCRIPTION,
+        FULL_AGENT_TOOLS_GATE_KEY,
+        FULL_AGENT_TOOLS_TITLE,
+        full_agent_tools_enabled,
+    )
+
+    gates.append(
+        ToolGate(
+            section="tools",
+            key=FULL_AGENT_TOOLS_GATE_KEY,
+            tool_name="full_agent_tools",
+            title=FULL_AGENT_TOOLS_TITLE,
+            description=FULL_AGENT_TOOLS_DESCRIPTION,
+            enabled=full_agent_tools_enabled(tools_cfg),
+            group="agent",
+            effect_scope=scopes[("tools", FULL_AGENT_TOOLS_GATE_KEY)],
         )
     )
     return gates
@@ -1003,6 +1175,7 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     """Every gate's (section, key), in enumeration order, WITHOUT
     constructing any Tool — the cheap skeleton `all_tool_gates()` and the
     count path share so the key set can never drift between them."""
+    from .code_review_models import CODE_REVIEW_GATE_KEY
     from .local_tool_provider import (
         ASK_USER_GATE_KEY,
         CHARACTER_TOOLS_GATE_KEY,
@@ -1013,10 +1186,14 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     pairs: list[tuple[str, str]] = [
         ("tools", entry.gate_key) for entry in _GATEABLE_BUILTINS
     ]
+    pairs.append(("tools", CODE_REVIEW_GATE_KEY))
     pairs.append(("console", LOCAL_TOOLS_MASTER_KEY))
     pairs.append(("tools", WEB_DEEP_SEARCH_GATE_KEY))
     pairs.append(("tools", ASK_USER_GATE_KEY))
     pairs.append(("tools", CHARACTER_TOOLS_GATE_KEY))
+    from .plain_chat_tool_surface import FULL_AGENT_TOOLS_GATE_KEY
+
+    pairs.append(("tools", FULL_AGENT_TOOLS_GATE_KEY))
     return pairs
 
 
@@ -1028,6 +1205,7 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         gate is disabled.
     """
     from ..config import coerce_bool_setting
+    from .code_review_models import CODE_REVIEW_DEFAULT_ENABLED, CODE_REVIEW_GATE_KEY
     from .local_tool_provider import (
         ASK_USER_DEFAULT_ENABLED,
         ASK_USER_GATE_KEY,
@@ -1047,6 +1225,8 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         elif section == "tools" and key == CHARACTER_TOOLS_GATE_KEY:
             # TASK-32954: also defaults ON.
             default = CHARACTER_TOOLS_DEFAULT_ENABLED
+        elif section == "tools" and key == CODE_REVIEW_GATE_KEY:
+            default = CODE_REVIEW_DEFAULT_ENABLED
         else:
             default = False
         section_cfg = console_cfg if section == "console" else tools_cfg

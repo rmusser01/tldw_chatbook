@@ -187,6 +187,63 @@ def test_main_fails_when_explicit_offline_input_environment_is_missing(
     assert "declared input is missing" in capsys.readouterr().err
 
 
+def test_default_check_reproduces_without_network(monkeypatch):
+    """An unchanged fresh checkout must verify without an upstream service."""
+    checker = _load_checker()
+    pinned_python = json.loads(checker.INPUT_MANIFEST.read_text(encoding="utf-8"))[
+        "python"
+    ]
+    if ".".join(map(str, sys.version_info[:3])) != pinned_python:
+        pytest.skip(
+            f"Actual rebuild requires Python {pinned_python}; required CI pins it"
+        )
+    monkeypatch.delenv("TLDW_CANVAS_MERMAID_INPUT_DIR", raising=False)
+
+    def refuse_network(*args, **kwargs):
+        raise AssertionError("ordinary artifact verification attempted network access")
+
+    monkeypatch.setattr(checker, "build_opener", refuse_network)
+
+    assert set(checker.check_assets()) == EXPECTED_OUTPUTS
+
+
+def test_explicit_fetch_copies_only_authenticated_inputs(tmp_path, monkeypatch, capsys):
+    """Fetching is an explicit maintenance action and never a rebuild."""
+    checker = _load_checker()
+    payload = b"pinned download"
+    manifest = tmp_path / "inputs.json"
+    _write_manifest(manifest, _download("declared.bin", payload))
+    monkeypatch.setattr(checker, "INPUT_MANIFEST", manifest)
+
+    class Download:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def geturl(self):
+            return "https://example.invalid/declared.bin"
+
+        def read(self, size):
+            return payload[:size]
+
+    class DownloadSource:
+        def open(self, request, timeout):
+            return Download()
+
+    monkeypatch.setattr(checker, "build_opener", lambda *args: DownloadSource())
+    destination = tmp_path / "fetched"
+
+    assert checker.main(["--fetch-inputs", str(destination)]) == 0
+    assert (destination / "declared.bin").read_bytes() == payload
+    assert "fetched" in capsys.readouterr().out
+
+    (destination / "declared.bin").write_bytes(b"existing user bytes")
+    assert checker.main(["--fetch-inputs", str(destination)]) == 1
+    assert (destination / "declared.bin").read_bytes() == b"existing user bytes"
+
+
 # --------------------------------------------------------------------------
 # TASK-32897: the two outputs the builder COPIES out of STATIC
 # --------------------------------------------------------------------------
@@ -207,6 +264,9 @@ def test_the_copied_outputs_are_authenticated_against_a_pin_in_this_checker():
     assert set(checker.VENDORED_OUTPUTS) == {
         "canvas_runtime_worker_v2.js",
         "canvas_renderer_v2.js",
+        "canvas_shell.js",
+        "canvas_shell.css",
+        "canvas_shell.html",
     }
     checker.verify_vendored_pins(STATIC)
 
@@ -226,6 +286,11 @@ def test_a_tampered_copied_output_fails_the_pin(tmp_path, name):
     with pytest.raises(checker.MermaidAssetCheckError, match="integrity mismatch"):
         checker.verify_vendored_pins(tmp_path)
 
+    changed = (tmp_path / name).read_bytes()
+    pins = dict(checker.VENDORED_OUTPUTS)
+    pins[name] = {"bytes": len(changed), "sha256": hashlib.sha256(changed).hexdigest()}
+    checker.verify_vendored_pins(tmp_path, pins)
+
 
 def test_a_missing_copied_output_fails_the_pin(tmp_path):
     checker = _load_checker()
@@ -241,3 +306,22 @@ def test_a_symlinked_copied_output_fails_the_pin(tmp_path):
 
     with pytest.raises(checker.MermaidAssetCheckError, match="cannot be a symlink"):
         checker.verify_vendored_pins(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "name", ["canvas_shell.js", "canvas_shell.css", "canvas_shell.html"]
+)
+def test_a_tampered_shell_asset_fails_the_existing_guard(tmp_path, name):
+    """Changing the token-handling shell must fail independently of rebuilding."""
+    checker = _load_checker()
+    for asset in {*checker.VENDORED_OUTPUTS, name}:
+        data = (STATIC / asset).read_bytes()
+        (tmp_path / asset).write_bytes(data + b"\n" if asset == name else data)
+
+    with pytest.raises(checker.MermaidAssetCheckError, match="integrity mismatch"):
+        checker.verify_vendored_pins(tmp_path)
+
+    changed = (tmp_path / name).read_bytes()
+    pins = dict(checker.VENDORED_OUTPUTS)
+    pins[name] = {"bytes": len(changed), "sha256": hashlib.sha256(changed).hexdigest()}
+    checker.verify_vendored_pins(tmp_path, pins)

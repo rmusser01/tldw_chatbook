@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
 from textual.containers import Grid, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
@@ -43,33 +45,28 @@ class EditRuleRequested(Message):
 
 
 class RuleFormVisibilityChanged(Message):
-    """Posted whenever the rule form opens or closes, and which rule (if any)
-    it is editing.
+    """Mirror ephemeral editor visibility, original target and raw fields.
 
-    `RulesPane` lives inside a `WatchlistsWorkbench` region, and that region
-    is swapped for a freshly built one whenever it collapses or expands, or
-    whenever the section switches — each of which constructs a brand new
-    `RulesPane`. (Until task-15461 the trigger was wider still: `region_
-    layout` was `recompose=True`, so `[` on the left rail — a region
-    unrelated to Rules — rebuilt this pane too.) Without this message the
-    screen has no way to know an edit was in progress, so an open edit form
-    would be silently destroyed on the next such rebuild — the same failure
-    `CreateFormVisibilityChanged` in
-    sources_pane.py already fixes for the Sources create form. The owning
-    screen mirrors this into its own state and re-seeds it into the
-    freshly-constructed pane via `RulesPane.edit_rule`.
+    The screen re-seeds this state when a section/region reconstructs the pane.
+    Draft values are never persisted or interpreted until explicit submission.
     """
 
-    def __init__(self, is_open: bool, editing_rule: dict[str, Any] | None) -> None:
+    def __init__(
+        self,
+        is_open: bool,
+        editing_rule: dict[str, Any] | None,
+        draft: dict[str, Any] | None = None,
+    ) -> None:
         self.is_open = is_open
         self.editing_rule = editing_rule
+        self.draft = draft
         super().__init__()
 
 
 class RulesPane(RecomposeCaptureGuard, Vertical):
     """Alert rule list and editor for watchlists."""
 
-    rules = reactive[list[dict[str, Any]]](list, recompose=True)
+    rules = reactive[list[dict[str, Any]]](list)
     selected_rule = reactive[dict[str, Any] | None](None)
     show_rule_form = reactive(False, recompose=True)
     runtime_backend = reactive("local", recompose=True)
@@ -100,8 +97,7 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
     _THRESHOLD_GUIDANCE: dict[str, tuple[str, str]] = {
         "no_items": (
             "Not used",
-            "Not used for this condition -- it fires whenever a run yields "
-            "zero items.",
+            "Not used for this condition -- it fires whenever a run yields zero items.",
         ),
         "error_rate_above": (
             "0.5 = 50%",
@@ -127,6 +123,8 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._editing_rule_id: str | None = None
+        self._editing_rule: dict[str, Any] | None = None
+        self.form_draft: dict[str, Any] | None = None
 
     def compose(self):
         with Horizontal(id="rules-toolbar", classes="destination-filter-strip"):
@@ -134,7 +132,7 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
             yield Button("New Rule", id="rules-new-button", variant="primary")
 
         if self.show_rule_form:
-            rule = self.selected_rule if self._editing_rule_id else None
+            rule = self.form_draft or self._editing_rule
             condition_type = (
                 str(rule.get("condition_type") or "no_items") if rule else "no_items"
             )
@@ -189,24 +187,52 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
 
         table = DataTable(id="rules-table")
         table.add_columns("Name", "Condition", "Severity", "Enabled")
+        self._populate_table(table)
+        yield table
+        if not self.rules:
+            yield self._empty_state()
+
+    @staticmethod
+    def _empty_state() -> Static:
+        return Static(
+            "No alert rules yet. Press New Rule to watch for a "
+            "condition like a run failing or items dropping off.",
+            id="rules-empty-state",
+            classes="watchlists-hint-line",
+        )
+
+    def _populate_table(self, table: DataTable) -> None:
         for rule in self.rules:
             table.add_row(
-                str(rule.get("name") or "Untitled"),
+                Text(str(rule.get("name") or "Untitled")),
                 str(rule.get("condition_type") or "-"),
                 str(rule.get("severity") or "-"),
                 "Yes" if rule.get("enabled") else "No",
                 key=str(rule.get("id") or id(rule)),
             )
-        yield table
-        # TASK-2313, AC#4: one line of guidance for the bare-table state,
-        # matching Runs/Notifications' identical fix.
-        if not self.rules:
-            yield Static(
-                "No alert rules yet. Press New Rule to watch for a "
-                "condition like a run failing or items dropping off.",
-                id="rules-empty-state",
-                classes="watchlists-hint-line",
-            )
+
+    async def watch_rules(self) -> None:
+        """Publish list presentation without replacing a live editor."""
+        if not self.is_attached:
+            return
+        try:
+            table = self.query_one("#rules-table", DataTable)
+        except NoMatches:
+            return
+        cursor_key = (
+            table.ordered_rows[table.cursor_row].key if table.row_count else None
+        )
+        # Synthetic highlights from refreshing rows must not retarget selection.
+        with table.prevent(DataTable.RowHighlighted, DataTable.CellHighlighted):
+            table.clear()
+            self._populate_table(table)
+            if cursor_key in table.rows:
+                table.move_cursor(row=table.get_row_index(cursor_key))
+        hint = next(iter(self.query("#rules-empty-state")), None)
+        if self.rules and hint is not None:
+            await hint.remove()
+        elif not self.rules and hint is None:
+            await self.mount(self._empty_state())
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """TASK-2310: repaint the Threshold guidance when Condition changes.
@@ -215,17 +241,55 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
         may already carry typed text) and a recompose would rebuild every
         field from scratch, discarding it.
         """
-        if event.select.id != "rules-create-condition":
+        if event.select.id not in {"rules-create-condition", "rules-create-severity"}:
             return
         event.stop()
-        try:
-            threshold_input = self.query_one("#rules-create-threshold", Input)
-            threshold_help = self.query_one("#rules-create-threshold-help", Static)
-        except Exception:
+        if event.select.id == "rules-create-condition":
+            try:
+                threshold_input = self.query_one("#rules-create-threshold", Input)
+                threshold_help = self.query_one("#rules-create-threshold-help", Static)
+            except NoMatches:
+                return
+            placeholder, help_text = self._threshold_guidance(str(event.value))
+            threshold_input.placeholder = placeholder
+            threshold_help.update(help_text)
+        self._post_form_state()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id in {"rules-create-name", "rules-create-threshold"}:
+            event.stop()
+            self._post_form_state()
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "rules-create-enabled":
+            event.stop()
+            self._post_form_state()
+
+    def _post_form_state(self, *, capture: bool = True) -> None:
+        if not self.is_mounted:
             return
-        placeholder, help_text = self._threshold_guidance(str(event.value))
-        threshold_input.placeholder = placeholder
-        threshold_help.update(help_text)
+        if capture and self.show_rule_form:
+            try:
+                self.form_draft = {
+                    "name": self.query_one("#rules-create-name", Input).value,
+                    "condition_type": self.query_one(
+                        "#rules-create-condition", Select
+                    ).value,
+                    "condition_value": {
+                        "threshold": self.query_one(
+                            "#rules-create-threshold", Input
+                        ).value,
+                    },
+                    "severity": self.query_one("#rules-create-severity", Select).value,
+                    "enabled": self.query_one("#rules-create-enabled", Switch).value,
+                }
+            except NoMatches:
+                return
+        self.post_message(
+            RuleFormVisibilityChanged(
+                self.show_rule_form, self._editing_rule, self.form_draft
+            )
+        )
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
@@ -267,26 +331,21 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
             self.post_message(RuleSelected(rule))
 
     def watch_show_rule_form(self, is_open: bool) -> None:
-        """Tell the owning screen the rule form opened or closed, and on what.
-
-        Mirrors `show_rule_form` (plus which rule, if any, is being edited)
-        into a `RuleFormVisibilityChanged` message so the screen can persist
-        it across a workbench rebuild — see that message's docstring for why
-        this pane cannot just rely on its own reactives surviving a
-        recompose.
-
-        Args:
-            is_open: The form's new visibility.
-        """
-        if self.is_mounted:
-            editing_rule = self.selected_rule if self._editing_rule_id else None
-            self.post_message(RuleFormVisibilityChanged(is_open, editing_rule))
+        """Mirror the editor lifecycle; closing retires its raw draft."""
+        if not is_open:
+            self.form_draft = None
+        self._post_form_state(capture=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
         if button_id == "rules-new-button":
             self._editing_rule_id = None
+            self._editing_rule = None
+            self.form_draft = None
             self.selected_rule = None
+            if self.show_rule_form:
+                self._post_form_state(capture=False)
+                self.refresh(recompose=True)
             self.show_rule_form = True
         elif button_id == "rules-create-cancel":
             self.show_rule_form = False
@@ -302,9 +361,13 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
         if not name:
             self.app.notify("Rule name is required.", severity="error")
             return
-        condition_type = str(self.query_one("#rules-create-condition", Select).value or "no_items")
+        condition_type = str(
+            self.query_one("#rules-create-condition", Select).value or "no_items"
+        )
         threshold_text = self.query_one("#rules-create-threshold", Input).value.strip()
-        severity = str(self.query_one("#rules-create-severity", Select).value or "warning")
+        severity = str(
+            self.query_one("#rules-create-severity", Select).value or "warning"
+        )
         enabled = self.query_one("#rules-create-enabled", Switch).value
         condition_value: dict[str, Any] = {}
         if threshold_text:
@@ -343,7 +406,12 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
             rule: The rule row to pre-fill the form with.
         """
         self._editing_rule_id = str(rule.get("id") or "")
+        self._editing_rule = dict(rule)
+        self.form_draft = None
         if self.is_mounted:
+            if self.show_rule_form:
+                self._post_form_state(capture=False)
+                self.refresh(recompose=True)
             self.selected_rule = rule
             self.show_rule_form = True
             return

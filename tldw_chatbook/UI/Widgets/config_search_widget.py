@@ -95,17 +95,30 @@ class ConfigSearchResult(ListItem):
 
 
 class UIElementSearchEngine:
-    """Engine for searching through UI form elements."""
+    """Engine for searching through UI form elements.
+
+    Reusable lifecycle (B19): the DOM index is built once per container and
+    reused across searches; widget values are read live at search time so
+    results never see stale snapshots. Call ``invalidate()`` when the
+    container's contents change (e.g. a settings pane switch) and the next
+    ``search()`` rebuilds the index exactly once.
+    """
 
     def __init__(self, container: Widget):
         self.container = container
-        self.elements_index = []
+        self.elements_index: List[Dict[str, Any]] = []
+        self._index_valid = False
         self._build_index()
+
+    def invalidate(self) -> None:
+        """Drop the cached index; the next ``search()`` rebuilds it once."""
+        self._index_valid = False
 
     def _build_index(self) -> None:
         """Build an index of all searchable UI elements in the container."""
         self.elements_index = []
         self._scan_widget(self.container)
+        self._index_valid = True
 
     def _scan_widget(self, widget: Widget, depth: int = 0) -> None:
         """Recursively scan widgets for form elements."""
@@ -121,34 +134,13 @@ class UIElementSearchEngine:
             # Try to find associated label
             label_text = self._find_label_for_widget(widget)
 
-            # Get current value
-            current_value = None
-            element_type = widget.__class__.__name__
-
-            if isinstance(widget, Input):
-                current_value = widget.value
-            elif isinstance(widget, Select):
-                current_value = widget.value
-                if hasattr(widget, "_options") and widget.value is not None:
-                    # Try to get the display text for the selected value
-                    for option in widget._options:
-                        if option[1] == widget.value:
-                            current_value = option[0]
-                            break
-            elif isinstance(widget, Checkbox):
-                current_value = "Enabled" if widget.value else "Disabled"
-            elif isinstance(widget, TextArea):
-                current_value = (
-                    widget.text[:50] + "..." if len(widget.text) > 50 else widget.text
-                )
-
-            # Add to index
+            # Add to index (static fields only -- values are read live at
+            # search time, see _current_value_for)
             self.elements_index.append(
                 {
                     "widget": widget,
                     "label": label_text or widget.id or "Unnamed",
-                    "element_type": element_type,
-                    "current_value": current_value,
+                    "element_type": widget.__class__.__name__,
                     "widget_id": widget.id or "",
                     "depth": depth,
                 }
@@ -157,6 +149,27 @@ class UIElementSearchEngine:
         # Recursively scan children
         for child in widget.children:
             self._scan_widget(child, depth + 1)
+
+    @staticmethod
+    def _current_value_for(widget: Widget) -> Any:
+        """Read a widget's current value live at search time (B19)."""
+        if isinstance(widget, Input):
+            return widget.value
+        if isinstance(widget, Select):
+            current_value = widget.value
+            if hasattr(widget, "_options") and widget.value is not None:
+                # Try to get the display text for the selected value
+                for option in widget._options:
+                    if option[1] == widget.value:
+                        current_value = option[0]
+                        break
+            return current_value
+        if isinstance(widget, Checkbox):
+            return "Enabled" if widget.value else "Disabled"
+        if isinstance(widget, TextArea):
+            text = widget.text
+            return text[:50] + "..." if len(text) > 50 else text
+        return None
 
     def _find_label_for_widget(self, widget: Widget) -> Optional[str]:
         """Try to find a label associated with a widget."""
@@ -186,12 +199,17 @@ class UIElementSearchEngine:
         return None
 
     def search(self, query: str) -> List[Dict[str, Any]]:
-        """Search for UI elements matching the query."""
+        """Search for UI elements matching the query.
+
+        Served from the cached index (rebuilt only after ``invalidate()``);
+        widget values are read live at search time.
+        """
         if not query:
             return []
 
-        # Rebuild index to get current state
-        self._build_index()
+        # Rebuild only when the cache was explicitly invalidated (B19).
+        if not self._index_valid:
+            self._build_index()
 
         query_lower = query.lower()
         results = []
@@ -209,11 +227,9 @@ class UIElementSearchEngine:
             if element["widget_id"] and query_lower in element["widget_id"].lower():
                 score += 2
 
-            # Search in current value
-            if (
-                element["current_value"]
-                and query_lower in str(element["current_value"]).lower()
-            ):
+            # Search in current value (read live at search time)
+            current_value = self._current_value_for(element["widget"])
+            if current_value and query_lower in str(current_value).lower():
                 score += 1
 
             # Search in element type
@@ -221,6 +237,7 @@ class UIElementSearchEngine:
                 score += 1
 
             if score > 0:
+                element = {**element, "current_value": current_value}
                 results.append((score, element))
 
         # Sort by score (descending) and limit results

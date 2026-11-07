@@ -13,7 +13,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleThinkingActivityRef,
 )
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
     ThinkingEnvelope,

@@ -1,0 +1,1 @@
+{"total_slots": 1, "slot_id": 0, "is_processing": false, "n_ctx": 64000, "model": "../../../Working/Language_Models/gemma-4-26B-A4B/gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf"}

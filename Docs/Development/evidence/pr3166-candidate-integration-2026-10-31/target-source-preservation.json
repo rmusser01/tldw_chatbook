@@ -1,0 +1,202 @@
+[
+  {
+    "path": "tldw_chatbook/Agents/archive_recovery_tool_provider.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/__init__.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/contracts.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/coordinator.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/operations.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/result_store.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/runtime.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/search_service.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_compaction_hooks.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_configuration_capture.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_configuration_preparation.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_plugin_context.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_plugin_tests.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_received_dispatch.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_received_intent.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_received_turn.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/DB/Workspace_DB.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/DB/conversation_archive_queries.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/DB/migrations/chachanotes_v84_to_v85_archive_chronology.sql",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/DB/migrations/workspaces_v9_to_v10_archive_chronology.sql",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Plugins/acquisition.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Plugins/catalogs.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Plugins/git_source.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Plugins/imports.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Plugins/migrations/005_marketplace_sources.sql",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Plugins/retained_inspection.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Plugins/source_service.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Plugins/variables.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/archive_recovery.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Kanban/__init__.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Kanban/board_models.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Kanban/board_widgets.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Kanban/kanban_board_screen.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_profile_actions.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Plugins_Modules/__init__.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Plugins_Modules/browse_state.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Plugins_Modules/details.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Plugins_Modules/operations.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Plugins_Modules/review.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/plugins_screen.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/settings_category_exports.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Settings_Modules/workspace_archive.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Utils/os_notifications.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Chat_Widgets/archive_recovery_cards.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/Widgets/plugin_review_modal.py",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/css/core/_variables.tcss",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/css/features/_plugins.tcss",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/css/screen_feature_plugins.tcss",
+    "candidate_blob_unchanged": true
+  },
+  {
+    "path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+    "candidate_blob_unchanged": true
+  }
+]

@@ -1,7 +1,7 @@
 ---
 id: TASK-760
 title: 'quick_ingest() resolves a different media DB than the app opens'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 17:00'
 labels:
@@ -35,7 +35,14 @@ moment something calls it.
 
 ## Acceptance Criteria
 
-- [ ] `quick_ingest()` opens the same database file the running app opens, for both a default config and a custom `[database] media_db_path`
-- [ ] The per-user data directory is honored rather than a hardcoded `~/.local/share/tldw_cli` literal
-- [ ] A test asserts the path `quick_ingest` uses equals `get_media_db_path()` under a default config
-- [ ] The existing TASK-658 regression tests still pass, or are updated with a documented reason if the fallback expectation legitimately changes
+- [x] `quick_ingest()` opens the same database file the running app opens, for both a default config and a custom `[database] media_db_path`
+- [x] The per-user data directory is honored rather than a hardcoded `~/.local/share/tldw_cli` literal
+- [x] A test asserts the path `quick_ingest` uses equals `get_media_db_path()` under a default config
+- [x] The existing TASK-658 regression tests still pass, or are updated with a documented reason if the fallback expectation legitimately changes
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+quick_ingest() now calls config.get_media_db_path() (Local_Ingestion/local_file_ingestion.py:2629-2631) — the same accessor the app uses — instead of hand-rolling the media-DB path.

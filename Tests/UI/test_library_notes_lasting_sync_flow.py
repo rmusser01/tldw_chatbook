@@ -57,17 +57,13 @@ def test_production_screen_derives_lasting_route_from_the_app_runtime() -> None:
     ).read_text(encoding="utf-8")
     # TASK-21112: availability still derives from the runtime snapshot;
     # 'not_configured' (boot-deferred) also offers first-time setup.
-    assert (
-        "runtime.snapshot().status in _SETUP_READY_STATUSES" in controller_source
-    )
+    assert "runtime.snapshot().status in _SETUP_READY_STATUSES" in controller_source
     assert "lasting_available=" not in source
     assert "lasting_available=" not in cluster_source
     assert "LibraryNotesAddFromFilesCanvas" in cluster_source
     assert "LibraryNotesSyncRootsCanvas" in cluster_source
     assert "LibraryNotesSyncController(" in source
-    assert (
-        "self._library_notes_sync_controller.choose_relationship" in cluster_source
-    )
+    assert "self._library_notes_sync_controller.choose_relationship" in cluster_source
 
 
 def test_production_notes_canvas_replaces_legacy_entry_points_at_cutover() -> None:

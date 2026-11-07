@@ -183,13 +183,21 @@ class _MCPDelivery:
         self.context.check()
         for policy in self.inherited_policies:
             policy.check()
+        engine = self.executor.engine
+        try:
+            on_owner_loop = asyncio.get_running_loop() is engine.loop
+        except RuntimeError:
+            on_owner_loop = False
+        authority = (
+            engine._effect_authority_check if on_owner_loop else engine.authority_check
+        )
         return (
             not self.stopped
             and not self.execution.closed
             and not self.cancellation.is_set()
             and self.active_used < self.handler.timeout_seconds
             and self.execution.active_seconds + self.active_used < 60
-            and self.executor.engine.authority_check(self.handler, self.event, "launch")
+            and authority(self.handler, self.event, "launch")
         )
 
     def stop(self):

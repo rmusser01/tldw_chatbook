@@ -1,0 +1,9 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "scripts/check_persistent_diagnostic_inventory.py",
+    "--write"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 85.4234766960144
+}

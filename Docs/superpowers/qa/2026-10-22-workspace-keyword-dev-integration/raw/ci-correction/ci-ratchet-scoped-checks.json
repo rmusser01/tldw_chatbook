@@ -1,0 +1,30 @@
+{
+  "check_helper": {
+    "exit": 0,
+    "output": "All checks passed!"
+  },
+  "check_ratchet": {
+    "exit": 0,
+    "output": "All checks passed!"
+  },
+  "format_helper": {
+    "exit": 0,
+    "output": "1 file already formatted"
+  },
+  "format_ratchet": {
+    "exit": 0,
+    "output": "1 file already formatted"
+  },
+  "format_settings": {
+    "exit": 1,
+    "output": "Would reformat: tldw_chatbook\\UI\\Screens\\settings_screen.py\n1 file would be reformatted"
+  },
+  "format_settings_head": {
+    "exit": 1,
+    "output": ""
+  },
+  "diff_check": {
+    "exit": 0,
+    "output": "warning: in the working copy of 'Tests/Architecture/test_module_size_ratchet.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tldw_chatbook/UI/Screens/settings_screen.py', LF will be replaced by CRLF the next time Git touches it"
+  }
+}

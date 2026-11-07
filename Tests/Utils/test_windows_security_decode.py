@@ -325,3 +325,28 @@ def test_real_warm_acl_observes_public_grant_and_hardening(tmp_path):
         assert (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)
     finally:
         windows.close(descriptor)
+
+
+def test_admission_descriptor_is_fresh_and_copied_before_release(native):
+    api, state = native
+    first = state.data
+    assert api.security(7, False, with_descriptor=True) == (1000, 0o600, first)
+    assert not state.allocations
+    state.data = _descriptor(trustee=999)
+    assert api.security(7, False, with_descriptor=True) == (1000, 0o644, state.data)
+    assert state.counts["acquire"] == state.counts["free"] == 2
+    assert first != state.data
+    # Ordinary two-positional-argument return shape remains unchanged.
+    assert api.security(7, False) == (1000, 0o644)
+
+
+@pytest.mark.parametrize("options", [{"relative": False}, {"padding": 5000}])
+def test_admission_unrepresentable_descriptor_refuses_but_ordinary_stays_compatible(
+    native, options
+):
+    api, state = native
+    state.data = _descriptor(**options)
+    with pytest.raises(OSError, match="windows_admission_descriptor_unavailable"):
+        api.security(7, False, with_descriptor=True)
+    assert not state.allocations
+    assert api.security(7, False) == (1000, 0o600)

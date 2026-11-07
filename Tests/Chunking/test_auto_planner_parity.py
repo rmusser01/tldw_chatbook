@@ -12,6 +12,7 @@ mode explicitly off; re-run the generator at every
 fixtures were generated on; a mismatch means the vendored planner's
 planning behavior drifted and the parity claim must be re-examined.
 """
+
 from __future__ import annotations
 
 import json
@@ -71,9 +72,10 @@ def test_fixtures_cover_every_map_entry_plus_passthrough_cases():
 def test_planner_output_byte_matches_fixture(case):
     # The mapping outcome is pinned too: the table must still produce the
     # same planner input it produced at generation time.
-    assert MEDIA_TYPE_MAP.get(case["media_type"], case["media_type"]) == case[
-        "planner_media_type"
-    ]
+    assert (
+        MEDIA_TYPE_MAP.get(case["media_type"], case["media_type"])
+        == case["planner_media_type"]
+    )
     decision = plan_auto_chunking(
         media_type=case["planner_media_type"],
         **CALL_SITE_FLAGS,

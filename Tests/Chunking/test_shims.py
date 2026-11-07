@@ -1,10 +1,12 @@
 # Tests/Chunking/test_shims.py
 """Shim contract tests (spec §5.3): the three phase-1 shims exist and behave."""
+
 import pytest
 
 
 def test_testing_shim():
     from tldw_chatbook.Chunking._shims import testing
+
     assert testing.is_truthy("true") is True
     assert testing.is_truthy("no") is False
     assert testing.is_truthy(True) is True
@@ -14,6 +16,7 @@ def test_testing_shim():
 
 def test_config_shim():
     from tldw_chatbook.Chunking._shims import config
+
     cfg = config.load_comprehensive_config()
     # Server code calls .has_section('Chunking') / .get(section, key) — a
     # config-parser-like object must come back.
@@ -58,13 +61,15 @@ def test_config_shim_percent_values_do_not_crash(monkeypatch):
     monkeypatch.setattr(
         shim,
         "load_cli_config_and_ensure_existence",
-        lambda: {"Chunking": {
-            "max_size": "50%",
-            "note": "100% sure",
-            "tmpl": "pre-%(name)s-post",
-            "count": 3,
-            7: "int-key",
-        }},
+        lambda: {
+            "Chunking": {
+                "max_size": "50%",
+                "note": "100% sure",
+                "tmpl": "pre-%(name)s-post",
+                "count": 3,
+                7: "int-key",
+            }
+        },
     )
     cfg = shim.load_comprehensive_config()
     assert cfg.get("Chunking", "max_size") == "50%"
@@ -95,6 +100,7 @@ def test_config_shim_merge_order_capitalized_wins(monkeypatch):
 
 def test_prompt_loader_shim_maps_rolling_summarize():
     from tldw_chatbook.Chunking._shims.Utils import prompt_loader
+
     prompt = prompt_loader.load_prompt("chunking", "Rolling Summarization")
     assert isinstance(prompt, str)
     # Chatbook's canonical prompt for this pairing is 37 chars by default
@@ -103,12 +109,14 @@ def test_prompt_loader_shim_maps_rolling_summarize():
     assert len(prompt) > 0  # a real prompt, not an empty string
     # The mapping must hit the documented resolver key.
     from tldw_chatbook.Internal_Prompts.resolver import get_internal_prompt
+
     assert prompt == get_internal_prompt("summarization.rolling_summarize_system")
 
 
 def test_prompt_loader_unknown_pairing_raises():
     # Unknown pairings must fail loudly, never silently return "".
     from tldw_chatbook.Chunking._shims.Utils import prompt_loader
+
     with pytest.raises(KeyError):
         prompt_loader.load_prompt("chunking", "Not A Real Prompt")
 
@@ -126,8 +134,12 @@ def test_prompt_loader_shim_maps_proposition_profiles():
     cannot ride the Internal_Prompts catalog; a future override
     mechanism changes the map VALUES, not the keys."""
     from tldw_chatbook.Chunking._shims.Utils import prompt_loader
-    for name in ("proposition_claimify", "proposition_gemma_aps",
-                 "proposition_generic"):
+
+    for name in (
+        "proposition_claimify",
+        "proposition_gemma_aps",
+        "proposition_generic",
+    ):
         assert prompt_loader.load_prompt("chunking", name) == ""
 
 
@@ -140,13 +152,20 @@ def test_prompt_loader_known_covers_vendored_propositions_calls():
     import re
     from pathlib import Path
     from tldw_chatbook.Chunking._shims.Utils import prompt_loader
-    src = (Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Chunking"
-           / "engine" / "strategies" / "propositions.py").read_text()
-    pairs = set(re.findall(
-        r'load_prompt\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)', src))
+
+    src = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "Chunking"
+        / "engine"
+        / "strategies"
+        / "propositions.py"
+    ).read_text()
+    pairs = set(re.findall(r'load_prompt\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)', src))
     assert pairs, "scan found no load_prompt call sites — anchor drifted"
-    assert pairs <= set(prompt_loader._KNOWN), \
+    assert pairs <= set(prompt_loader._KNOWN), (
         f"unmapped load_prompt pairs in the vendored strategy: {pairs - set(prompt_loader._KNOWN)}"
+    )
 
 
 def test_prompt_loader_flat_alias():
@@ -154,6 +173,7 @@ def test_prompt_loader_flat_alias():
     # the vendored engine actually imports (rolling_summarize.py:13).
     from tldw_chatbook.Chunking._shims import prompt_loader as flat
     from tldw_chatbook.Chunking._shims.Utils import prompt_loader as nested
+
     assert flat.load_prompt is nested.load_prompt
 
 
@@ -161,5 +181,6 @@ def test_engine_imports_with_shims():
     # The engine's module graph must resolve entirely through the shims.
     import tldw_chatbook.Chunking.engine  # noqa: F401
     from tldw_chatbook.Chunking.engine import Chunker, ChunkerConfig
+
     c = Chunker(ChunkerConfig())
     assert c.config.default_max_size == 400

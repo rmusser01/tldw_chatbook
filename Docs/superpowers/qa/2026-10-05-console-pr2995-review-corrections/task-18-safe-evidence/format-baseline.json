@@ -1,0 +1,129 @@
+{
+  "base_ref": "3238094c92e77248483ac95254b877639c842c9b",
+  "base_sha": "3238094c92e77248483ac95254b877639c842c9b",
+  "baseline_red_paths": [
+    "Tests/UI/test_console_runtime_ownership.py",
+    "tldw_chatbook/Chat/console_chat_controller.py"
+  ],
+  "files": {
+    "Tests/Chat/console_interrupt_test_bindings.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "19958b333dca44cbaf3cfbf7b078188729cb157e0565f33a574bd5a07a313b29"
+    },
+    "Tests/Chat/test_console_decision_clock.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "fd03f74ffa0bd86e4412dfdca1eb687a4bf76131606ea3431b6ff1cdbed1a9a3"
+    },
+    "Tests/UI/test_buddy_speech.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "b6034cfddc45d1a1fcb8514ceb91ad83b2c664545f2646f33036c373eeaa0f19"
+    },
+    "Tests/UI/test_console_runtime_ownership.py": {
+      "debt_units": 56,
+      "formatter_required": true,
+      "normalized_diff_sha256": "db13222d766c9d4efdd040ffc212b36628dd199f50bcd7963830b258534872c9",
+      "source_hunks": [
+        [
+          847,
+          856
+        ],
+        [
+          871,
+          880
+        ],
+        [
+          888,
+          895
+        ],
+        [
+          974,
+          983
+        ],
+        [
+          1003,
+          1012
+        ],
+        [
+          1179,
+          1188
+        ],
+        [
+          1225,
+          1234
+        ],
+        [
+          2293,
+          2298
+        ]
+      ],
+      "source_sha256": "48bfe2f95a6fad7b9be0920e210b894ba8ccb8264267fb08762867a81ca98932"
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "debt_units": 23,
+      "formatter_required": true,
+      "normalized_diff_sha256": "95cd8937ee7b17c204066653e0c79fb2c002e0cd56971d83e222962cbd398604",
+      "source_hunks": [
+        [
+          8291,
+          8298
+        ],
+        [
+          8414,
+          8420
+        ],
+        [
+          8443,
+          8451
+        ],
+        [
+          8454,
+          8462
+        ],
+        [
+          8472,
+          8480
+        ],
+        [
+          29296,
+          29301
+        ]
+      ],
+      "source_sha256": "5d9df3acc6ff2caa5d03e425d13f8ff23f6109c0c78300aa7a36dcae53b26c94"
+    },
+    "tldw_chatbook/Chat/console_chat_start.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "3d628d4394da0ecad3a4d04166623608116e709a434dab204b13ab71e6b5b2e0"
+    },
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "d9d391123e31a409e000293acb1b335b423ddec0c0bd2ba9b81cc679def63487"
+    }
+  },
+  "generated_at_utc": "2026-10-05T01:50:10.529828+00:00",
+  "paths": [
+    "Tests/UI/test_buddy_speech.py",
+    "Tests/Chat/test_console_decision_clock.py",
+    "Tests/Chat/console_interrupt_test_bindings.py",
+    "Tests/UI/test_console_runtime_ownership.py",
+    "tldw_chatbook/Chat/console_chat_start.py",
+    "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "tldw_chatbook/Chat/console_chat_controller.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

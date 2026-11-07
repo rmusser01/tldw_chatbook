@@ -135,11 +135,16 @@ class PathState(Enum):
 
 def _attribute_parts(node: ast.AST) -> list[str]:
     parts: list[str] = []
-    while isinstance(node, (ast.Attribute, ast.Call)):
+    while isinstance(node, (ast.Attribute, ast.Call, ast.Subscript)):
         if isinstance(node, ast.Call):
             node = node.func
             continue
-        parts.append(node.attr)
+        if isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+        elif isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            parts.append(node.slice.value)
+        else:
+            break
         node = node.value
     if isinstance(node, ast.Name):
         parts.append(node.id)

@@ -145,7 +145,8 @@ class _CatalogRefreshScheduleHost:
 
 def _pin_consented_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     set_app_global(
-        monkeypatch, "load_settings",
+        monkeypatch,
+        "load_settings",
         lambda: {"model_catalog": {"refresh_consent_recorded": True}},
     )
 
@@ -176,9 +177,7 @@ def test_normal_startup_schedules_catalog_refresh_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _pin_consented_settings(monkeypatch)
-    host = _CatalogRefreshScheduleHost(
-        {"first_run": {"setup_completed": True}}
-    )
+    host = _CatalogRefreshScheduleHost({"first_run": {"setup_completed": True}})
 
     assert host._schedule_startup_model_catalog_refresh(environ={}) is True
     assert host._schedule_startup_model_catalog_refresh(environ={}) is False
@@ -195,9 +194,7 @@ def test_unconsented_startup_shows_consent_modal_instead_of_refresh(
 ) -> None:
     """ADR-020 amendment: no consent on file means a dialog, not network I/O."""
     set_app_global(monkeypatch, "load_settings", lambda: {})
-    host = _CatalogRefreshScheduleHost(
-        {"first_run": {"setup_completed": True}}
-    )
+    host = _CatalogRefreshScheduleHost({"first_run": {"setup_completed": True}})
 
     assert host._schedule_startup_model_catalog_refresh(environ={}) is True
     assert host._schedule_startup_model_catalog_refresh(environ={}) is False
@@ -290,7 +287,9 @@ async def test_clean_first_run_mount_suppresses_global_catalog_refresh(
 
 
 @pytest.mark.asyncio
-async def test_initial_first_run_mount_has_no_unrelated_provider_catalog_calls() -> None:
+async def test_initial_first_run_mount_has_no_unrelated_provider_catalog_calls() -> (
+    None
+):
     app_instance = MagicMock(app_config={})
     scope_service = MagicMock()
     scope_service.discover_models = AsyncMock()

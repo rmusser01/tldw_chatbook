@@ -41,7 +41,9 @@ def _scratch_video_config(tmp_path: Path, monkeypatch):
         "registry": adapter_registry._registry,
     }
     config_path = tmp_path / "video-generation-config.toml"
-    config_path.write_text(_video_toml("minimax_h3_t2v_spectrum.json"), encoding="utf-8")
+    config_path.write_text(
+        _video_toml("minimax_h3_t2v_spectrum.json"), encoding="utf-8"
+    )
     original_path = os.environ.get("TLDW_CONFIG_PATH")
     try:
         monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
@@ -85,7 +87,9 @@ def test_persisted_video_settings_project_to_runtime_and_refresh(tmp_path, monke
         assert first_config.comfyui_timeout_seconds == 321
         assert first_registry.resolve_backend(None) == "comfyui"
 
-        config_path.write_text(_video_toml("minimax_h3_t2v_revised.json"), encoding="utf-8")
+        config_path.write_text(
+            _video_toml("minimax_h3_t2v_revised.json"), encoding="utf-8"
+        )
         app_config.load_settings(force_reload=True)
         reset_video_generation_runtime()
         second_config = get_video_generation_config()

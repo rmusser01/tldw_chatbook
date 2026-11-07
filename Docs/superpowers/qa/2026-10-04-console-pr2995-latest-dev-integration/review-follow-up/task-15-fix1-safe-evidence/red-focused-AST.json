@@ -1,0 +1,16 @@
+{
+  "source_hashes": {
+    "tldw_chatbook/Chat/console_chat_start.py": "f28df48d144d296329f872001a83300248be44e4df8619baff2cd53bd6d8c8b2",
+    "tldw_chatbook/DB/automatic_work.py": "a78ed90f3fd717029ffb3cec53929a888e26f3b7d44f4c703769958153a1211c",
+    "tldw_chatbook/Chat/console_chat_fork.py": "6d86308c24ad8d2b33f625047b6fea52c9280542bd0c23230de7268cf8ca3afb",
+    "Tests/Chat/test_console_chat_start.py": "64252c34b5d41f453067aa2ed67e7d85bd7672f062154bd4327c2baec6a182ae",
+    "Tests/DB/test_automatic_chat_starts.py": "7956240bb7d8339105f8b5892ce347dffafc202e1a61cfd2d9f54093c42d5b7a"
+  },
+  "AST_hashes": {
+    "tldw_chatbook/Chat/console_chat_start.py": "1d5f8305ee00b51c7fae71a00b5f0566b3dfa271ecea8bd0c637a198fa906acd",
+    "tldw_chatbook/DB/automatic_work.py": "5045de9b3b4da6d3a7c61c2891a6fd3a356c4a134839d0b4ce269a5cad6438bd",
+    "tldw_chatbook/Chat/console_chat_fork.py": "bcb0c65c838a579858d1170c07d0ee437c80ba81cec860ca0f7d7de221ce1c98",
+    "Tests/Chat/test_console_chat_start.py": "dccb2fbd930bf43678a11902193c9fe9907d6e9a8c52e2209b626030baadc1bc",
+    "Tests/DB/test_automatic_chat_starts.py": "41757e4d58d20b37872b866b668a809993f5fb92d7f88ea05c6ef9bd3fee67d7"
+  }
+}

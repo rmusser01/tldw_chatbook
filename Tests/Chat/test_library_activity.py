@@ -53,9 +53,7 @@ def test_minimize_activity_keeps_only_bounded_review_fields():
     candidate = _candidate(result={"items": rows, "total": len(rows)})
     candidate = replace(
         candidate,
-        arguments={
-            "query": "quarterly plan " + secret + " /Users/private/query.txt"
-        },
+        arguments={"query": "quarterly plan " + secret + " /Users/private/query.txt"},
     )
 
     event = minimize_library_activity(candidate)
@@ -91,9 +89,7 @@ def test_minimize_activity_scrubs_structured_failure_without_exception_text():
             result={
                 "error": {
                     "code": "storage_error",
-                    "message": (
-                        "sqlite failed at /Users/private/library.db " + secret
-                    ),
+                    "message": ("sqlite failed at /Users/private/library.db " + secret),
                     "retryable": True,
                     "details": {"traceback": "PRIVATE TRACEBACK"},
                 }

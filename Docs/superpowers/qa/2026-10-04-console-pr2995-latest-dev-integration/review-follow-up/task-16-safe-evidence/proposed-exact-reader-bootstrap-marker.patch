@@ -1,0 +1,20 @@
+--- a/Tests/UI/test_console_ask_user_typed_answers.py
++++ b/Tests/UI/test_console_ask_user_typed_answers.py
+@@ -216,6 +216,7 @@
+ 
+ 
+ @pytest.mark.asyncio
++@pytest.mark.bootstrap_profile
+ async def test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer():
+     """Integration: a real ConsoleChatController round waiting on a worker
+     thread, the real ChatTaskCards/ChatQuestionCard under the consolidated
+--- a/Tests/UI/test_personas_workbench.py
++++ b/Tests/UI/test_personas_workbench.py
+@@ -11256,6 +11256,7 @@
+             prompt = screen.preview.system_prompt()
+             assert "Draft noir vibes, unsaved." in prompt
+ 
++    @pytest.mark.bootstrap_profile
+     async def test_open_in_console_stages_preview_transcript(
+         self, mock_app_instance, stub_characters, stub_conversations
+     ):

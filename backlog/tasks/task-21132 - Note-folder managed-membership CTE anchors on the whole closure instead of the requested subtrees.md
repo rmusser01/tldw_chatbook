@@ -2,7 +2,7 @@
 id: TASK-21132
 title: >-
   Note-folder managed-membership CTE anchors on the whole closure instead of the requested subtrees
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-08-22'
 labels:
@@ -66,3 +66,10 @@ evidence above is what a re-verification pass measured against dev before dispat
 accepted, close this as "retired on evidence" rather than "won't fix", because the mechanism was
 real and only the cost or the prescribed fix was wrong.
 
+
+## Closeout audit 2026-10-11
+
+Board-prune audit 2026-10-11: retired on evidence (per the board's 'Won't Do' enum) - the task's own recorded closure recommendation is accepted:
+- Retired on evidence per this task's own 2026-08-24 closure recommendation: the mechanism is real but effectively free for the default user (upward recursion bounded by managed folders x tree depth; empty anchor with no sync owners; already off the event loop), and the prescribed fix is a query inversion whose equivalence hinges on a deleted-parent quirk.
+- Evidence in-file under 'Re-verification against dev 2be18842a (2026-08-23) - RECOMMEND CANCEL' and 'Closure recommendation (2026-08-24, burn-down close-out)'.
+- Closeout audit 2026-10-11: re-checked origin/dev a3c47c6c72 - note_folder_repository.py CTE unchanged, consistent with the retirement.

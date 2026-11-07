@@ -1,0 +1,27 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "description": "Independent retained interpretation witness",
+  "extensions": {
+    "io.github.rmusser01.chatbook": {
+      "commands": [
+        "commands/independent.md"
+      ],
+      "hooks": "hooks.json",
+      "requires": {
+        "skill:review": [
+          "hook:guard"
+        ]
+      },
+      "variables": {
+        "TOKEN": {
+          "required": true,
+          "secret": false,
+          "type": "string"
+        }
+      },
+      "version": 1
+    }
+  },
+  "name": "retained-witness",
+  "version": "1.0.0"
+}

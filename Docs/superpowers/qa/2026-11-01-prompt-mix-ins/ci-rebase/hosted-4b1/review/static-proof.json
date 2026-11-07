@@ -1,0 +1,45 @@
+{
+  "base": "4b1e070c972320e1353b6bac7e185035db125571",
+  "source": {
+    "Tests/QA/test_project_chat_uat.py": {
+      "base_sha256": "fac12a11cf27ef3c2b2b40aa4542ffa73f194bbccf0e5df67607718848457e7a",
+      "final_sha256": "bff4182da1994ceb691a644f7c458fd3fc321d64bf58df51be60670eac985681"
+    },
+    "Tests/QA/test_project_chat_uat_support.py": {
+      "base_sha256": "0fdbe57039b0729d5b70e64b0d8bc189c62fb90fe88abd49c8250046e6c1746d",
+      "final_sha256": "8f22db83a9ebf3e3c5f2921894f838b1e745b181f07d6fa77c2f48c4c5a93329"
+    }
+  },
+  "original_uat_module_ast_preserved_except_helper_and_return": true,
+  "original_support_module_ast_preserved_except_new_control": true,
+  "original_assertion_count": 23,
+  "original_assertion_sequence_sha256": "cbbf791de861670aa22a20e9a5773aaa9a8a6c8993d6494d3c37b062a049ba10",
+  "original_timeout_keywords": [
+    "timeout=600 if os.name == 'nt' else 100",
+    "timeout=600 if os.name == 'nt' else 100",
+    "timeout=600 if os.name == 'nt' else 60"
+  ],
+  "helper_is_native_mount_gate_only": true,
+  "new_control": "test_approval_readiness_waits_for_children_without_filtering_rows",
+  "new_control_assertions": 7,
+  "existing_whole_file_derived_enrollment": true,
+  "frozen_paths": [
+    "tldw_chatbook",
+    "Tests/Performance",
+    "Tests/Architecture",
+    "Tests/CI",
+    "Tests/UI",
+    ".github/workflows",
+    "scripts",
+    "scripts/check_project_chat_uat.py",
+    "scripts/ui_pr_gate_census.txt",
+    "scripts/check_ui_pr_gate_census.py",
+    "pyproject.toml"
+  ],
+  "changed_frozen_paths": [],
+  "changed_non_documentation_paths": [
+    "Tests/QA/test_project_chat_uat.py",
+    "Tests/QA/test_project_chat_uat_support.py"
+  ],
+  "qualification": "Static read-only comparison; no app, test, native, performance, remote or Git mutation run by reviewer."
+}

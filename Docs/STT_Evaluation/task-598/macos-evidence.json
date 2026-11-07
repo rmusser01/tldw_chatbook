@@ -47,7 +47,7 @@
         "tldw_chatbook/UI/LLM_Management_Window.py",
         "tldw_chatbook/UI/Screens/library_screen.py",
         "tldw_chatbook/UI/Screens/llm_screen.py",
-        "tldw_chatbook/UI/Screens/model_browser_state.py",
+        "tldw_chatbook/Model_Artifacts/model_browser_state.py",
         "tldw_chatbook/UI/Screens/model_curated_view.py",
         "tldw_chatbook/UI/Screens/model_external_view.py",
         "tldw_chatbook/UI/Screens/model_installed_view.py",

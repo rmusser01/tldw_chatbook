@@ -1,0 +1,12 @@
+[
+  {
+    "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\remaining-04123805bbbf449d89844fbafbefdbbd\\results.xml",
+    "receipt": "schema-followup.xml.gz",
+    "sha256_uncompressed": "3f00d56c53878eec16dde1e5319d3382c0ebb63dd49a4509cf2bd2fb8e2d222b"
+  },
+  {
+    "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\cleanup-8aca5516903d408da67391bea8bdae2e\\results.xml",
+    "receipt": "cleanup.xml.gz",
+    "sha256_uncompressed": "65a0405dd9e5898ca975365f12b9f5b5036abec00c2c13a4c28cd1d71bff7bc2"
+  }
+]

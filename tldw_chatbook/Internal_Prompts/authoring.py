@@ -20,10 +20,12 @@ from .resolver import get_internal_prompt
 
 @dataclass(frozen=True)
 class OverrideState:
-    customized: bool          # resolved text != shipped default (override OR legacy)
-    default_changed: bool     # override table exists AND its baseline != current default hash
+    customized: bool  # resolved text != shipped default (override OR legacy)
+    default_changed: (
+        bool  # override table exists AND its baseline != current default hash
+    )
     has_override_table: bool  # a [internal_prompts.<sub>.<key>] table is present
-    active_text: str          # currently resolved text (editor prefill)
+    active_text: str  # currently resolved text (editor prefill)
 
 
 def baseline_hash(text: str) -> str:
@@ -35,9 +37,7 @@ def iter_specs_by_subsystem() -> list[tuple[str, list[PromptSpec]]]:
     grouped: dict[str, list[PromptSpec]] = {name: [] for name in order}
     for spec in CATALOG.values():
         grouped[spec.subsystem].append(spec)
-    return [
-        (name, sorted(grouped[name], key=lambda s: s.title)) for name in order
-    ]
+    return [(name, sorted(grouped[name], key=lambda s: s.title)) for name in order]
 
 
 def _split(prompt_id: str) -> tuple[str, str]:
@@ -47,6 +47,7 @@ def _split(prompt_id: str) -> tuple[str, str]:
 
 def _override_table(prompt_id: str) -> dict | None:
     from tldw_chatbook.config import get_cli_setting  # lazy
+
     subsystem, key = _split(prompt_id)
     raw = get_cli_setting("internal_prompts." + subsystem, key, None)
     return raw if isinstance(raw, dict) else None
@@ -71,6 +72,7 @@ def override_state(prompt_id: str) -> OverrideState:
 
 def save_override(prompt_id: str, text: str) -> bool:
     from tldw_chatbook.config import save_settings_to_cli_config  # lazy
+
     spec = CATALOG[prompt_id]
     subsystem, key = _split(prompt_id)
     return save_settings_to_cli_config(
@@ -92,6 +94,7 @@ def _legacy_differs_from_shipped(spec: PromptSpec) -> tuple[str, str] | None:
         get_cli_setting,
         DEFAULT_CONFIG_FROM_TOML,
     )
+
     section, _, key = spec.legacy_config_path.rpartition(".")
     if not section:
         return None
@@ -112,6 +115,7 @@ def _legacy_differs_from_shipped(spec: PromptSpec) -> tuple[str, str] | None:
 
 def reset_override(prompt_id: str) -> bool:
     from tldw_chatbook.config import delete_settings_from_cli_config  # lazy
+
     spec = CATALOG[prompt_id]
     subsystem, key = _split(prompt_id)
     ok = delete_settings_from_cli_config("internal_prompts." + subsystem, [key])

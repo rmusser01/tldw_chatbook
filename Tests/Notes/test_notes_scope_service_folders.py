@@ -9,7 +9,9 @@ import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
-from tldw_chatbook.Notes.notes_organization_repository import NotesOrganizationRepository
+from tldw_chatbook.Notes.notes_organization_repository import (
+    NotesOrganizationRepository,
+)
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
     FolderCapabilityError,
@@ -70,6 +72,27 @@ class RecordingFolderRepository:
             (
                 "page_child_folders",
                 {"parent_id": parent_id, "limit": limit, "offset": offset},
+            )
+        )
+        return self.folder_child_page
+
+    def page_folders(
+        self,
+        *,
+        query: str = "",
+        limit: int,
+        offset: int,
+        exclude_subtree_of: str | None = None,
+    ) -> NoteFolderChildPage:
+        self._record(
+            (
+                "page_folders",
+                {
+                    "query": query,
+                    "limit": limit,
+                    "offset": offset,
+                    "exclude_subtree_of": exclude_subtree_of,
+                },
             )
         )
         return self.folder_child_page
@@ -504,6 +527,17 @@ LOCAL_FOLDER_CASES = [
         id="branch_page_folder",
     ),
     pytest.param(
+        "page_note_folders",
+        {"query": "thes", "limit": 20, "offset": 40, "exclude_subtree_of": "f-1"},
+        "notes.list.local",
+        (
+            "page_folders",
+            {"query": "thes", "limit": 20, "offset": 40, "exclude_subtree_of": "f-1"},
+        ),
+        # TASK-34000.28 (N-23): the folder pickers' all-folders page.
+        id="picker_page_folders",
+    ),
+    pytest.param(
         "page_note_placements",
         {"parent_id": "folder-1", "limit": 10, "offset": 20},
         "notes.list.local",
@@ -609,6 +643,7 @@ LOCAL_FOLDER_CASES = [
 
 NEW_TREE_SERVICE_METHODS = {
     "page_note_folder_children": "page_child_folders",
+    "page_note_folders": "page_folders",
     "page_note_placements": "page_note_placements",
     "locate_note_tree_folder": "locate_note_tree_folder",
     "locate_note_tree_placement": "locate_note_tree_placement",
@@ -648,6 +683,7 @@ async def test_branch_page_tree_locator_affected_parent_and_placement_filter_res
     repository_method = NEW_TREE_SERVICE_METHODS[method_name]
     expected_result = {
         "page_child_folders": repository.folder_child_page,
+        "page_folders": repository.folder_child_page,
         "page_note_placements": repository.placement_page,
         "locate_note_tree_folder": repository.folder_location,
         "locate_note_tree_placement": repository.folder_location,
@@ -877,6 +913,7 @@ async def test_local_folder_methods_fail_closed_when_repository_is_missing(
         == {
             "list_note_folder_children": "list",
             "page_note_folder_children": "list",
+            "page_note_folders": "list",
             "page_note_placements": "list",
             "locate_note_tree_folder": "list",
             "locate_note_tree_placement": "list",
@@ -935,6 +972,7 @@ async def test_unsupported_folder_scopes_fail_closed_without_backend_calls(
     operation = {
         "list_note_folder_children": "list",
         "page_note_folder_children": "list",
+        "page_note_folders": "list",
         "page_note_placements": "list",
         "locate_note_tree_folder": "list",
         "locate_note_tree_placement": "list",
@@ -1088,7 +1126,9 @@ async def test_synchronized_folder_create_rejects_until_group_ready(
         )
     repository = LocalNoteFolderRepository(notes)
     organization = NotesOrganizationSyncService(
-        notes_repository=NotesOrganizationRepository(notes, server_profile_id="server-a"),
+        notes_repository=NotesOrganizationRepository(
+            notes, server_profile_id="server-a"
+        ),
         state_repository=state,
     )
     service = NotesScopeService(
@@ -1108,9 +1148,12 @@ async def test_synchronized_folder_create_rejects_until_group_ready(
         )
 
     assert repository.list_children(parent_id=None, limit=10, offset=0).folders == ()
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM notes_organization_sync_intents"
-    ).fetchone()[0] == 0
+    assert (
+        notes.get_connection()
+        .execute("SELECT COUNT(*) FROM notes_organization_sync_intents")
+        .fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -1158,13 +1201,19 @@ async def test_ready_folder_create_commits_mutation_and_one_explicit_intent(
         sync_v2_profile={"server_profile_id": "server-a"},
     )
 
-    row = notes.get_connection().execute(
-        "SELECT domain, object_id, operation, payload_json, source_version "
-        "FROM notes_organization_sync_intents"
-    ).fetchone()
-    sync_id = notes.get_connection().execute(
-        "SELECT sync_id FROM note_folders WHERE id = ?", (folder.folder_id,)
-    ).fetchone()[0]
+    row = (
+        notes.get_connection()
+        .execute(
+            "SELECT domain, object_id, operation, payload_json, source_version "
+            "FROM notes_organization_sync_intents"
+        )
+        .fetchone()
+    )
+    sync_id = (
+        notes.get_connection()
+        .execute("SELECT sync_id FROM note_folders WHERE id = ?", (folder.folder_id,))
+        .fetchone()[0]
+    )
     assert tuple(row) == (
         "notes.folder",
         sync_id,
@@ -1229,9 +1278,13 @@ async def test_ready_scope_managed_membership_routes_through_organization_owner(
     )
 
     assert len(memberships) == 1
-    row = notes.get_connection().execute(
-        "SELECT operation, payload_json FROM notes_organization_sync_intents "
-        "WHERE domain = 'notes.folder_link'"
-    ).fetchone()
+    row = (
+        notes.get_connection()
+        .execute(
+            "SELECT operation, payload_json FROM notes_organization_sync_intents "
+            "WHERE domain = 'notes.folder_link'"
+        )
+        .fetchone()
+    )
     assert row["operation"] == "upsert"
     assert json.loads(row["payload_json"])["note_id"] == note_id

@@ -1,0 +1,56 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_fixed_v21_to_v22_recovery_route_preserves_historical_variants ______
+
+tmp_path = PosixPath('/private/tmp/console-dev-recovery-route-root-red-01a0fa6c/test_fixed_v21_to_v22_recovery0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10dd06930>
+
+    def test_fixed_v21_to_v22_recovery_route_preserves_historical_variants(tmp_path, monkeypatch):
+        from dataclasses import replace
+        from tldw_chatbook.DB.recovery_operations import _AgentRunsAdapter
+        # TDD: exercise the exact native SQL before wiring its permanent route.
+        statements=[]
+        buffer=''
+        for line in Path('tldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql').read_text().splitlines(True):
+            if line.lstrip().startswith('--'):
+                continue
+            buffer += line
+            if sqlite3.complete_statement(buffer):
+                statement=buffer.strip().rstrip(';')
+                buffer=''
+                if statement not in ('PRAGMA foreign_keys=ON','BEGIN IMMEDIATE','COMMIT'):
+                    statements.append(statement)
+        native=_AgentRunsAdapter.schema_policy
+        def proposed(self):
+            policy=native(self)
+            return replace(policy, migration_steps=policy.migration_steps+((21,22,tuple(statements)),))
+        monkeypatch.setattr(_AgentRunsAdapter,'schema_policy',proposed)
+        for index,schema in enumerate(sql for version,sql in _AGENT_RUNS_SCHEMA if version==21):
+            path=tmp_path/f'predecessor-{index}.db'
+            with closing(sqlite3.connect(path)) as connection:
+                for sql in sorted(schema,key=lambda sql:not sql.startswith('CREATE TABLE')):
+                    if sql.startswith('CREATE TABLE sqlite_sequence'):
+                        continue
+                    connection.execute(sql)
+                connection.execute('INSERT INTO schema_version VALUES (21)')
+                connection.execute("INSERT INTO agent_definitions(id,name,max_wall_seconds,provider,params_json,created_at,updated_at) VALUES ('kept','Kept',12.5,'openai','{}','then','then')")
+                connection.commit()
+            path.chmod(0o600)
+>           assert validate_candidate(owner(),path,Event(),migrate=True)==()
+E           AssertionError: assert ('sqlite_vali...unavailable',) == ()
+E             
+E             Left contains one more item: 'sqlite_validation_unavailable'
+E             Use -v to get more diff
+
+Tests/Backup_Recovery/test_agent_runs_recovery_schema.py:207: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 09:06:53.964 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 09:06:54.036 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 09:06:54.095 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 09:06:54.099 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Backup_Recovery/test_agent_runs_recovery_schema.py::test_fixed_v21_to_v22_recovery_route_preserves_historical_variants
+1 failed in 0.87s

@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_archive_recovery_cards.py",
+    "Tests/UI/test_console_archive_recovery_flow.py",
+    "Tests/UI/test_console_runtime_ownership.py::test_attach_and_detach_cover_exactly_the_same_slot_set",
+    "Tests/UI/test_console_runtime_ownership.py::test_view_hook_inventory_contains_only_disposable_projections",
+    "Tests/UI/test_console_runtime_ownership.py::test_detach_releases_the_old_chat_screen_from_every_runtime_hook",
+    "Tests/Chat/test_console_viewless_hooks.py::test_every_slot_names_a_real_attribute_on_the_target_it_declares",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--maxfail=4",
+    "--junitxml=Docs\\superpowers\\qa\\2026-10-31-pr3162-backlog-rebase\\mounted.xml"
+  ],
+  "source_head": "52269c3dd4b330a5cf6ccd938e7ea1f467a05cf0",
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\mounted-ff0b133d20874edf8fb366f662a84486"
+}

@@ -54,7 +54,15 @@ from pathlib import Path
 #: losing any, so the pin is re-based down to that measured 63 -- see
 #: ``Docs/superpowers/specs/2026-09-01-library-screen-decomposition-
 #: design.md`` ("PR 0b").
-LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 63
+#:
+#: TASK-21243 (2026-10) re-based it a fourth time: between 2026-09-01 and
+#: 2026-10-11 the census had drifted back UP to 67 (4 sites over the pin;
+#: dev's CI last ran 2026-09-06, so nothing bit). Converting the Export
+#: family -- the section "Export..." shell crossing plus the export canvas's
+#: own submit/quality/destination presses -- removed 5 statements
+#: (library_export_controller.py: 937/1291/1315/1409/1422 at the dev base
+#: ``9f8533686c``), taking the census to 62; the pin follows it down.
+LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 62
 
 #: TASK-27019: how far the pin may sit above the measured count before the
 #: anti-slack guard (``test_census_pin_is_not_left_slack`` below) fires.

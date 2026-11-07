@@ -1,0 +1,17 @@
+{
+  "tag": "control1",
+  "original": true,
+  "checkout_revision": "e9c894e9bc9696aca60317fc2029f6709dcf9d0b",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/home_screen.py": "961032a6e48ac4e00462ba3598a3d07c67a86a0f169d84ba75161d7529579462",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "17fabad938cb43559f2ad9eb9bee1b551238239fbafa2190bac1801614bb2fc1",
+    "tldw_chatbook/Utils/textual_css_fastpath.py": "945b9a897bf9a22c467fa9b6cbd8da6e8e986a6f0a224a8036f47288e132bd15",
+    "tldw_chatbook/UI/Console_Modules/session.py": "98971da6d61b4e766fc41c5a9b629d3fd768760556f364d921e35c28ee50570b",
+    "tldw_chatbook/Chat/console_preparation_reads.py": "cedea6b6e5f3dde996d0715050acaf91ce481e776c3f33bc0927d2048ac6399b",
+    "tldw_chatbook/UI/Console_Modules/config_sync.py": "4145494975d4b49cea96a954e911ff1041bd97bfe6dc50126aa534731fc708b8",
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": "af0da9d1ead69d97b4ac8e5dab169411726bc40b544032a3283bd0d5ab3560ae",
+    "tldw_chatbook/UI/Console_Modules/workspace.py": "a6153edb80fb68c0e8029b3f243192ee9991600e0ee67a864ae521e88689ef3f"
+  },
+  "exit_code": 0,
+  "seconds": 51.01600000000326
+}

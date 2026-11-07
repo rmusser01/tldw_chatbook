@@ -25,6 +25,7 @@ from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
 from tldw_chatbook.Tools.virtual_cli_impls import (
     MAX_ARGV_ITEMS,
     VIRTUAL_CLI_COMMANDS,
+    VIRTUAL_CLI_USAGE as _USAGE,
     VirtualCliCommand,
     VirtualCliArgumentError,
     VirtualCliRegistry,
@@ -45,6 +46,7 @@ from .local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
 from .mcp_tool_provider import MCPPendingCall, approval_effects_for_tool
@@ -60,18 +62,6 @@ _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
 _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
-_USAGE = {
-    "ls": "ls [PATH]",
-    "cat": "cat PATH [--offset N] [--limit N]",
-    "grep": "grep PATTERN [--mode content|files|count]",
-    "find": "find GLOB",
-    "stat": "stat PATH",
-    "git_status": "git_status [PATH]",
-    "git_diff": "git_diff [--staged] [--range REF] [--path PATH] [--stat]",
-    "git_log": "git_log [--count N] [--path PATH]",
-    "git_blame": "git_blame PATH [--start N] [--end N]",
-    "git_branches": "git_branches",
-}
 
 _MODEL_SCHEMA = {
     "type": "object",
@@ -85,7 +75,11 @@ _MODEL_SCHEMA = {
             "type": "array",
             "items": {"type": "string", "maxLength": 4096},
             "maxItems": MAX_ARGV_ITEMS,
-            "description": "Arguments for the selected command; no shell syntax.",
+            "description": (
+                "Arguments for the selected command; no shell syntax. "
+                "Usage: " + "; ".join(_USAGE.values()) + ". "
+                "ls always includes hidden entries; -l adds type/permissions and byte size."
+            ),
         },
     },
     "required": ["command", "argv"],
@@ -233,6 +227,21 @@ class VirtualCliProvider:
         self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         self._stamps_lock = threading.Lock()
 
+    def path_root_aliases(self) -> tuple[str, ...] | None:
+        """Return the ``root_alias`` values ``virtual_cli`` accepts this run.
+
+        Mirrors ``LocalToolProvider.path_root_aliases`` (TASK-33940.1): the
+        workspace-context note offers exactly these aliases.
+
+        Returns:
+            The sorted aliases of the usable admitted roots (``()`` when none
+            survived construction), or ``None`` for a legacy provider rooted at
+            ``workspace_root`` with no alias routing.
+        """
+        if self._admitted_roots is None:
+            return None
+        return tuple(sorted(self._admitted_roots))
+
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return [
             ToolCatalogEntry(
@@ -306,9 +315,11 @@ class VirtualCliProvider:
         try:
             validated = model.model_validate(dict(args))
         except PydanticValidationError as exc:
-            raise VirtualCliArgumentError(
-                "virtual_cli arguments do not match the tool schema"
-            ) from exc
+            message = "virtual_cli arguments do not match the tool schema"
+            command = args.get("command")
+            if isinstance(command, str) and command in _USAGE:
+                message += f"\nUsage: {_USAGE[command]}"
+            raise VirtualCliArgumentError(message) from exc
         alias = (
             validated.root_alias
             if isinstance(validated, _AdmittedVirtualCliInput)
@@ -558,7 +569,11 @@ class VirtualCliProvider:
                 if exc.code == "root_pin_failed":
                     return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
                 if exc.code not in {"invalid_request", "tool_failure"}:
-                    return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+                    return ToolResult(
+                        ok=False,
+                        error=LOCAL_WORKER_FAILED_REFUSAL,
+                        dispatch_state="uncertain",
+                    )
                 error = redact_root_locator(
                     str(exc),
                     self._error_redaction_root(authority),

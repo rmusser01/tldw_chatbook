@@ -1,0 +1,62 @@
+{
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "baseline": "0652d3fe258d974c06680889f558a2a993de75ed8da7300cba970d471d932a7a",
+    "current": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13",
+    "unchanged": false
+  },
+  "Tests/Chat/test_console_archive_recovery_followup.py": {
+    "baseline": "c2f69ace650aa9d2d8c2efce697dac223de54fb41f29963b166bd258cbcdffe5",
+    "current": "540fcc5823293eb755e4dcd18585400c2e8970a9e9ac45ff9e5c5909f78813ef",
+    "unchanged": false
+  },
+  "Tests/Chat/test_console_trace_service.py": {
+    "baseline": "38836f31fceccb6b7d8ae7b49a01633ec80fd1ff0cb30ad9872b07d00abcbce8",
+    "current": "624a73f62a88b7585d0211944e39f549b6fe4dcdfe85e81225dde923b6a30f20",
+    "unchanged": false
+  },
+  "tldw_chatbook/Chat/console_agent_bridge.py": {
+    "baseline": "e957c9d4e2a07d5d49908dfbe46e116fc3f8a37823f8b3dbe25b9736f9f3a329",
+    "current": "6496825e63066a05541d900a01e1dd4f790bcd04dfee5af17e630a1ce71bb912",
+    "unchanged": false
+  },
+  "tldw_chatbook/Chat/console_provider_gateway.py": {
+    "baseline": "f0069af99f83bdc03fcb75ac0bbb31490a509b756761a3d54af8e35dfa71ef96",
+    "current": "f0069af99f83bdc03fcb75ac0bbb31490a509b756761a3d54af8e35dfa71ef96",
+    "unchanged": true
+  },
+  "tldw_chatbook/Chat/console_runtime.py": {
+    "baseline": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+    "current": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+    "unchanged": true
+  },
+  "tldw_chatbook/Chat/console_trace_runtime.py": {
+    "baseline": "117ab373bd490cdea7de58b619767d64b0dac5d8f02cd7297e0b5817204a21d4",
+    "current": "117ab373bd490cdea7de58b619767d64b0dac5d8f02cd7297e0b5817204a21d4",
+    "unchanged": true
+  },
+  "tldw_chatbook/Chat/console_trace_service.py": {
+    "baseline": "de7b0d87d388e0fca41c31f7d2272251a446d94bb8313f3dc1682ba7fbb245c9",
+    "current": "2e769ebbbb4e7b5917e4a8e84f47e3b0c38ce87033444c202eaeca298b6b213e",
+    "unchanged": false
+  },
+  "tldw_chatbook/Chat/console_trace_provenance.py": {
+    "baseline": "3d5e9632914eaf2693a8cb24c775a1c69205e3519e378e1803d14f7d38b31e9d",
+    "current": "3d5e9632914eaf2693a8cb24c775a1c69205e3519e378e1803d14f7d38b31e9d",
+    "unchanged": true
+  },
+  "tldw_chatbook/Chat/console_prepared_request.py": {
+    "baseline": "de320177b5abda5864da6cd63422bff1b0777e2509b40f901e1f949e322181eb",
+    "current": "de320177b5abda5864da6cd63422bff1b0777e2509b40f901e1f949e322181eb",
+    "unchanged": true
+  },
+  "tldw_chatbook/Chat/console_thinking_history.py": {
+    "baseline": "ff715253156e720969724e3cba44ce4349330c22f2e1ea769e5e2bd540dc1f06",
+    "current": "ff715253156e720969724e3cba44ce4349330c22f2e1ea769e5e2bd540dc1f06",
+    "unchanged": true
+  },
+  "backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md": {
+    "baseline": "7ad5d2bebcb2c14c181ff106d6343dd12b45693ae4ed4c91a332a6095c4f15c6",
+    "current": "b83ab16275499954560c5888a2a98e3ca81c286f5bc2e84c37d1fffd9047c614",
+    "unchanged": false
+  }
+}

@@ -53,11 +53,31 @@ class _Binding:
 def _selected(source, owner, canonical):
     if owner in {"mcp.local", "mcp.permissions", "mcp.context"}:
         from ..MCP.recovery_activation import selected_path
+        from . import raw_participants as raw
 
         if getattr(source, "_recovery_original_path", None) != canonical:
             return canonical
-        return selected_path(canonical)
+        return selected_path(canonical, retained=raw.mcp_observation(source, canonical))
     return canonical
+
+
+def canonical_path(source):
+    """Name the installed canonical observer after its fresh binding proof."""
+    bound = _BINDINGS.get(source)
+    kind = _kind(source)
+    if bound is None or kind is None or type(source) is not bound.source_type:
+        raise bootstrap.RecoveryRequired("mcp_source_not_supported")
+    config = bound.config
+    data = config._CONFIG_CACHE
+    if (
+        sys.modules.get("tldw_chatbook.config") is not config
+        or profile_paths.lexical_path(config._get_effective_config_path())
+        != bound.profile
+        or config._CONFIG_CACHE_SOURCE != bound.profile
+        or data is None
+    ):
+        raise bootstrap.RecoveryRequired("mcp_source_selection_changed")
+    return profile_paths.lexical_path(profile_paths.user_data_dir(data) / kind[2])
 
 
 def _kind(source):
@@ -251,12 +271,12 @@ def guarded(function):
                     raise bootstrap.RecoveryRequired("mcp_source_already_bound")
                 result = function(source, *args, **kwargs)
                 bind(source)
-                with raw._scope(source, ROUTE, writing=True):
+                with raw.scope(source, ROUTE, writing=True):
                     return result
         operation = None
         state = None
         try:
-            with raw._scope(source, ROUTE, writing=True) as operation:
+            with raw.scope(source, ROUTE, writing=True) as operation:
                 state = raw._states[operation]
                 result = function(source, *args, **kwargs)
             return result
@@ -272,7 +292,7 @@ def _operation(source):
     from . import raw_participants as raw
 
     operation = getattr(raw._local, "operation", None)
-    state = raw._check(operation)
+    state = raw.check(operation)
     if state.source is not source or state.route != ROUTE:
         raise bootstrap.RecoveryRequired("mcp_source_not_supported")
     return operation, state
@@ -288,7 +308,7 @@ def reader(source):
             yield handle
         return
     check_destination(state, state.selected)
-    with raw._file(operation, state.selected, "r") as handle:
+    with raw.file(operation, state.selected, "r") as handle:
         yield handle
 
 
@@ -306,16 +326,16 @@ def write_json(source, payload):
         temporary.replace(source.path)
         state.mcp_effects = True
         return
-    raw._mkdirs(operation)
+    raw.mkdirs(operation)
     temporary = state.selected.with_suffix(state.selected.suffix + ".tmp")
     try:
-        with raw._file(operation, temporary, "w") as handle:
+        with raw.file(operation, temporary, "w") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
         check_destination(state, state.selected)
-        raw._replace(operation, temporary, state.selected)
+        raw.replace(operation, temporary, state.selected)
     finally:
         if not state.uncertain:
-            raw._remove_temporary(operation, temporary)
+            raw.remove_temporary(operation, temporary)
 
 
 def stamp_payload(source, payload, stamp):
@@ -332,7 +352,7 @@ def backup_corrupt(source):
         source.path.replace(backup)
         state.mcp_effects = True
         return
-    raw._check(operation, backup, writing=True)
+    raw.check(operation, backup, writing=True)
     check_destination(state, state.selected)
     check_destination(state, backup)
     try:

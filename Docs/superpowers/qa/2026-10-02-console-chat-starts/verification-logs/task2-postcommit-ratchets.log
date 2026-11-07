@@ -1,0 +1,8 @@
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline .superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/task2-format.json --head HEAD
+EXIT: 0
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline .superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/task2-format-extra.json --head HEAD
+EXIT: 0
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline .superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/task2-format-composer.json --head HEAD
+EXIT: 0
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline .superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/task2-format-queue-ui.json --head HEAD
+EXIT: 0

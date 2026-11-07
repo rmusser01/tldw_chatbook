@@ -1,0 +1,2 @@
+Tests/UI/test_console_send_draft_snapshot.py: formatter-required hunk overlaps changed lines
+Tests/UI/test_console_send_draft_snapshot.py: normalized formatter debt grew from 49 to 50

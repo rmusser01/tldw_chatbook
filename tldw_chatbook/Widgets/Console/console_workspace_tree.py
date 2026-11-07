@@ -663,9 +663,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         if hovered_key is not None:
             current_hovered_node = self.get_node_at_line(self.hover_line)
             current_hovered_data = (
-                current_hovered_node.data
-                if current_hovered_node is not None
-                else None
+                current_hovered_node.data if current_hovered_node is not None else None
             )
             if current_hovered_data is None or current_hovered_data.key != hovered_key:
                 self.hover_line = -1
@@ -700,13 +698,13 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         if node.data is not None and node.data.selected:
             label.stylize("bold")
         toggle = (
-            self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE
-        ) if node.allow_expand else ""
+            (self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE)
+            if node.allow_expand
+            else ""
+        )
         toggle_length = len(toggle)
         marker = (
-            ("| " if ascii_glyph_mode() else "▌ ")
-            if node is self.cursor_node
-            else "  "
+            ("| " if ascii_glyph_mode() else "▌ ") if node is self.cursor_node else "  "
         )
         marker_style = style if node is self.cursor_node else base_style
         label = Text.assemble(
@@ -746,14 +744,10 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             return None
         if data.kind == "conversation":
             icon = data.action_icon or ("[chat]" if ascii_glyph_mode() else "💬")
-            return (
-                icon
-                + " "
-                * max(
-                    0,
-                    conversation_action_width(ascii_mode=ascii_glyph_mode())
-                    - cell_len(icon),
-                )
+            return icon + " " * max(
+                0,
+                conversation_action_width(ascii_mode=ascii_glyph_mode())
+                - cell_len(icon),
             )
         return _MENU_AFFORDANCES.get(data.kind)
 
@@ -794,12 +788,12 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         """Return the complete literal label measured for truncation."""
 
         toggle = (
-            self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE
-        ) if node.allow_expand else ""
+            (self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE)
+            if node.allow_expand
+            else ""
+        )
         marker = (
-            ("| " if ascii_glyph_mode() else "▌ ")
-            if node is self.cursor_node
-            else "  "
+            ("| " if ascii_glyph_mode() else "▌ ") if node is self.cursor_node else "  "
         )
         return f"{toggle}{marker}{node.label.plain}"
 
@@ -1151,9 +1145,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             if zone is not None
             else region.right - 1
         )
-        anchor_y = region.y + max(
-            0, line - int(self.scroll_offset.y)
-        ) + 1
+        anchor_y = region.y + max(0, line - int(self.scroll_offset.y)) + 1
         conversation_id, title, native_sid = _menu_conversation_payload(data)
         self.post_message(
             WorkspaceTreeMenuRequested(

@@ -1,0 +1,21 @@
+-- body of 'Typed link test'
+See [[Gardening log]] for soil notes. Docs: [site](https://example.test/soil) Also [[Nonexistent title]]
+-- edges from 'Typed link test' (target titles)
+Gardening log
+-- linkers of 'Gardening log'
+Typed link test
+-- live notes titled 'Nonexistent title'
+0
+-- live notes
+124
+-- sqlite_stat1 present?
+0
+-- resolver timing
+Gardening log|2de77df2-0d3f-4bc3-9776-622f3a1a2f30
+QUERY PLAN
+`--SCAN notes
+-- resolver timing, 124 live notes, sqlite_stat1 absent (three runs)
+-- resolver timing from Python (sqlite3 CLI .timer prints nothing non-interactively); plan: [(2, 0, 216, 'SCAN notes')]
+run 1: 0.049 ms -> [('Gardening log', '2de77df2-0d3f-4bc3-9776-622f3a1a2f30')]
+run 2: 0.022 ms -> [('Gardening log', '2de77df2-0d3f-4bc3-9776-622f3a1a2f30')]
+run 3: 0.020 ms -> [('Gardening log', '2de77df2-0d3f-4bc3-9776-622f3a1a2f30')]

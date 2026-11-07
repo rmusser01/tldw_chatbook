@@ -1,0 +1,17 @@
+{
+  "baseline": {
+    "ruff_exit": 1,
+    "ruff_count": 34,
+    "whole_source_formatted": false
+  },
+  "current": {
+    "ruff_exit": 1,
+    "ruff_count": 34,
+    "whole_source_formatted": false
+  },
+  "signatures_equal": true,
+  "one_argument_deletion_only": true,
+  "source_sha256": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+  "test_sha256": "01add45624951c6aad3d37114115da33a61210759942db2fbcd3984391eb1266",
+  "post_green_changes": "Import wrapping/order only; runtime remains the exact one-argument deletion."
+}

@@ -647,3 +647,14 @@ def test_pending_reply_queue_is_capped_at_the_aggregate_reply_bound() -> None:
     replies = model.pending_replies()
     assert sum(map(len, replies)) == 4 * 1024
     assert all(reply == b"\x1b[0n" for reply in replies)
+
+
+def test_snapshot_tracks_bracketed_paste_enable_disable_and_reset() -> None:
+    model = TerminalScreenModel(columns=20, rows=2)
+    assert not model.snapshot().bracketed_paste
+    model.feed(b"\x1b[?2004h")
+    assert model.snapshot().bracketed_paste
+    model.feed(b"\x1b[?2004l")
+    assert not model.snapshot().bracketed_paste
+    model.feed(b"\x1b[?2004h\x1bc")
+    assert not model.snapshot().bracketed_paste

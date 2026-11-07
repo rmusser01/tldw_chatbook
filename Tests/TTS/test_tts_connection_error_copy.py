@@ -104,8 +104,11 @@ async def test_openai_backend_raises_the_typed_error_on_connection_failure(
     monkeypatch.setattr(backend, "client", StubClient())
 
     request = OpenAISpeechRequest(
-        model="mock-model", input="hi", voice="mock-voice",
-        response_format="wav", speed=1.0,
+        model="mock-model",
+        input="hi",
+        voice="mock-voice",
+        response_format="wav",
+        speed=1.0,
     )
     with pytest.raises(TTSBackendConnectionError):
         async for _chunk in backend.generate_speech_stream(request):

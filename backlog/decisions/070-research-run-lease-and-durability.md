@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-18
 - **Task:** task-19300 (Make research runs durable, resumable jobs; renumbered from task-18060 after an ID collision)
-- **Related:** ADR-068 (local research execution engine — this layers
+- **Related:** ADR-315 (local research execution engine — this layers
   durability onto its engine); tldw_server `app/core/Jobs/` (the lease model
   adopted); `Docs/superpowers/specs/2026-08-18-durable-research-jobs-design.md`
   (design); PR #1822 review (the live/expired release semantics and
@@ -11,7 +11,7 @@
 
 ## Context
 
-ADR-068's engine executes a run inside one app session with no execution
+ADR-315's engine executes a run inside one app session with no execution
 ownership: `execute_run` refuses only terminal runs, and the window's
 exclusive-worker guard is per-session. Two processes (or a future scheduler)
 could execute the same run concurrently — duplicate searches, duplicate

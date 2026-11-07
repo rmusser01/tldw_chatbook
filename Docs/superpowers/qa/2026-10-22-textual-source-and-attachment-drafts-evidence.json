@@ -1,0 +1,792 @@
+{
+  "schema_version": 1,
+  "utc": "2026-10-22T18:15:03.362743+00:00",
+  "base_dev": "7700c63a688355a2df595941b8b2b4dc8a819074",
+  "source_commits": {
+    "36130": "7329a3221a146f420ad0a6c7505d9556e1b4fc50",
+    "36131": "89bc95779e49448255275fecb61a8e680b9aab05",
+    "36132": "c0990bf3cfa1284e13ab7ac0340e25d1682746ff"
+  },
+  "runs": [
+    {
+      "label": "task36130-red-1",
+      "suites": [
+        {
+          "tests": "7",
+          "failures": "3",
+          "errors": "0",
+          "skipped": "0",
+          "time": "69.246"
+        }
+      ],
+      "receipts": {
+        "command.json": "557b7e399c511fb4a13ff7faf59e61a7ae0b08ce896c16f1c738c50915ab186d",
+        "result.xml": "01d9ef3349639bc1b11d697bd10acb6f064536646537f4055ae295d300a24b3b",
+        "run.log": "89e2ad132c13000e382d3d9eddc7562501d62c22c31a395a74e73f224efe2177"
+      },
+      "path": ".test-tmp/task-36130-36132/task36130-red-1"
+    },
+    {
+      "label": "task36130-final-green",
+      "suites": [
+        {
+          "tests": "7",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0",
+          "time": "69.176"
+        }
+      ],
+      "receipts": {
+        "command.json": "26b9208d94228725e3f9ea6b4cca6a8897c8eda7955b50d4313f6d8f0a630778",
+        "result.xml": "48f2a4623ad86ecd0aa5b5cc906c532a25ac53246caf2cf97704ee4e661320bd",
+        "run.log": "4357179cc76d4caf7f9f8095a6d802227b52ce4fc4803615dc569a6cb58de139"
+      },
+      "path": ".test-tmp/task-36130-36132/task36130-final-green"
+    },
+    {
+      "label": "task36130-adjacent-1",
+      "suites": [
+        {
+          "tests": "18",
+          "failures": "0",
+          "errors": "13",
+          "skipped": "0",
+          "time": "51.666"
+        }
+      ],
+      "receipts": {
+        "command.json": "ba5016eed61477b879c8534c0b9b8d040ca9f94153861231e1f7418c278a917a",
+        "result.xml": "ff72f5e51a5330583fc9525e33fb114e1d4431ab8e80967bb1e265dfb18430de",
+        "run.log": "bbe693e9fdea2560f5a39fc0aba1755bb4e4dabd150f23c3f9e2dcb6749b5c9c"
+      },
+      "path": ".test-tmp/task-36130-36132/task36130-adjacent-1"
+    },
+    {
+      "label": "task36131-red",
+      "suites": [
+        {
+          "tests": "4",
+          "failures": "2",
+          "errors": "0",
+          "skipped": "0",
+          "time": "136.835"
+        }
+      ],
+      "receipts": {
+        "command.json": "29ad3dc3793923b86ca8fd6be7ad6a796a97bd37a384f83b43260523c811e4a2",
+        "result.xml": "b2c4ec57f2ce453206baa8d0eb92b913f0d0bd73c62be8d36ac503b1f85dd17f",
+        "run.log": "c8eb5dd74c4d90bfdaf33ebb69580c239f6e3457afeca6207b858b5de9335d2a"
+      },
+      "path": ".test-tmp/task-36130-36132/task36131-red"
+    },
+    {
+      "label": "task36131-green",
+      "suites": [
+        {
+          "tests": "4",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0",
+          "time": "114.888"
+        }
+      ],
+      "receipts": {
+        "command.json": "dcb17289faf4613291aee5cccd5d052ca98ef641ba8ea29a1f1b424ecaeb39ac",
+        "result.xml": "d1b8fafcd36eb8cdca746013de27a20328e8fa0dcb7c6d9dad6139e46b90911f",
+        "run.log": "5c738e77c8cbfcebf8a63e7b1acdec795570a51c663f9e4e1fe6e777895be678"
+      },
+      "path": ".test-tmp/task-36130-36132/task36131-green"
+    },
+    {
+      "label": "task36131-adjacent",
+      "suites": [
+        {
+          "tests": "22",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0",
+          "time": "278.110"
+        }
+      ],
+      "receipts": {
+        "command.json": "5e478d7d7a9a4c30552f1ff523d6d21790fc73d7eb19402d8918deefc4516f7c",
+        "result.xml": "75a28198ec787c22216d7be57d8f6b672d0bcbd12bf6b41eace771b98b0e183b",
+        "run.log": "864f43e067ddaf9aa25d8ce61890ef24646d080af7721dc080d1a88f490ec198"
+      },
+      "path": ".test-tmp/task-36130-36132/task36131-adjacent"
+    },
+    {
+      "label": "task36132-red",
+      "suites": [
+        {
+          "tests": "4",
+          "failures": "2",
+          "errors": "0",
+          "skipped": "0",
+          "time": "35.516"
+        }
+      ],
+      "receipts": {
+        "command.json": "5e80bd10fae6bfc66d793de24a8aae0160d8857fa91c13a2a4d1c7ad45d43aa5",
+        "result.xml": "5bee4ce022570d6721494079dd57f191f054b7913bce151f877ee083da030ece",
+        "run.log": "80be8cdce34367d042a7990d72dff946d6817e8dbfbc35b4ddf110aa5d9d38c4"
+      },
+      "path": ".test-tmp/task-36130-36132/task36132-red"
+    },
+    {
+      "label": "task36132-green-final",
+      "suites": [
+        {
+          "tests": "4",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0",
+          "time": "42.161"
+        }
+      ],
+      "receipts": {
+        "command.json": "80bdf1186d959f02499d036a315ba78e68cddfec4e66d6fb5b2d13d31711def8",
+        "result.xml": "c31681913b3c38ce4be4ae19c44777802051ef4a2f69dd8636c09c67ccdf178f",
+        "run.log": "45826dc5439f8808b242c5717807baaf801e576a40fb1ce206162fd5ac02ab10"
+      },
+      "path": ".test-tmp/task-36130-36132/task36132-green-final"
+    },
+    {
+      "label": "task36132-adjacent",
+      "suites": [
+        {
+          "tests": "19",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0",
+          "time": "78.863"
+        }
+      ],
+      "receipts": {
+        "command.json": "bdc72ac7d5a9a7ab93687d86e1e7cecfc247e2b420139233af33ac0f4f0627f2",
+        "result.xml": "096efc627579f42eb3e2d4880054cd195df45482e16818dde9138a5c08c85aca",
+        "run.log": "41d1bbe8620dd561663269e27f50d3d4a31b49f123869fa8a1d0b59b5693e676"
+      },
+      "path": ".test-tmp/task-36130-36132/task36132-adjacent"
+    },
+    {
+      "label": "integration-census-service-contracts",
+      "suites": [
+        {
+          "tests": "87",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0",
+          "time": "11.012"
+        }
+      ],
+      "receipts": {
+        "command.json": "40552f253f5927566e88339fe2cc99c695e9d8a8c2270fab70a660f6941cf97c",
+        "result.xml": "87dd88a5893ef62a91411844d1aa9444797b86f7a956e46edce0b770313b38b0",
+        "run.log": "1ed36f5760450b510c15fa14724dec3ca4f4fae31578816255b76271d9aace66"
+      },
+      "path": ".test-tmp/task-36130-36132/integration-census-service-contracts"
+    }
+  ],
+  "source_fingerprints": {
+    "tldw_chatbook/UI/STTS_Window.py": {
+      "utf8_lf_sha256": "dac5d22a25386ee8b2f2790db4eb3403fc87ea74da95c1b72b36a746f78b9b63"
+    },
+    "tldw_chatbook/UI/Screens/personas_screen.py": {
+      "utf8_lf_sha256": "89114ddbb1666ef73bca1b41807e8174a815e448e806359602a3889364c3b404"
+    },
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py": {
+      "utf8_lf_sha256": "02c5000148b8d1dc1dade8c698e76881c031de19ee366d9b6e877ef0843d45d7"
+    },
+    "tldw_chatbook/UI/Study_Modules/flashcards_handler.py": {
+      "utf8_lf_sha256": "42d7d88b802bce64af9acbd6d55601bd5ef98bc88205bb4ac35ee3f320934256"
+    },
+    "Tests/UI/test_audiobook_import_source_integrity.py": {
+      "utf8_lf_sha256": "1f6195e6cbd87ac010d8136d62b6cd7f3919e0afdddaf1c28d3a19af9300178b"
+    },
+    "Tests/UI/test_personas_pending_avatar_saves.py": {
+      "utf8_lf_sha256": "f1a351b2897dca93be7267aaa7fd134f68fd8788ffebd49960e68ee1d5a94b12"
+    },
+    "Tests/UI/test_study_flashcard_create_drafts.py": {
+      "utf8_lf_sha256": "92bcab3b3f430676615a0a4fa91196451c9c415fb29126352ccd88bde59e1a23"
+    },
+    "Docs/Architecture/speech.md": {
+      "utf8_lf_sha256": "2da16a4f3ef92bf4671a7aac3809a5164f3ae383d9d65b042904708b18f7f654"
+    },
+    "Docs/Architecture/ccp.md": {
+      "utf8_lf_sha256": "37a3fcf333e2bdb7ead9a1e800630022e746412c6cbf8a06cdb62c9db57319fd"
+    },
+    "Docs/Architecture/study.md": {
+      "utf8_lf_sha256": "a7c5e19aed151fea5d0522ecfd0ad52632f609a7f1dd90fc2184418cf2fd00a5"
+    }
+  },
+  "task_reviews": [
+    {
+      "task": 36130,
+      "path": ".superpowers/sdd/2026-10-22-textual-source-and-attachment-drafts/task-1-review.md",
+      "sha256": "bf5af622fe251cc260dbd3d1a4a5d502af1d88aece8202304fda1e0e03adec3a",
+      "verdict": "Approved; no blocking findings"
+    },
+    {
+      "task": 36131,
+      "path": ".superpowers/sdd/2026-10-22-textual-source-and-attachment-drafts/task-2-review.md",
+      "sha256": "be2191abfaaf7645b13ab8e35d1f397e53c6ec2f4c05cac9818550f1eaeb6499",
+      "verdict": "Approved; no blocking findings"
+    },
+    {
+      "task": 36132,
+      "path": ".superpowers/sdd/2026-10-22-textual-source-and-attachment-drafts/task-3-review.md",
+      "sha256": "7b86f75864bad160449129545ddbb86885f43652d469368c3de8c1f486a67630",
+      "verdict": "Approved; no blocking findings"
+    }
+  ],
+  "shared_static": {
+    "path": ".test-tmp/task-36130-36132/shared-static-final",
+    "before_after_source_hashes_equal": true,
+    "checks": [
+      {
+        "argv": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "scripts/check_persistent_diagnostic_inventory.py"
+        ],
+        "exit": 0,
+        "seconds": 90.969,
+        "stdout": "diagnostic inventory verified: 690 owners, 1051 TASK-492 calls, 56 TASK-31551 calls, 7719 TASK-494 calls, 16 sink files\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "scripts/check_textual_worker_contract.py"
+        ],
+        "exit": 0,
+        "seconds": 42.156,
+        "stdout": "textual worker contract: no synchronous run_worker targets; 316 post-await DOM lookup(s) in 149 function(s), none new; 10 baseline lookup(s) resolved; 43 wait-for-dismiss push(es) reachable from 23 non-worker entry point(s), none new; 27 baseline push(es) resolved.\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "scripts/check_markup_interpolation.py"
+        ],
+        "exit": 0,
+        "seconds": 24.844,
+        "stdout": "markup interpolation: 313 notify_interp, 79 button_label_interp, 60 tooltip_interp occurrence(s) (541 pinned).\ncheck_markup_interpolation: OK\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "scripts/check_timestamp_writers.py"
+        ],
+        "exit": 0,
+        "seconds": 25.687,
+        "stdout": "timestamp writers: 0 datetime.utcnow() site(s), 0 naive_now_iso, 98 offset_now_iso, 18 strftime_iso occurrence(s) (117 pinned).\ncheck_timestamp_writers: OK\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "census": {
+    "prefix_base": "7700c63a688355a2df595941b8b2b4dc8a819074",
+    "prefix_count": 584,
+    "prefix_sha256_utf8_lf": "3e3404c9aa7e81fc70a4bd44dd1a6d348b088c268a224463ac74379605569263",
+    "count": 599,
+    "shards": 13,
+    "old_slots_preserved": true,
+    "added_nodes": [
+      {
+        "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[900]",
+        "index": 585,
+        "shard": 13,
+        "seconds": 9.745,
+        "receipt": "task36130-final-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[1000]",
+        "index": 586,
+        "shard": 1,
+        "seconds": 9.402,
+        "receipt": "task36130-final-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[1600]",
+        "index": 587,
+        "shard": 2,
+        "seconds": 9.736,
+        "receipt": "task36130-final-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_service_import_generate_retains_complete_source[notes]",
+        "index": 588,
+        "shard": 3,
+        "seconds": 9.699,
+        "receipt": "task36130-final-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_service_import_generate_retains_complete_source[conversation]",
+        "index": 589,
+        "shard": 4,
+        "seconds": 9.705,
+        "receipt": "task36130-final-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_editing_import_before_detection_finishes_owns_generate[clear]",
+        "index": 590,
+        "shard": 5,
+        "seconds": 9.766,
+        "receipt": "task36130-final-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_editing_import_before_detection_finishes_owns_generate[replace]",
+        "index": 591,
+        "shard": 6,
+        "seconds": 9.774,
+        "receipt": "task36130-final-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_pending_save_retains_later_upload_and_same_record_next_save[create]",
+        "index": 592,
+        "shard": 7,
+        "seconds": 27.099,
+        "receipt": "task36131-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_pending_save_retains_later_upload_and_same_record_next_save[update]",
+        "index": 593,
+        "shard": 8,
+        "seconds": 28.055,
+        "receipt": "task36131-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_upload_before_save_persists_normally",
+        "index": 594,
+        "shard": 9,
+        "seconds": 28.129,
+        "receipt": "task36131-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_failed_pending_save_retains_upload_for_same_record_retry",
+        "index": 595,
+        "shard": 10,
+        "seconds": 27.957,
+        "receipt": "task36131-green/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_create_preserves_newer_raw_fields_and_editing_context[create_deck]",
+        "index": 596,
+        "shard": 11,
+        "seconds": 9.592,
+        "receipt": "task36132-green-final/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_create_preserves_newer_raw_fields_and_editing_context[create_flashcard]",
+        "index": 597,
+        "shard": 12,
+        "seconds": 12.849,
+        "receipt": "task36132-green-final/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_once_and_definite_failure_can_retry[create_deck]",
+        "index": 598,
+        "shard": 13,
+        "seconds": 8.952,
+        "receipt": "task36132-green-final/result.xml"
+      },
+      {
+        "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_once_and_definite_failure_can_retry[create_flashcard]",
+        "index": 599,
+        "shard": 1,
+        "seconds": 10.027,
+        "receipt": "task36132-green-final/result.xml"
+      }
+    ],
+    "native_added_seconds_by_shard": [
+      19.429,
+      9.736,
+      9.699,
+      9.705,
+      9.766,
+      9.774,
+      27.099,
+      28.055,
+      28.129,
+      27.957,
+      9.592,
+      12.849,
+      18.697
+    ],
+    "hosted_duration_prediction": false
+  },
+  "qualifications": [
+    "Thirteen legacy audiobook cases stopped during profile admission with RecoveryRequired(raw_source_selection_changed), before their bodies; no matched-baseline execution and no passing claim for those bodies.",
+    "Existing dependency warnings and inherited STTS/screen Ruff debt remain; new tests, Character widget and Flashcards handler have clean scoped lint/format.",
+    "Avatar screen received AST-equivalent formatting during its GREEN run; no semantic source change; current-head hosted CI follows.",
+    "First Flashcards candidate hit real unique deck-name validation due repeated test inputs; corrected numbered fixture passed. Interrupted redundant RED is excluded.",
+    "Initial shared-static run overlapped a temporary baseline restoration; only shared-static-final with matching before/after hashes is final integration evidence.",
+    "Mounted private-profile/local-service coverage does not claim terminal pointer UAT, live servers/providers, synthesis, large-book benchmarking or uncertain-write idempotency."
+  ],
+  "hosted_ci": "Current-head verdict to be recorded in the PR; not claimed by these native receipts.",
+  "backlog_and_census_integrity": [
+    {
+      "argv": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "scripts/check_backlog_task_ids.py"
+      ],
+      "exit": 0,
+      "seconds": 1.594,
+      "stdout": "No duplicate task IDs across 5621 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "scripts/check_backlog_task_files.py"
+      ],
+      "exit": 0,
+      "seconds": 1.015,
+      "stdout": "All 5621 task files in backlog/tasks, backlog/archive/tasks are readable (frontmatter + owned-section markers).\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "scripts/check_ui_pr_gate_census.py"
+      ],
+      "exit": 0,
+      "seconds": 8.235,
+      "stdout": "OK: 599 Tests/UI entries in the PR gate (floor 599); every listed path exists.\n",
+      "stderr": ""
+    }
+  ],
+  "rebase_integration": {
+    "base_dev": "e2cffbed60ae1bceb3eb26f295de15968aae9811",
+    "source_and_architecture_fingerprints_unchanged": {
+      "tldw_chatbook/UI/STTS_Window.py": true,
+      "tldw_chatbook/UI/Screens/personas_screen.py": true,
+      "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py": true,
+      "tldw_chatbook/UI/Study_Modules/flashcards_handler.py": true,
+      "Tests/UI/test_audiobook_import_source_integrity.py": true,
+      "Tests/UI/test_personas_pending_avatar_saves.py": true,
+      "Tests/UI/test_study_flashcard_create_drafts.py": true,
+      "Docs/Architecture/speech.md": true,
+      "Docs/Architecture/ccp.md": true,
+      "Docs/Architecture/study.md": true
+    },
+    "census": {
+      "base": "e2cffbed60ae1bceb3eb26f295de15968aae9811",
+      "prefix_count": 588,
+      "count": 603,
+      "shards": 13,
+      "prefix_sha256_utf8_lf": "15c5bfa24c71a8673ed1a5873c25becbe3806551e6bc8bcebb73252d7fc11c55",
+      "old_slots_preserved": true,
+      "added_nodes": [
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[900]",
+          "index": 589,
+          "shard": 4,
+          "seconds": 9.745,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[1000]",
+          "index": 590,
+          "shard": 5,
+          "seconds": 9.402,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_file_import_generate_retains_complete_source[1600]",
+          "index": 591,
+          "shard": 6,
+          "seconds": 9.736,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_service_import_generate_retains_complete_source[notes]",
+          "index": 592,
+          "shard": 7,
+          "seconds": 9.699,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_service_import_generate_retains_complete_source[conversation]",
+          "index": 593,
+          "shard": 8,
+          "seconds": 9.705,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_editing_import_before_detection_finishes_owns_generate[clear]",
+          "index": 594,
+          "shard": 9,
+          "seconds": 9.766,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_audiobook_import_source_integrity.py::test_editing_import_before_detection_finishes_owns_generate[replace]",
+          "index": 595,
+          "shard": 10,
+          "seconds": 9.774,
+          "receipt": "task36130-final-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_pending_save_retains_later_upload_and_same_record_next_save[create]",
+          "index": 596,
+          "shard": 11,
+          "seconds": 27.099,
+          "receipt": "task36131-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_pending_save_retains_later_upload_and_same_record_next_save[update]",
+          "index": 597,
+          "shard": 12,
+          "seconds": 28.055,
+          "receipt": "task36131-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_upload_before_save_persists_normally",
+          "index": 598,
+          "shard": 13,
+          "seconds": 28.129,
+          "receipt": "task36131-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_personas_pending_avatar_saves.py::test_failed_pending_save_retains_upload_for_same_record_retry",
+          "index": 599,
+          "shard": 1,
+          "seconds": 27.957,
+          "receipt": "task36131-green/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_create_preserves_newer_raw_fields_and_editing_context[create_deck]",
+          "index": 600,
+          "shard": 2,
+          "seconds": 9.592,
+          "receipt": "task36132-green-final/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_create_preserves_newer_raw_fields_and_editing_context[create_flashcard]",
+          "index": 601,
+          "shard": 3,
+          "seconds": 12.849,
+          "receipt": "task36132-green-final/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_once_and_definite_failure_can_retry[create_deck]",
+          "index": 602,
+          "shard": 4,
+          "seconds": 8.952,
+          "receipt": "task36132-green-final/result.xml"
+        },
+        {
+          "nodeid": "Tests/UI/test_study_flashcard_create_drafts.py::test_unchanged_create_clears_once_and_definite_failure_can_retry[create_flashcard]",
+          "index": 603,
+          "shard": 5,
+          "seconds": 10.027,
+          "receipt": "task36132-green-final/result.xml"
+        }
+      ],
+      "native_added_seconds_by_shard": [
+        27.957,
+        9.592,
+        12.849,
+        18.697,
+        19.429,
+        9.736,
+        9.699,
+        9.705,
+        9.766,
+        9.774,
+        27.099,
+        28.055,
+        28.129
+      ]
+    },
+    "targeted_suites": [
+      {
+        "tests": "87",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "10.469"
+      }
+    ],
+    "receipts": {
+      "command.json": "f0af5045748d77e61bcb907b58f993a8d9ace90c6a60edc2c68b89b21e7f2cc4",
+      "result.xml": "d1c73adfa3be81e1c4a7adccdb0b4b52aa5423466ab89ff62193564f48351352",
+      "run.log": "44a089a942cf867b4609cd2209c940886502738a82ac072507fc6796a7d82032"
+    },
+    "qualification": "Original native receipts remain historical; all implementation/test/doc fingerprints are unchanged. Current-head hosted CI verifies the rebased dependency graph and new dev guard pins."
+  },
+  "console_ci_repair": {
+    "owner": "TASK-34974 (AC2/AC4; remains In Progress)",
+    "adr": "backlog/decisions/232-console-learned-response-rules.md",
+    "failed_head": "f3875a186322650df6bde1e48612a35eabcc2c7e",
+    "failed_run": 39833718134,
+    "failed_job": 120020947873,
+    "patch_file": "Tests/UI/test_response_rules_modal.py",
+    "baseline_git_blob": "1072a83075423e1695d13d0cd7a3510a63ebd232",
+    "corrected_git_blob": "de291ea6d7d3fc4bd1f72b192b03bdbf2017b3cf",
+    "assertion_asts_unchanged": 72,
+    "behavior": "Wait within asyncio.timeout(10) for expected durable state, idle modal and enabled current toggle control; preserve original assertions. No production change.",
+    "runs": {
+      "console-ci-exact-node-1": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "0",
+            "tests": "1",
+            "time": "20.709",
+            "timestamp": "2026-10-22T12:07:33.179838-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "1d2289df09000500d750e3044c9b177710f903fac60bfea83fc709b40be39817",
+          "result.xml": "276d0f1b879e2a9bc4d635f8540f1005be5147903376a089591f5c3d20062e01",
+          "run.log": "6b2d2d842c41d04d4d2120a4f01779f8bc7a326e51498876030ecc9a4094d0ac"
+        }
+      },
+      "console-ci-controlled-hold-1": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "1",
+            "skipped": "0",
+            "tests": "1",
+            "time": "17.706",
+            "timestamp": "2026-10-22T12:09:48.085510-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "45e91acd23a43c708e6a8306e917ff117338450df389450f1eb11758f6a6ef37",
+          "result.xml": "3aa941acb88498737148e124e636b3a7686dfad5bf914414de940342c8c4dd77",
+          "run.log": "237e1283a8d4499714b8429aa134aa39db9d237e531b282b9b9b469f079d276c"
+        }
+      },
+      "console-ci-finite-red-2": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "1",
+            "skipped": "0",
+            "tests": "1",
+            "time": "17.604",
+            "timestamp": "2026-10-22T12:14:12.455436-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "84a2c10be149ab2873394089936396bd27dd02646462d4fe55cfca8addac9bfd",
+          "result.xml": "3d01673bb4480977b8c9308ef618855a6247a9d4823eea8ebba8e0f05eb119ef",
+          "run.log": "f4c84adf81a0d433898b7e999785cbc6ce394436487e083a7dc80cb18764640c"
+        }
+      },
+      "console-ci-finite-green-1": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "0",
+            "tests": "1",
+            "time": "21.557",
+            "timestamp": "2026-10-22T12:14:57.598003-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "65735fee9b9a75a2b75758812e1ff3b480b242f639ac59f42364aabc4c6922ca",
+          "result.xml": "6f5c95c583e02b5b4dc02bd658cd45c74d239a2b69658c845bc8f44e47ce87f9",
+          "run.log": "726fa8577f58358758245efb87308428e6869bb17aa68417b77dc12d388a47f4"
+        }
+      },
+      "console-ci-modal-file-1": {
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "0",
+            "tests": "25",
+            "time": "199.804",
+            "timestamp": "2026-10-22T12:15:47.340503-07:00",
+            "hostname": "DESKTOP-BISU2HE"
+          }
+        ],
+        "receipts": {
+          "command.json": "cec06584e84e69aaf0e7aaedeaaf4a6843cf2d9fbe1b79d8bd2ad26d024670a1",
+          "result.xml": "cb6702addc9833c136e35135aa64a1c9c9ed7cdab28a49858d72615411626279",
+          "run.log": "4f5c1247b17d88854f6377457ef8b787882739bb10742f26b15e99a3c3a8f9e7"
+        }
+      }
+    },
+    "static": {
+      "baseline_ref": "7405afaa12d8fa07d50069c0234442fc970517b3",
+      "only_intended_replacement": true,
+      "assertions_unchanged": true,
+      "assertion_count": 72,
+      "files": {
+        "baseline": {
+          "normalized_sha256": "038f851ec804426fc219852fc106f0f7bb4c684c54b2e55ea1c3c4c1fba5cf8f",
+          "lint": {
+            "exit_code": 0,
+            "stdout": "[]",
+            "stderr": ""
+          },
+          "format_check": {
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": ""
+          },
+          "formatter_ast_preserved": true,
+          "format_edits": [
+            {
+              "tag": "delete",
+              "before": [
+                ""
+              ],
+              "after": []
+            }
+          ]
+        },
+        "current": {
+          "normalized_sha256": "6c9341798a5a4b560f499ac750e793473005a3950995aca81bc9eae7d7c7320c",
+          "lint": {
+            "exit_code": 0,
+            "stdout": "[]",
+            "stderr": ""
+          },
+          "format_check": {
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": ""
+          },
+          "formatter_ast_preserved": true,
+          "format_edits": [
+            {
+              "tag": "delete",
+              "before": [
+                ""
+              ],
+              "after": []
+            }
+          ]
+        }
+      },
+      "inherited_format_edits_unchanged": true,
+      "diff_check": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "warning: in the working copy of 'Tests/UI/test_response_rules_modal.py', LF will be replaced by CRLF the next time Git touches it\n"
+      }
+    },
+    "qualification": "Controlled real-reload delay proves the test barrier defect, not the exact unlogged hosted schedule. Invalid first finite observer cleanup failure and initial unqualified static assertion are retained as non-evidence. Hosted verification of the corrected head remains pending."
+  }
+}

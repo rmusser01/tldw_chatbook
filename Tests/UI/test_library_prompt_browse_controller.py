@@ -642,3 +642,29 @@ async def test_controller_live_reads_replaced_sync_callback_on_settle() -> None:
 
     assert first_sync == ["loading"]
     assert replacement_sync == ["ready"]
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_controller_live_reads_replaced_screen_worker() -> None:
+    screen = _WorkerScreen()
+    service = _BrowseService()
+    controller = _controller(
+        screen=screen,
+        service=lambda: service,
+        sync_view=lambda: lambda _result, _focus: None,
+    )
+    starts = []
+
+    def replacement_worker(work, **kwargs):
+        starts.append(kwargs)
+        return work
+
+    screen.run_worker = replacement_worker
+    await controller.request(
+        PromptBrowseScope(artifact_type="mixin"), focus_identity=None
+    )
+
+    assert starts == [{"exclusive": True, "group": "library-prompt-browse"}]
+    assert service.calls[0]["artifact_type"] == "mixin"
+    assert screen.pending == []

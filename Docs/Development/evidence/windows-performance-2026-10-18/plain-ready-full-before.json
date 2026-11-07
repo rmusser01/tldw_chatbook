@@ -1,0 +1,81 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "profiled": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-lec2bdmu",
+  "import_ms": 2922.122700008913,
+  "construct_ms": 15793.319900010829,
+  "mount_ready_ms": 26179.598900009296,
+  "startup_phases": {
+    "basic_init": 1.0465540000004694,
+    "attribute_init": 8.90000956133008e-06,
+    "parallel_init": 6.491560399997979,
+    "total_init": 15.792739900003653
+  },
+  "console_resume": [
+    {
+      "iteration": 0,
+      "resume_to_input_ms": 251.2438999983715,
+      "input_ms": 249.8287999915192,
+      "max_loop_overshoot_ms": 208.39249999902677,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1694.8932999948738
+    },
+    {
+      "iteration": 1,
+      "resume_to_input_ms": 1021.9874000031268,
+      "input_ms": 1020.760599989444,
+      "max_loop_overshoot_ms": 485.08310000237543,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1568.1846000079531
+    },
+    {
+      "iteration": 2,
+      "resume_to_input_ms": 976.4876999979606,
+      "input_ms": 975.5602000077488,
+      "max_loop_overshoot_ms": 540.5944999895291,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1511.6991000104463
+    },
+    {
+      "iteration": 3,
+      "resume_to_input_ms": 681.4816000114661,
+      "input_ms": 678.591600008076,
+      "max_loop_overshoot_ms": 352.59550000249874,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1199.0152000071248
+    },
+    {
+      "iteration": 4,
+      "resume_to_input_ms": 711.4587999967625,
+      "input_ms": 709.7070999880088,
+      "max_loop_overshoot_ms": 453.47590000368655,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1270.337499998277
+    },
+    {
+      "iteration": 5,
+      "resume_to_input_ms": 754.6184999955585,
+      "input_ms": 752.9540999967139,
+      "max_loop_overshoot_ms": 456.0390999924857,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1293.5414999956265
+    }
+  ],
+  "final_screen": null,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0
+}

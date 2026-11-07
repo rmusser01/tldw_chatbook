@@ -4,6 +4,7 @@ This module exists so that state/UI modules can share pre-flight and job
 result shapes without importing the heavy analysis modules that build them.
 Keep it stdlib-only and free of optional dependencies.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

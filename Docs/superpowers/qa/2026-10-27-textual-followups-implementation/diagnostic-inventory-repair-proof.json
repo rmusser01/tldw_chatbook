@@ -1,0 +1,34 @@
+{
+  "path": "Docs/security/production-diagnostic-inventory.json",
+  "before_git_blob_sha256": "49bcb3ec47f28ff17efe08c880e9c99526fc1b142031da9492110f5aca025238",
+  "after_native_sha256": "39e7a19d85a98d0ab293d85719095cf99c6948df3e0e77af65f3db03f0078f62",
+  "owner_index": 447,
+  "before": {
+    "call_count": 3,
+    "diagnostic_digest": "0a3721c1a77907d1dcf7",
+    "owner": "TASK-494",
+    "path": "tldw_chatbook/UI/Library_Modules/library_file_export.py",
+    "reason": "remaining Chatbook production diagnostic owner"
+  },
+  "after": {
+    "call_count": 4,
+    "diagnostic_digest": "b4a748817136c4c4f8de",
+    "owner": "TASK-494",
+    "path": "tldw_chatbook/UI/Library_Modules/library_file_export.py",
+    "reason": "remaining Chatbook production diagnostic owner"
+  },
+  "all_other_698_owners_unchanged": true,
+  "all_other_top_level_sections_unchanged": true,
+  "path_privacy_candidates": 116,
+  "persistent_sinks": 16,
+  "reviewed_new_statement": "logger.warning(\"Failed to export Library prompt {} (category={}).\", prompt_id, type(exc).__name__)",
+  "no_raw_exception_text_path_url_prompt_content_or_secret_argument": true,
+  "red_exit_code": 1,
+  "green_exit_code": 0,
+  "green_command": "python -X utf8 scripts/check_persistent_diagnostic_inventory.py",
+  "green_log_sha256": "da1cc2fddc9ee7f8382adecc7ebec73bf769889a6a7070b9cf9bc5b6498e0f45",
+  "after_git_blob_sha256": "0cb63ab8acaa455d7673a5142fad47916222cb0970782f4f8b7b91e79fc253be",
+  "statements_review_log_sha256": "59b0a6fdc40a2454cde738150d1e608c4557388c1c30374186146bb192214672",
+  "failed_hosted_guard_log_sha256": "5b5c81c0bfe5c70438c2765f819243cd31d8fd61468e134504f8e81159969d58",
+  "qualification": "The sole hosted artifact failure was this stale pin. All23 application test jobs and Perf passed; actual successor-head CI remains required."
+}

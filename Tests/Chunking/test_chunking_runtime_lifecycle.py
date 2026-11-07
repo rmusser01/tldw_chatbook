@@ -14,8 +14,10 @@ import pytest
 # Skipped: exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored. Terminal disposition (2026-08-23 program close):
 # pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
 # this block verbatim.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored")
+pytest.importorskip(
+    "tldw_chatbook.NoSuchDeferredModule",
+    reason="skipped: exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored",
+)
 from fastapi import UploadFile
 from starlette.requests import Request
 
@@ -305,9 +307,7 @@ async def test_chunking_real_byok_resolution_cannot_mix_config_generations(
         release_lookup.set()
         runtime, handle = await task
         expected_key = (
-            "sk-static-generation-a"
-            if source == "absent"
-            else "sk-byok-generation-a"
+            "sk-static-generation-a" if source == "absent" else "sk-byok-generation-a"
         )
         assert handle.api_key == expected_key
         assert handle.app_config == {
@@ -373,7 +373,9 @@ async def test_rolling_config_snapshot_capture_runs_off_event_loop(
         return ["template chunk"]
 
     monkeypatch.setattr(chunking_module, "load_server_configs", load_snapshot)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "improved_chunking_process", process)
     monkeypatch.setattr(TemplateProcessor, "process_template", process_template)
 
@@ -516,7 +518,9 @@ async def test_rolling_endpoint_preserves_provider_generated_summary(
         return "provider-generated summary"
 
     monkeypatch.setattr(chunking_module, "load_server_configs", _rolling_config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "general_llm_analyzer", analyze)
 
     result = await _invoke_rolling_endpoint(
@@ -553,7 +557,9 @@ async def test_rolling_template_accepts_real_processor_result_contract(monkeypat
         return "provider-generated template summary"
 
     monkeypatch.setattr(chunking_module, "load_server_configs", _rolling_config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "general_llm_analyzer", analyze)
 
     result = await _invoke_rolling_template(
@@ -667,7 +673,9 @@ async def test_rolling_endpoint_cancellation_drains_worker_and_mark_before_close
         ]
 
     monkeypatch.setattr(chunking_module, "load_server_configs", _rolling_config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "improved_chunking_process", process)
     monkeypatch.setattr(
         chunking_module,
@@ -722,7 +730,9 @@ async def test_rolling_template_processor_runs_off_event_loop(monkeypatch):
         return ["template chunk"]
 
     monkeypatch.setattr(chunking_module, "load_server_configs", _rolling_config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(TemplateProcessor, "process_template", process_template)
 
     result = await _invoke_rolling_template("off-loop-template")
@@ -772,7 +782,9 @@ async def test_rolling_template_cancellation_drains_worker_and_mark_before_close
         return ["template chunk"]
 
     monkeypatch.setattr(chunking_module, "load_server_configs", _rolling_config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(TemplateProcessor, "process_template", process_template)
     monkeypatch.setattr(
         chunking_module,
@@ -840,7 +852,9 @@ async def test_rolling_endpoint_fails_closed_when_pipeline_skips_provider(
         return ["unverified raw chunk"]
 
     monkeypatch.setattr(chunking_module, "load_server_configs", _rolling_config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "improved_chunking_process", process)
     monkeypatch.setattr(TemplateProcessor, "process_template", process_template)
 
@@ -916,7 +930,9 @@ async def test_rolling_endpoints_accept_runtime_certified_bedrock_default_chain(
         "load_server_configs",
         lambda: _rolling_config("bedrock"),
     )
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "improved_chunking_process", process)
     monkeypatch.setattr(TemplateProcessor, "process_template", process_template)
 
@@ -971,7 +987,9 @@ async def test_rolling_endpoints_reject_uncertified_bedrock_default_chain(
         "load_server_configs",
         lambda: _rolling_config("bedrock"),
     )
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "improved_chunking_process", forbidden_process)
     monkeypatch.setattr(TemplateProcessor, "process_template", forbidden_process)
 
@@ -1034,7 +1052,9 @@ async def test_rolling_setup_failure_closes_every_resolved_runtime(
         ]
 
     monkeypatch.setattr(chunking_module, "load_server_configs", lambda: config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "improved_chunking_process", process)
 
     if kind == "file":
@@ -1087,7 +1107,9 @@ async def test_rolling_template_processor_setup_failure_closes_runtime_once(
         raise RuntimeError("sensitive processor setup failure")
 
     monkeypatch.setattr(chunking_module, "load_server_configs", _rolling_config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(TemplateProcessor, "__init__", fail_processor_setup)
 
     with pytest.raises(chunking_module.HTTPException) as exc_info:
@@ -1176,7 +1198,9 @@ async def test_concurrent_rolling_endpoints_keep_runtime_snapshots_isolated(
         return [f"chunk-{label}"]
 
     monkeypatch.setattr(chunking_module, "load_server_configs", _rolling_config)
-    monkeypatch.setattr(chunking_module, "_resolve_chunking_credentials", resolve_credentials)
+    monkeypatch.setattr(
+        chunking_module, "_resolve_chunking_credentials", resolve_credentials
+    )
     monkeypatch.setattr(chunking_module, "improved_chunking_process", process)
     monkeypatch.setattr(TemplateProcessor, "process_template", process_template)
 
@@ -1508,9 +1532,7 @@ async def test_non_llm_chunking_ignores_saturated_provider_pool(
                 ChunkingTextRequest(
                     text_content=text,
                     file_name=f"{text}.txt",
-                    options=ChunkingOptionsRequest(
-                        template_name="ordinary-template"
-                    ),
+                    options=ChunkingOptionsRequest(template_name="ordinary-template"),
                 ),
                 http_request=_http_request(),
                 current_user=SimpleNamespace(id=1),
@@ -1595,9 +1617,7 @@ def test_chunking_routes_document_provider_capacity_response(path):
     """Both public endpoint shapes advertise their retryable overload response."""
 
     route = next(
-        route
-        for route in chunking_module.chunking_router.routes
-        if route.path == path
+        route for route in chunking_module.chunking_router.routes if route.path == path
     )
 
     assert route.responses[503] == {

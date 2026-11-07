@@ -1,0 +1,102 @@
+# Voice step: 'skip with Next' copy vs. commit() that always saves the PocketTTS draft
+## Copy (FirstRunSetupWizard.py:4318-4324)
+            yield Static(
+                "Hear replies read aloud — optional. PocketTTS or OmniVoice "
+                "run locally, no account needed; skip with Next if you "
+                "don't want voice.",
+                classes="setup-subtitle",
+            )
+            yield Label("Service", classes="setup-field-label")
+
+## Initial draft is static -- never prefilled from [app_tts] on a rerun (FirstRunSetupWizard.py:4295-4306)
+    @staticmethod
+    def _initial_draft() -> voice_state.VoiceSetupDraft:
+        return voice_state.VoiceSetupDraft(
+            endpoint=voice_state.POCKET_TTS_ENDPOINT,
+            authentication_mode="none",
+            model_id=voice_state.POCKET_TTS_MODEL,
+            voice_id=voice_state.POCKET_TTS_VOICE,
+            response_format="wav",
+            speed=1.0,
+            sample_text="Hello from Chatbook.",
+            use_as_default=False,
+        )
+
+## commit(): no 'untouched' short-circuit; validates and posts the save event (FirstRunSetupWizard.py:5127-5157)
+    async def commit(self) -> tuple[bool, str]:
+        if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
+            return await self._commit_omnivoice()
+        try:
+            draft = self._draft_from_controls()
+        except (TypeError, ValueError) as error:
+            return False, str(error) or "Review the Voice setup fields."
+        validation = voice_state.validate_voice_setup_draft(draft)
+        if not validation.configuration_valid:
+            return False, validation.errors[
+                0
+            ] if validation.errors else "Review the Voice setup fields."
+        if (
+            draft.authentication_mode == "api_key"
+            and self._existing_openai_credential() is None
+        ):
+            return False, "Add an API key in Settings before saving this voice."
+        request_id = self._next_save_request_id
+        self._next_save_request_id += 1
+        self._save_request_id = request_id
+        self._save_draft = draft
+        self._save_use_as_default = draft.use_as_default
+        self._save_future = asyncio.get_running_loop().create_future()
+        self.app.post_message(
+            voice_state.build_voice_setup_save_event(
+                draft,
+                request_id=request_id,
+                reply_to=self,
+            )
+        )
+        try:
+
+## The save event writes [app_tts] OPENAI_BASE_URL / OPENAI_AUTH_MODE (first_run_voice_step_state.py:225-230; stts_events.py:152-153)
+    return STTSSettingsSaveEvent(
+        {
+            "OPENAI_BASE_URL": validation.normalized_endpoint,
+            "OPENAI_AUTH_MODE": draft.authentication_mode,
+        },
+        preferences=preferences,
+    "OPENAI_BASE_URL": _app_tts_binding("OPENAI_BASE_URL", "openai"),
+    "OPENAI_AUTH_MODE": _app_tts_binding("OPENAI_AUTH_MODE", "openai"),
+
+## Summary then reads it back as configured (first_run_setup_state.py:1830-1836)
+        return SummaryRow(
+            "Voice",
+            ROW_CONFIGURED,
+            f"{_voice_service_name(base_url)} (saved, not the default voice)",
+        )
+    return SummaryRow("Voice", ROW_DEFAULT, "not set up (optional)")
+
+
+## Existing test proves an UNTOUCHED step's commit() posts a save (Tests/Wizards/test_first_run_setup_wizard.py:419-440)
+async def test_voice_save_waits_for_applied_runtime_when_default_is_opted_out() -> None:
+    from types import SimpleNamespace
+
+    class DelayedSaveHost(_StepHost):
+        saved_event: STTSSettingsSaveEvent | None = None
+
+        @on(STTSSettingsSaveEvent)
+        def capture_save(self, event: STTSSettingsSaveEvent) -> None:
+            self.saved_event = event
+
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = DelayedSaveHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        commit = __import__("asyncio").create_task(step.commit())
+        await pilot.pause()
+        assert app.saved_event is not None
+
+
+## User Guide claim contradicted (Docs/User_Guide/First_Run_Setup.md):
+106:when a voice was saved without being made the default, and reads "not set up

@@ -1,0 +1,30 @@
+Final targeted test pass on this branch, 2026-10-05 (the machine was shared with other sessions' pytest runs; durations are inflated).
+
+== PR UI lane file, alone (scripts/ui_pr_gate_census.txt entry):
+   /usr/bin/time -p .venv/bin/python -m pytest Tests/UI/test_library_media_export_no_freeze.py -q -p no:randomly --durations=0
+7.32s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[mouse-default]
+5.67s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[keyboard-default]
+5.48s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[keyboard-eager]
+5.36s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[mouse-eager]
+4 passed, 3 warnings in 30.12s
+real 37.93
+   (budget: 60 s; the WIP's single six-test file measured 58.10 s / 69.8 s wall before the split)
+
+== real-screen seam tests + guard predicate + CI contract + inventory:
+   pytest Tests/UI/test_library_surface_swap_refused_on_real_screen.py Tests/Architecture/test_surface_swap_guard.py Tests/CI/test_ci_queue_pressure_contract.py Tests/CI/test_ui_pr_gate_census_checker.py Tests/CI/test_derived_artifacts_workflow.py Tests/Architecture/test_persistent_diagnostic_inventory.py -q -p no:randomly
+FAILED Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only
+FAILED Tests/Architecture/test_persistent_diagnostic_inventory.py::test_task_15743_final_rebase_diagnostics_are_metadata_only
+FAILED Tests/Architecture/test_persistent_diagnostic_inventory.py::test_task_15743_reviewed_delta_is_complete
+FAILED Tests/Architecture/test_persistent_diagnostic_inventory.py::test_task_15743_exception_types_survive_loguru_forwarding
+4 failed, 130 passed, 7 warnings in 699.41s (0:11:39)
+   The four failures are task-15103/15743 review-ledger tests naming files this task never touched
+   (console_chat_store.py, console_fleet_wake.py, console_agent_bridge.py, Library conversations): pre-existing ledger drift.
+   test_production_diagnostic_inventory_and_sink_topology_are_unchanged (the check on this task's regenerated inventory) passed.
+
+== earlier in the same pass (same code): Tests/UI/test_library_surface_swap_refused_on_real_screen.py alone: 4 passed in 21.71s;
+   Tests/Architecture/test_surface_swap_guard.py + the three CI contract files: 60 passed in 4.47s.
+
+== collect-only sweep: pytest Tests/UI Tests/Architecture Tests/CI --collect-only -q -> 32433 tests collected in 26.48s, 0 errors;
+   23 node ids from the three new test files, 0 from Tests/UI/pump_probe.py (a helper, never collected).
+
+== scripts/check_ui_pr_gate_census.py: OK: 139 Tests/UI files in the PR gate (floor 136); every listed path exists.

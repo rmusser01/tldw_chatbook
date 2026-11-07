@@ -29,6 +29,7 @@ with the short-circuit neutered (`if False:`) the unseeded file stayed
 5/5 green; seeded, the same mutation yields three `_perform_fts5_search`
 calls (one per retry attempt) and reds the test. Do not drop the seed.
 """
+
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -89,9 +90,7 @@ def _fts5_conn():
 
 
 def _insert(conn, title, content):
-    conn.execute(
-        "INSERT INTO docs(title, content) VALUES (?, ?)", (title, content)
-    )
+    conn.execute("INSERT INTO docs(title, content) VALUES (?, ?)", (title, content))
     conn.commit()
 
 
@@ -306,9 +305,7 @@ def test_contiguous_match_still_cites_the_whole_phrase(tmp_path):
     assert results, "the seeded media doc must match"
 
     row = results[0]
-    spans = [
-        row.document[c.start_char : c.end_char].lower() for c in row.citations
-    ]
+    spans = [row.document[c.start_char : c.end_char].lower() for c in row.citations]
     assert "spindle runout" in spans, spans
 
     whole_phrase = next(
@@ -333,8 +330,7 @@ def test_span_cap_still_evidences_a_rare_second_token(tmp_path):
         "id": 11,
         "title": "Repeated Token Doc",
         "content": (
-            "alpha one. alpha two. alpha three. alpha four. "
-            "and much later, beta."
+            "alpha one. alpha two. alpha three. alpha four. and much later, beta."
         ),
     }
 
@@ -351,8 +347,9 @@ def test_span_cap_still_evidences_a_rare_second_token(tmp_path):
     assert "alpha" in spans, spans
     # Offsets index the returned content, not some other string.
     for citation in result.citations:
-        assert result.document[citation.start_char : citation.end_char] == (
-            citation.metadata["match_text"]
+        assert (
+            result.document[citation.start_char : citation.end_char]
+            == (citation.metadata["match_text"])
         )
 
 
@@ -503,9 +500,7 @@ def test_user_typed_operator_words_never_become_operators(tmp_path):
     # 2026-08-13 it is byte-identical to the DEFAULT's primary above, which
     # is the flip stated as an identity rather than as prose.
     service.config.search.fts_match_construction = "and"
-    assert service._fts5_match_expressions(query)[0] == (
-        '"lathe" "OR" "NOT" "spindle"'
-    )
+    assert service._fts5_match_expressions(query)[0] == ('"lathe" "OR" "NOT" "spindle"')
     assert _match(conn, '"lathe" "OR" "NOT" "spindle"') == []
 
     # The construction that WAS the default until 2026-08-13: one expression,

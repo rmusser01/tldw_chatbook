@@ -17,7 +17,8 @@ class WatchlistFilterService:
         filters: list[Mapping[str, Any]],
     ) -> list[dict[str, Any]]:
         active_filters = [
-            f for f in filters
+            f
+            for f in filters
             if f.get("action") in self.VALID_ACTIONS and f.get("is_active", True)
         ]
         active_filters.sort(key=lambda f: int(f.get("priority") or 0))

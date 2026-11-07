@@ -50,8 +50,9 @@ class ConsoleSummarizePreviewModal(
         width: 64;
         max-width: 95%;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 

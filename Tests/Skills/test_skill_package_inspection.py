@@ -116,19 +116,12 @@ def test_symlinked_directory_skill_is_not_accepted(tmp_path):
 
 def test_more_than_display_cap_remains_multi_skill_with_bounded_candidates():
     result = inspect_skill_zip(
-        _zip(
-            [
-                (f"skills/s{index:02d}/SKILL.md", "body")
-                for index in range(21)
-            ]
-        ),
+        _zip([(f"skills/s{index:02d}/SKILL.md", "body") for index in range(21)]),
         repository_source=True,
     )
 
     assert result.kind is SkillPackageKind.MULTI_SKILL_REPOSITORY
-    assert result.candidates == tuple(
-        f"skills/s{index:02d}" for index in range(20)
-    )
+    assert result.candidates == tuple(f"skills/s{index:02d}" for index in range(20))
 
 
 @pytest.mark.parametrize(

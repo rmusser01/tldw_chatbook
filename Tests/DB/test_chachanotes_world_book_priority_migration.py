@@ -8,10 +8,14 @@ def _seed_v20_database(db_path, monkeypatch) -> None:
     with monkeypatch.context() as v20_patch:
         v20_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 20)
         db = CharactersRAGDB(str(db_path), client_id="v20-seed")
-        version = db.get_connection().execute(
-            "SELECT version FROM db_schema_version WHERE schema_name = ?",
-            (db._SCHEMA_NAME,),
-        ).fetchone()
+        version = (
+            db.get_connection()
+            .execute(
+                "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                (db._SCHEMA_NAME,),
+            )
+            .fetchone()
+        )
         assert version["version"] == 20
         db.get_connection().executescript(
             """
@@ -69,9 +73,13 @@ def _seed_v20_database(db_path, monkeypatch) -> None:
             "world_book_entries_sync_create",
             "world_book_entries_sync_update",
         ):
-            trigger_sql = db.get_connection().execute(
-                "SELECT sql FROM sqlite_master WHERE name = ?", (trigger_name,)
-            ).fetchone()["sql"]
+            trigger_sql = (
+                db.get_connection()
+                .execute(
+                    "SELECT sql FROM sqlite_master WHERE name = ?", (trigger_name,)
+                )
+                .fetchone()["sql"]
+            )
             assert "priority" not in trigger_sql
             assert "regex" not in trigger_sql
         db.close_connection()
@@ -82,9 +90,7 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path, monkeypatch):
     _seed_v20_database(db_path, monkeypatch)
 
     # Reopen the genuine v20 schema with current support.
-    migrated = open_current_chachanotes_from_legacy(
-        db_path, client_id="test-client"
-    )
+    migrated = open_current_chachanotes_from_legacy(db_path, client_id="test-client")
     mconn = migrated.get_connection()
     version = mconn.execute(
         "SELECT version FROM db_schema_version WHERE schema_name = ?",

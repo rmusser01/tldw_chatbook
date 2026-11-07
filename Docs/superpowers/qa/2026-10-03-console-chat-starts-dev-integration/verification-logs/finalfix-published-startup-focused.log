@@ -1,0 +1,231 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+F--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                                                                  [100%]
+=================================== FAILURES ===================================
+____________ test_prepared_native_start_allows_mounted_manual_send _____________
+
+fut = <coroutine object Event.wait at 0x1229ec820>, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <asyncio.locks.Event object at 0x1207208c0 [unset]>
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+>           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/private/tmp/console-finalfix-startup-01a0fa6c/test_prepared_native_start_all0')
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
+        from textual.widgets import Button
+        from Tests.Chat.test_console_chat_start import _native_start_rig
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(
+            tmp_path
+        )
+        entered = asyncio.Event()
+        original = controller._resolve_for_send_bounded
+        calls = 0
+    
+        async def held(selection):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered.set()
+                await asyncio.Event().wait()
+            return await original(selection)
+    
+        controller._resolve_for_send_bounded = held
+        app = _build_test_app(config_overrides={"splash_screen": {"enabled": False}})
+        persist_seeded_config(app, "splash_screen")
+        _attach_real_dbs(app, tmp_path)
+        _configure_native_ready_console(app)
+        from tldw_chatbook.config import get_cli_setting
+    
+        assert get_cli_setting("splash_screen", "enabled", True) is False
+        try:
+            async with app.run_test(size=(160, 48)) as pilot:
+                chat = ChatScreen(app)
+                await app.push_screen(chat)
+                app._initial_screen_pushed = True
+                app.current_tab = "chat"
+                await _wait_for_selector(chat, pilot, "#console-native-composer")
+                for _ in range(50):
+                    if chat._console_attach_reconciled:
+                        break
+                    await pilot.pause(0.1)
+                assert chat._console_attach_reconciled and app.screen is chat
+                runtime = app.console_runtime
+                runtime._chat_store = store
+                runtime._chat_controller = controller
+                runtime._agent_bridge = controller._agent_bridge
+                controller.app = app
+                store.switch_session(target.id)
+                await chat._sync_native_console_chat_ui()
+                from dataclasses import replace
+    
+                request = replace(
+                    request,
+                    configuration=controller.resolve_turn_configuration_snapshot(target.id),
+                    context_epoch=store.conversation_context_epoch(target.id),
+                )
+                start = asyncio.create_task(controller._chat_start.start(request))
+                try:
+>                   await asyncio.wait_for(entered.wait(), 5)
+
+Tests/UI/test_console_runtime_ownership.py:3139: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x127742080>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 15:03:49 [WARNING ] root:1492 - Prompts service not initialized, self.prompts_db set to None.
+2026-10-03 15:03:49 [ERROR   ] root:1513 - ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     root:app.py:2277 Splash screen enabled: False
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=base provider=faster-whisper status=ok
+INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+=============================== warnings summary ===============================
+Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:600: UserWarning: open file descriptors grew by 262 over the test session (start=14, end=276, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+24.94s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+24.52s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+22.88s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+22.19s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+18.71s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+18.26s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+16.09s call     Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+1.18s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+1.09s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+
+(12 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+1 failed, 6 passed, 1 warning in 160.12s (0:02:40)

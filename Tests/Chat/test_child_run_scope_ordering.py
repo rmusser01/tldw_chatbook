@@ -28,6 +28,7 @@ last-child fails test 1; removing `_persist` from `_run_one` (final row
 state identical, ordering broken) fails test 2 alone; removing
 `run_child`'s finally `set_status` fallback fails test 3.
 """
+
 from __future__ import annotations
 
 import threading
@@ -61,9 +62,7 @@ def _survivor_bridge(tmp_path, parent_script, needed):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     return gate, gateway, db, store, session, assistant.id, bridge
 
 
@@ -111,9 +110,7 @@ def test_last_child_scope_exit_fires_the_consumer_exactly_once_on_the_childs_thr
         needed=2,
     )
     try:
-        outcome = _run(
-            bridge, store, session, aid, conversation_id="conv-ordering"
-        )
+        outcome = _run(bridge, store, session, aid, conversation_id="conv-ordering")
         assert outcome.status == "done"
         assert gateway.entered_event.wait(5), "the children never started"
         assert bridge._live_child_count("conv-ordering") == 2, (
@@ -216,9 +213,7 @@ def test_raise_path_row_not_terminal_at_scope_exit_settles_via_run_child_finally
     )
 
     # ... and `run_child`'s finally settles it, strictly after the signal.
-    row = next(
-        r for r in db.list_runs("conv-rp") if r["agent_kind"] == "subagent"
-    )
+    row = next(r for r in db.list_runs("conv-rp") if r["agent_kind"] == "subagent")
     assert row["status"] == "error", (
         "the raise path's row must still settle terminal via run_child's "
         f"finally set_status fallback: {row['status']!r}"

@@ -852,28 +852,12 @@ class TestErrorHandling:
                 config_overrides={},
             )
 
-    def test_concurrent_modification(self, temp_db):
-        """Test handling of concurrent modifications."""
-        # Create a task
-        task_id = temp_db.create_task(
-            name="test_task",
-            description="Test",
-            task_type="question_answer",
-            config_format="custom",
-            config_data={},
-        )
-
-        # Simulate concurrent modification by updating version manually
-        conn = temp_db.get_connection()
-        conn.execute(
-            "UPDATE eval_tasks SET version = version + 1 WHERE id = ?", (task_id,)
-        )
-        conn.commit()
-
-        # Now try to update - version checking not implemented yet
-        success = temp_db.update_task(task_id, description="Updated")
-        # For now, this will succeed as optimistic locking is not implemented
-        assert success
+    # test_concurrent_modification was removed at schema v6 (TASK-19566 F8):
+    # it manually bumped the now-dropped ``version`` column and asserted the
+    # update still succeeded ("optimistic locking is not implemented yet").
+    # The column was inert residue and was removed rather than made real --
+    # the removal itself is pinned by
+    # Tests/Evals/test_evals_db_v5_to_v6_migration.py instead.
 
     def test_delete_task_wraps_a_driver_error_in_evalsdberror(self, temp_db):
         """delete_task's docstring promises EvalsDBError for "the delete

@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings╭──────────────────────────────────────────────────────────╮
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+            *                   *                                                                                        *                │ Provider key detected                                    │
+       •      ·  •                               ·                     *                                                             •    │ Found ANTHROPIC_API_KEY — you're ready to chat. Run      │
+                                                    •                        •*                                                •          │ setup any time: Settings ▸ Diagnostics ▸ Run setup       │
+                                                             ·         •                                                •                 │ wizard.                                                  │
+                                         *                                                                                      •         │                                                          │
+                                                                           •                   *                                          ╰──────────────────────────────────────────────────────────╯·
+                          *                                                                                                                                       * ·
+        *                 ·                   •                                                                                      ·*                                    *
+                                                                                                               *                                                       •  ·
+                                          ·              •                                          •                                   *                    •
+     ·                                           •                                                                             ·
+• *     •
+                                                             *     ┌────────────────────────────────────────────────────────────────┐                               •                •    *      *
+                                                 •        •     ╭──────────────────────────────────────────────────────────────────────╮  *             ·      ·                     •
+                                         •                      │                                                                      │ ·         *        ·                       ·
+           ·        ·                                           │  Check model lists online?                                           │                       •                        •
+             •                                              ·   │                                                                      │
+    *                                                           │  tldw can fetch up-to-date model lists from your configured cloud    │      •                 •
+                                  *                             │  providers (OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter,      │·
+        ·                                                       │  QwenCloud, ZAI) at startup. This contacts those endpoints over the  │
+                                                                │  network using your configured API keys.                             │       *                                   •       •
+                                              *                 │                                                                      │            ·                                *
+*                                                               │  Allow this once and it stays on until you turn it off in Settings.  │
+                                            •       *       *   │  Nothing is checked until you say yes.                               │
+             ·                                       ·          │                                                                      │                          *    ·
+          •                                                     │                                                                      │
+     •                                                          │                                     Don't check      Check online    │
+                  •                            ·              · │                                                                      │                *
+                                    • ·                         │                                                                      │                         •                    ·
+                                  •                             ╰──────────────────────────────────────────────────────────────────────╯         ·                                                   ·
+                                           ·                       │  │  Write a note in Library  │                                 │          ·
+                                     *                             │  ╰───────────────────────────╯                                 │          *         ·
+                                                                   │                                                                │                   •
+ *                                                                 └────────────────────────────────────────────────────────────────┘                     *
+                         •                        ·                                  •                                     *                                                                   ·
+               ·    *                                   *                                                                              •       · •                      •                 ·
+                                                                                                                                                          ·
+                             •              •                                                                                                                                *
+                                                                             •**                                                 •                                 *   *           ·       ·
+                                                     *                          ·            · •                  *                                                                             •
+     *                                                            *     ·    ·                         ·           *                *                •
+  *                         •             ·*                               *      *                        ·              *                  ·             ·
+                      •    •   *                             •            ·                                ·                                                                                   •
+             •     •     *      •        •                                                                                                                    *   •*
+        •                                                                                *   •                          •                                         *              *
+
+  Ctrl+Shift+F focus | Enter continue setup | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Ctrl+P · Ctrl+Q

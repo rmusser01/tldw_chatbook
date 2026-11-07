@@ -223,7 +223,9 @@ def test_ancestor_walk_stops_at_home(monkeypatch, tmp_path):
     assert find_project_dir_with_skills(start) is None
 
 
-def test_ancestor_walk_stops_at_home_reached_via_symlinked_ancestor(monkeypatch, tmp_path):
+def test_ancestor_walk_stops_at_home_reached_via_symlinked_ancestor(
+    monkeypatch, tmp_path
+):
     # The walk start is reached through a symlinked path component that
     # resolves onto $HOME. The unresolved `current` never string-equals the
     # resolved `home`, so a stop-check that compares unresolved `current`

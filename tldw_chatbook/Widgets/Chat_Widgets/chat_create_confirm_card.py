@@ -125,7 +125,29 @@ class ChatCreateConfirmCard(Container):
                     f"Copies {count_text} messages "
                     f"from {str(source_title or '')!r} into the new chat."
                 )
-        run_id = self._payload.get("run_id")
+        if self._payload.get("tool") == "new_chat":
+            destination = (
+                "Casual chat"
+                if self._payload.get("scope_type") == "global"
+                else f"Workspace: {self._payload.get('workspace_id', '')}"
+            )
+            lines.append(f"Destination: {destination}")
+            lines.append(
+                "Mode: start one bounded turn in the background"
+                if self._payload.get("mode") == "start"
+                else "Mode: save a draft for review"
+            )
+            lines.append(
+                f"Assistant: {self._payload.get('assistant') or 'Console'} · Provider: {self._payload.get('provider') or 'unconfigured'} · Model: {self._payload.get('model') or 'unconfigured'}"
+            )
+            lines.append(
+                "Allow for this session permits later requests in the same mode "
+                "and destination, including their supplied opening prompts and "
+                "instructions, without another approval card."
+            )
+            if self._payload.get("assistant_default_notice"):
+                lines.append(self._payload["assistant_default_notice"])
+        run_id = self._payload.get("source_run_id") or self._payload.get("run_id")
         if run_id:
             from tldw_chatbook.Agents.agent_models import AGENT_KIND_SUBAGENT
 
@@ -154,11 +176,24 @@ class ChatCreateConfirmCard(Container):
             lines.append("Runs on: " + ", ".join(target_bits))
         if self._payload.get("opening_prompt"):
             lines.append(
-                "Opening prompt (draft for the input box):\n"
-                f"{self._payload['opening_prompt']}"
+                (
+                    "Opening prompt (one background turn):\n"
+                    if self._payload.get("mode") == "start"
+                    else "Opening prompt (draft for the input box):\n"
+                )
+                + f"{self._payload['opening_prompt']}"
             )
-        if self._payload.get("instructions"):
-            lines.append(f"System prompt:\n{self._payload['instructions']}")
+        instructions = self._payload.get(
+            "resolved_instructions", self._payload.get("instructions")
+        )
+        if instructions:
+            label = (
+                "System prompt (explicit instructions override)"
+                if self._payload.get("tool") == "new_chat"
+                and str(self._payload.get("instructions") or "").strip()
+                else "System prompt"
+            )
+            lines.append(f"{label}:\n{instructions}")
         return "\n\n".join(lines)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

@@ -1,0 +1,1165 @@
+{
+  "Tests/UI/test_screen_navigation.py": {
+    "base": {
+      "lint_exit": 1,
+      "lint_diagnostics": [
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 2,
+            "row": 212
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "import asyncio\nimport shutil\nimport subprocess\nimport time\nfrom dataclasses import replace\nfrom types import SimpleNamespace\nfrom unittest.mock import AsyncMock, patch\n\nimport pytest\nfrom textual.app import ComposeResult\nfrom textual.widgets import Button, Input\n\nfrom Tests.app_module_patches import patch_app_global, set_app_global\nfrom Tests.private_profile import private_profile_test\n\n# Harness apps load the consolidated widget CSS the real app loads\n# (TASK-15450); without it the widgets under test mount unstyled.\nfrom Tests.UI.consolidated_css import ConsolidatedCSSApp\nfrom Tests.UI.library_media_rows import summary_row\nfrom tldw_chatbook.app import TldwCli\nfrom tldw_chatbook.Audio_Services_Interop import (\n    AudioServicesScopeService,\n    LocalAudioServicesService,\n    ServerAudioServicesService,\n)\nfrom tldw_chatbook.Auth_Account_Interop import (\n    AuthAccountScopeService,\n    ServerAuthAccountService,\n)\nfrom tldw_chatbook.Character_Chat.character_persona_scope_service import (\n    CharacterPersonaScopeService,\n)\nfrom tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (\n    ChatDictionaryScopeService,\n)\nfrom tldw_chatbook.Character_Chat.local_character_persona_service import (\n    LocalCharacterPersonaService,\n)\nfrom tldw_chatbook.Character_Chat.local_chat_dictionary_service import (\n    LocalChatDictionaryService,\n)\nfrom tldw_chatbook.Character_Chat.server_character_persona_service import (\n    ServerCharacterPersonaService,\n)\nfrom tldw_chatbook.Character_Chat.server_chat_dictionary_service import (\n    ServerChatDictionaryService,\n)\nfrom tldw_chatbook.Chat import (\n    ChatConversationScopeService,\n    ServerChatConversationService,\n)\nfrom tldw_chatbook.Chat_Grammars_Interop import (\n    ChatGrammarsScopeService,\n    LocalChatGrammarsService,\n    ServerChatGrammarsService,\n)\nfrom tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService\nfrom tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService\nfrom tldw_chatbook.Collections_Interop import (\n    CollectionsFeedsScopeService,\n    ServerCollectionsFeedsService,\n)\nfrom tldw_chatbook.Companion_Interop import (\n    CompanionScopeService,\n    ServerCompanionService,\n)\nfrom tldw_chatbook.Constants import ALL_TABS\nfrom tldw_chatbook.External_Connectors_Interop import (\n    ConnectorsScopeService,\n    ServerConnectorsService,\n)\nfrom tldw_chatbook.Feedback_Interop import (\n    FeedbackScopeService,\n    LocalFeedbackService,\n    ServerFeedbackService,\n)\nfrom tldw_chatbook.Home.active_work_adapter import (\n    LocalNotificationHomeActiveWorkAdapter,\n)\nfrom tldw_chatbook.Kanban_Interop import (\n    KanbanScopeService,\n    LocalKanbanService,\n    ServerKanbanService,\n)\nfrom tldw_chatbook.LLM_Provider_Catalog import (\n    LLMProviderCatalogScopeService,\n    LocalLLMProviderCatalogService,\n    ServerLLMProviderCatalogService,\n)\nfrom tldw_chatbook.MCP.local_control_service import LocalMCPControlService\nfrom tldw_chatbook.MCP.local_store import LocalMCPStore\nfrom tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore\nfrom tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService\nfrom tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore\nfrom tldw_chatbook.MCP.unified_control_plane_service import (\n    UnifiedMCPControlPlaneService,\n)\nfrom tldw_chatbook.MCP_Governance_Interop import (\n    MCPGovernanceScopeService,\n    ServerMCPGovernanceService,\n)\nfrom tldw_chatbook.Media import (\n    LocalMediaReadingService,\n    MediaReadingScopeService,\n    ServerMediaReadingService,\n)\nfrom tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService\nfrom tldw_chatbook.Notes.file_notes_session_owner import SessionChange\nfrom tldw_chatbook.Notes.notes_scope_service import NotesScopeService\nfrom tldw_chatbook.Notes.server_notes_workspace_service import (\n    ServerNotesWorkspaceService,\n)\nfrom tldw_chatbook.Notifications import (\n    ClientNotificationsDB,\n    ClientNotificationsService,\n    EventStateRepository,\n    NotificationDispatchService,\n    NotificationsScopeService,\n    ServerNotificationsService,\n)\nfrom tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService\nfrom tldw_chatbook.Personalization_Interop import (\n    PersonalizationScopeService,\n    ServerPersonalizationService,\n)\nfrom tldw_chatbook.Prompt_Management import (\n    LocalPromptService,\n    PromptChatbookScopeService,\n    ServerPromptService,\n)\nfrom tldw_chatbook.Prompt_Studio_Interop import (\n    PromptStudioScopeService,\n    ServerPromptStudioService,\n)\nfrom tldw_chatbook.Research_Interop import (\n    LocalResearchSearchService,\n    LocalResearchService,\n    ResearchScopeService,\n    ResearchSearchScopeService,\n    ServerResearchSearchService,\n    ServerResearchService,\n)\nfrom tldw_chatbook.runtime_policy import (\n    KeyringServerCredentialStore,\n    RuntimeServerContextProvider,\n)\nfrom tldw_chatbook.runtime_policy.server_capabilities import (\n    ActiveServerCapabilityService,\n)\nfrom tldw_chatbook.runtime_policy.server_credentials import (\n    UnavailableServerCredentialStore,\n)\nfrom tldw_chatbook.runtime_policy.server_parity_state import (\n    ServerParityStateRepositories,\n)\nfrom tldw_chatbook.Server_Runtime_Interop import (\n    ServerRuntimeScopeService,\n    ServerRuntimeService,\n)\nfrom tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService\nfrom tldw_chatbook.Skills_Interop import (\n    LocalSkillsService,\n    ServerSkillsService,\n    SkillsScopeService,\n    SkillTrustService,\n)\nfrom tldw_chatbook.Subscriptions import (\n    LocalWatchlistsService,\n    ServerWatchlistsService,\n    WatchlistScopeService,\n)\nfrom tldw_chatbook.Sync_Interop import (\n    LocalFirstSyncService,\n    ManualSyncControlService,\n    ServerSyncService,\n    SyncScopeService,\n    SyncStateRepository,\n)\nfrom tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService\nfrom tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService\nfrom tldw_chatbook.Translation_Interop import (\n    ServerTranslationService,\n    TranslationScopeService,\n)\nfrom tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen\nfrom tldw_chatbook.UI.Navigation.main_navigation import (\n    MainNavigationBar,\n    NavigateToScreen,\n)\nfrom tldw_chatbook.User_Governance_Interop import (\n    ServerUserGovernanceService,\n    UserGovernanceScopeService,\n)\nfrom tldw_chatbook.Voice_Assistant_Interop import (\n    ServerVoiceAssistantService,\n    VoiceAssistantScopeService,\n)\nfrom tldw_chatbook.Web_Clipper_Interop import (\n    ServerWebClipperService,\n    WebClipperScopeService,\n)\nfrom tldw_chatbook.Web_Scraping_Interop import (\n    ServerWebScrapingService,\n    WebScrapingScopeService,\n)\nfrom tldw_chatbook.Workspaces import LocalWorkspaceRegistryService\nfrom tldw_chatbook.Writing_Interop import (\n    LocalWritingService,\n    ServerWritingService,\n    WritingScopeService,\n)\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 214
+                },
+                "location": {
+                  "column": 1,
+                  "row": 3
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 3,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 6,
+            "row": 622
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "    from tldw_chatbook.UI.Navigation.shell_destinations import (\n        MCP_COMPATIBILITY_SHORTCUT,\n        SHELL_DESTINATION_SHORTCUTS,\n    )\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 623
+                },
+                "location": {
+                  "column": 1,
+                  "row": 619
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 5,
+            "row": 619
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 619,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 2,
+            "row": 1563
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from Tests.UI.app_factory import _build_test_app  # noqa: F401,E402\n\n# task-3316 introduced `_wait_for_background_signal` / `_await_background_task`\n# here; task-14912 moved them to Tests/UI/background_signals.py so every UI test\n# gets the bound by default rather than only this file. Read that module's\n# header for the incident and the rules. Re-exported under the original private\n# names so in-flight branches that import them from this module keep working.\nfrom Tests.UI.background_signals import (  # noqa: E402\n    BACKGROUND_SIGNAL_TIMEOUT_SECONDS as _BACKGROUND_SIGNAL_TIMEOUT_SECONDS,  # noqa: F401\n)\nfrom Tests.UI.background_signals import (\n    await_background_task as _await_background_task,  # noqa: F401\n)\nfrom Tests.UI.background_signals import (\n    wait_for_background_signal as _wait_for_background_signal,  # noqa: F401\n)\n\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 1566
+                },
+                "location": {
+                  "column": 1,
+                  "row": 1551
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 1551
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 1551,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "RUF100",
+          "end_location": {
+            "column": 68,
+            "row": 1551
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "",
+                "end_location": {
+                  "column": 68,
+                  "row": 1551
+                },
+                "location": {
+                  "column": 49,
+                  "row": 1551
+                }
+              }
+            ],
+            "message": "Remove unused `noqa` directive"
+          },
+          "location": {
+            "column": 51,
+            "row": 1551
+          },
+          "message": "Unused `noqa` directive (unused: `F401`; non-enabled: `E402`)",
+          "name": "unused-noqa",
+          "noqa_row": 1551,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+        },
+        {
+          "cell": null,
+          "code": "RUF100",
+          "end_location": {
+            "column": 56,
+            "row": 1559
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "",
+                "end_location": {
+                  "column": 56,
+                  "row": 1559
+                },
+                "location": {
+                  "column": 42,
+                  "row": 1559
+                }
+              }
+            ],
+            "message": "Remove unused `noqa` directive"
+          },
+          "location": {
+            "column": 44,
+            "row": 1559
+          },
+          "message": "Unused `noqa` directive (non-enabled: `E402`)",
+          "name": "unused-noqa",
+          "noqa_row": 1559,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+        },
+        {
+          "cell": null,
+          "code": "RUF100",
+          "end_location": {
+            "column": 67,
+            "row": 1561
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "",
+                "end_location": {
+                  "column": 67,
+                  "row": 1561
+                },
+                "location": {
+                  "column": 53,
+                  "row": 1561
+                }
+              }
+            ],
+            "message": "Remove unused `noqa` directive"
+          },
+          "location": {
+            "column": 55,
+            "row": 1561
+          },
+          "message": "Unused `noqa` directive (unused: `F401`)",
+          "name": "unused-noqa",
+          "noqa_row": 1561,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+        },
+        {
+          "cell": null,
+          "code": "RUF100",
+          "end_location": {
+            "column": 77,
+            "row": 1562
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "",
+                "end_location": {
+                  "column": 77,
+                  "row": 1562
+                },
+                "location": {
+                  "column": 63,
+                  "row": 1562
+                }
+              }
+            ],
+            "message": "Remove unused `noqa` directive"
+          },
+          "location": {
+            "column": 65,
+            "row": 1562
+          },
+          "message": "Unused `noqa` directive (unused: `F401`)",
+          "name": "unused-noqa",
+          "noqa_row": 1562,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+        },
+        {
+          "cell": null,
+          "code": "UP022",
+          "end_location": {
+            "column": 10,
+            "row": 1738
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "unsafe",
+            "edits": [
+              {
+                "content": "capture_output=True",
+                "end_location": {
+                  "column": 35,
+                  "row": 1736
+                },
+                "location": {
+                  "column": 13,
+                  "row": 1736
+                }
+              },
+              {
+                "content": "",
+                "end_location": {
+                  "column": 35,
+                  "row": 1737
+                },
+                "location": {
+                  "column": 35,
+                  "row": 1736
+                }
+              }
+            ],
+            "message": "Replace with `capture_output` keyword argument"
+          },
+          "location": {
+            "column": 16,
+            "row": 1731
+          },
+          "message": "Prefer `capture_output` over sending `stdout` and `stderr` to `PIPE`",
+          "name": "replace-stdout-stderr",
+          "noqa_row": 1731,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/replace-stdout-stderr"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 6,
+            "row": 2016
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "    from tldw_chatbook.Library.library_notes_session import (\n        NoteFlushOutcome,\n        NoteFlushOutcomeKind,\n    )\n    from tldw_chatbook.Library.library_shell_state import (\n        LIBRARY_ROW_BROWSE_COLLECTIONS,\n        LIBRARY_ROW_BROWSE_NOTES,\n    )\n    from tldw_chatbook.UI.Screens.library_screen import (\n        LibraryEntryReconcileResult,\n        LibraryScreen,\n    )\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 2017
+                },
+                "location": {
+                  "column": 1,
+                  "row": 2005
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 5,
+            "row": 2005
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 2005,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "SIM114",
+          "end_location": {
+            "column": 41,
+            "row": 2376
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": " or (\n                    # (wave-8 task 3) The workspace handle is a\n                    # `LibraryNotesState` field now, reached as\n                    # `self._notes_state.file_notes_workspace.<name>`, so the\n                    # receiver this matches is the state attribute, not the\n                    # old flat screen name. Without this retarget the visitor\n                    # matches nothing and the contract set goes EMPTY -- a\n                    # loud red, not a vacuous pass.\n                    isinstance(value, ast.Attribute)\n                    and value.attr == \"file_notes_workspace\"\n                )",
+                "end_location": {
+                  "column": 75,
+                  "row": 2363
+                },
+                "location": {
+                  "column": 75,
+                  "row": 2363
+                }
+              },
+              {
+                "content": "",
+                "end_location": {
+                  "column": 1,
+                  "row": 2377
+                },
+                "location": {
+                  "column": 1,
+                  "row": 2365
+                }
+              }
+            ],
+            "message": "Combine `if` branches"
+          },
+          "location": {
+            "column": 17,
+            "row": 2363
+          },
+          "message": "Combine `if` branches using logical `or` operator",
+          "name": "if-with-same-arms",
+          "noqa_row": 2363,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/if-with-same-arms"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 6,
+            "row": 2944
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "    from tldw_chatbook.Library.library_media_reader_state import (\n        LibraryMediaReaderSessionState,\n    )\n    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA\n    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen\n    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 2945
+                },
+                "location": {
+                  "column": 1,
+                  "row": 2938
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 5,
+            "row": 2938
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 2938,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "S110",
+          "end_location": {
+            "column": 17,
+            "row": 3426
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": null,
+          "location": {
+            "column": 9,
+            "row": 3422
+          },
+          "message": "`try`-`except`-`pass` detected, consider logging the exception",
+          "name": "try-except-pass",
+          "noqa_row": 3422,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+        },
+        {
+          "cell": null,
+          "code": "BLE001",
+          "end_location": {
+            "column": 25,
+            "row": 3422
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": null,
+          "location": {
+            "column": 16,
+            "row": 3422
+          },
+          "message": "Do not catch blind exception: `Exception`",
+          "name": "blind-except",
+          "noqa_row": 3422,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/blind-except"
+        },
+        {
+          "cell": null,
+          "code": "S110",
+          "end_location": {
+            "column": 13,
+            "row": 3453
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": null,
+          "location": {
+            "column": 5,
+            "row": 3452
+          },
+          "message": "`try`-`except`-`pass` detected, consider logging the exception",
+          "name": "try-except-pass",
+          "noqa_row": 3452,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+        },
+        {
+          "cell": null,
+          "code": "BLE001",
+          "end_location": {
+            "column": 21,
+            "row": 3452
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 3452
+          },
+          "message": "Do not catch blind exception: `Exception`",
+          "name": "blind-except",
+          "noqa_row": 3452,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/blind-except"
+        }
+      ],
+      "sha256": "582719f51f2209176d979593768179d50f497bd7017845503a62df0b2be275a9",
+      "format_changes": [
+        {
+          "before": [
+            "        screen_name, current_tab, screen_class = (",
+            "            app._resolve_screen_navigation_target(route)"
+          ],
+          "after": [
+            "        screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(",
+            "            route"
+          ]
+        },
+        {
+          "before": [
+            "            time.monotonic() < deadline",
+            "            and pane.workbench.active_mode != \"permissions\""
+          ],
+          "after": [
+            "            time.monotonic() < deadline and pane.workbench.active_mode != \"permissions\""
+          ]
+        }
+      ]
+    },
+    "current": {
+      "lint_exit": 1,
+      "lint_diagnostics": [
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 2,
+            "row": 212
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "import asyncio\nimport shutil\nimport subprocess\nimport time\nfrom dataclasses import replace\nfrom types import SimpleNamespace\nfrom unittest.mock import AsyncMock, patch\n\nimport pytest\nfrom textual.app import ComposeResult\nfrom textual.widgets import Button, Input\n\nfrom Tests.app_module_patches import patch_app_global, set_app_global\nfrom Tests.private_profile import private_profile_test\n\n# Harness apps load the consolidated widget CSS the real app loads\n# (TASK-15450); without it the widgets under test mount unstyled.\nfrom Tests.UI.consolidated_css import ConsolidatedCSSApp\nfrom Tests.UI.library_media_rows import summary_row\nfrom tldw_chatbook.app import TldwCli\nfrom tldw_chatbook.Audio_Services_Interop import (\n    AudioServicesScopeService,\n    LocalAudioServicesService,\n    ServerAudioServicesService,\n)\nfrom tldw_chatbook.Auth_Account_Interop import (\n    AuthAccountScopeService,\n    ServerAuthAccountService,\n)\nfrom tldw_chatbook.Character_Chat.character_persona_scope_service import (\n    CharacterPersonaScopeService,\n)\nfrom tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (\n    ChatDictionaryScopeService,\n)\nfrom tldw_chatbook.Character_Chat.local_character_persona_service import (\n    LocalCharacterPersonaService,\n)\nfrom tldw_chatbook.Character_Chat.local_chat_dictionary_service import (\n    LocalChatDictionaryService,\n)\nfrom tldw_chatbook.Character_Chat.server_character_persona_service import (\n    ServerCharacterPersonaService,\n)\nfrom tldw_chatbook.Character_Chat.server_chat_dictionary_service import (\n    ServerChatDictionaryService,\n)\nfrom tldw_chatbook.Chat import (\n    ChatConversationScopeService,\n    ServerChatConversationService,\n)\nfrom tldw_chatbook.Chat_Grammars_Interop import (\n    ChatGrammarsScopeService,\n    LocalChatGrammarsService,\n    ServerChatGrammarsService,\n)\nfrom tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService\nfrom tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService\nfrom tldw_chatbook.Collections_Interop import (\n    CollectionsFeedsScopeService,\n    ServerCollectionsFeedsService,\n)\nfrom tldw_chatbook.Companion_Interop import (\n    CompanionScopeService,\n    ServerCompanionService,\n)\nfrom tldw_chatbook.Constants import ALL_TABS\nfrom tldw_chatbook.External_Connectors_Interop import (\n    ConnectorsScopeService,\n    ServerConnectorsService,\n)\nfrom tldw_chatbook.Feedback_Interop import (\n    FeedbackScopeService,\n    LocalFeedbackService,\n    ServerFeedbackService,\n)\nfrom tldw_chatbook.Home.active_work_adapter import (\n    LocalNotificationHomeActiveWorkAdapter,\n)\nfrom tldw_chatbook.Kanban_Interop import (\n    KanbanScopeService,\n    LocalKanbanService,\n    ServerKanbanService,\n)\nfrom tldw_chatbook.LLM_Provider_Catalog import (\n    LLMProviderCatalogScopeService,\n    LocalLLMProviderCatalogService,\n    ServerLLMProviderCatalogService,\n)\nfrom tldw_chatbook.MCP.local_control_service import LocalMCPControlService\nfrom tldw_chatbook.MCP.local_store import LocalMCPStore\nfrom tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore\nfrom tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService\nfrom tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore\nfrom tldw_chatbook.MCP.unified_control_plane_service import (\n    UnifiedMCPControlPlaneService,\n)\nfrom tldw_chatbook.MCP_Governance_Interop import (\n    MCPGovernanceScopeService,\n    ServerMCPGovernanceService,\n)\nfrom tldw_chatbook.Media import (\n    LocalMediaReadingService,\n    MediaReadingScopeService,\n    ServerMediaReadingService,\n)\nfrom tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService\nfrom tldw_chatbook.Notes.file_notes_session_owner import SessionChange\nfrom tldw_chatbook.Notes.notes_scope_service import NotesScopeService\nfrom tldw_chatbook.Notes.server_notes_workspace_service import (\n    ServerNotesWorkspaceService,\n)\nfrom tldw_chatbook.Notifications import (\n    ClientNotificationsDB,\n    ClientNotificationsService,\n    EventStateRepository,\n    NotificationDispatchService,\n    NotificationsScopeService,\n    ServerNotificationsService,\n)\nfrom tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService\nfrom tldw_chatbook.Personalization_Interop import (\n    PersonalizationScopeService,\n    ServerPersonalizationService,\n)\nfrom tldw_chatbook.Prompt_Management import (\n    LocalPromptService,\n    PromptChatbookScopeService,\n    ServerPromptService,\n)\nfrom tldw_chatbook.Prompt_Studio_Interop import (\n    PromptStudioScopeService,\n    ServerPromptStudioService,\n)\nfrom tldw_chatbook.Research_Interop import (\n    LocalResearchSearchService,\n    LocalResearchService,\n    ResearchScopeService,\n    ResearchSearchScopeService,\n    ServerResearchSearchService,\n    ServerResearchService,\n)\nfrom tldw_chatbook.runtime_policy import (\n    KeyringServerCredentialStore,\n    RuntimeServerContextProvider,\n)\nfrom tldw_chatbook.runtime_policy.server_capabilities import (\n    ActiveServerCapabilityService,\n)\nfrom tldw_chatbook.runtime_policy.server_credentials import (\n    UnavailableServerCredentialStore,\n)\nfrom tldw_chatbook.runtime_policy.server_parity_state import (\n    ServerParityStateRepositories,\n)\nfrom tldw_chatbook.Server_Runtime_Interop import (\n    ServerRuntimeScopeService,\n    ServerRuntimeService,\n)\nfrom tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService\nfrom tldw_chatbook.Skills_Interop import (\n    LocalSkillsService,\n    ServerSkillsService,\n    SkillsScopeService,\n    SkillTrustService,\n)\nfrom tldw_chatbook.Subscriptions import (\n    LocalWatchlistsService,\n    ServerWatchlistsService,\n    WatchlistScopeService,\n)\nfrom tldw_chatbook.Sync_Interop import (\n    LocalFirstSyncService,\n    ManualSyncControlService,\n    ServerSyncService,\n    SyncScopeService,\n    SyncStateRepository,\n)\nfrom tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService\nfrom tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService\nfrom tldw_chatbook.Translation_Interop import (\n    ServerTranslationService,\n    TranslationScopeService,\n)\nfrom tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen\nfrom tldw_chatbook.UI.Navigation.main_navigation import (\n    MainNavigationBar,\n    NavigateToScreen,\n)\nfrom tldw_chatbook.User_Governance_Interop import (\n    ServerUserGovernanceService,\n    UserGovernanceScopeService,\n)\nfrom tldw_chatbook.Voice_Assistant_Interop import (\n    ServerVoiceAssistantService,\n    VoiceAssistantScopeService,\n)\nfrom tldw_chatbook.Web_Clipper_Interop import (\n    ServerWebClipperService,\n    WebClipperScopeService,\n)\nfrom tldw_chatbook.Web_Scraping_Interop import (\n    ServerWebScrapingService,\n    WebScrapingScopeService,\n)\nfrom tldw_chatbook.Workspaces import LocalWorkspaceRegistryService\nfrom tldw_chatbook.Writing_Interop import (\n    LocalWritingService,\n    ServerWritingService,\n    WritingScopeService,\n)\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 214
+                },
+                "location": {
+                  "column": 1,
+                  "row": 3
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 3,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 6,
+            "row": 624
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "    from tldw_chatbook.UI.Navigation.shell_destinations import (\n        MCP_COMPATIBILITY_SHORTCUT,\n        SHELL_DESTINATION_SHORTCUTS,\n    )\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 625
+                },
+                "location": {
+                  "column": 1,
+                  "row": 621
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 5,
+            "row": 621
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 621,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 2,
+            "row": 1565
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from Tests.UI.app_factory import _build_test_app  # noqa: F401,E402\n\n# task-3316 introduced `_wait_for_background_signal` / `_await_background_task`\n# here; task-14912 moved them to Tests/UI/background_signals.py so every UI test\n# gets the bound by default rather than only this file. Read that module's\n# header for the incident and the rules. Re-exported under the original private\n# names so in-flight branches that import them from this module keep working.\nfrom Tests.UI.background_signals import (  # noqa: E402\n    BACKGROUND_SIGNAL_TIMEOUT_SECONDS as _BACKGROUND_SIGNAL_TIMEOUT_SECONDS,  # noqa: F401\n)\nfrom Tests.UI.background_signals import (\n    await_background_task as _await_background_task,  # noqa: F401\n)\nfrom Tests.UI.background_signals import (\n    wait_for_background_signal as _wait_for_background_signal,  # noqa: F401\n)\n\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 1568
+                },
+                "location": {
+                  "column": 1,
+                  "row": 1553
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 1553
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 1553,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "RUF100",
+          "end_location": {
+            "column": 68,
+            "row": 1553
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "",
+                "end_location": {
+                  "column": 68,
+                  "row": 1553
+                },
+                "location": {
+                  "column": 49,
+                  "row": 1553
+                }
+              }
+            ],
+            "message": "Remove unused `noqa` directive"
+          },
+          "location": {
+            "column": 51,
+            "row": 1553
+          },
+          "message": "Unused `noqa` directive (unused: `F401`; non-enabled: `E402`)",
+          "name": "unused-noqa",
+          "noqa_row": 1553,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+        },
+        {
+          "cell": null,
+          "code": "RUF100",
+          "end_location": {
+            "column": 56,
+            "row": 1561
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "",
+                "end_location": {
+                  "column": 56,
+                  "row": 1561
+                },
+                "location": {
+                  "column": 42,
+                  "row": 1561
+                }
+              }
+            ],
+            "message": "Remove unused `noqa` directive"
+          },
+          "location": {
+            "column": 44,
+            "row": 1561
+          },
+          "message": "Unused `noqa` directive (non-enabled: `E402`)",
+          "name": "unused-noqa",
+          "noqa_row": 1561,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+        },
+        {
+          "cell": null,
+          "code": "RUF100",
+          "end_location": {
+            "column": 67,
+            "row": 1563
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "",
+                "end_location": {
+                  "column": 67,
+                  "row": 1563
+                },
+                "location": {
+                  "column": 53,
+                  "row": 1563
+                }
+              }
+            ],
+            "message": "Remove unused `noqa` directive"
+          },
+          "location": {
+            "column": 55,
+            "row": 1563
+          },
+          "message": "Unused `noqa` directive (unused: `F401`)",
+          "name": "unused-noqa",
+          "noqa_row": 1563,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+        },
+        {
+          "cell": null,
+          "code": "RUF100",
+          "end_location": {
+            "column": 77,
+            "row": 1564
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "",
+                "end_location": {
+                  "column": 77,
+                  "row": 1564
+                },
+                "location": {
+                  "column": 63,
+                  "row": 1564
+                }
+              }
+            ],
+            "message": "Remove unused `noqa` directive"
+          },
+          "location": {
+            "column": 65,
+            "row": 1564
+          },
+          "message": "Unused `noqa` directive (unused: `F401`)",
+          "name": "unused-noqa",
+          "noqa_row": 1564,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+        },
+        {
+          "cell": null,
+          "code": "UP022",
+          "end_location": {
+            "column": 10,
+            "row": 1740
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "unsafe",
+            "edits": [
+              {
+                "content": "capture_output=True",
+                "end_location": {
+                  "column": 35,
+                  "row": 1738
+                },
+                "location": {
+                  "column": 13,
+                  "row": 1738
+                }
+              },
+              {
+                "content": "",
+                "end_location": {
+                  "column": 35,
+                  "row": 1739
+                },
+                "location": {
+                  "column": 35,
+                  "row": 1738
+                }
+              }
+            ],
+            "message": "Replace with `capture_output` keyword argument"
+          },
+          "location": {
+            "column": 16,
+            "row": 1733
+          },
+          "message": "Prefer `capture_output` over sending `stdout` and `stderr` to `PIPE`",
+          "name": "replace-stdout-stderr",
+          "noqa_row": 1733,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/replace-stdout-stderr"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 6,
+            "row": 2018
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "    from tldw_chatbook.Library.library_notes_session import (\n        NoteFlushOutcome,\n        NoteFlushOutcomeKind,\n    )\n    from tldw_chatbook.Library.library_shell_state import (\n        LIBRARY_ROW_BROWSE_COLLECTIONS,\n        LIBRARY_ROW_BROWSE_NOTES,\n    )\n    from tldw_chatbook.UI.Screens.library_screen import (\n        LibraryEntryReconcileResult,\n        LibraryScreen,\n    )\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 2019
+                },
+                "location": {
+                  "column": 1,
+                  "row": 2007
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 5,
+            "row": 2007
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 2007,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "SIM114",
+          "end_location": {
+            "column": 41,
+            "row": 2378
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": " or (\n                    # (wave-8 task 3) The workspace handle is a\n                    # `LibraryNotesState` field now, reached as\n                    # `self._notes_state.file_notes_workspace.<name>`, so the\n                    # receiver this matches is the state attribute, not the\n                    # old flat screen name. Without this retarget the visitor\n                    # matches nothing and the contract set goes EMPTY -- a\n                    # loud red, not a vacuous pass.\n                    isinstance(value, ast.Attribute)\n                    and value.attr == \"file_notes_workspace\"\n                )",
+                "end_location": {
+                  "column": 75,
+                  "row": 2365
+                },
+                "location": {
+                  "column": 75,
+                  "row": 2365
+                }
+              },
+              {
+                "content": "",
+                "end_location": {
+                  "column": 1,
+                  "row": 2379
+                },
+                "location": {
+                  "column": 1,
+                  "row": 2367
+                }
+              }
+            ],
+            "message": "Combine `if` branches"
+          },
+          "location": {
+            "column": 17,
+            "row": 2365
+          },
+          "message": "Combine `if` branches using logical `or` operator",
+          "name": "if-with-same-arms",
+          "noqa_row": 2365,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/if-with-same-arms"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 6,
+            "row": 2946
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "    from tldw_chatbook.Library.library_media_reader_state import (\n        LibraryMediaReaderSessionState,\n    )\n    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA\n    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen\n    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 2947
+                },
+                "location": {
+                  "column": 1,
+                  "row": 2940
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 5,
+            "row": 2940
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 2940,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "S110",
+          "end_location": {
+            "column": 17,
+            "row": 3428
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": null,
+          "location": {
+            "column": 9,
+            "row": 3424
+          },
+          "message": "`try`-`except`-`pass` detected, consider logging the exception",
+          "name": "try-except-pass",
+          "noqa_row": 3424,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+        },
+        {
+          "cell": null,
+          "code": "BLE001",
+          "end_location": {
+            "column": 25,
+            "row": 3424
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": null,
+          "location": {
+            "column": 16,
+            "row": 3424
+          },
+          "message": "Do not catch blind exception: `Exception`",
+          "name": "blind-except",
+          "noqa_row": 3424,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/blind-except"
+        },
+        {
+          "cell": null,
+          "code": "S110",
+          "end_location": {
+            "column": 13,
+            "row": 3455
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": null,
+          "location": {
+            "column": 5,
+            "row": 3454
+          },
+          "message": "`try`-`except`-`pass` detected, consider logging the exception",
+          "name": "try-except-pass",
+          "noqa_row": 3454,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+        },
+        {
+          "cell": null,
+          "code": "BLE001",
+          "end_location": {
+            "column": 21,
+            "row": 3454
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_navigation.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 3454
+          },
+          "message": "Do not catch blind exception: `Exception`",
+          "name": "blind-except",
+          "noqa_row": 3454,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/blind-except"
+        }
+      ],
+      "sha256": "dd91827f891556448fdcba269be4325e74bdb04d31d88779277f08e51ebb2f79",
+      "format_changes": [
+        {
+          "before": [
+            "        screen_name, current_tab, screen_class = (",
+            "            app._resolve_screen_navigation_target(route)"
+          ],
+          "after": [
+            "        screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(",
+            "            route"
+          ]
+        },
+        {
+          "before": [
+            "            time.monotonic() < deadline",
+            "            and pane.workbench.active_mode != \"permissions\""
+          ],
+          "after": [
+            "            time.monotonic() < deadline and pane.workbench.active_mode != \"permissions\""
+          ]
+        }
+      ]
+    },
+    "lint_codes_same": true,
+    "format_changes_same": true,
+    "diagnostic_messages_same": true
+  },
+  "Tests/UI/test_console_attachment_vision_block.py": {
+    "base": {
+      "lint_exit": 1,
+      "lint_diagnostics": [
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 61,
+            "row": 27
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_attachment_vision_block.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from __future__ import annotations\n\nimport time\nfrom dataclasses import replace\n\nimport pytest\nfrom textual.widgets import Button, Input, Static\n\nfrom Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp\nfrom Tests.UI.test_console_dictation import _mounted_console, _ready_host\nfrom tldw_chatbook.Chat.attachment_core import PendingAttachment\nfrom tldw_chatbook.Widgets.Console import ConsoleComposerBar\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 29
+                },
+                "location": {
+                  "column": 1,
+                  "row": 16
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 16
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 16,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "RUF012",
+          "end_location": {
+            "column": 59,
+            "row": 402
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_attachment_vision_block.py",
+          "fix": null,
+          "location": {
+            "column": 20,
+            "row": 402
+          },
+          "message": "Mutable default value for class attribute",
+          "name": "mutable-class-default",
+          "noqa_row": 402,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/mutable-class-default"
+        }
+      ],
+      "sha256": "64fd217bb96db87a32cf26eb9d4e00dc0dcec8334366f7a2c19b5676ec879372",
+      "format_changes": [
+        {
+          "before": [
+            "            console, pilot, strip_reason=f\"Send blocked \u2014 {long_model} can't accept images\""
+          ],
+          "after": [
+            "            console,",
+            "            pilot,",
+            "            strip_reason=f\"Send blocked \u2014 {long_model} can't accept images\","
+          ]
+        }
+      ]
+    },
+    "current": {
+      "lint_exit": 1,
+      "lint_diagnostics": [
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 61,
+            "row": 27
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_attachment_vision_block.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from __future__ import annotations\n\nimport time\nfrom dataclasses import replace\n\nimport pytest\nfrom textual.widgets import Button, Input, Static\n\nfrom Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp\nfrom Tests.UI.test_console_dictation import _mounted_console, _ready_host\nfrom tldw_chatbook.Chat.attachment_core import PendingAttachment\nfrom tldw_chatbook.Widgets.Console import ConsoleComposerBar\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 29
+                },
+                "location": {
+                  "column": 1,
+                  "row": 16
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 16
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 16,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "RUF012",
+          "end_location": {
+            "column": 59,
+            "row": 401
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_attachment_vision_block.py",
+          "fix": null,
+          "location": {
+            "column": 20,
+            "row": 401
+          },
+          "message": "Mutable default value for class attribute",
+          "name": "mutable-class-default",
+          "noqa_row": 401,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/mutable-class-default"
+        }
+      ],
+      "sha256": "9de710f02e55c57d807481cf97aaf5e4c4668a4fa50ba076190e698b21e91485",
+      "format_changes": []
+    },
+    "lint_codes_same": true,
+    "format_changes_same": false,
+    "diagnostic_messages_same": true
+  }
+}

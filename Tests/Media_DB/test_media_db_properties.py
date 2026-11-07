@@ -20,9 +20,10 @@ from hypothesis import HealthCheck, assume, given, settings, strategies as st
 # Adjust the import path based on your project structure
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase,
-    fetch_keywords_for_media,
+    fetch_keywords_for_media_batch,
     empty_trash,
 )
+
 MEDIA_DB_SETTINGS = settings(
     suppress_health_check=[
         HealthCheck.too_slow,
@@ -142,7 +143,8 @@ class TestMediaItemProperties:
         assert not retrieved["deleted"]
 
         linked_keywords = {
-            kw.lower().strip() for kw in fetch_keywords_for_media(db_instance, media_id)
+            kw.lower().strip()
+            for kw in fetch_keywords_for_media_batch(db_instance, [media_id])[media_id]
         }
         expected_keywords = {kw.lower().strip() for kw in media_data["keywords"]}
         assert linked_keywords == expected_keywords
@@ -542,9 +544,7 @@ class TestLargeMediaIdsFilterUsesJsonEach:
         assert total == 5
         assert {r["id"] for r in results} == set(seeded_ids)
 
-    def test_large_allowlist_excludes_ids_outside_it(
-        self, db_instance: MediaDatabase
-    ):
+    def test_large_allowlist_excludes_ids_outside_it(self, db_instance: MediaDatabase):
         in_scope_id, _, _ = db_instance.add_media_with_keywords(
             title="In scope",
             media_type="document",
@@ -589,9 +589,7 @@ class TestLargeMediaIdsFilterUsesJsonEach:
         connection.set_trace_callback(captured_sql.append)
 
         try:
-            large_allowlist = [media_id] + list(
-                range(3_000_000, 3_000_000 + 999)
-            )
+            large_allowlist = [media_id] + list(range(3_000_000, 3_000_000 + 999))
             db_instance.search_media_db(
                 search_query=None,
                 media_ids_filter=large_allowlist,

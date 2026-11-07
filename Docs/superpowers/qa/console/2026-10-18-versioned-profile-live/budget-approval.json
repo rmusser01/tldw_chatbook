@@ -1,0 +1,8 @@
+{
+  "previous_total": 20,
+  "additional_authorized": 10,
+  "authorized_total": 30,
+  "consumed_before_run": 17,
+  "remaining_before_run": 13,
+  "user_answer": "Approve 10 additional requests (total cap 30)"
+}

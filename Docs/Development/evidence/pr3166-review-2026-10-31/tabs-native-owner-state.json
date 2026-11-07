@@ -1,0 +1,127 @@
+{
+  "settle_failed": true,
+  "test_line": 630,
+  "pending": true,
+  "read_count": 1,
+  "sync_running": true,
+  "sync_requested": false,
+  "replay": false,
+  "reads": [
+    {
+      "task_done": false,
+      "producer_done": false,
+      "retired": false,
+      "reader_original": true
+    }
+  ],
+  "workers": [
+    {
+      "name": "_sync_native_console_chat_ui",
+      "group": "console-sync",
+      "state": "RUNNING",
+      "node": "ChatScreen"
+    },
+    {
+      "name": "_refresh",
+      "group": "console-readiness-config",
+      "state": "RUNNING",
+      "node": "ChatScreen"
+    }
+  ],
+  "native_stacks": [
+    {
+      "thread": 235152,
+      "frames": [
+        {
+          "module": "tldw_chatbook.Utils.windows_files",
+          "qualname": "WindowsOS._stat_handle",
+          "line": 961,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Utils.windows_files",
+          "qualname": "WindowsOS.fstat",
+          "line": 774,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.native_files",
+          "qualname": "pinned_directory",
+          "line": 53,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.admission",
+          "qualname": "Admission._directory",
+          "line": 119,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.admission",
+          "qualname": "Admission.open_existing",
+          "line": 110,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.control_records",
+          "qualname": "_existing_admission_authority",
+          "line": 216,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.control_records",
+          "qualname": "admission_authority",
+          "line": 196,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.storage_admission",
+          "qualname": "_acquire_storage",
+          "line": 1472,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.storage_admission",
+          "qualname": "acquire_storage",
+          "line": 1397,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.raw_participants",
+          "qualname": "_scope",
+          "line": 1053,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Backup_Recovery.config_participants",
+          "qualname": "operation",
+          "line": 436,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.UI.Console_Modules.console_spend_projection",
+          "qualname": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+          "line": 249,
+          "original_source": true
+        },
+        {
+          "module": "tldw_chatbook.Chat.console_preparation_reads",
+          "qualname": "run_preparation_read.<locals>.invoke",
+          "line": 202,
+          "original_source": false
+        }
+      ]
+    },
+    {
+      "thread": 201420,
+      "frames": [
+        {
+          "module": "tldw_chatbook.Backup_Recovery.storage_admission",
+          "qualname": "_Hold._run",
+          "line": 531,
+          "original_source": true
+        }
+      ]
+    }
+  ]
+}

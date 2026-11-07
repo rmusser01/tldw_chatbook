@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  paper-retrieval-practice                                 │
+│ │ Navigation                     │  a  │ Media (24)      Sets                                 │  t  file:///Users/you/Papers/paper-retrieval-practice.pdf    │
+│ │     Import…                    │  v  │ Media · 24 of 24 · all types · sort: Newest          │  e    Find  Read later  Use in Console  More                 │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m    Read (selected)  Analysis  Highlights  Info            │
+│ │ ▊ Search Library…         ▎▊x▎ │     │  ▊  Title/keyword…                  ▎                │  s   Rendered (selected) |      Raw                          │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │     ┌──────────────────────────────────────────────────────┐ │
+│ │                                │     │    type: All types    sort: Newest                   │     │                                                      │ │
+│ │ ────────────────────────────── │     │                                                      │     │                                                      │ │
+│ │ Browse                     ▾   │     │    Export…     Trash     Select                      │     │   Retrieval practice improves long-term retention    │ │
+│ │  ▸ Media (24) — your files     │     │    Review these                                      │     │                                                      │ │
+│ │    Conversations (12)          │     │  ▸ paper-retrieval-practice                          │     │   Abstract. We compare rereading with retrieval      │ │
+│ │    Notes (122)                 │     │      pdf · updated just now · loaded                 │     │   practice in 120 undergraduates. Results.           │ │
+│ │    Prompts (10) — reuse        │     │    A field guide to Markdown tables                  │     │   Retrieval practice improved 7-day retention by     │ │
+│ │    Skills (4) — AI add-ons     │<--- │      article · updated 2d                            │     │   21 percentage points. Discussion. Effects held     │ │
+│ │    Collections (6)             │     │    Voice memo 2026-09-29                             │     │   across subject areas. Abstract. We compare         │ │
+│ │    Search / RAG — find all     │     │      audio · updated 3d                              │     │   rereading with retrieval practice in 120           │ │
+│ │ ────────────────────────────── │     │    学習メモ — 日本語の文法                           │     │   undergraduates. Results. Retrieval practice        │ │
+│ │ Artifacts                  ▾   │     │      document · updated 4d                           │     │   improved 7-day retention by 21 percentage          │ │
+│ │    All artifacts               │     │    Server logs excerpt 2026-09-27                    │<--- │   points. Discussion. Effects held across subject    │ │
+│ │    Chatbooks                   │     │      plaintext · updated 5d                          │     │   areas.                                             │ │
+│ │    Reports                     │     │    Spaced repetition, explained                      │     │                                                      │ │
+│ │ ────────────────────────────── │     │      article · updated 5d                            │     │   Abstract. We compare rereading with retrieval      │ │
+│ │ Create                     ▾   │     │    Podcast: Deep Work revisited (ep. 112) — trans…   │     │   practice in 120 undergraduates. Results.           │ │
+│ │    New note                    │     │      audio · updated 1w                              │     │   Retrieval practice improved 7-day retention by     │ │
+│ │    New prompt                  │<--- │    Grocery receipt (OCR text)                      ▄ │     │   21 percentage points. Discussion. Effects held     │ │
+│ │    New skill                   │     │      plaintext · updated 1w                          │     │   across subject areas.                              │ │
+│ │ ────────────────────────────── │     │    Research notes — interview synthesis (export)     │     │                                                      │ │
+│ │ Study                      ▾   │     │      document · updated 1w                           │     │                                                      │ │
+│ │    Study decks (0)             │     │    How SQLite FTS5 ranks results                     │     │                                                      │ │
+│ │    Flashcards due: 0           │     │      article · updated 1w                            │     │                                                      │ │
+│ │    Quizzes (0)                 │     │    Lecture 4 — Transformers (transcript)             │     │                                                      │ │
+│ │ ────────────────────────────── │     │      video · updated 2w                              │     │                                                      │ │
+│ │ Import / Export            ▾   │     │    The Dispossessed — sample chapter                 │     │                                                      │ │
+│ │    Import…                     │     │      ebook · updated 2w                              │     │                                                      │ │
+│ │    Export                      │     │               1-20 of 24 · Page 1 of 2               │     │                                                      │ │
+│ │ ────────────────────────────── │     │              Already on the first page.              │     │                                                      │ │
+│ │ Details                    ▸   │     │                 ○ Previous     Next                  │     └──────────────────────────────────────────────────────┘ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | ctrl+f find | l read later | c use in Console | t trash | F1 help · Ctrl+P palette · Ctrl+Q quit

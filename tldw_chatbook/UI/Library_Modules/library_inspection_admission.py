@@ -244,6 +244,12 @@ async def _flush_library_navigation_sources(self, *, is_current) -> bool:
     if not skill_allowed:
         self._notify_skill_dirty_veto()
         return False
+    # TASK-34000.22 fix round 2 (R2-1): the Media reader's authoring forms
+    # are the fifth sibling -- explicit-Save only, so nothing to flush,
+    # only to veto on, in the same voice as the prompt and skill vetoes.
+    if self._library_media_editor_dirty():
+        self._notify_media_editor_dirty_veto()
+        return False
     return True
 
 

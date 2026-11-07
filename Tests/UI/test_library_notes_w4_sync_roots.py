@@ -229,12 +229,12 @@ async def test_sync_copy_uses_no_engineering_terms() -> None:
         (60, 12),
     )
 
-    # task-32451 owns the root row's placeholder name; it is the one
-    # remaining "cutover" on screen and is explicitly out of this task.
-    placeholder = "Sync folder (name unavailable before cutover)"
+    # task-32451: the root row is titled with the name the runtime stamped
+    # (the folder's name), never the old "(name unavailable before cutover)"
+    # placeholder -- which was the last "cutover" left on screen.
     joined = "\n".join(frames)
-    assert placeholder in joined, "the placeholder moved -- re-check task-32451"
-    joined = joined.replace(placeholder, "<task-32451 placeholder>")
+    assert "Vault sync" in joined
+    assert "name unavailable" not in joined
     assert "Check failed — recovery still open" in joined
     assert "listed under Receipts" in joined
     for term in _ENGINEERING_TERMS:
@@ -265,7 +265,11 @@ def _failed_roots_controller(error: BaseException, status: str, next_action: str
     runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
         "active",
         "sync_now",
-        (NotesSyncRootRuntimeSnapshot("root-1", status, next_action),),
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root-1", status, next_action, display_name="Vault sync"
+            ),
+        ),
     )
 
     async def fail(_root_id: str):

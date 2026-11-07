@@ -91,7 +91,9 @@ def test_profile_json_is_finite_content_free_metadata_without_timing_gate(
     output = tmp_path / "profile.json"
     profile.write_profile(report, output)
     raw = output.read_text(encoding="utf-8")
-    decoded = json.loads(raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+    decoded = json.loads(
+        raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value))
+    )
 
     assert set(decoded) == {
         "schema_version",

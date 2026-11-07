@@ -102,10 +102,10 @@ def test_admitted_transaction_finishes_but_escaped_cursor_keeps_native_hold(
     tmp_path, local_root, launch, owner_type
 ):
     from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = owner_type(tmp_path / "transaction.sqlite", "transaction-test")
-    participant = _repository_participant(owner)
+    participant = repository_participant(owner)
     pause = None
     try:
         with owner.transaction() as work:
@@ -188,7 +188,7 @@ def test_explicit_raw_close_reopens_cached_owner_without_idle_delay(
 def test_uninstalled_subclass_keeps_ordinary_use_without_participant_authority(
     tmp_path,
 ):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     class OrdinaryReader(CharactersRAGDB):
         pass
@@ -198,7 +198,7 @@ def test_uninstalled_subclass_keeps_ordinary_use_without_participant_authority(
         with owner.transaction() as cursor:
             assert cursor.execute("SELECT 42").fetchone()[0] == 42
         with pytest.raises(ValueError, match="repository_participant_not_installed"):
-            _repository_participant(owner)
+            repository_participant(owner)
     finally:
         owner.close()
 
@@ -210,10 +210,10 @@ def test_distinct_thread_cache_closes_without_interrupting_same_owner_worker(
     import threading
 
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = owner_type(tmp_path / "threads.sqlite", "threads-test")
-    participant = _repository_participant(owner)
+    participant = repository_participant(owner)
     main_connection = cached_connection(owner)
     entered, finish, idle, retire = (threading.Event() for _ in range(4))
     errors = []
@@ -452,7 +452,7 @@ def test_nested_and_borrowed_transaction_ownership_remains_with_original_caller(
 @pytest.mark.parametrize("owner_type", CORE_TYPES)
 def test_connection_registration_rejects_another_selected_path(tmp_path, owner_type):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.participants import _register_core_connection
+    from tldw_chatbook.Backup_Recovery.participants import register_core_connection
 
     owner = owner_type(tmp_path / "selected.sqlite", "selected-test")
     other = owner_type(tmp_path / "other.sqlite", "other-test")
@@ -460,7 +460,7 @@ def test_connection_registration_rejects_another_selected_path(tmp_path, owner_t
         with pytest.raises(
             RecoveryRequired, match="core_connection_provenance_invalid"
         ):
-            _register_core_connection(owner, get_connection(other))
+            register_core_connection(owner, get_connection(other))
         assert get_connection(other).execute("SELECT 42").fetchone()[0] == 42
     finally:
         owner.close()
@@ -469,7 +469,7 @@ def test_connection_registration_rejects_another_selected_path(tmp_path, owner_t
 
 def test_independent_nested_exception_restores_outer_operation_after_pause(tmp_path):
     from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     outer = PromptsDatabase(tmp_path / "outer.sqlite", "outer-test")
     inner = PromptsDatabase(tmp_path / "inner.sqlite", "inner-test")
@@ -501,7 +501,7 @@ def test_independent_nested_exception_restores_outer_operation_after_pause(tmp_p
         assert pause.drain(time.monotonic() + 1)
         pause.resume()
         pause = None
-        participant = _repository_participant(inner)
+        participant = repository_participant(inner)
         participant.close_admission()
         try:
             with outer.transaction():
@@ -592,7 +592,7 @@ from pathlib import Path
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 bootstrap.default_bootstrap_root = lambda: Path(sys.argv[1])
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
-from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+from tldw_chatbook.Backup_Recovery.participants import repository_participant
 owner = LibraryCollectionsDB(Path(sys.argv[2]))
 owner.close()
 references = []
@@ -606,7 +606,7 @@ assert not worker.is_alive()
 # Adversarial GC cannot replace explicit native retirement or erase the blocker.
 gc.collect()
 assert references[0]() is not None
-participant = _repository_participant(owner)
+participant = repository_participant(owner)
 participant.close_admission()
 pause = storage._begin_local_pause()
 assert not participant.drain(time.monotonic() + 0.03)
@@ -633,7 +633,7 @@ pause.resume()
 
 def test_raw_unwrapped_native_connection_cannot_claim_core_provenance(tmp_path):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.participants import _register_core_connection
+    from tldw_chatbook.Backup_Recovery.participants import register_core_connection
 
     owner = LibraryIngestJobsDB(tmp_path / "provenance.sqlite")
     native = sqlite3.Connection(":memory:")
@@ -641,7 +641,7 @@ def test_raw_unwrapped_native_connection_cannot_claim_core_provenance(tmp_path):
         with pytest.raises(
             RecoveryRequired, match="core_connection_provenance_invalid"
         ):
-            _register_core_connection(owner, native)
+            register_core_connection(owner, native)
         assert get_connection(owner).execute("SELECT 42").fetchone()[0] == 42
     finally:
         native.close()
@@ -719,7 +719,7 @@ pause.resume()
 
 def test_live_connection_cannot_be_reassigned_to_another_instance_same_path(tmp_path):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.participants import _register_core_connection
+    from tldw_chatbook.Backup_Recovery.participants import register_core_connection
 
     first = PromptsDatabase(tmp_path / "same.sqlite", "first")
     second = PromptsDatabase(tmp_path / "same.sqlite", "second")
@@ -727,7 +727,7 @@ def test_live_connection_cannot_be_reassigned_to_another_instance_same_path(tmp_
         with pytest.raises(
             RecoveryRequired, match="core_connection_provenance_invalid"
         ):
-            _register_core_connection(second, first.get_connection())
+            register_core_connection(second, first.get_connection())
     finally:
         first.close()
         second.close()

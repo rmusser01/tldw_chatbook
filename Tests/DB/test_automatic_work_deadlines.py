@@ -189,3 +189,43 @@ def test_wake_acceptance_rechecks_deadline(db, clock):
     with pytest.raises(AutomaticWorkRefused, match="wall_budget"):
         db.automatic_work.accept_wake("second", owner_id="owner")
     assert db.automatic_work.abort_wake("second", owner_id="owner")
+
+
+@pytest.mark.parametrize("backward", [False, True])
+def test_members_share_original_deadline_and_durable_clock_refusal(db, clock, backward):
+    from Tests.DB.test_automatic_chat_starts import prepare, source_run
+
+    root, source = source_run(db, wall_seconds=10)
+    first = prepare(db, source, "a", "first")
+    db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    clock[:] = [1005.0, 5.0]
+    second = prepare(db, source, "b", "second")
+    db.automatic_work.accept_chat_start(second.id, owner_id="owner")
+    assert db.automatic_work.snapshot(second.chain_id).deadline_at == 1010.0
+    clock[:] = [1004.0, 6.0] if backward else [1009.0, 11.0]
+    reason = "clock_reversed" if backward else "wall_budget"
+    with pytest.raises(AutomaticWorkRefused, match=reason):
+        reserve(db, second.chain_id, "third")
+    db.close()
+    clock[:] = [1012.0, 12.0]
+    for member in (root, first.chain_id, second.chain_id):
+        snapshot = db.automatic_work.snapshot(member)
+        assert snapshot.deadline_at == 1010.0
+        assert snapshot.pause_reason == reason
+        with pytest.raises(AutomaticWorkRefused, match=reason):
+            db.automatic_work.check_active(member, owner_id="owner")
+
+
+def test_refused_descendant_prepare_retains_observed_root_time(db, clock):
+    from Tests.DB.test_automatic_chat_starts import prepare, source_run
+
+    root, source = source_run(db, generations=1)
+    first = prepare(db, source, "a", "first")
+    db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    clock[:] = [1005.0, 5.0]
+    with pytest.raises(AutomaticWorkRefused, match="generation_budget"):
+        prepare(db, source, "b", "second")
+    clock[:] = [1004.0, 6.0]
+    with pytest.raises(AutomaticWorkRefused, match="clock_reversed"):
+        reserve(db, first.chain_id, "third")
+    assert db.automatic_work.snapshot(root).status == "review_required"

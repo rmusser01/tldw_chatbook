@@ -1,0 +1,8 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+5.33s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]
+4.46s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]
+4.37s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]
+
+(6 durations < 1s hidden.)
+3 passed in 16.23s

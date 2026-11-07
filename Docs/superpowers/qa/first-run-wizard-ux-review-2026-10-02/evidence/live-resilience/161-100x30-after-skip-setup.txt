@@ -1,0 +1,30 @@
+╭─────────╮
+│ ⌃1 Home │ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Home | Blocked · Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌──────────────────────┐┌──────────────────────────────────────────────────────────────────────┐ │
+│ │ ──────────╭──────────────────────────────────────────────────────────────────────╮           │ │
+│ │ Needs Atte│                                                                      │           │ │
+│ │  No approv│  Check model lists online?                                           │           │ │
+│ │  failures │                                                                      │           │ │
+│ │ ──────────│  tldw can fetch up-to-date model lists from your configured cloud    │           │ │
+│ │ Running   │  providers (OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter,      │           │ │
+│ │  Nothing r│  QwenCloud, ZAI) at startup. This contacts those endpoints over the  │           │ │
+│ │  right now│  network using your configured API keys.                             │           │ │
+│ │ ──────────│                                                                      │           │ │
+│ │ Recent    │  Allow this once and it stays on until you turn it off in Settings.  │           │ │
+│ │  Conversat│  Nothing is checked until you say yes.                               │           │ │
+│ │  notes, me│                                                                      │           │ │
+│ │  runs, cha│                                                                      │           │ │
+│ │  and impor│                                     Don't check      Check online    │           │ │
+│ │  appear he│                                                                      │           │ │
+│ │ ──────────│                                                                      │           │ │
+│ │ Details   ╰──────────────────────────────────────────────────────────────────────╯           │ │
+│ │                      ││                                                                      │ │
+│ │                      ││                                                                      │ │
+│ │                      ││                                                                      │ │
+│ │                      ││                                                                      │ │
+│ └──────────────────────┘└──────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

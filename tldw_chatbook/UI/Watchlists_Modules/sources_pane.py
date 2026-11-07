@@ -28,6 +28,11 @@ from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
 from .table_selection import IdSelectionModel, row_with_id
 
+try:  # Private Textual name, pinned by a test; without it a list loses its highlight.
+    from textual.widgets._select import SelectOverlay
+except ImportError:  # pragma: no cover - only after a Textual upgrade renames it
+    SelectOverlay = None
+
 
 DEFAULT_SOURCE_FREQUENCY_SECONDS = 3600
 
@@ -372,8 +377,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self._update_multi_selection_ui()
 
     def set_authoritative_source_ids(self, source_ids: tuple[str, ...]) -> None:
-        """Mirror the owning screen's full-reload order for selected IDs."""
+        """Mirror the owning screen's full-reload order for selected IDs.
+
+        The selection is pruned to them in place: picks and the shift-range
+        anchor that still exist are kept (review of #3107, round 3, Q4).
+        """
         self._authoritative_source_ids = tuple(dict.fromkeys(source_ids))
+        selected = self._multi_selection.selected_ids
+        if self._authoritative_source_ids and selected:
+            self._multi_selection.prune(self._authoritative_source_ids)
+            if self._multi_selection.selected_ids != selected:
+                self._update_multi_selection_ui()
 
     def configure_create_backend(
         self, backend: str, source_types: tuple[str, ...]
@@ -419,6 +433,41 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     def watch_create_draft_source_type(self, _source_type: str) -> None:
         """Show noise controls only when the selected type can use them."""
         self._sync_create_backend_controls()
+
+    def watch_watchlist_choices(self, _choices: list[dict[str, Any]]) -> None:
+        """Offer changed choices in an open form; the chosen draft is kept.
+
+        The Select shows `_resolved_destination()`: the user's draft while it
+        is still offered, Unassigned otherwise (review of #3107, item V3).
+        Only the destination Select is touched.
+        """
+        try:
+            self._sync_destination_options(
+                self.query_one("#sources-create-watchlist", Select)
+            )
+        except NoMatches:
+            pass
+
+    def _sync_destination_options(self, destination: Select) -> None:
+        """Re-offer the destination choices, keeping an open list's highlight.
+
+        `Select.set_options` rebuilds the expanded overlay and drops its
+        highlight; it is put back on the same choice when that is still
+        offered (review of #3107, round 2, item Y2).
+        """
+        overlay = None
+        if SelectOverlay is not None and destination.expanded:
+            overlay = next(iter(destination.query(SelectOverlay)), None)
+        shown = getattr(destination, "_options", None)  # private, pinned likewise
+        index = None if overlay is None else overlay.highlighted
+        keep = None if index is None or shown is None else shown[index][1]
+        options = self._destination_options()
+        with destination.prevent(Select.Changed):
+            destination.set_options(options)
+            destination.value = self._resolved_destination()
+        values = [value for _label, value in options]
+        if keep is not None and keep in values:
+            overlay.highlighted = values.index(keep)
 
     def _sync_create_backend_controls(self) -> None:
         """Patch the small backend-dependent surface in place when mounted."""
@@ -472,9 +521,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         try:
             self.query_one("#sources-create-ignore-selectors").display = (
                 local_backend
-                and self._type_takes_ignore_selectors(
-                    self.create_draft_source_type
-                )
+                and self._type_takes_ignore_selectors(self.create_draft_source_type)
             )
         except NoMatches:
             pass
@@ -486,9 +533,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 "Watchlist" if local_backend else "Watchlist (Local only)"
             )
             destination = self.query_one("#sources-create-watchlist", Select)
-            with destination.prevent(Select.Changed):
-                destination.set_options(self._destination_options())
-                destination.value = self._resolved_destination()
+            self._sync_destination_options(destination)
             destination.disabled = not local_backend
         except NoMatches:
             pass
@@ -546,7 +591,9 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 )
                 yield Button("Filters", id="sources-filter-toggle", variant="default")
             if self.show_filter_editor:
-                with Horizontal(id="sources-filter-editor", classes="destination-filter-strip"):
+                with Horizontal(
+                    id="sources-filter-editor", classes="destination-filter-strip"
+                ):
                     yield Static("Type", classes="sources-filter-label")
                     yield PruneSafeSelect(
                         self._FILTER_TYPE_OPTIONS,
@@ -753,9 +800,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 ignore_selectors = self._ignore_selectors_field()
                 ignore_selectors.display = (
                     self.create_runtime_backend == "local"
-                    and self._type_takes_ignore_selectors(
-                        self.create_draft_source_type
-                    )
+                    and self._type_takes_ignore_selectors(self.create_draft_source_type)
                 )
                 yield ignore_selectors
                 # `.dialog-buttons` is the same one-row, side-by-side pairing
@@ -764,8 +809,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # alignment is overridden for this inline form -- see
                 # `features/_watchlists.tcss`.
                 with Horizontal(classes="dialog-buttons sources-create-buttons"):
-                    yield Button("Create", id="sources-create-submit", variant="success")
-                    yield Button("Cancel", id="sources-create-cancel", variant="default")
+                    yield Button(
+                        "Create", id="sources-create-submit", variant="success"
+                    )
+                    yield Button(
+                        "Cancel", id="sources-create-cancel", variant="default"
+                    )
 
         table = DataTable(id="sources-table")
         # TASK-2313, AC#2: "checked"/"Check now" is the vocabulary this
@@ -865,8 +914,10 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             except (KeyError, TypeError, ValueError):
                 continue
             options.append(
-                (Text(str(watchlist.get("name") or f"Watchlist {watchlist_id}")),
-                 watchlist_id)
+                (
+                    Text(str(watchlist.get("name") or f"Watchlist {watchlist_id}")),
+                    watchlist_id,
+                )
             )
         return options
 
@@ -1091,10 +1142,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         status_filter = self.status_filter
         active_filter = self.active_filter
         tags_filter = self.tags_filter
-        required_tags = [tag.strip().lower() for tag in tags_filter.split(",") if tag.strip()] if tags_filter else []
+        required_tags = (
+            [tag.strip().lower() for tag in tags_filter.split(",") if tag.strip()]
+            if tags_filter
+            else []
+        )
         results: list[dict[str, Any]] = []
         for source in self.sources:
-            if type_filter != "all" and str(source.get("source_type") or "").lower() != type_filter:
+            if (
+                type_filter != "all"
+                and str(source.get("source_type") or "").lower() != type_filter
+            ):
                 continue
             if status_filter != "all" and not self._matches_status_filter(
                 source, status_filter
@@ -1110,7 +1168,8 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     continue
             if query:
                 text = " ".join(
-                    str(source.get(key) or "") for key in ("name", "title", "url", "source_type", "status")
+                    str(source.get(key) or "")
+                    for key in ("name", "title", "url", "source_type", "status")
                 ).lower()
                 if query not in text:
                     continue
@@ -1347,9 +1406,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             focused = self.screen.focused if self.is_mounted else None
         except Exception:
             focused = None
-        search_had_focus = (
-            focused is not None and focused.id == "sources-search-input"
-        )
+        search_had_focus = focused is not None and focused.id == "sources-search-input"
         # Capture whether the create form is mounted NOW, while the old DOM
         # still exists: after the rebuild, `show_create_form` alone cannot
         # distinguish "the form is OPENING with this recompose" (its
@@ -1398,8 +1455,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             # rebuilt under a different id, between arming `restore` and
             # getting here. Debug is right for that -- it is not a fault.
             logger.opt(exception=True).debug(
-                f"SourcesPane: #{restore} was gone after recompose; "
-                "nothing to focus."
+                f"SourcesPane: #{restore} was gone after recompose; nothing to focus."
             )
             return
         except Exception:
@@ -1570,7 +1626,9 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             self._submit_create_form()
         elif button_id == "sources-preview-button" and self.selected_source is not None:
             self.post_message(PreviewRequested(self.selected_source))
-        elif button_id == "sources-check-now-button" and self.selected_source is not None:
+        elif (
+            button_id == "sources-check-now-button" and self.selected_source is not None
+        ):
             self.post_message(CheckNowRequested(self.selected_source))
         elif button_id == "sources-import-opml-button":
             self.post_message(ImportOpmlRequested())
@@ -1579,13 +1637,20 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         event.stop()
 
     def _submit_create_form(self) -> None:
-        name = sanitize_string(self.query_one("#sources-create-name", Input).value.strip(), max_length=255)
-        url = sanitize_string(self.query_one("#sources-create-url", Input).value.strip(), max_length=2000)
+        name = sanitize_string(
+            self.query_one("#sources-create-name", Input).value.strip(), max_length=255
+        )
+        url = sanitize_string(
+            self.query_one("#sources-create-url", Input).value.strip(), max_length=2000
+        )
         if not name:
             self.app.notify("Source name is required.", severity="error")
             return
         if not validate_text_input(name, max_length=255):
-            self.app.notify("Source name contains invalid characters or is too long.", severity="error")
+            self.app.notify(
+                "Source name contains invalid characters or is too long.",
+                severity="error",
+            )
             return
         if not url:
             self.app.notify("Source URL is required.", severity="error")
@@ -1620,15 +1685,24 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             )
             return
         active = self.query_one("#sources-create-active", Switch).value
-        tags_text = sanitize_string(self.query_one("#sources-create-tags", Input).value.strip(), max_length=1000)
-        raw_tags = [tag.strip() for tag in tags_text.split(",") if tag.strip()] if tags_text else []
+        tags_text = sanitize_string(
+            self.query_one("#sources-create-tags", Input).value.strip(), max_length=1000
+        )
+        raw_tags = (
+            [tag.strip() for tag in tags_text.split(",") if tag.strip()]
+            if tags_text
+            else []
+        )
         tags: list[str] = []
         for tag in raw_tags:
             clean = sanitize_string(tag, max_length=100)
             if clean and validate_text_input(clean, max_length=100):
                 tags.append(clean)
             else:
-                self.app.notify(f"Tag '{tag}' was skipped due to invalid content.", severity="warning")
+                self.app.notify(
+                    f"Tag '{tag}' was skipped due to invalid content.",
+                    severity="warning",
+                )
         # TASK-2302 AC#1/#2: whatever the destination Select is SHOWING is
         # what travels with the request. Read off the mounted control rather
         # than off `create_draft_destination` so the payload cannot disagree
@@ -1637,9 +1711,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             destination = self.UNASSIGNED_DESTINATION
         else:
             try:
-                destination = self.query_one(
-                    "#sources-create-watchlist", Select
-                ).value
+                destination = self.query_one("#sources-create-watchlist", Select).value
             except Exception:
                 destination = self.UNASSIGNED_DESTINATION
         watchlist_id = (
@@ -1671,9 +1743,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             # use its value. Empty means watch every part of the page.
             if self._type_takes_ignore_selectors(source_type):
                 ignore_selectors = sanitize_string(
-                    self.query_one(
-                        "#sources-create-ignore-selectors", TextArea
-                    ).text,
+                    self.query_one("#sources-create-ignore-selectors", TextArea).text,
                     max_length=self._IGNORE_SELECTORS_MAX_LENGTH,
                 ).strip()
             else:
@@ -1881,9 +1951,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             self.query_one("#sources-selection-status", Static).update(
                 self._selection_status_text()
             )
-            self.query_one(
-                "#sources-create-watchlist-selected", Button
-            ).disabled = (
+            self.query_one("#sources-create-watchlist-selected", Button).disabled = (
                 self.create_runtime_backend != "local"
                 or not 1 <= len(self._multi_selection.selected_ids) <= 100
             )

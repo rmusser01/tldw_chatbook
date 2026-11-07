@@ -17,7 +17,7 @@ from .contracts import (
     MAX_PENDING_INPUT_BYTES,
     MAX_PENDING_OUTPUT_BYTES,
 )
-from tldw_chatbook.Utils.input_validation import (
+from tldw_chatbook.Terminal.contracts import (
     validate_terminal_key_input,
     validate_terminal_output_input,
     validate_terminal_paste_input,

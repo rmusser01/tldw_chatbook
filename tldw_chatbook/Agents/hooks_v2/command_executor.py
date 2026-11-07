@@ -64,6 +64,15 @@ class _Capture(asyncio.SubprocessProtocol):
             self.done.set_result(None)
 
 
+@dataclass(frozen=True, repr=False)
+class CommandLaunchValues:
+    """Ephemeral launch arguments; never retained in job/result metadata."""
+
+    argv: tuple[str, ...]
+    cwd: str | None
+    environment: dict[str, str]
+
+
 @dataclass
 class CommandResult:
     result: HookResult | None = None
@@ -81,6 +90,7 @@ class CommandJob:
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     capture: _Capture | None = None
     token: str | None = None
+    owner: HookProcessOwner | None = None
     task: asyncio.Task | None = None
     cleanup_deadline: float | None = None
 
@@ -126,12 +136,24 @@ class CommandExecutor:
         authority_check: Callable,
         environment: Callable,
         deadline: float,
+        process_owner_factory: Callable | None = None,
+        command_launch: Callable | None = None,
     ) -> CommandJob:
         job = CommandJob(uuid4().hex, ticket)
+        job.owner = (
+            process_owner_factory(job.stop) if process_owner_factory else None
+        ) or self.owner
         self.records[job.id] = job
         job.task = asyncio.create_task(
             self._run(
-                job, handler, event, payload, authority_check, environment, deadline
+                job,
+                handler,
+                event,
+                payload,
+                authority_check,
+                environment,
+                deadline,
+                command_launch,
             )
         )
         return job
@@ -158,7 +180,15 @@ class CommandExecutor:
             raise
 
     async def _run(
-        self, job, handler, event, payload, authority_check, environment, deadline
+        self,
+        job,
+        handler,
+        event,
+        payload,
+        authority_check,
+        environment,
+        deadline,
+        command_launch,
     ):
         started = time.monotonic()
         outcome = CommandResult()
@@ -172,9 +202,28 @@ class CommandExecutor:
                 terminal = True
                 outcome.failure = "unsupported_platform"
                 return outcome
-            job.token = await asyncio.to_thread(self.owner.reserve_launch, event)
-            env = await asyncio.to_thread(environment, handler, event)
-            cwd = handler.cwd
+            job.token = await asyncio.to_thread(job.owner.reserve_launch, event)
+            baseline = dict(os.environ)
+            launch_values = (
+                await asyncio.to_thread(command_launch, handler, event, baseline)
+                if command_launch
+                else None
+            )
+            if launch_values is None:
+                launch_values = CommandLaunchValues(
+                    handler.argv,
+                    handler.cwd,
+                    await asyncio.to_thread(environment, handler, event),
+                )
+            if not isinstance(launch_values, CommandLaunchValues):
+                raise TypeError("invalid command launch values")
+            if handler.vendor_protocol:
+                from tldw_chatbook.Plugins.adapters.vendor_hooks import (
+                    encode_vendor_payload,
+                )
+
+                payload = encode_vendor_payload(handler, event)
+            cwd = launch_values.cwd
             if cwd is not None:
                 current_cwd = str(
                     await asyncio.to_thread(validate_existing_absolute_directory, cwd)
@@ -200,12 +249,12 @@ class CommandExecutor:
                 async def launch():
                     return await loop.subprocess_exec(
                         lambda: capture,
-                        *handler.argv,
+                        *launch_values.argv,
                         stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         cwd=cwd,
-                        env=env,
+                        env=launch_values.environment,
                         start_new_session=os.name != "nt",
                     )
 
@@ -232,7 +281,7 @@ class CommandExecutor:
                 outcome.failure = "launch_failed"
                 return outcome
             await asyncio.to_thread(
-                self.owner.publish_process,
+                job.owner.publish_process,
                 job.token,
                 {
                     "pid": transport.get_pid(),
@@ -254,7 +303,11 @@ class CommandExecutor:
                 if cancelled in done or capture.done not in done or job.cancel.is_set():
                     outcome.failure = "cancelled" if job.cancel.is_set() else "timeout"
                     job.stop()
-                elif transport.get_returncode() != 0:
+                elif transport.get_returncode() != 0 and not (
+                    handler.vendor_protocol
+                    and transport.get_returncode() == 2
+                    and "deny" in handler.effects
+                ):
                     outcome.failure = "nonzero_exit"
                 elif capture.stdout_overflow:
                     outcome.failure = "stdout_overflow"
@@ -266,7 +319,20 @@ class CommandExecutor:
                     outcome.failure = "timeout"
                 else:
                     try:
-                        outcome.result = decode_result(bytes(capture.stdout), handler)
+                        if handler.vendor_protocol:
+                            from tldw_chatbook.Plugins.adapters.vendor_hooks import (
+                                decode_vendor_result,
+                            )
+
+                            outcome.result = decode_vendor_result(
+                                bytes(capture.stdout),
+                                handler,
+                                transport.get_returncode(),
+                            )
+                        else:
+                            outcome.result = decode_result(
+                                bytes(capture.stdout), handler
+                            )
                     except ValueError:
                         outcome.failure = "invalid_output"
             finally:
@@ -289,7 +355,7 @@ class CommandExecutor:
             if job.token is not None:
                 try:
                     await asyncio.to_thread(
-                        self.owner.settle_process, job.token, terminal
+                        job.owner.settle_process, job.token, terminal
                     )
                 except Exception:  # noqa: BLE001
                     # Any owner failure preserves unresolved custody.
@@ -370,7 +436,7 @@ class CommandExecutor:
                     except ProcessLookupError:
                         try:
                             await asyncio.to_thread(
-                                self.owner.settle_process, job.token, True
+                                job.owner.settle_process, job.token, True
                             )
                         except Exception:  # noqa: BLE001, S112
                             # Retained metadata is the diagnostic.

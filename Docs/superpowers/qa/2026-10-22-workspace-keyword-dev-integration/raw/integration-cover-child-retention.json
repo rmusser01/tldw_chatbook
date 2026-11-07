@@ -1,0 +1,152 @@
+[
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_actual_settings_card_enab0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_actual_settings_card_enab0\\pytest.log",
+    "sha256": "337c1a9f9ead07689347b2ba7a42ebd030bb66bf56aa25ce17bebaa5802a5a41"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_actual_settings_card_enab0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_actual_settings_card_enab0\\pytest.xml",
+    "sha256": "4c2b6cb98305526affe3692314bf70bfb159382b10088de997e1dd2f4e133d04"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_actual_settings_card_enab1\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_actual_settings_card_enab1\\pytest.log",
+    "sha256": "dedf4e013163619cec5dba7f9bc6b5499ab300eeaf63d83e1eb35cbb47224be6"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_actual_settings_card_enab1\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_actual_settings_card_enab1\\pytest.xml",
+    "sha256": "c60c26edcb2030a3f1323d70e9b8ad5579c5799a745d963f8edc4c33bd8e8bc7"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_console_status_binding_fe0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_console_status_binding_fe0\\pytest.log",
+    "sha256": "53fbc606cf0994b59431680038c5b34b6bca1653362a72bc34660967275b37c0"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_console_status_binding_fe0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_console_status_binding_fe0\\pytest.xml",
+    "sha256": "118886278a8bf5eced95fd6cef9a4d9bf94180a697c18e3437718e5b6b63ad9e"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_console_status_binding_fe1\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_console_status_binding_fe1\\pytest.log",
+    "sha256": "b7e201e70f6f975545002af867bed7502d8408ef0331751a1b737701687f5c19"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_console_status_binding_fe1\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_console_status_binding_fe1\\pytest.xml",
+    "sha256": "573a06b0c17a6318e751508d8cfe522c7f094a65ba4ab79b34bd64ebd7a6560b"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_pending_project_turn_stay0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_pending_project_turn_stay0\\pytest.log",
+    "sha256": "58ccef84bb5cba79d819070eba3ffc40eae931df052b81c0bdf7898624bb8740"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_pending_project_turn_stay0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_pending_project_turn_stay0\\pytest.xml",
+    "sha256": "1bae2103653974a852e517cdc9c4c89de1689afaa4dd76748322e648408dac22"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_pending_project_turn_stay1\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_pending_project_turn_stay1\\pytest.log",
+    "sha256": "3460c3caf8436a26f1fef5c0badf6b46633efee9772832b89cf930aa8382027f"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_pending_project_turn_stay1\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_pending_project_turn_stay1\\pytest.xml",
+    "sha256": "1f672ba308733f3e56ebc85ec0bdd0b76368ef5d6ca9f9946958b8deb27b21d9"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_pending_project_turn_stay2\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_pending_project_turn_stay2\\pytest.log",
+    "sha256": "4cd9cbefc9f06855a8102f47e224c57cd5356014916b586e6daac659dcecfb82"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_pending_project_turn_stay2\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_pending_project_turn_stay2\\pytest.xml",
+    "sha256": "782044f033203da70766a1526abca1d132dd107e585ca608610a8b17ee71d408"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_pending_project_turn_stay3\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_pending_project_turn_stay3\\pytest.log",
+    "sha256": "8adc9d724ac9eb607853660f87eea6f0b6be7e6e8fbf580cd5b65f18508cfcf2"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_pending_project_turn_stay3\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_pending_project_turn_stay3\\pytest.xml",
+    "sha256": "5f6b012419c6d14bff41c13ef0b7ac0d187e65fdb0de86003ae6ec730789a8a2"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_project_turn_preserves_al0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_project_turn_preserves_al0\\pytest.log",
+    "sha256": "38e406d434aa157bde218b31787092c4f3a75a3fe0530a5d443e4a3d29413b4b"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_project_turn_preserves_al0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_project_turn_preserves_al0\\pytest.xml",
+    "sha256": "11be144379067357b0c79bba961fb824113accb917d69989bd9a5e2f9f830e32"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_project_turn_preserves_al1\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_project_turn_preserves_al1\\pytest.log",
+    "sha256": "75f866b43dcbfe4d8b46d58b87c8f70bb534989b62270080481739981c799c41"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_project_turn_preserves_al1\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_project_turn_preserves_al1\\pytest.xml",
+    "sha256": "563d863eb85ae2c5272502f0aa581a41a4db3e544f3d503f2e156a8cc88d134d"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_project_turn_preserves_al2\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_project_turn_preserves_al2\\pytest.log",
+    "sha256": "d3695acfd2c8f159ceb94c31104f9685d9d43fee1499745d673a67a1e50b110a"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_project_turn_preserves_al2\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_project_turn_preserves_al2\\pytest.xml",
+    "sha256": "144ebcea89114d302ca9eca2301bc5e60a1c5340927e22853a829bb1104c293b"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_project_turn_preserves_al3\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_project_turn_preserves_al3\\pytest.log",
+    "sha256": "41d6c1ce8103744849e3c6d14ccb8d99a0381273789d8d62db40cf4bbab4e229"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_project_turn_preserves_al3\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_project_turn_preserves_al3\\pytest.xml",
+    "sha256": "76554a73d043260a318e351b3d698c7c16b64482d4065ecc3c6fad731f40b4b0"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_real_app_shutdown_without0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_real_app_shutdown_without0\\pytest.log",
+    "sha256": "6456c028dd74e10ad3c370dec0d9d78c98630f0f89456ce502587895fdff2c69"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_real_app_shutdown_without0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_real_app_shutdown_without0\\pytest.xml",
+    "sha256": "dd313cabc18ac90477538af547889365995076efd91ea40be249c68973acd102"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_saved_policy_and_stale_ac0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_saved_policy_and_stale_ac0\\pytest.log",
+    "sha256": "0b8dd54226100624783257786e728ba81e6e495c80ee4c498465b880b69f4ccc"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_saved_policy_and_stale_ac0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_saved_policy_and_stale_ac0\\pytest.xml",
+    "sha256": "0dea6a7ee76e12e0794b4bad1ced89e354941fb4f78d50fd2feb90d26456585e"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_settings_overview_ownersh0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_settings_overview_ownersh0\\pytest.log",
+    "sha256": "5fbaaeee69c89d8fea3409655d83c841f9b8a87db25ac245cd6d7360cf041e54"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-5\\test_settings_overview_ownersh0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\integration-cover-children\\test_settings_overview_ownersh0\\pytest.xml",
+    "sha256": "eb041fc70e46b6f8081a4f08076544171aa2068f07e345481c5a52d44558f6bb"
+  }
+]

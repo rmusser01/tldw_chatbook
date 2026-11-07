@@ -148,7 +148,7 @@ def test_a_transient_failure_does_not_suppress_a_later_unlock(cached):
     """Regression: a one-shot latch made a transient keyring error permanent.
 
     `trust_posture()` documents an unavailable keyring as recoverable by Retry,
-    so a failed attempt must never bar the next one.
+    so a failed automatic attempt must never bar an explicit retry.
     """
     tmp_path, skills_dir, key_cache = cached
 
@@ -166,7 +166,8 @@ def test_a_transient_failure_does_not_suppress_a_later_unlock(cached):
     flaky = FlakyOnce(key_cache)
     fresh = _fresh_service(tmp_path, skills_dir, flaky)
     assert fresh.trust_posture() == "locked"
-    assert fresh.trust_posture() == "ready", "a retry must be able to succeed"
+    assert fresh.unlock_from_keyring_convenience() is True
+    assert fresh.trust_posture() == "ready", "an explicit retry must succeed"
 
 
 def test_settings_posture_also_auto_unlocks(cached):
@@ -174,3 +175,111 @@ def test_settings_posture_also_auto_unlocks(cached):
     tmp_path, skills_dir, key_cache = cached
     fresh = _fresh_service(tmp_path, skills_dir, key_cache)
     assert fresh.overall_status() == "trusted"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["missing", "oserror", "valueerror", "marker", "runtime", "keyring", "salt"],
+)
+def test_failed_automatic_unlock_cools_down_from_completion(
+    cached, monkeypatch, failure
+):
+    """A slow failure must suppress both salt and backend reads until expiry."""
+    from keyring.errors import KeyringError
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        SkillTrustMarkerUnavailable,
+    )
+
+    tmp_path, skills_dir, key_cache = cached
+    now = [100.0]
+    monkeypatch.setattr("time.monotonic", lambda: now[0])
+    errors = {
+        "oserror": OSError,
+        "valueerror": ValueError,
+        "marker": SkillTrustMarkerUnavailable,
+        "runtime": RuntimeError,
+        "keyring": KeyringError,
+    }
+    calls = []
+    recovering = False
+
+    class Cache:
+        def load_keys(self, *, expected_salt):
+            calls.append("keyring")
+            if recovering:
+                return key_cache.load_keys(expected_salt=expected_salt)
+            now[0] += 75.0
+            if failure in errors:
+                raise errors[failure]("unavailable")
+            return None
+
+    fresh = _fresh_service(tmp_path, skills_dir, Cache())
+    original_salt = SkillTrustStore.load_salt
+
+    def counted_salt(store):
+        calls.append("salt")
+        if failure == "salt" and not recovering:
+            now[0] += 75.0
+            raise OSError("manifest temporarily unreadable")
+        return original_salt(store)
+
+    monkeypatch.setattr(SkillTrustStore, "load_salt", counted_salt)
+    assert fresh.trust_posture() == "locked"
+    expected_calls = ["salt"] if failure == "salt" else ["salt", "keyring"]
+    assert calls == expected_calls
+    recovering = True
+    now[0] = 234.999
+    for _ in range(3):
+        assert fresh.trust_posture() == "locked"
+        assert fresh.status_for_skill("demo").trust_blocked
+        assert fresh.overall_status() == "trust_locked"
+    assert calls == expected_calls
+    now[0] = 235.0
+    assert fresh.trust_posture() == "ready"
+    assert calls == expected_calls + ["salt", "keyring"]
+    assert fresh.status_for_skill("demo").trust_status == "trusted"
+    assert calls == expected_calls + ["salt", "keyring"]
+
+
+def test_passphrase_unlock_works_during_cooldown(cached, monkeypatch):
+    tmp_path, skills_dir, key_cache = cached
+    monkeypatch.setattr(key_cache.keyring_backend, "get_password", lambda *args: None)
+    fresh = _fresh_service(tmp_path, skills_dir, key_cache)
+    assert fresh.trust_posture() == "locked"
+    fresh.unlock_with_passphrase("passphrase")
+    assert fresh.trust_posture() == "ready"
+    assert fresh.status_for_skill("demo").trust_status == "trusted"
+
+
+def test_reset_clears_automatic_retry_cooldown(cached, monkeypatch):
+    tmp_path, skills_dir, key_cache = cached
+    backend = key_cache.keyring_backend
+    get_password = backend.get_password
+    monkeypatch.setattr(backend, "get_password", lambda *args: None)
+    fresh = _fresh_service(tmp_path, skills_dir, key_cache)
+    assert fresh.trust_posture() == "locked"
+    fresh.reset_trust()
+    assert fresh.trust_posture() == "needs_setup"
+    monkeypatch.setattr(backend, "get_password", get_password)
+    setup, _ = _service(tmp_path, key_cache=key_cache)
+    setup.bootstrap_trust()
+    setup.enable_keyring_convenience()
+    assert fresh.trust_posture() == "ready"
+
+
+def test_direct_unlock_bypasses_cached_backend_failure(cached, monkeypatch):
+    from keyring.errors import KeyringError
+
+    tmp_path, skills_dir, key_cache = cached
+    backend = key_cache.keyring_backend
+    get_password = backend.get_password
+
+    def fail(*args):
+        raise KeyringError("locked")
+
+    monkeypatch.setattr(backend, "get_password", fail)
+    fresh = _fresh_service(tmp_path, skills_dir, key_cache)
+    assert fresh.trust_posture() == "locked"
+    monkeypatch.setattr(backend, "get_password", get_password)
+    assert fresh.unlock_from_keyring_convenience()
+    assert fresh.trust_posture() == "ready"

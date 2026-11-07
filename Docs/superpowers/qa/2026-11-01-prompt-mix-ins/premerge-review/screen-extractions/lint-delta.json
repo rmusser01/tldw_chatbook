@@ -1,0 +1,7 @@
+{
+  "baseline_count": 388,
+  "current_count": 388,
+  "introduced_multiplicities": [],
+  "removed_multiplicities": [],
+  "scope": "all five changed production files; moved broad-except diagnostics follow their unchanged bodies"
+}

@@ -476,7 +476,8 @@ async def test_a_direct_reload_also_shows_the_loading_state():
 
     `is_loading` is the UI-facing "a reload is in flight" flag, and `reload()`
     always clears it in its `finally` -- but it was only ever SET by `on_mount`.
-    `MCPScreen.action_mcp_refresh()` calls `workbench.reload()` directly, so a
+    The Tools & MCP pane's refresh (`ToolsHubPanel.refresh_now()`, the retired
+    screen's `action_mcp_refresh`) calls `workbench.reload()` directly, so a
     manual refresh ran with no spinner at all and then cleared a flag it never
     raised.
     """

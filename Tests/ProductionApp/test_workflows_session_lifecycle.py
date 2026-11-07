@@ -7,7 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from Tests.UI.test_app_quit_guard import _ConfirmationHarness, _ConfirmationScreen
+from Tests.UI.test_app_quit_guard import (
+    _ConfirmationHarness,
+    _ConfirmationScreen,
+    _OneTabStore,
+)
 from Tests.Workflows import test_session as session_tests
 from Tests.Workflows.test_session import launch, until
 from tldw_chatbook.app import TldwCli
@@ -268,8 +272,13 @@ async def test_reconfirmation_abort_restores_same_workflow_owners(
     app._workflow_authoring = authoring
     app.decision = True
     impact = ConsoleLifecycleImpact(1, 0, 0, 0, 0)
+    # TASK-33628.1: quit sums every open tab's close impact; one idle tab.
     console_runtime.set_chat_controller(
-        SimpleNamespace(lifecycle_impact=lambda: impact)
+        SimpleNamespace(
+            lifecycle_impact=lambda **_kwargs: impact,
+            store=_OneTabStore(),
+            pending_round_kinds=lambda _session_id: frozenset(),
+        )
     )
 
     def workflow_changed():

@@ -11,6 +11,8 @@ from Tests.hooks_v2_process_support import child_argv
 
 pytestmark = pytest.mark.bootstrap_profile
 
+from Tests.Plugins import platform_support
+
 CHILD = """
 import json, os, sys
 from pathlib import Path
@@ -44,6 +46,7 @@ def child(root, phase):
     return result.stdout.strip()
 
 
+@platform_support.managed_runtime
 def test_independent_process_contention_and_reacquisition(tmp_path):
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
@@ -56,6 +59,7 @@ def test_independent_process_contention_and_reacquisition(tmp_path):
     assert json.loads(child(tmp_path, "contend")) == {"acquired": True}
 
 
+@platform_support.managed_runtime
 @pytest.mark.parametrize("phase", ["pending", "published"])
 def test_owner_death_retains_records_and_blocks_same_installation(tmp_path, phase):
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
@@ -86,6 +90,7 @@ def test_owner_death_retains_records_and_blocks_same_installation(tmp_path, phas
         owner.close()
 
 
+@platform_support.managed_runtime
 def test_exact_provenance_pid_reuse_and_lease_kinds(tmp_path):
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
@@ -130,13 +135,19 @@ def test_synchronized_roots_refuse_ownership(tmp_path, name):
     assert not (tmp_path / name).exists()
 
 
-def test_unknown_platform_network_and_probe_errors_refuse(tmp_path, monkeypatch):
+def test_simulated_unknown_platform_refuses(tmp_path, monkeypatch):
     import tldw_chatbook.Plugins.runtime_owner as module
 
     with monkeypatch.context() as patch:
         patch.setattr(module.sys, "platform", "unknown")
         with pytest.raises(PermissionError):
             module.PluginRuntimeOwner(tmp_path).try_acquire()
+
+
+@platform_support.managed_runtime
+def test_native_darwin_network_and_probe_errors_refuse(tmp_path, monkeypatch):
+    import tldw_chatbook.Plugins.runtime_owner as module
+
     with monkeypatch.context() as patch:
         patch.setattr(module, "_darwin_filesystem", lambda path: (0, "nfs"))
         with pytest.raises(PermissionError):
@@ -151,6 +162,7 @@ def test_unknown_platform_network_and_probe_errors_refuse(tmp_path, monkeypatch)
             module.PluginRuntimeOwner(tmp_path).try_acquire()
 
 
+@platform_support.managed_runtime
 def test_symlink_lock_and_root_replacement_refuse(tmp_path):
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
@@ -166,6 +178,7 @@ def test_symlink_lock_and_root_replacement_refuse(tmp_path):
     assert not (tmp_path / "victim").exists()
 
 
+@platform_support.managed_runtime
 def test_replaced_lock_and_fork_inherited_owner_cannot_mutate(tmp_path):
     # Fork in a fresh process so pytest's background threads are not inherited.
     contend = child_argv(CHILD) + [str(tmp_path), str(Path.cwd()), "contend"]
@@ -220,6 +233,7 @@ finally:
     assert result.returncode == 0, result.stderr
 
 
+@platform_support.managed_runtime
 def test_owner_death_after_spawn_before_publication_preserves_pending(tmp_path):
     """A real orphaned child stays alive; lock acquisition does not settle it."""
     import time
@@ -271,6 +285,7 @@ os._exit(0)
     assert finished.read_text() == "stopped"
 
 
+@platform_support.managed_runtime
 def test_unqualified_local_filesystem_refuses_even_with_local_flag(
     tmp_path, monkeypatch
 ):
@@ -279,3 +294,15 @@ def test_unqualified_local_filesystem_refuses_even_with_local_flag(
     monkeypatch.setattr(module, "_darwin_filesystem", lambda path: (0x1000, "hfs"))
     with pytest.raises(PermissionError):
         module.PluginRuntimeOwner(tmp_path).try_acquire()
+
+
+@pytest.mark.skipif(
+    platform_support.MANAGED_RUNTIME, reason="native unsupported-platform control"
+)
+def test_native_unsupported_runtime_refuses_before_storage(tmp_path):
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    root = tmp_path / "unqualified"
+    with pytest.raises(PermissionError):
+        PluginRuntimeOwner(root).try_acquire()
+    assert not root.exists()

@@ -1,0 +1,12 @@
+F..........................................                              [100%]
+=================================== FAILURES ===================================
+_ test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistics _
+Tests/DB/test_console_prompt_mixins.py:788: in test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistics
+    write_attempt(cursor, cid, replace(batch, snapshot=MixinAttemptSnapshot((item,))),
+E   TypeError: write_attempt() takes 2 positional arguments but 3 positional arguments (and 1 keyword-only argument) were given
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/DB/test_console_prompt_mixins.py::test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistics
+1 failed, 42 passed in 9.58s

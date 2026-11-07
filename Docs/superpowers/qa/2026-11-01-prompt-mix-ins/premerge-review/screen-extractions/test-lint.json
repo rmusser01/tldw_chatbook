@@ -1,0 +1,37 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 25
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_screen_derivation_helpers.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "import asyncio\nfrom types import SimpleNamespace\n\nimport pytest\n\nfrom tldw_chatbook.Chat.console_command_suggestions import (\n    CommandSuggestion,\n    count_suggestion_usage,\n    rank_suggestions_by_usage,\n)\nfrom tldw_chatbook.UI.Console_Modules.command_handoff import (\n    console_unknown_command_hint,\n    rank_console_command_suggestions,\n    record_console_command_dispatch,\n)\nfrom tldw_chatbook.UI.Library_Modules.screen_helpers import (\n    source_study_context,\n    study_handoff_copy,\n)\nfrom tldw_chatbook.UI.Screens.study_scope_models import (\n    StudyScopeContext,\n    StudySourceItem,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 28
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  }
+]

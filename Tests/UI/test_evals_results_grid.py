@@ -39,7 +39,11 @@ from tldw_chatbook.Evals.word_bench.models import (
     Target,
     TokenProb,
 )
-from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench, save_cell
+from tldw_chatbook.Evals.word_bench.storage import (
+    create_run_group,
+    save_bench,
+    save_cell,
+)
 from tldw_chatbook.UI.Evals import inspector as inspector_module
 from tldw_chatbook.UI.Evals.results_grid import (
     FAILED_MARK,
@@ -50,10 +54,22 @@ from tldw_chatbook.UI.Evals.results_grid import (
 )
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
 )
+
+#: task-1515: the bundle alone is NOT "the app's styling" since TASK-24459
+#: split the screen-owned evals rules (``#evals-cell-inspector { height:
+#: auto; }`` among them) into ``screen_feature_evals.tcss``, which the
+#: real app loads lazily per screen. A harness pinning only the bundle
+#: deterministically fails the geometry tests that depend on those rules
+#: (``max_scroll_y == 1``, the exact pre-fix signature this file's own
+#: viewport tests describe) -- see ``consolidated_css.APP_STYLESHEETS``'s
+#: own note that "the app's styling" means the bundle PLUS the split
+#: sheets.
+_APP_CSS_PATHS = [str(path) for path in APP_STYLESHEETS]
 
 
 class _FakeOrchestrator:
@@ -71,7 +87,7 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(ConsolidatedCSSApp):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    CSS_PATH = _APP_CSS_PATHS
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()
@@ -106,7 +122,9 @@ def _cap(
     existed -- so every EXISTING call site in this file keeps constructing
     a byte-identical ``CellCapture`` with no changes required."""
     top = tuple(
-        TokenProb(token=t, logprob=math.log(p), bytes_=tuple(t.encode("utf-8")), token_id=i)
+        TokenProb(
+            token=t, logprob=math.log(p), bytes_=tuple(t.encode("utf-8")), token_id=i
+        )
         for i, (t, p) in enumerate(pairs)
     )
     return CellCapture(
@@ -135,7 +153,9 @@ def _cap(
 @pytest.fixture
 def mixed_run_group(evals_db: EvalsDB) -> dict:
     base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
-    steered_id = evals_db.create_model(name="steered", provider="llama_cpp", model_id="m")
+    steered_id = evals_db.create_model(
+        name="steered", provider="llama_cpp", model_id="m"
+    )
     dataset_id = evals_db.create_dataset(
         name="loaded-nouns", format="custom", source_path="inline:loaded-nouns"
     )
@@ -167,28 +187,38 @@ def mixed_run_group(evals_db: EvalsDB) -> dict:
 
     # s1 x base: near-tie (gap << NEAR_TIE_LOGPROB_GAP_NATS).
     save_cell(
-        evals_db, run_ids[base_id], snippets[0],
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
         _cap([(" a", 0.44), (" the", 0.43), (" an", 0.05)]),
     )
     # s1 x steered: clear winner (gap >> NEAR_TIE_LOGPROB_GAP_NATS).
     save_cell(
-        evals_db, run_ids[steered_id], snippets[0],
+        evals_db,
+        run_ids[steered_id],
+        snippets[0],
         _cap([(" a", 0.9), (" the", 0.05)]),
     )
     # s2 x base: failed.
     save_cell(
-        evals_db, run_ids[base_id], snippets[1],
+        evals_db,
+        run_ids[base_id],
+        snippets[1],
         CellError(reason="unreachable", detail="connection refused"),
     )
     # s2 x steered: captured normally.
     save_cell(
-        evals_db, run_ids[steered_id], snippets[1],
+        evals_db,
+        run_ids[steered_id],
+        snippets[1],
         _cap([(" a", 0.5), (" not", 0.3)]),
     )
     # s3 x base: deliberately never saved -- unrun.
     # s3 x steered: captured normally.
     save_cell(
-        evals_db, run_ids[steered_id], snippets[2],
+        evals_db,
+        run_ids[steered_id],
+        snippets[2],
         _cap([(" it", 0.6), (" the", 0.2)]),
     )
 
@@ -196,7 +226,9 @@ def mixed_run_group(evals_db: EvalsDB) -> dict:
         "group_id": group_id,
         "base_id": base_id,
         "steered_id": steered_id,
-        "s1": "s1", "s2": "s2", "s3": "s3",
+        "s1": "s1",
+        "s2": "s2",
+        "s3": "s3",
     }
 
 
@@ -209,16 +241,23 @@ def mixed_run_group(evals_db: EvalsDB) -> dict:
 
 @pytest.fixture
 def clean_run_group(evals_db: EvalsDB) -> dict:
-    base_id = evals_db.create_model(name="llama-3-8b", provider="llama_cpp", model_id="m")
+    base_id = evals_db.create_model(
+        name="llama-3-8b", provider="llama_cpp", model_id="m"
+    )
     # k_returned=5 mirrors an OpenAI-legacy-style target capped below the
     # requested top_k, so effective_k must come out to 5, not 20.
-    poor_id = evals_db.create_model(name="capped-target", provider="openai", model_id="m2")
+    poor_id = evals_db.create_model(
+        name="capped-target", provider="openai", model_id="m2"
+    )
     dataset_id = evals_db.create_dataset(
         name="clean-set", format="custom", source_path="inline:clean-set"
     )
     config = BenchConfig(
-        name="clean bench", prompt_mode="raw", top_k=20,
-        dataset_id=dataset_id, target_ids=(base_id, poor_id),
+        name="clean bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(base_id, poor_id),
     )
     task_id = save_bench(evals_db, config)
     targets = [
@@ -250,19 +289,41 @@ def clean_run_group(evals_db: EvalsDB) -> dict:
     # results_grid.py's entropy call -- caught in review: the engine
     # (analysis.entropy) confirmed 1.2712 in every mode (native, shared,
     # no-k) for that degenerate fixture, an inert assertion.
-    same_dist = [(" a", 0.5), (" the", 0.3), (" an", 0.1), (" some", 0.05), (" one", 0.03)]
+    same_dist = [
+        (" a", 0.5),
+        (" the", 0.3),
+        (" an", 0.1),
+        (" some", 0.05),
+        (" one", 0.03),
+    ]
     rich_tail = [(f"_extra_{i}", 0.001) for i in range(15)]  # +15 real low-prob tokens
     save_cell(
-        evals_db, run_ids[base_id], snippets[0],
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
         _cap(same_dist + rich_tail, k_returned=20),
     )
     save_cell(evals_db, run_ids[poor_id], snippets[0], _cap(same_dist, k_returned=5))
 
     # s2: base diverges a lot from poor; s3: base diverges a little.
-    save_cell(evals_db, run_ids[base_id], snippets[1], _cap([(" a", 0.9)], k_returned=20))
-    save_cell(evals_db, run_ids[poor_id], snippets[1], _cap([(" not", 0.9)], k_returned=5))
-    save_cell(evals_db, run_ids[base_id], snippets[2], _cap([(" it", 0.6), (" the", 0.3)], k_returned=20))
-    save_cell(evals_db, run_ids[poor_id], snippets[2], _cap([(" it", 0.55), (" the", 0.3)], k_returned=5))
+    save_cell(
+        evals_db, run_ids[base_id], snippets[1], _cap([(" a", 0.9)], k_returned=20)
+    )
+    save_cell(
+        evals_db, run_ids[poor_id], snippets[1], _cap([(" not", 0.9)], k_returned=5)
+    )
+    save_cell(
+        evals_db,
+        run_ids[base_id],
+        snippets[2],
+        _cap([(" it", 0.6), (" the", 0.3)], k_returned=20),
+    )
+    save_cell(
+        evals_db,
+        run_ids[poor_id],
+        snippets[2],
+        _cap([(" it", 0.55), (" the", 0.3)], k_returned=5),
+    )
 
     # s4: same rich/capped K convention as s1 (native 20 vs. native 5, so
     # the grid-wide effective K stays 5) -- but each cell's mass is
@@ -297,15 +358,24 @@ def multi_warned_run_group(evals_db: EvalsDB) -> dict:
     actionable on a bench with several targets) and must not name the
     clean one.
     """
-    clean_id = evals_db.create_model(name="clean-target", provider="llama_cpp", model_id="m")
-    steered_id = evals_db.create_model(name="steered", provider="llama_cpp", model_id="m")
-    distilled_id = evals_db.create_model(name="distilled", provider="llama_cpp", model_id="m")
+    clean_id = evals_db.create_model(
+        name="clean-target", provider="llama_cpp", model_id="m"
+    )
+    steered_id = evals_db.create_model(
+        name="steered", provider="llama_cpp", model_id="m"
+    )
+    distilled_id = evals_db.create_model(
+        name="distilled", provider="llama_cpp", model_id="m"
+    )
     dataset_id = evals_db.create_dataset(
         name="multi-warn-set", format="custom", source_path="inline:multi-warn-set"
     )
     config = BenchConfig(
-        name="multi-warn bench", prompt_mode="raw", top_k=20,
-        dataset_id=dataset_id, target_ids=(clean_id, steered_id, distilled_id),
+        name="multi-warn bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(clean_id, steered_id, distilled_id),
     )
     task_id = save_bench(evals_db, config)
     targets = [
@@ -322,13 +392,19 @@ def multi_warned_run_group(evals_db: EvalsDB) -> dict:
     group_id, run_ids = create_run_group(
         evals_db, task_id, config, targets, snippets, preflight=preflight
     )
-    save_cell(evals_db, run_ids[clean_id], snippets[0], _cap([(" a", 0.9), (" the", 0.05)]))
     save_cell(
-        evals_db, run_ids[steered_id], snippets[0],
+        evals_db, run_ids[clean_id], snippets[0], _cap([(" a", 0.9), (" the", 0.05)])
+    )
+    save_cell(
+        evals_db,
+        run_ids[steered_id],
+        snippets[0],
         _cap([(" mente", 0.49), (" the", 0.2)]),
     )
     save_cell(
-        evals_db, run_ids[distilled_id], snippets[0],
+        evals_db,
+        run_ids[distilled_id],
+        snippets[0],
         _cap([(" xyzzy", 0.4), (" the", 0.3)]),
     )
     return {
@@ -353,23 +429,34 @@ def warned_markup_hazard_run_group(evals_db: EvalsDB) -> dict:
         name="steered [redacted]", provider="llama_cpp", model_id="m"
     )
     dataset_id = evals_db.create_dataset(
-        name="hazard-canary-set", format="custom", source_path="inline:hazard-canary-set"
+        name="hazard-canary-set",
+        format="custom",
+        source_path="inline:hazard-canary-set",
     )
     config = BenchConfig(
-        name="hazard canary bench", prompt_mode="raw", top_k=5,
-        dataset_id=dataset_id, target_ids=(steered_id,),
+        name="hazard canary bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(steered_id,),
     )
     task_id = save_bench(evals_db, config)
     targets = [
-        Target(id=steered_id, name="steered [redacted]", provider="llama_cpp", model_id="m")
+        Target(
+            id=steered_id, name="steered [redacted]", provider="llama_cpp", model_id="m"
+        )
     ]
     snippets = [Snippet(id="s1", text="The protestors were", group=None)]
-    preflight = {steered_id: PreflightResult(state="ok", k_returned=20, canary="degenerate")}
+    preflight = {
+        steered_id: PreflightResult(state="ok", k_returned=20, canary="degenerate")
+    }
     group_id, run_ids = create_run_group(
         evals_db, task_id, config, targets, snippets, preflight=preflight
     )
     save_cell(
-        evals_db, run_ids[steered_id], snippets[0],
+        evals_db,
+        run_ids[steered_id],
+        snippets[0],
         _cap([(" mente", 0.49), (" the", 0.2)]),
     )
     return {"group_id": group_id, "steered_id": steered_id}
@@ -388,13 +475,18 @@ def _make_two_by_two_run_group(
     in which cells are ``CellError`` vs ``CellCapture``, so the run/target/
     snippet setup is factored out rather than duplicated twice."""
     base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
-    steered_id = evals_db.create_model(name="steered", provider="llama_cpp", model_id="m")
+    steered_id = evals_db.create_model(
+        name="steered", provider="llama_cpp", model_id="m"
+    )
     dataset_id = evals_db.create_dataset(
         name=f"{name}-set", format="custom", source_path=f"inline:{name}-set"
     )
     config = BenchConfig(
-        name=f"{name} bench", prompt_mode="raw", top_k=20,
-        dataset_id=dataset_id, target_ids=(base_id, steered_id),
+        name=f"{name} bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(base_id, steered_id),
     )
     task_id = save_bench(evals_db, config)
     targets = [
@@ -428,16 +520,23 @@ def _make_single_target_run_group(
     this fixture's ``save_cell`` call order -- no target-interleaving to
     reason about.
     """
-    target_id = evals_db.create_model(name=f"{name}-base", provider="llama_cpp", model_id="m")
+    target_id = evals_db.create_model(
+        name=f"{name}-base", provider="llama_cpp", model_id="m"
+    )
     dataset_id = evals_db.create_dataset(
         name=f"{name}-set", format="custom", source_path=f"inline:{name}-set"
     )
     config = BenchConfig(
-        name=f"{name} bench", prompt_mode="raw", top_k=20,
-        dataset_id=dataset_id, target_ids=(target_id,),
+        name=f"{name} bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_id,),
     )
     task_id = save_bench(evals_db, config)
-    targets = [Target(id=target_id, name=f"{name}-base", provider="llama_cpp", model_id="m")]
+    targets = [
+        Target(id=target_id, name=f"{name}-base", provider="llama_cpp", model_id="m")
+    ]
     snippets = [
         Snippet(id=f"s{i}", text=f"snippet {i}", group=None)
         for i in range(1, snippet_count + 1)
@@ -456,7 +555,9 @@ def all_cells_failed_run_group(evals_db: EvalsDB) -> dict:
     for snippet in snippets:
         for target_id in (base_id, steered_id):
             save_cell(
-                evals_db, run_ids[target_id], snippet,
+                evals_db,
+                run_ids[target_id],
+                snippet,
                 CellError(reason="unreachable", detail="connection refused"),
             )
     return {"group_id": group_id, "base_id": base_id, "steered_id": steered_id}
@@ -471,12 +572,20 @@ def one_of_four_cells_failed_run_group(evals_db: EvalsDB) -> dict:
         evals_db, "one-failed"
     )
     save_cell(
-        evals_db, run_ids[base_id], snippets[0],
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
         CellError(reason="unreachable", detail="connection refused"),
     )
-    save_cell(evals_db, run_ids[steered_id], snippets[0], _cap([(" a", 0.9), (" the", 0.05)]))
-    save_cell(evals_db, run_ids[base_id], snippets[1], _cap([(" it", 0.6), (" the", 0.2)]))
-    save_cell(evals_db, run_ids[steered_id], snippets[1], _cap([(" the", 0.5), (" a", 0.3)]))
+    save_cell(
+        evals_db, run_ids[steered_id], snippets[0], _cap([(" a", 0.9), (" the", 0.05)])
+    )
+    save_cell(
+        evals_db, run_ids[base_id], snippets[1], _cap([(" it", 0.6), (" the", 0.2)])
+    )
+    save_cell(
+        evals_db, run_ids[steered_id], snippets[1], _cap([(" the", 0.5), (" a", 0.3)])
+    )
     return {"group_id": group_id, "base_id": base_id, "steered_id": steered_id}
 
 
@@ -514,14 +623,21 @@ def k_depth_matched_run_group(evals_db: EvalsDB) -> dict:
         A dict with keys "group_id" (str), "base_id" (int), and "poor_id"
         (int) identifying the test run group and its two target models.
     """
-    base_id = evals_db.create_model(name="llama-3-8b", provider="llama_cpp", model_id="m")
-    poor_id = evals_db.create_model(name="capped-target", provider="openai", model_id="m2")
+    base_id = evals_db.create_model(
+        name="llama-3-8b", provider="llama_cpp", model_id="m"
+    )
+    poor_id = evals_db.create_model(
+        name="capped-target", provider="openai", model_id="m2"
+    )
     dataset_id = evals_db.create_dataset(
         name="k-depth-set", format="custom", source_path="inline:k-depth-set"
     )
     config = BenchConfig(
-        name="k-depth bench", prompt_mode="raw", top_k=20,
-        dataset_id=dataset_id, target_ids=(base_id, poor_id),
+        name="k-depth bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(base_id, poor_id),
     )
     task_id = save_bench(evals_db, config)
     targets = [
@@ -531,10 +647,18 @@ def k_depth_matched_run_group(evals_db: EvalsDB) -> dict:
     snippets = [Snippet(id="s1", text="the protestors were", group="neutral")]
     group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
 
-    same_dist = [(" a", 0.5), (" the", 0.3), (" an", 0.1), (" some", 0.05), (" one", 0.03)]
+    same_dist = [
+        (" a", 0.5),
+        (" the", 0.3),
+        (" an", 0.1),
+        (" some", 0.05),
+        (" one", 0.03),
+    ]
     rich_tail = [(f"_extra_{i}", 0.001) for i in range(15)]  # +15 real low-prob tokens
     save_cell(
-        evals_db, run_ids[base_id], snippets[0],
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
         _cap(same_dist + rich_tail, k_returned=20),
     )
     save_cell(evals_db, run_ids[poor_id], snippets[0], _cap(same_dist, k_returned=5))
@@ -561,8 +685,11 @@ def empty_run_group(evals_db: EvalsDB) -> dict:
         name="empty-set", format="custom", source_path="inline:empty-set"
     )
     config = BenchConfig(
-        name="empty bench", prompt_mode="raw", top_k=5,
-        dataset_id=dataset_id, target_ids=(base_id,),
+        name="empty bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(base_id,),
     )
     task_id = save_bench(evals_db, config)
     targets = [Target(id=base_id, name="base", provider="llama_cpp", model_id="m")]
@@ -579,8 +706,11 @@ def multi_probe_run_group(evals_db: EvalsDB) -> dict:
         name="probe-set", format="custom", source_path="inline:probe-set"
     )
     config = BenchConfig(
-        name="probe bench", prompt_mode="raw", top_k=5,
-        dataset_id=dataset_id, target_ids=(base_id,),
+        name="probe bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(base_id,),
         probes=(" Sure", " Cannot"),
     )
     task_id = save_bench(evals_db, config)
@@ -590,7 +720,9 @@ def multi_probe_run_group(evals_db: EvalsDB) -> dict:
     # Both probes are genuinely present, at clearly different
     # probabilities, so the rendered cell says WHICH one is showing.
     save_cell(
-        evals_db, run_ids[base_id], snippets[0],
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
         _cap([(" Sure", 0.6), (" Cannot", 0.2), (" maybe", 0.1)]),
     )
     return {"group_id": group_id, "base_id": base_id}
@@ -603,8 +735,11 @@ def markup_hazard_run_group(evals_db: EvalsDB) -> dict:
         name="hazard-set", format="custom", source_path="inline:hazard-set"
     )
     config = BenchConfig(
-        name="hazard bench", prompt_mode="raw", top_k=5,
-        dataset_id=dataset_id, target_ids=(base_id,),
+        name="hazard bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(base_id,),
     )
     task_id = save_bench(evals_db, config)
     targets = [Target(id=base_id, name="base", provider="llama_cpp", model_id="m")]
@@ -673,28 +808,41 @@ def run_group_with_cell_continuations(evals_db: EvalsDB) -> dict:
     ]
     group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
     save_cell(
-        evals_db, run_ids[base_id], snippets[0],
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
         _cap([(" a", 0.9)], continuation="  <|channel>thought  scaffolding"),
     )
     save_cell(
-        evals_db, run_ids[base_id], snippets[1],
+        evals_db,
+        run_ids[base_id],
+        snippets[1],
         _cap([(" a", 0.9)], continuation="[/]bold-looking output"),
     )
     save_cell(
-        evals_db, run_ids[base_id], snippets[2],
+        evals_db,
+        run_ids[base_id],
+        snippets[2],
         _cap(
             [(" a", 0.9)],
             continuation="<|channel><|channel>thought\n<channel|>The sky is **blue",
         ),
     )
     save_cell(
-        evals_db, run_ids[base_id], snippets[3],
+        evals_db,
+        run_ids[base_id],
+        snippets[3],
         _cap([(" a", 0.9)], continuation=_CELL_CONTINUATION_LONG),
     )
     save_cell(evals_db, run_ids[base_id], snippets[4], _cap([(" a", 0.9)]))
     return {
-        "group_id": group_id, "base_id": base_id,
-        "s1": "s1", "s2": "s2", "s3": "s3", "s4": "s4", "s5": "s5",
+        "group_id": group_id,
+        "base_id": base_id,
+        "s1": "s1",
+        "s2": "s2",
+        "s3": "s3",
+        "s4": "s4",
+        "s5": "s5",
     }
 
 
@@ -739,7 +887,9 @@ def test_ever_observed_helpers_share_one_scan_and_hold_the_right_axis_fixed():
         return target_id == "t1"
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(results_grid_module, "_probe_observed_in_target", _fake_observed)
+    monkeypatch.setattr(
+        results_grid_module, "_probe_observed_in_target", _fake_observed
+    )
     try:
         targets = [{"id": "t1", "name": "a"}, {"id": "t2", "name": "b"}]
         snippets = [{"id": "s1", "text": "x"}]
@@ -815,7 +965,9 @@ def test_render_probe_reading_covers_all_three_states_distinctly():
     observed = analysis.ProbeReading(
         probe=" Sure", state="observed", logprob=math.log(0.6), matched=matched
     )
-    bounded = analysis.ProbeReading(probe=" Sure", state="bounded", logprob=math.log(0.9))
+    bounded = analysis.ProbeReading(
+        probe=" Sure", state="bounded", logprob=math.log(0.9)
+    )
     never = analysis.ProbeReading(probe=" Sure", state="never_observed", logprob=None)
 
     observed_text = render_probe_reading(observed)
@@ -906,9 +1058,13 @@ async def test_top1_lens_marks_a_near_tie_and_leaves_a_clear_winner_bare(
         tie_cell = str(table.get_cell("s1", mixed_run_group["base_id"]))
         clear_cell = str(table.get_cell("s1", mixed_run_group["steered_id"]))
 
-        assert "≈" in tie_cell, f"near-tie cell must show a tie marker, got {tie_cell!r}"
+        assert "≈" in tie_cell, (
+            f"near-tie cell must show a tie marker, got {tie_cell!r}"
+        )
         assert '" a"' in tie_cell and '" the"' in tie_cell
-        assert "≈" not in clear_cell, f"clear winner must not show a tie marker, got {clear_cell!r}"
+        assert "≈" not in clear_cell, (
+            f"clear winner must not show a tie marker, got {clear_cell!r}"
+        )
         assert '" a"' in clear_cell
 
 
@@ -968,7 +1124,9 @@ async def test_unrun_cell_renders_blank_never_zero(evals_app, mixed_run_group):
 # ---------------------------------------------------------------------------
 
 
-async def _focus_cell(pilot, grid: ResultsGrid, snippet_id: str, target_id: str) -> None:
+async def _focus_cell(
+    pilot, grid: ResultsGrid, snippet_id: str, target_id: str
+) -> None:
     """Shared by every test in this section only -- every OTHER cell-focus
     test in this file inlines the same four lines, kept that way rather
     than refactored here to avoid touching passing tests unrelated to
@@ -1569,7 +1727,9 @@ async def test_failure_callout_dominant_reason_ties_broken_by_first_seen_majorit
     for snippet, reason in zip(
         majority_snippets, ["timeout", "unreachable", "unreachable", "unreachable"]
     ):
-        save_cell(evals_db, majority_run_id, snippet, CellError(reason=reason, detail=""))
+        save_cell(
+            evals_db, majority_run_id, snippet, CellError(reason=reason, detail="")
+        )
 
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
@@ -1584,7 +1744,9 @@ async def test_failure_callout_dominant_reason_ties_broken_by_first_seen_majorit
         )
 
         majority_grid = await _select_run_group(pilot, majority_group_id)
-        majority_callout = majority_grid.query_one("#evals-grid-failure-callout", Static)
+        majority_callout = majority_grid.query_one(
+            "#evals-grid-failure-callout", Static
+        )
         assert majority_callout.visual.plain == (
             "All 4 cells failed — unreachable. Check that the target's "
             "server is running and reachable, then run the bench again."
@@ -1637,7 +1799,9 @@ async def test_delta_lens_never_renders_a_leading_gte(evals_app, clean_run_group
         for row_index in range(table.row_count):
             for col_index in range(len(table.columns)):
                 text = str(table.get_cell_at((row_index, col_index)))
-                assert "≥" not in text, f"found a leading >= at ({row_index},{col_index}): {text!r}"
+                assert "≥" not in text, (
+                    f"found a leading >= at ({row_index},{col_index}): {text!r}"
+                )
 
 
 @pytest.mark.asyncio
@@ -1879,7 +2043,8 @@ async def test_baseline_cell_failing_makes_the_whole_comparison_unavailable_not_
         grid.query_one("#evals-lens-selector", Select).value = "delta"
         await pilot.pause()
         grid.query_one("#evals-baseline-selector", Select).value = (
-            "row", "s2",
+            "row",
+            "s2",
         )
         await pilot.pause()
 
@@ -1952,9 +2117,12 @@ async def test_sort_key_registers_and_reorders_by_spread(evals_app, clean_run_gr
 
         state_before = str(grid.query_one("#evals-grid-state").renderable)
         assert "Sort: dataset order" in state_before
-        assert [
-            table.get_row_index(sid) for sid in ("s1", "s2", "s3", "s4")
-        ] == [0, 1, 2, 3], "unsorted must be dataset (authoring) order"
+        assert [table.get_row_index(sid) for sid in ("s1", "s2", "s3", "s4")] == [
+            0,
+            1,
+            2,
+            3,
+        ], "unsorted must be dataset (authoring) order"
 
         await pilot.press("s")
         await pilot.pause()
@@ -2092,7 +2260,9 @@ async def test_arrow_keys_move_focus_and_update_the_inspector_without_a_recompos
         await pilot.pause()
 
         second_text = str(body.renderable)
-        assert second_text != first_text, "moving focus with arrow keys must update the inspector"
+        assert second_text != first_text, (
+            "moving focus with arrow keys must update the inspector"
+        )
 
         still_same_grid = pilot.app.screen.query_one("#evals-results-grid", ResultsGrid)
         assert id(still_same_grid) == grid_identity, (
@@ -2340,8 +2510,7 @@ async def test_probe_percentage_follows_the_engines_matched_token_not_a_local_re
         base_id = mixed_run_group["base_id"]
         expected = f"{math.log(0.43):.2f}  43.0%"
         assert str(table.get_cell("s1", base_id)) == expected, (
-            "the grid re-derived the match instead of using "
-            "ProbeReading.matched"
+            "the grid re-derived the match instead of using ProbeReading.matched"
         )
 
         row = table.get_row_index("s1")
@@ -2425,7 +2594,150 @@ async def test_group_mean_rows_match_analysis_group_means_over_the_rendered_dive
             if snippet_cell.startswith("group mean") and "loaded" in snippet_cell:
                 row_key = row_index
                 break
-        assert row_key is not None, "expected a 'group mean [loaded]' row in the delta lens"
+        assert row_key is not None, (
+            "expected a 'group mean [loaded]' row in the delta lens"
+        )
         col_index = table.get_column_index(poor_id)
         rendered = str(table.get_cell_at((row_key, col_index)))
         assert rendered == f"{expected:.2f}"
+
+
+# ---------------------------------------------------------------------------
+# task-1511: the failure callout is gated on the GROUP's rolled-up status
+# -- an in-flight or cancelled run must never read as "All N cells failed
+# … run the bench again" (a completed run has attempted its full snapshot
+# grid, so the completed copy keeps its TASK-1477 wording verbatim,
+# consistent with the rail's ✓✗ all-cells-failed glyph for that case).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_in_flight_run_never_renders_the_all_cells_failed_next_step(
+    evals_app, evals_db
+):
+    """task-1511 AC1: an in-flight group whose first-attempted cells ALL
+    failed reads as in flight, not as a completed dead run -- the old
+    ``failed == total`` gate counted only ATTEMPTED cells, so this run
+    showed "All 2 cells failed … then run the bench again" while it was
+    still going."""
+    group_id, base_id, steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "inflight"
+    )
+    for run_id in run_ids.values():
+        evals_db.update_run_status(run_id, "running")
+    save_cell(
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
+        CellError(reason="unreachable", detail="connection refused"),
+    )
+    save_cell(
+        evals_db,
+        run_ids[steered_id],
+        snippets[0],
+        CellError(reason="unreachable", detail="connection refused"),
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        text = callout.visual.plain
+        assert (
+            text
+            == "Run in flight — 2 of 2 attempted cells failed so far — unreachable."
+        )
+        assert "All" not in text
+        assert "run the bench again" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_states_cancellation_and_the_true_proportions(
+    evals_app, evals_db
+):
+    """task-1511 AC2: a cancelled run's callout names the cancellation and
+    the TRUE attempted/total proportions (2 of a 4-cell grid attempted, 1
+    failed) -- the old callout kept the misleading all-failed sentence
+    with ``N`` below the real grid size, permanently."""
+    group_id, base_id, steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "cancelled"
+    )
+    for run_id in run_ids.values():
+        evals_db.update_run_status(run_id, "cancelled")
+    save_cell(
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
+        CellError(reason="unreachable", detail="connection refused"),
+    )
+    save_cell(
+        evals_db,
+        run_ids[steered_id],
+        snippets[0],
+        _cap([(" a", 0.5), (" the", 0.3)]),
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        text = callout.visual.plain
+        assert text == "Run cancelled — 2 of 4 cells attempted, 1 failed."
+        assert "run the bench again" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_with_zero_failures_still_explains_its_partial_grid(
+    evals_app, evals_db
+):
+    """task-1511 AC2's other half: a cancelled run whose attempted cells
+    all SUCCEEDED still has a partial grid that needs explaining -- the
+    cancellation line renders with ``0 failed``, not nothing."""
+    group_id, _base_id, _steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "cancelled-clean"
+    )
+    for run_id in run_ids.values():
+        evals_db.update_run_status(run_id, "cancelled")
+    save_cell(
+        evals_db,
+        run_ids[_base_id],
+        snippets[0],
+        _cap([(" a", 0.5), (" the", 0.3)]),
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        assert (
+            callout.visual.plain == "Run cancelled — 1 of 4 cells attempted, 0 failed."
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_completed_all_failed_run_keeps_its_existing_callout(
+    evals_app, all_cells_failed_run_group
+):
+    """task-1511 AC3: the completed-run callout is byte-for-byte
+    unchanged -- the existing
+    ``test_failure_callout_names_the_next_step_when_every_cell_failed``
+    already pins the exact sentence for a completed group; this companion
+    pins that the same grid read as COMPLETED (statuses stamped) produces
+    that same sentence, i.e. the status gate did not disturb the
+    completed path."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        # Stamp the fixture's runs completed the way the engine does at
+        # the end of a full pass (the bare fixture leaves them pending,
+        # which the roll-up also treats as completed -- stamping makes
+        # this test independent of that fall-through).
+        for run in pilot.app.screen._view_model.db.list_runs(
+            run_group_id=all_cells_failed_run_group["group_id"], limit=10
+        ):
+            pilot.app.screen._view_model.db.update_run_status(run["id"], "completed")
+        grid = await _select_run_group(pilot, all_cells_failed_run_group["group_id"])
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        assert callout.visual.plain == (
+            "All 4 cells failed — unreachable. Check that the target's "
+            "server is running and reachable, then run the bench again."
+        )

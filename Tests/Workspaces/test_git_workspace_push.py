@@ -22,6 +22,7 @@ commit) and only then the returned `PushResult`; every one of them was
 proven red against the pre-fix engine, which pushed with no refspec at
 all.
 """
+
 import subprocess
 from pathlib import Path
 
@@ -165,8 +166,7 @@ def test_nonff_push_fails_honestly_no_force(repo, bare, tmp_path, monkeypatch):
 
 def test_credential_hint_mapping():
     detail = _push_failure_detail(
-        "fatal: could not read Username for 'https://host': "
-        "terminal prompts disabled"
+        "fatal: could not read Username for 'https://host': terminal prompts disabled"
     )
     assert detail.endswith(
         " — credentials were not available non-interactively; push once "
@@ -175,11 +175,10 @@ def test_credential_hint_mapping():
 
 
 def test_credential_hint_not_appended_for_unrelated_failure():
-    detail = _push_failure_detail("fatal: unable to access 'https://host': "
-                                   "Could not resolve host")
-    assert detail == (
+    detail = _push_failure_detail(
         "fatal: unable to access 'https://host': Could not resolve host"
     )
+    assert detail == ("fatal: unable to access 'https://host': Could not resolve host")
 
 
 def test_detached_refused(repo):
@@ -235,7 +234,13 @@ def test_explicit_remote_overrides_derivation(repo, bare, tmp_path):
 def _bare_refs(bare: Path) -> dict[str, str]:
     """Every ref in the bare remote, as ``{refname: full sha}``."""
     out = subprocess.run(
-        ["git", "--git-dir", str(bare), "for-each-ref", "--format=%(refname) %(objectname)"],
+        [
+            "git",
+            "--git-dir",
+            str(bare),
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+        ],
         capture_output=True,
         text=True,
         check=True,
@@ -449,9 +454,7 @@ def test_push_argv_carries_a_fully_qualified_refspec(repo, bare, monkeypatch):
     ), pushes[1]
 
 
-def test_push_targets_the_upstreams_own_ref_when_the_names_differ(
-    repo, bare, tmp_path
-):
+def test_push_targets_the_upstreams_own_ref_when_the_names_differ(repo, bare, tmp_path):
     """A branch tracking a DIFFERENTLY-named upstream pushes to that ref.
 
     The destination is the branch's `%(upstream:remoteref)`, never the

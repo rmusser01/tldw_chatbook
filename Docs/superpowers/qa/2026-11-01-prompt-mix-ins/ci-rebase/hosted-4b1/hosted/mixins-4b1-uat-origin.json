@@ -1,0 +1,40 @@
+{
+  "head": "4b1e070c972320e1353b6bac7e185035db125571",
+  "run_id": 41547453582,
+  "run_attempt": 1,
+  "job_id": 125628364692,
+  "artifact_id": 13189717212,
+  "artifact_name": "project-chat-uat-41547453582-1",
+  "files": [
+    {
+      "path": "/private/tmp/mixins-4b1-admission2.log",
+      "bytes": 146459,
+      "sha256": "ef8fa524e6027067053bd57fdff6622b85357684bfc475ba831733c373f0e9d9"
+    },
+    {
+      "path": "/private/tmp/mixins-4b1-uat-artifacts/project-chat-uat.xml",
+      "bytes": 34965,
+      "sha256": "7e293b57c900c62c876bc6ff8e3643914032eb09e163495abf211c7d3dde421d"
+    },
+    {
+      "path": "/private/tmp/mixins-4b1-uat-artifacts/project-chat-uat/wrong-family-144c3637/receipt.json",
+      "bytes": 21901,
+      "sha256": "9c32bed267e049529251820e3d73f5fe7860496ef1a0a36b51f349deb6bffd8b"
+    },
+    {
+      "path": "/private/tmp/mixins-4b1-uat-artifacts/project-chat-uat/wrong-family-144c3637/viewport.txt",
+      "bytes": 12680,
+      "sha256": "745b19d08f7fcb154fea161ddade82ca8a01374e2f980a4abbc9728d78d9e425"
+    },
+    {
+      "path": "/private/tmp/mixins-4b1-uat-artifacts/project-chat-uat/wrong-family-144c3637/viewport.svg",
+      "bytes": 144729,
+      "sha256": "05250142cdc69920b26c60f7ebf98e8423ffc33958a51f1977eb418850ae6931"
+    },
+    {
+      "path": "/private/tmp/mixins-4b1-uat-artifacts/project-chat-uat/wrong-family-144c3637/task-stacks.txt",
+      "bytes": 22585,
+      "sha256": "e4b6541ffff33a04b4ead97a30423237f339a8d517eb788d2cb11104fe90b807"
+    }
+  ]
+}

@@ -1,0 +1,214 @@
+{
+  "archive": "native-investigations.tar.gz",
+  "archive_sha256": "27fc7ce5ab2e4eca2d219c39b02821e09d64702b03b43ea1b0226e4dd2097870",
+  "members": {
+    "ci-media-filter/ci_media_probe.py": {
+      "bytes": 5392,
+      "sha256": "427b445ce05fcae2cc50778a2b4bb4c8e966d5b260547629352fa7fbe03e4cd2"
+    },
+    "ci-media-filter/evidence-receipt.json": {
+      "bytes": 2297,
+      "sha256": "b2a9d2b44ee7007d672f6d9cd26cb8cad943ba0af8773f5f2af02274fc08ac72"
+    },
+    "ci-media-filter/exact-native-01/command.json": {
+      "bytes": 1161,
+      "sha256": "28daff0538c98f08ba6eeedc45ee95df7054d054a88ae8a3763350c96f82f150"
+    },
+    "ci-media-filter/exact-native-01/result.xml": {
+      "bytes": 416,
+      "sha256": "5f2cbfe431b704be8d0f852f1dfb38a17808cfd4575ea21fecaf885acc99f0bb"
+    },
+    "ci-media-filter/exact-native-01/verification.json": {
+      "bytes": 517,
+      "sha256": "5aca22d624fee7e7e97d59db1b89f70112449c84349a2d0ff1ecdc3cffc952ae"
+    },
+    "ci-media-filter/fullpaste-native-01/command.json": {
+      "bytes": 1169,
+      "sha256": "8b13460686f5fe7a4bb54bfe79eb951f1e7fb79356fbcd99cba55d2ed57fc557"
+    },
+    "ci-media-filter/fullpaste-native-01/result.xml": {
+      "bytes": 416,
+      "sha256": "8575a3dbac5979aef33ed645d390d7600748a95289a10ff00494c97a94397de8"
+    },
+    "ci-media-filter/fullpaste-native-01/verification.json": {
+      "bytes": 521,
+      "sha256": "70472adfe4311808794aebc05c8243390fae49e1c2469308cd84493883b1b3a1"
+    },
+    "ci-media-filter/fullpaste-probe-function.py": {
+      "bytes": 2048,
+      "sha256": "4805a82bdadb8961c218cbac9e72a2c1b725f9593097111aba4c37c1ffd5bdd2"
+    },
+    "ci-media-filter/fullpaste.trace.json": {
+      "bytes": 50656,
+      "sha256": "1c4bb0f32d056ad20899da8d04110af4d3c062f6350500358e66a791b47103d9"
+    },
+    "ci-media-filter/paced-native-01/command.json": {
+      "bytes": 1161,
+      "sha256": "41d453cd3f5a64cc9daf4869bb16b897a38e83f4ec77eaeecbfc806f824d611d"
+    },
+    "ci-media-filter/paced-native-01/result.xml": {
+      "bytes": 1215,
+      "sha256": "5cf935686ce4f2820f3754d2dc66e8b0d6d8b4b99c08357fe964b229afff2ba3"
+    },
+    "ci-media-filter/paced-native-01/verification.json": {
+      "bytes": 517,
+      "sha256": "aa813844cfa461ab139768bf0425507613d69f589943ceb66d7214b0d9bc4258"
+    },
+    "ci-media-filter/paced.trace.json": {
+      "bytes": 105417,
+      "sha256": "6a905b9e5383a7218086cc04a685336cf5570a44713b487c9e80363803f773dc"
+    },
+    "ci-media-filter/summarize.py": {
+      "bytes": 2148,
+      "sha256": "0d834e7f4ad8b042c46eaf7c4b1708c77a1560214c42322e5961a13ab4dba245"
+    },
+    "ci-media-filter/test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back.trace.json": {
+      "bytes": 72450,
+      "sha256": "a7cc190a1d989820ed92ac7a85f920a3ff3126aa8169218dfee6c30a0abac4da"
+    },
+    "ci-note-open/ci_note_probe.py": {
+      "bytes": 8746,
+      "sha256": "1c4a34bc4c02ae2c2ee12221c8a806b58d0702bc7944f93f3b08590867fce40d"
+    },
+    "ci-note-open/evidence-receipt.json": {
+      "bytes": 7246,
+      "sha256": "943f88eba82eb2a3493bf23bb85e36bfb76c08c3c321bd09701d32cd1c05a85f"
+    },
+    "ci-note-open/held-delivery-trace-01/command.json": {
+      "bytes": 1155,
+      "sha256": "1b51b6f1cc0bed3b7c50b550a87b3a455fa865518dbb4682bee4de799d9a4f4e"
+    },
+    "ci-note-open/held-delivery-trace-01/result.xml": {
+      "bytes": 1973,
+      "sha256": "b99c5da11194fe0481a2d888676cbbca41bebed0c4906f81427920334cf1c70f"
+    },
+    "ci-note-open/held-delivery-trace-01/verification.json": {
+      "bytes": 521,
+      "sha256": "ac23d42a3dcce81a0d2226c138b3a35f141944013c3c5ee545dfea70ae4ba5f0"
+    },
+    "ci-note-open/holdpress.timeline.json": {
+      "bytes": 33149,
+      "sha256": "5806d837dfb06e20b7cb5a7b386e2177656e8dfd223e0189c06ec37898fd59f0"
+    },
+    "ci-note-open/holdpress.trace.json": {
+      "bytes": 778140,
+      "sha256": "218b505323f0fa5ce4c2e986b0234e0d951facd8815e420660f41bf428bb5d9c"
+    },
+    "ci-note-open/original-trace-01/command.json": {
+      "bytes": 1145,
+      "sha256": "6920b0b2e26b029927954d76500599ebbeb17919ba4833c2d97117bbe741e99b"
+    },
+    "ci-note-open/original-trace-01/result.xml": {
+      "bytes": 1598,
+      "sha256": "2693528859109e7627a1e3d9493e8c74dfaaf48bca2dbe48feceb8f8afcd2104"
+    },
+    "ci-note-open/original-trace-01/verification.json": {
+      "bytes": 516,
+      "sha256": "ef22bc623abe472138155449c4fee443374598e4fe8201ccc9cb81f26af33e00"
+    },
+    "ci-note-open/receipt.py": {
+      "bytes": 1983,
+      "sha256": "6ad64e228baf9cf5b27843771d3a45f719f69c372ebf9de715f54b19361065dd"
+    },
+    "ci-note-open/summarize.py": {
+      "bytes": 1595,
+      "sha256": "f7e32508d8a2146f896138de4bd570e48d193b09d04a1b62435a8a11951f2e7b"
+    },
+    "ci-note-open/test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link.trace.json": {
+      "bytes": 209218,
+      "sha256": "a87439e8ad08aff569ed6daeea694091a72fa16bd7c654048eb0dfc6d7bff2e9"
+    },
+    "ci-note-open/titleprep-trace-01/command.json": {
+      "bytes": 1147,
+      "sha256": "cd05f71e9a974d984879368afd65f027d312a9560b848b51c25f6fb459082fc8"
+    },
+    "ci-note-open/titleprep-trace-01/result.xml": {
+      "bytes": 403,
+      "sha256": "d5ea0dc14ad6ab6687e43758df40bd90f93343b0d9241401000bb0256cbf15a5"
+    },
+    "ci-note-open/titleprep-trace-01/verification.json": {
+      "bytes": 517,
+      "sha256": "9e3b7e5da40e501b1c9d3c7a8e6b7e73b2d7173f0189d55faa769244e27d9450"
+    },
+    "ci-note-open/titleprep.timeline.json": {
+      "bytes": 58455,
+      "sha256": "32391e600ee89dbb7bd46fcca8f36e9011f8d38413910892f3491b5ab0eda205"
+    },
+    "ci-note-open/titleprep.trace.json": {
+      "bytes": 1956885,
+      "sha256": "29f9189cd6822f7efbdc35884ee63254d0da1c247c1302ba9cae88d85d811d80"
+    },
+    "reports/ci-media-filter-investigation-report.md": {
+      "bytes": 11587,
+      "sha256": "083309217e2115f1898864e4fcd06adf34802f4d9497dc635008abe5095a6662"
+    },
+    "reports/ci-note-open-investigation-report.md": {
+      "bytes": 9916,
+      "sha256": "b93abbbf15179724ea8161d005c4b4104afd68a23c08708ae293ac40e6208f7c"
+    },
+    "runtime/run-targeted.py": {
+      "bytes": 2165,
+      "sha256": "fed322c340015529db927e4639e57437144e5b722368659309cb2808c05c8773"
+    }
+  },
+  "actual_native_direct_cases": [
+    {
+      "entry": "ci-media-filter/exact-native-01/result.xml",
+      "classname": "Tests.UI.test_library_media_reader_controls_in_list_view",
+      "name": "test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back",
+      "seconds": 43.306,
+      "outcomes": []
+    },
+    {
+      "entry": "ci-media-filter/fullpaste-native-01/result.xml",
+      "classname": "Tests.UI.test_library_media_reader_controls_in_list_view",
+      "name": "test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back",
+      "seconds": 35.318,
+      "outcomes": []
+    },
+    {
+      "entry": "ci-media-filter/paced-native-01/result.xml",
+      "classname": "Tests.UI.test_library_media_reader_controls_in_list_view",
+      "name": "test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back",
+      "seconds": 43.81,
+      "outcomes": [
+        {
+          "kind": "failure",
+          "message": "AssertionError: query 'roduct' never settled to 1 rows: MediaBrowseScope(query='t', media_type=None, sort_by='last_modified_desc', page=1) rows=2"
+        }
+      ]
+    },
+    {
+      "entry": "ci-note-open/held-delivery-trace-01/result.xml",
+      "classname": "Tests.UI.test_library_note_links_picker_and_preview",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 100.36,
+      "outcomes": [
+        {
+          "kind": "failure",
+          "message": "AssertionError: timed out waiting for the note editor to open and arm"
+        }
+      ]
+    },
+    {
+      "entry": "ci-note-open/original-trace-01/result.xml",
+      "classname": "Tests.UI.test_library_note_links_picker_and_preview",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 59.543,
+      "outcomes": [
+        {
+          "kind": "failure",
+          "message": "textual.css.query.NoMatches: No nodes match '#library-note-title' on LibraryScreen(classes='shell-header-normal')"
+        }
+      ]
+    },
+    {
+      "entry": "ci-note-open/titleprep-trace-01/result.xml",
+      "classname": "Tests.UI.test_library_note_links_picker_and_preview",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 76.122,
+      "outcomes": []
+    }
+  ],
+  "qualification": "These legacy controls execute App directly in one pytest process, not new-test parent/child wrappers. Media exact and Paste pass; paced native keys intentionally reproduce queryt/2rows. Notes original titleNoMatches is INVALID for reopen; titleprep passes all original outcomes; held row-message reproduces exact post-autosave reopen failure. Sandboxed launch failure never launched pytest. Historical CI interleavings are inferred from sufficient matching native witnesses, not directly captured. No permanent source fix or post-fix GREEN is implied; raw .log files remain private."
+}

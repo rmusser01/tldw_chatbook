@@ -1,0 +1,4 @@
+{
+  "sha256": "f99b5f033f6ab5964ca2489785957012726a24900f2f3f9ccf6b4b0152f1ddb3",
+  "raw_text": "::error::1 new post-await DOM lookup(s) with no guard.\nA `query_one` that resumes after an `await` can find its subtree removed -- NoMatches propagates out of the worker and, with exit_on_error defaulting to True, exits the application (TASK-32800.1 was exactly this). Guard the lookup with `query()` + `first()`, or an enclosing `try`, or re-check the widget is still mounted after the await:\n  tldw_chatbook/UI/Library_Modules/prompt_save_ack.py::save_prompt  (0 in census, 1 now)\n\nIf the await genuinely cannot remove the subtree, re-pin the census with:  python scripts/check_textual_worker_contract.py --write\n\n"
+}

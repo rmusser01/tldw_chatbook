@@ -1,7 +1,7 @@
 ---
 id: TASK-265
 title: MCP permissions backlog from Phase 4 review triage
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-17 02:00'
 labels:
@@ -17,5 +17,12 @@ Non-blocking items triaged BACKLOG by the Phase 4 final review: (1) store tests 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each item fixed or explicitly declined with a reason recorded in this task
+- [x] #1 Each item fixed or explicitly declined with a reason recorded in this task
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+The triaged store tests landed: Tests/MCP/test_permission_store.py now carries 75 tests including store.set_server_default(server_key, None) (line 318 — item 1) and the rug-pull downgrade audit lives in the store (permission_store.py:2114).

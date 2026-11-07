@@ -3,7 +3,11 @@ import asyncio
 
 import pytest
 from tldw_chatbook.RAG_Search.simplified.config import (
-    RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig, SearchConfig,
+    RAGConfig,
+    EmbeddingConfig,
+    ChunkingConfig,
+    VectorStoreConfig,
+    SearchConfig,
 )
 from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
     fingerprinted_collection_name,
@@ -12,12 +16,18 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
 
 
 def _chroma_cfg(persist_dir, **over):
-    vs = dict(type="chroma", persist_directory=persist_dir,
-              collection_name="default", distance_metric="cosine")
+    vs = dict(
+        type="chroma",
+        persist_directory=persist_dir,
+        collection_name="default",
+        distance_metric="cosine",
+    )
     vs.update(over.pop("vector_store", {}))
     return RAGConfig(
         embedding=EmbeddingConfig(model="mock", device="cpu"),
-        chunking=ChunkingConfig(chunk_size=400, chunk_overlap=100, chunking_method="words"),
+        chunking=ChunkingConfig(
+            chunk_size=400, chunk_overlap=100, chunking_method="words"
+        ),
         vector_store=VectorStoreConfig(**vs),
         search=SearchConfig(enable_cache=False),
     )
@@ -37,8 +47,10 @@ def test_query_only_diff_shares_collection(chroma_persist_dir):
     a = _chroma_cfg(chroma_persist_dir)
     b = _chroma_cfg(chroma_persist_dir)
     b.search.default_top_k = 42
-    assert (RAGService(a).vector_store.collection_name
-            == RAGService(b).vector_store.collection_name)
+    assert (
+        RAGService(a).vector_store.collection_name
+        == RAGService(b).vector_store.collection_name
+    )
 
 
 @pytest.mark.requires_chromadb

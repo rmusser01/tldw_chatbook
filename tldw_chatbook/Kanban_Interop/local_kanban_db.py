@@ -34,12 +34,12 @@ def open_connection(db_path: str | Path, *, _source=None) -> sqlite3.Connection:
     try:
         if _source is not None:
             from tldw_chatbook.Backup_Recovery.participants import (
-                _core_access,
-                _register_core_connection,
+                core_access,
+                register_core_connection,
             )
 
-            _register_core_connection(_source, conn)
-            _core_access(_source)
+            register_core_connection(_source, conn)
+            core_access(_source)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         if str(db_path) != ":memory:":

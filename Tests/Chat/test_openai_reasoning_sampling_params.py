@@ -28,11 +28,19 @@ class _FakeResponse:
     def json(self) -> dict:
         return self._body
 
+    def iter_lines(self, **_kwargs):
+        yield "data: [DONE]"
+
+    def close(self) -> None:
+        return None
+
 
 @pytest.fixture
 def captured_payloads(monkeypatch):
     """Swap ``requests.Session`` for a fake that records posted payloads."""
     payloads: list[dict] = []
+    # These payload tests use explicit settings, not the global profile owner.
+    monkeypatch.setattr(llm_calls, "load_settings", dict)
 
     class _FakeSession:
         """Stands in for ``requests.Session`` in the non-streaming send path."""
@@ -44,6 +52,9 @@ def captured_payloads(monkeypatch):
             return False
 
         def mount(self, *_args, **_kwargs) -> None:
+            return None
+
+        def close(self) -> None:
             return None
 
         def post(self, url, headers=None, json=None, timeout=None, **_kwargs):
@@ -67,7 +78,9 @@ def captured_payloads(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(llm_calls, "create_default_session", _FakeSession)
+    monkeypatch.setattr(llm_calls, "create_owned_default_session", lambda *a, **k: _FakeSession())
+    monkeypatch.setattr(llm_calls, "create_default_session", lambda *a, **k: _FakeSession(), raising=False)
+    monkeypatch.setattr(llm_calls, "create_pooled_default_session", lambda *a, **k: _FakeSession(), raising=False)
     return payloads
 
 
@@ -224,3 +237,186 @@ def test_openai_sampling_predicate_boundaries(model, expected):
     """The builder consults the TASK-18802 predicate; its boundaries carry
     the exact rows the retired ``_is_openai_reasoning_model`` tuple pinned."""
     assert openai_model_rejects_sampling_params(model) is expected
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_gpt_6_luna_chat_cap_preserves_sampling(captured_payloads, streaming):
+    """The observed unsupported max_tokens error must not change sampling or route."""
+    result = chat_with_openai(
+        input_data=[{"role": "user", "content": "Answer OK"}],
+        api_key="test-key",
+        model="gpt-6-luna",
+        streaming=streaming,
+        max_tokens=4096,
+        temp=0.6,
+        maxp=0.95,
+    )
+    if streaming:
+        list(result)
+    entry = captured_payloads[-1]
+    assert entry["url"].rstrip("/").endswith("/chat/completions")
+    payload = entry["payload"]
+    assert payload["max_completion_tokens"] == 4096
+    assert "max_tokens" not in payload
+    assert "max_output_tokens" not in payload
+    assert "reasoning_effort" not in payload
+    assert payload["temperature"] == pytest.approx(0.6)
+    assert payload["top_p"] == pytest.approx(0.95)
+    assert payload["stream"] is streaming
+
+
+_FUNCTION_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_marker",
+            "description": "Read the marker.",
+            "parameters": {"type": "object", "properties": {}},
+            "strict": True,
+        },
+    }
+]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("model", ["gpt-6-luna", " GPT-6-LUNA "])
+def test_luna_none_native_functions_use_chat_unchanged(
+    captured_payloads, streaming, model
+):
+    """Native Luna functions require explicit none on the existing Chat wire path."""
+    history = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "read_marker", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "marker"},
+    ]
+    choice = {"type": "function", "function": {"name": "read_marker"}}
+    result = chat_with_openai(
+        input_data=history,
+        api_key="test-key",
+        model=model,
+        streaming=streaming,
+        reasoning_effort=" NONE ",
+        tools=_FUNCTION_TOOLS,
+        tool_choice=choice,
+        max_tokens=4096,
+        temp=0.6,
+        maxp=0.95,
+        reasoning_summary=" ",
+        verbosity="",
+    )
+    if streaming:
+        list(result)
+    entry = captured_payloads[-1]
+    assert entry["url"].endswith("/chat/completions")
+    payload = entry["payload"]
+    assert payload["reasoning_effort"] == "none"
+    assert payload["max_completion_tokens"] == 4096
+    assert "max_tokens" not in payload and "max_output_tokens" not in payload
+    assert payload["messages"] == history
+    assert payload["tools"] == _FUNCTION_TOOLS
+    assert payload["tool_choice"] == choice
+    assert payload["temperature"] == pytest.approx(0.6)
+    assert payload["top_p"] == pytest.approx(0.95)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    ("overrides", "route", "effort"),
+    [
+        ({"model": "openai/gpt-6-luna"}, "responses", None),
+        ({"model": "gpt-6-luna-preview"}, "responses", None),
+        ({"model": "gpt-6-sol"}, "responses", None),
+        ({"tools": [*_FUNCTION_TOOLS, {"type": "web_search"}]}, "responses", None),
+        (
+            {"tools": [{"type": "function", "name": "flat", "parameters": {}}]},
+            "responses",
+            None,
+        ),
+        (
+            {"tools": [{"type": "function", "function": {"name": "missing_schema"}}]},
+            "responses",
+            None,
+        ),
+        (
+            {
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {"name": "", "parameters": {"type": "object"}},
+                    }
+                ]
+            },
+            "responses",
+            None,
+        ),
+        (
+            {
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {"name": "bad", "parameters": {"type": "array"}},
+                    }
+                ]
+            },
+            "responses",
+            None,
+        ),
+        ({"tools": []}, "responses", None),
+        ({"tools": None}, "responses", None),
+        ({"reasoning_effort": None}, "chat/completions", None),
+        ({"reasoning_effort": "low"}, "responses", None),
+        ({"reasoning_summary": "none"}, "responses", None),
+        ({"verbosity": "low"}, "responses", None),
+        ({"model": "gpt-5.6-terra"}, "chat/completions", "none"),
+        ({"model": "gpt-5.6-terra", "tools": []}, "chat/completions", "none"),
+        ({"model": "gpt-5.6-terra", "reasoning_effort": "low"}, "responses", None),
+    ],
+)
+def test_luna_native_exemption_preserves_other_routes(
+    captured_payloads, streaming, overrides, route, effort
+):
+    options = {
+        "model": "gpt-6-luna",
+        "reasoning_effort": "none",
+        "tools": _FUNCTION_TOOLS,
+    }
+    options.update(overrides)
+    result = chat_with_openai(
+        input_data=_MESSAGES, api_key="test-key", streaming=streaming, **options
+    )
+    if streaming:
+        list(result)
+    entry = captured_payloads[-1]
+    assert entry["url"].endswith("/" + route)
+    assert entry["payload"].get("reasoning_effort") == effort
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    "content", ["Answer OK", "Use the disclosed ```tool_call``` text protocol."]
+)
+def test_luna_plain_and_fenced_none_keep_responses(
+    captured_payloads, streaming, content
+):
+    result = chat_with_openai(
+        input_data=[{"role": "user", "content": content}],
+        api_key="test-key",
+        model="gpt-6-luna",
+        reasoning_effort="none",
+        streaming=streaming,
+    )
+    if streaming:
+        list(result)
+    entry = captured_payloads[-1]
+    assert entry["url"].endswith("/responses")
+    assert entry["payload"]["reasoning"] == {"effort": "none"}
+    assert "tools" not in entry["payload"]

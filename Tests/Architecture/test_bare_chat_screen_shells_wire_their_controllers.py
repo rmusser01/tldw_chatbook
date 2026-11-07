@@ -72,7 +72,10 @@ REPO_ROOT = TESTS_ROOT.parent
 #: growing (or shedding) a controller on that path fails here.
 CONTROLLER_STUBS: dict[str, str] = {
     "_fleet": "stub_fleet_controller",
-    "_library_activity": "stub_library_activity_controller",
+    # TASK-38988 review: the hook build reads `self._session`'s three
+    # project-instruction projections (aad71de772) and no longer
+    # `self._library_activity.build_provider`.
+    "_session": "stub_session_controller",
 }
 
 #: Functions allowed to build a store-setting shell without wiring the

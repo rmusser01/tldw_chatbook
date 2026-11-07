@@ -1,0 +1,31 @@
+{
+  "held": true,
+  "timeline": [
+    {
+      "event": "writer-entered",
+      "time": 608201.687,
+      "thread": 130324,
+      "main_thread": 130324
+    },
+    {
+      "event": "key-posted",
+      "time": 608201.687
+    },
+    {
+      "event": "watchdog-released-writer",
+      "time": 608204.687
+    },
+    {
+      "event": "writer-completed",
+      "time": 608204.703
+    },
+    {
+      "event": "app-key-dispatched",
+      "time": 608205.203,
+      "before_release": false
+    }
+  ],
+  "dispatched_before_release": [
+    false
+  ]
+}

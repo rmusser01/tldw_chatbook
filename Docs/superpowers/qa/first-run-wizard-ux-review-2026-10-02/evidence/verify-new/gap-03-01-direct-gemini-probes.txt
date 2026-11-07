@@ -1,0 +1,20 @@
+# vn2 direct Gemini probes 2026-10-03T00:51:01.639531 (keys read from files, never printed)
+## key file gemini-api-key.txt (len 53)
+models.list -> 200; 61 models; 44 with generateContent; next page token: False
+  gemini-2.5-flash listed: True; gemini-3.8-flash listed: True
+  flash ids: gemini-2.5-flash, gemini-2.5-flash-image, gemini-2.5-flash-lite, gemini-2.5-flash-preview-tts, gemini-3-flash-preview, gemini-3.1-flash-image, gemini-3.1-flash-image-preview, gemini-3.1-flash-lite, gemini-3.1-flash-lite-image, gemini-3.1-flash-lite-preview, gemini-3.1-flash-tts-preview, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-3.6-flash, gemini-3.7-flash, gemini-3.8-flash, gemini-3.8-flash-lite-tts, gemini-3.8-flash-tts, gemini-flash-latest, gemini-flash-lite-latest, gemini-omni-1.1-flash, gemini-omni-flash-preview
+  generateContent gemini-2.5-flash -> 404 This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https
+  generateContent gemini-3.8-flash -> 200 OK
+  OpenAI-compatible /v1beta/openai/models -> 200; 61 ids
+## bogus key models.list -> 400 INVALID_ARGUMENT API key not valid. Please pass a valid API key.
+  generateContent gemini-flash-latest -> 200 OK
+  models.get gemini-2.5-flash -> 200; supportedGenerationMethods=['generateContent', 'countTokens', 'createCachedContent', 'batchGenerateContent']; inputTokenLimit=1048576
+## Shipped [providers] Google catalog (config.py:4444) — generateContent with the same key
+  gemini-2.5-flash -> 404 This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features
+  gemini-2.5-flash-preview-05-20 -> 404 models/gemini-2.5-flash-preview-05-20 is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to se
+  gemini-2.5-pro-preview-05-06 -> 404 models/gemini-2.5-pro-preview-05-06 is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see 
+  gemini-2.0-flash -> 404 This model models/gemini-2.0-flash is no longer available. Please update your code to use models/gemini-3.8-flash for the latest features and improvem
+  gemini-2.0-flash-lite -> 404 This model models/gemini-2.0-flash-lite is no longer available. Please update your code to use models/gemini-3.5-flash-lite for the latest features an
+  gemini-1.5-flash -> 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of 
+  gemini-1.5-flash-8b -> 404 models/gemini-1.5-flash-8b is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list 
+  gemini-1.5-pro -> 404 models/gemini-1.5-pro is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of av

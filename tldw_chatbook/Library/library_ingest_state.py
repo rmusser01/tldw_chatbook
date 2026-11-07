@@ -62,6 +62,7 @@ def _generic_default(name: str, fallback: Any) -> Any:
     """
     return generic_option_default(name, fallback)
 
+
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
 # Retired: the old scope-warning line ("ingest runs on Local") existed to say
@@ -76,6 +77,16 @@ INGEST_SERVER_NEEDS_SERVER_MODE_COPY = (
     "import on the server."
 )
 MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
+#: (TASK-34000.20 AC#2) The ONE sentence a path problem paints, under the
+#: path field beside the ``Choose a file…`` button. Owner ruling 2026-10-23
+#: (question 2): the gate line beside Start stays empty for a path problem.
+PATH_PROBLEM_LINE = (
+    "Can't find that path — check it, or use Browse… to pick a file or folder."
+)
+#: The pre-check's generic local-path errors (``ingest_preflight.analyze_path``)
+#: that ``PATH_PROBLEM_LINE`` replaces; every other ``path_invalid`` sentence
+#: keeps its own text (fix round 1, I2).
+_GENERIC_PATH_ERROR_PREFIXES = ("Path not found:", "Invalid path:")
 INGEST_UNAVAILABLE_COPY = "Import is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No import jobs yet."
@@ -117,18 +128,15 @@ def active_ingest_start_confirm_line(
     """
     if active_source_count and tooling_affected_count:
         return (
-            f"Import active; {tooling_affected_count} may fail. "
-            "Start again to queue."
+            f"Import active; {tooling_affected_count} may fail. Start again to queue."
         )
     if active_source_count and is_folder:
         noun = "file" if active_source_count == 1 else "files"
-        return (
-            f"{active_source_count} active {noun}. "
-            "Start again to queue all."
-        )
+        return f"{active_source_count} active {noun}. Start again to queue all."
     if active_source_count:
         return "Import active. Start again to queue a duplicate."
     return ""
+
 
 #: (xhigh review of task-14823) The gate reason for a folder that holds
 #: entries the scan passed over -- symlinks, dot-entries, unreadable
@@ -157,14 +165,11 @@ def ingest_unscannable_selection_copy(skipped_entries: int) -> str:
 # scrape methods (sitemap/url_level/recursive) are honored only by the server
 # clip path, so a local "sitemap" selection used to silently import ONE page.
 WEB_LOCAL_SINGLE_PAGE_NOTE = (
-    "Multi-page fetch runs on the server — this local import fetches one "
-    "page."
+    "Multi-page fetch runs on the server — this local import fetches one page."
 )
 
 
-def build_web_scope_note(
-    ingest_backend: str, web_options: Mapping[str, Any]
-) -> str:
+def build_web_scope_note(ingest_backend: str, web_options: Mapping[str, Any]) -> str:
     """Return the local single-page honesty note for the web options panel.
 
     (task-3303 AC5) ``scrape_method``/``max_pages``/``max_depth`` are honored
@@ -186,9 +191,7 @@ def build_web_scope_note(
         return ""
     fields = {f.name: f for f in get_capabilities("web").fields}
     default_method = getattr(fields.get("scrape_method"), "default", "individual")
-    method = str(
-        (web_options or {}).get("scrape_method") or default_method
-    ).strip()
+    method = str((web_options or {}).get("scrape_method") or default_method).strip()
     return WEB_LOCAL_SINGLE_PAGE_NOTE if method in MULTI_PAGE_SCRAPE_METHODS else ""
 
 
@@ -197,9 +200,7 @@ def build_web_scope_note(
 #: (optionally fractional) or [HH:]MM:SS[.fraction] with minutes/seconds
 #: below 60. Anything else fails the job only at run time, so the form
 #: gates the format up front.
-_TRIM_TIME_RE = re.compile(
-    r"^(?:\d+(?:\.\d+)?|(?:\d+:)?[0-5]?\d:[0-5]?\d(?:\.\d+)?)$"
-)
+_TRIM_TIME_RE = re.compile(r"^(?:\d+(?:\.\d+)?|(?:\d+:)?[0-5]?\d:[0-5]?\d(?:\.\d+)?)$")
 
 #: Audio/video fields validated as trim timestamps (see above).
 _TRIM_TIME_FIELDS = frozenset({"start_time", "end_time"})
@@ -246,8 +247,7 @@ def validate_ingest_option_value(field: Any, value: Any) -> str:
     if name == "chunk_size":
         if not (MIN_CHUNK_SIZE <= number <= MAX_CHUNK_SIZE):
             return (
-                f"{field.label} must be between {MIN_CHUNK_SIZE} and "
-                f"{MAX_CHUNK_SIZE}."
+                f"{field.label} must be between {MIN_CHUNK_SIZE} and {MAX_CHUNK_SIZE}."
             )
         return ""
     minimum = 0 if name == "chunk_overlap" else 1
@@ -307,15 +307,13 @@ def collect_ingest_option_errors(
                 errors.append((group, option_field.name, message))
     return tuple(errors)
 
+
 # First-visit orientation. Shown only while the form is untouched, so it fills
 # the otherwise-blank pane a new user lands on without ever competing with a
 # real pre-flight summary.
-INGEST_INTRO_WHAT_COPY = (
-    "Import a file, a whole folder, or a URL. Supported: {types}."
-)
+INGEST_INTRO_WHAT_COPY = "Import a file, a whole folder, or a URL. Supported: {types}."
 INGEST_INTRO_NEXT_COPY = (
-    "Imported items are searchable in your Library and can be used as "
-    "context in chat."
+    "Imported items are searchable in your Library and can be used as context in chat."
 )
 
 # Re-exported from library_ingest_jobs.py (the lowest-level pure module in
@@ -333,7 +331,10 @@ _GLYPH_DONE = "✓"  # "✓"
 #: import -- the two used to be byte-identical rows.
 _GLYPH_MATCHED = "≡"
 _GLYPH_FAILED = "✗"  # "✗"
-from .library_shell_state import LIBRARY_GLYPH_OUTCOME_SKIPPED as _GLYPH_SKIPPED  # "–" task-32235
+from .library_shell_state import (
+    LIBRARY_GLYPH_OUTCOME_SKIPPED as _GLYPH_SKIPPED,
+)  # "–" task-32235
+
 _GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
@@ -378,9 +379,7 @@ INGEST_EGRESS_BLOCKED_COPY = (
 #: host: task-3312's fixed sentence said "this address" and never which
 #: one, so a queue of refusals read as N identical rows and the expanded
 #: details could not recover the target either.
-_EGRESS_ORIGIN_RE = re.compile(
-    r"Egress blocked \([^)]*\) for (?P<origin>\S+)"
-)
+_EGRESS_ORIGIN_RE = re.compile(r"Egress blocked \([^)]*\) for (?P<origin>\S+)")
 
 
 def egress_blocked_receipt(error: str) -> str:
@@ -484,7 +483,7 @@ def _strip_basename_echo(detail: str, basename: str) -> str:
     """
     if not basename or not detail.startswith(basename):
         return detail
-    rest = detail[len(basename):]
+    rest = detail[len(basename) :]
     # Only a WORD-BOUNDARY echo counts: "report.txt is empty" stutters,
     # but "report.txt.orig could not be read" names a sibling artifact and
     # must pass through whole (xhigh review of task-3305).
@@ -567,9 +566,7 @@ def map_ingest_failure(
         if isinstance(exc_or_text, str)
         else str(exc_or_text).strip() or exc_or_text.__class__.__name__
     )
-    from_pool_start = (
-        context == "pool_start" or _POOL_START_FAILURE_MARKER in raw
-    )
+    from_pool_start = context == "pool_start" or _POOL_START_FAILURE_MARKER in raw
     errno_value = getattr(exc_or_text, "errno", None)
     hit_resource_limit = errno_value == errno.ENOSPC or "[Errno 28]" in raw
     if from_pool_start and hit_resource_limit:
@@ -904,11 +901,7 @@ class IngestForecast:
     @property
     def will_fail(self) -> int:
         """Total forecast failures, whatever the reason."""
-        return (
-            self.will_fail_refused
-            + self.will_fail_tooling
-            + self.will_fail_empty
-        )
+        return self.will_fail_refused + self.will_fail_tooling + self.will_fail_empty
 
     @property
     def consent_affected(self) -> int:
@@ -991,7 +984,10 @@ def build_ingest_forecast(
             required_missing, optional_missing = classify_missing_features(
                 group, warned
             )
-            if required_missing:
+            if required_missing or (
+                group == "audio_video"
+                and set(optional_missing) & {"faster_whisper", "parakeet_onnx", "transcribe_cpp"}
+            ):
                 fail_tooling += count
                 tooling_groups.append(group)
                 continue
@@ -1001,22 +997,16 @@ def build_ingest_forecast(
     # (task-2223) The duplicate probe is a capped best-effort count over
     # the read≈parse groups; subtract it from the files that would
     # otherwise import, never from the ones already forecast to fail.
-    will_match = min(
-        int(getattr(preflight, "already_in_library", 0) or 0), will_import
-    )
+    will_match = min(int(getattr(preflight, "already_in_library", 0) or 0), will_import)
     return IngestForecast(
         will_import=will_import - will_match,
         will_match=will_match,
-        match_capped=bool(
-            getattr(preflight, "already_in_library_capped", False)
-        ),
+        match_capped=bool(getattr(preflight, "already_in_library_capped", False)),
         # (task-14827) Nothing is skipped on the server path -- the
         # unsupported group's files are inside ``fail_refused`` above,
         # counted by asking the server mapping rather than the local one.
         will_skip=(
-            0
-            if targets_server
-            else len(preflight.type_groups.get("unsupported", ()))
+            0 if targets_server else len(preflight.type_groups.get("unsupported", ()))
         ),
         will_fail_refused=fail_refused,
         will_fail_tooling=fail_tooling,
@@ -1339,6 +1329,8 @@ class LibraryIngestFormState:
         preflight: The most recent pre-flight analysis result, if any.
         preflight_checking: Whether a pre-flight analysis is currently
             running (used to show a spinner/disable controls).
+        preflight_path: The stripped field text ``preflight`` describes
+            (TASK-34000.20); ``""`` when there is no result.
     """
 
     path: str = ""
@@ -1362,6 +1354,79 @@ class LibraryIngestFormState:
     type_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     preflight: PreflightResult | None = None
     preflight_checking: bool = False
+    #: (TASK-34000.20 AC#3) The exact field text (stripped) that ``preflight``
+    #: describes. A submit may only proceed when this equals the text in the
+    #: field right now -- a verdict for other text, or no verdict, is never
+    #: enough to import on. Cleared with ``preflight``.
+    preflight_path: str = ""
+
+
+def build_ingest_options_snapshot(
+    form: LibraryIngestFormState,
+) -> dict[str, dict[str, Any]]:
+    """Capture the current per-type ingestion options as a snapshot.
+
+    Returns a shallow copy of ``form.type_options``,
+    with the top-level generic toggles (analyze, chunk, chunk_size)
+    merged into the ``generic`` group so the downstream pipeline has a
+    single canonical options map.
+
+    Args:
+        form: Current form echo; its option mappings remain unchanged.
+
+    Returns:
+        A group-keyed dict mapping type group ids (``generic``, ``pdf``,
+        ``audio_video``, ``ebook``) to their option name/value maps.
+    """
+    snapshot: dict[str, dict[str, Any]] = {
+        group: dict(opts) for group, opts in form.type_options.items()
+    }
+    generic = snapshot.setdefault("generic", {})
+    generic["analyze"] = form.analyze
+    generic["chunk"] = form.chunk
+    # Prefer the generic panel's chunk_size when the user has set one;
+    # otherwise fall back to the legacy top-level form field.
+    if "chunk_size" not in generic:
+        generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
+    # (task-3301) The panel's number Inputs hand back display TEXT
+    # ("1000"); this snapshot is both what the job pipeline consumes
+    # and what gets persisted to config, so numbers are coerced to
+    # ints here, at the boundary, and never downstream. The values
+    # were already gate-validated (``collect_ingest_option_errors``
+    # blocks Start on a non-integer), so the clamp/fallback below is
+    # defensive, not a second validator.
+    generic["chunk_size"] = clamp_chunk_size(str(generic["chunk_size"]))
+    if "chunk_overlap" in generic:
+        try:
+            generic["chunk_overlap"] = max(
+                0, int(str(generic["chunk_overlap"]).strip())
+            )
+        except (TypeError, ValueError):
+            generic.pop("chunk_overlap")  # fall back to the schema default
+    # Preserve a complete generic form state in every job snapshot. The
+    # generic capability schema owns these defaults, including the
+    # server-only ``keep_original_file`` value; backend projection decides
+    # whether a snapshot value can reach a particular ingest path.
+    for capability_field in get_capabilities("generic").fields:
+        generic.setdefault(capability_field.name, capability_field.default)
+    # (task-3303 xhigh review round 2, F11) The ebook chunk-method is
+    # scheme IDENTITY, so every NEW snapshot must carry it explicitly
+    # even when untouched: the job-option builder treats an ABSENT
+    # value as "this snapshot predates the field" and falls back to
+    # the pre-branch sentences scheme for requeue parity. Without this
+    # seed a fresh untouched submission would be indistinguishable
+    # from a legacy job and lose the chapters default.
+    ebook = snapshot.setdefault("ebook", {})
+    if not str(ebook.get("chunk_method") or "").strip():
+        ebook["chunk_method"] = next(
+            (
+                capability_field.default
+                for capability_field in get_capabilities("ebook").fields
+                if capability_field.name == "chunk_method"
+            ),
+            "chapters",
+        )
+    return snapshot
 
 
 @dataclass(frozen=True)
@@ -1596,8 +1661,7 @@ def group_ingest_queue_rows(
             IngestOutcomeGroup(
                 glyph=leader.glyph,
                 line=(
-                    f"{leader.glyph} {word} · {len(members)} files "
-                    f"· {leader.reason}"
+                    f"{leader.glyph} {word} · {len(members)} files · {leader.reason}"
                 ),
                 members=members,
                 expanded=_outcome_group_id(leader) in expanded,
@@ -1987,9 +2051,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
-            line=(
-                f"{_GLYPH_ACTIVE} queued · {basename}{_retry_suffix(job)}"
-            ),
+            line=(f"{_GLYPH_ACTIVE} queued · {basename}{_retry_suffix(job)}"),
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
@@ -2028,9 +2090,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             # A server ingest wrote to the server's library, so there is no
             # local row to open; its own action stands in, when the server told
             # us which row it made.
-            can_open_on_server=(
-                job.origin == "server" and bool(job.remote_media_id)
-            ),
+            can_open_on_server=(job.origin == "server" and bool(job.remote_media_id)),
             remote_media_id=job.remote_media_id,
             media_id=job.media_id,
             state=job.state,
@@ -2099,9 +2159,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         glyph=_GLYPH_FAILED,
         line=f"{_GLYPH_FAILED} failed · {basename} · {reason}{_retry_suffix(job)}",
         can_open=False,
-        can_retry=(
-            not job.permanent and not is_unsupported and failure_copy.retryable
-        ),
+        can_retry=(not job.permanent and not is_unsupported and failure_copy.retryable),
         can_dismiss=True,
         # (task-32054 AC#2) EVERY failed row offers the underlying error --
         # the pool-start failure that produced this finding carries no
@@ -2251,9 +2309,7 @@ def _build_queue_row(
             research_owned=bool(job.research_source_operation_id),
         )
     else:
-        can_cancel = (
-            bool(job.batch_id) and job.state not in _TERMINAL_ROW_STATES
-        )
+        can_cancel = bool(job.batch_id) and job.state not in _TERMINAL_ROW_STATES
         row = replace(
             row,
             origin=job.origin,
@@ -2269,9 +2325,7 @@ def _build_queue_row(
         return replace(
             row,
             details_expanded=True,
-            detail_lines=(
-                f"Details: {map_ingest_failure(job.error or '').detail}",
-            ),
+            detail_lines=(f"Details: {map_ingest_failure(job.error or '').detail}",),
         )
     if details_expanded and job.error_detail:
         # (task-2043) Inline expansion replaces the old auto-expiring
@@ -2315,9 +2369,7 @@ def _build_queue_row(
             _normalized_detail_text(str(job.error or "")),
         ]
         for underlying in tuple(chain)[:3]:
-            text_part = _normalized_detail_text(
-                str(underlying).split(": ", 1)[-1]
-            )
+            text_part = _normalized_detail_text(str(underlying).split(": ", 1)[-1])
             if _restates_known_text(text_part, known_texts):
                 continue
             lines.append(f"Underlying: {underlying}")
@@ -2369,8 +2421,10 @@ def _apply_analyze_outcome(
         # through this same hook with a distinguishing reason, so its row
         # reads as "already analyzed" rather than claiming a fresh
         # generation that never ran.
-        message = f"{_GLYPH_DONE} {reason} · {title}" if reason else (
-            f"{_GLYPH_DONE} analyzed · {title}"
+        message = (
+            f"{_GLYPH_DONE} {reason} · {title}"
+            if reason
+            else (f"{_GLYPH_DONE} analyzed · {title}")
         )
     else:
         message = f"{_GLYPH_FAILED} analysis failed · {title} · {reason}"
@@ -2525,9 +2579,7 @@ def ingest_failure_reason(category: str) -> str:
     token = str(category or "").strip()
     if not token:
         return ""
-    return _FAILURE_REASON_LABELS.get(
-        token, f"{token.replace('_', ' ').capitalize()}."
-    )
+    return _FAILURE_REASON_LABELS.get(token, f"{token.replace('_', ' ').capitalize()}.")
 
 
 def ingest_retry_advice(
@@ -2569,10 +2621,7 @@ def ingest_retry_advice(
     # attribute 'FileDataError'`` as its message and carries the remedy
     # two links down. The chain entries render directly above this line,
     # so "named above" stays true of them.
-    if any(
-        _TOOLING_REMEDY_RE.search(str(text))
-        for text in (message, *tuple(chain))
-    ):
+    if any(_TOOLING_REMEDY_RE.search(str(text)) for text in (message, *tuple(chain))):
         return (
             "Retrying now will fail the same way — install the tooling "
             "named above first, then Retry."
@@ -2590,8 +2639,7 @@ def ingest_retry_advice(
         # flagged "a network hiccup" advice on a corrupt local PDF as
         # trust-eroding.
         return (
-            "If the file is corrupt or truncated, repair or re-export it, "
-            "then Retry."
+            "If the file is corrupt or truncated, repair or re-export it, then Retry."
         )
     if category == "write_error":
         # The one cause a retry alone can genuinely clear: the parse
@@ -2734,10 +2782,7 @@ def build_ingest_queue_groups(
         # prefix for the SELECTED row of a list, and this header is a plain
         # grouping Static (library_ingest_canvas.py), not a row or a
         # disclosure.
-        header = (
-            f"{source} — {count} {'file' if count == 1 else 'files'}"
-            f" · {age}"
-        )
+        header = f"{source} — {count} {'file' if count == 1 else 'files'} · {age}"
         if parts:
             header += " · " + " · ".join(parts)
         groups.append(
@@ -2796,6 +2841,45 @@ def _missing_dependency_from(message: str, chain: Sequence[str]) -> str:
             return next(g for g in match.groups() if g).rstrip(".,;:")
     return ""
 
+
+def _transcription_summary_line(
+    options: Mapping[str, Any], default_model: str, *, gguf_configured: bool
+) -> str:
+    """Describe the local route without exposing custom filesystem paths."""
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+        BatchSTTRoutingError,
+        resolve_batch_stt_model,
+        resolve_batch_stt_route,
+    )
+
+    try:
+        route = resolve_batch_stt_route(
+            provider=options.get("transcription_provider") or "default",
+            language=options.get("language"),
+            precision=options.get("transcription_precision"),
+        )
+    except BatchSTTRoutingError:
+        return ""
+    model = resolve_batch_stt_model(
+        route,
+        selected_model=options.get("model") or options.get("transcription_model"),
+        default_model=default_model or "base",
+    )
+    if route.provider == "faster-whisper":
+        catalog = next(
+            field.options
+            for field in get_capabilities("audio_video").fields
+            if field.name == "transcription_model"
+        )
+        label = model if model in catalog else "custom model"
+        auto = " (Auto)" if route.requested_provider == "default" else ""
+        return f"Transcription: Faster Whisper · {label}{auto}"
+    if route.provider == "parakeet-onnx":
+        return f"Transcription: Parakeet ONNX · {model} · {route.precision.upper()}"
+    label = "configured GGUF" if gguf_configured else "choose a GGUF model"
+    return f"Transcription: transcribe.cpp · {label}"
+
+
 def build_library_ingest_state(
     jobs: Sequence[LibraryIngestJob],
     *,
@@ -2809,6 +2893,7 @@ def build_library_ingest_state(
     ingest_backend: str = "local",
     server_ingest_available: bool = False,
     transcribe_cpp_configured: bool = False,
+    transcription_default_model: str = "base",
     recent_ledger: Sequence[LibraryIngestJob] = (),
     clear_finished_armed: bool = False,
     expanded_details: frozenset[str] | set[str] = frozenset(),
@@ -2867,6 +2952,7 @@ def build_library_ingest_state(
             ``form.preflight_checking``.
         transcribe_cpp_configured: Whether the dedicated direct-local model
             setting exists. Only the boolean reaches render state.
+        transcription_default_model: Captured configured Whisper model used by Auto.
         start_confirm_armed: Whether the screen has an immutable pending
             consent snapshot for the current request.
         start_confirm_line: Optional active-duplicate/combined consent copy.
@@ -2967,14 +3053,10 @@ def build_library_ingest_state(
             IngestJobState.SKIPPED,
         )
     )
-    failed_count = sum(
-        1 for job in jobs if job.state == IngestJobState.FAILED
-    )
+    failed_count = sum(1 for job in jobs if job.state == IngestJobState.FAILED)
     # (task-2160) "finished" includes failed rows -- say so at the moment
     # of destruction, or the user clears their failure records unknowingly.
-    failed_suffix = (
-        f" (incl. {failed_count} failed)" if failed_count else ""
-    )
+    failed_suffix = f" (incl. {failed_count} failed)" if failed_count else ""
     queue_clear_finished_label = (
         f"Press again to clear {finished_count} finished{failed_suffix}"
         if clear_finished_armed
@@ -3028,9 +3110,7 @@ def build_library_ingest_state(
         warning_lines = build_warning_lines(feature_warnings)
         advisory_lines = tuple(
             line
-            for line in (
-                _advisory_line(warning) for warning in advisory_warnings
-            )
+            for line in (_advisory_line(warning) for warning in advisory_warnings)
             if line
         )
         warning_commands = preflight_install_commands(feature_warnings)
@@ -3067,14 +3147,27 @@ def build_library_ingest_state(
             # 80-duplicate folder "20 files appear to already be…".
             count_text = f"at least {already}" if already_capped else str(already)
             duplicate_line = (
-                f"{count_text} {noun} {verb} to already be in your Library — "
-                f"{outcome}"
+                f"{count_text} {noun} {verb} to already be in your Library — {outcome}"
             )
         else:
             duplicate_line = ""
         errors_are_path_problem = bool(
             errors and getattr(active_preflight, "path_invalid", False)
         )
+        if errors_are_path_problem and all(
+            error.startswith(_GENERIC_PATH_ERROR_PREFIXES) for error in errors
+        ):
+            # TASK-34000.20 AC#2: the pre-check's own "Path not found: …" and
+            # the gate line beside Start said the same thing twice (the
+            # review's capture 02 showed three sentences for one typo). The
+            # summary under the field is the one place: it sits where the
+            # user types, and the "Choose a file…" button lives there.
+            # (fix round 1, I2) Only the GENERIC local errors collapse; a URL
+            # error (TASK-19556's wording) or "neither a file nor a
+            # directory" says something this sentence cannot and stays --
+            # still exactly one line, since each of those branches reports
+            # one error.
+            errors = [PATH_PROBLEM_LINE]
         type_groups_list = list(type_groups.keys())
     else:
         type_groups = {}
@@ -3098,9 +3191,7 @@ def build_library_ingest_state(
     # recorded as a failure -- letting Start stay enabled invites a
     # guaranteed-failure submit. ``type_groups`` here is the post-pop dict of
     # SUPPORTED groups only.
-    empty_files = tuple(
-        getattr(active_preflight, "empty_files", ()) or ()
-    )
+    empty_files = tuple(getattr(active_preflight, "empty_files", ()) or ())
     # (task-14820) ONE forecast, consumed by the commit line, the inline
     # consent line, and the nothing-importable gate below -- never
     # recomputed per surface. ``None`` under a path error or before any
@@ -3108,9 +3199,7 @@ def build_library_ingest_state(
     # (xhigh review round) It is told which backend it is forecasting:
     # ``targets_server`` was computed above and never reached it, so the
     # LOCAL tooling inventory was being used to condemn SERVER runs.
-    forecast = build_ingest_forecast(
-        active_preflight, targets_server=targets_server
-    )
+    forecast = build_ingest_forecast(active_preflight, targets_server=targets_server)
     # (task-14823) A folder holding NOTHING was the one selection this
     # gate let through: ``total_files > 0`` excluded it, so Start stayed
     # enabled with an EMPTY gate line and the press manufactured
@@ -3157,6 +3246,14 @@ def build_library_ingest_state(
     option_errors = collect_ingest_option_errors(
         form.type_options, groups=("generic", *type_groups)
     )
+    missing_transcription_runtime = next(
+        (
+            warning for warning in (active_preflight.warnings if active_preflight else ())
+            if not targets_server and "audio_video" in type_groups
+            and warning.get("feature") in {"faster_whisper", "parakeet_onnx", "transcribe_cpp"}
+        ),
+        None,
+    )
     # (task-2230) An unresolvable source gates like every other
     # known-doomed selection: a nonexistent path used to leave Start
     # styled exactly like a valid one, and pressing it produced a
@@ -3169,6 +3266,7 @@ def build_library_ingest_state(
         and not nothing_importable
         and not nothing_sendable
         and not option_errors
+        and missing_transcription_runtime is None
         and not errors_are_path_problem
     )
     # (L3b AB wave, A4) At most one gate line ever renders at once: the
@@ -3198,14 +3296,10 @@ def build_library_ingest_state(
         blocker_parts: list[str] = []
         if unsupported_files:
             u = len(unsupported_files)
-            blocker_parts.append(
-                f"{u} unsupported {'file' if u == 1 else 'files'}"
-            )
+            blocker_parts.append(f"{u} unsupported {'file' if u == 1 else 'files'}")
         if empty_files:
             e = len(empty_files)
-            blocker_parts.append(
-                f"{e} empty {'file' if e == 1 else 'files'}"
-            )
+            blocker_parts.append(f"{e} empty {'file' if e == 1 else 'files'}")
         if not blocker_parts:
             total = active_preflight.total_files
             blocker_parts.append(
@@ -3224,20 +3318,27 @@ def build_library_ingest_state(
         # needs the server's own vocabulary and its own recovery.
         start_quiet_line = server_nothing_sendable_line(forecast)
     elif errors_are_path_problem:
-        start_quiet_line = (
-            "Can't find that path — check it, or use Browse… to pick a "
-            "file or folder."
-        )
+        # (TASK-34000.20 AC#2) The reason is already on screen as the one
+        # ``PATH_PROBLEM_LINE`` under the field; Start stays disabled via
+        # ``start_enabled`` and this gate line stays empty rather than
+        # repeating the sentence two rows down.
+        start_quiet_line = ""
     elif option_errors:
         start_quiet_line = (
             f"Fix the highlighted options to start: {option_errors[0][2]}"
+        )
+    elif missing_transcription_runtime is not None:
+        start_quiet_line = (
+            f"Install the selected {missing_transcription_runtime['label']} runtime "
+            "in Chatbook's Python environment, then restart and retry. "
+            f"{missing_transcription_runtime['command']}"
         )
     elif not form.path.strip():
         start_quiet_line = START_QUIET_LINE_COPY
     else:
         start_quiet_line = ""
 
-    # (task-2130) A one-line commit summary beside Start for a valid
+    # (task-2130) A compact commit summary beside Start for a valid
     # selection: the forecast lives at the top of a long form, and the
     # commit point at the bottom -- restate the outcome where the finger
     # is.
@@ -3252,9 +3353,19 @@ def build_library_ingest_state(
     # nothing can keep -- "1 will import" beside a permanently dead Start.
     # A blocked-but-real selection (bad option value, armed consent) keeps
     # its numbers, which is what AC#4 is about.
-    commit_summary_line = (
-        "" if unavailable_line else forecast_summary_line(forecast)
-    )
+    commit_summary_line = "" if unavailable_line else forecast_summary_line(forecast)
+    if (
+        commit_summary_line
+        and "audio_video" in type_groups
+        and str(ingest_backend or "local").strip().lower() != "server"
+    ):
+        transcription_line = _transcription_summary_line(
+            form.type_options.get("audio_video", {}),
+            transcription_default_model,
+            gguf_configured=transcribe_cpp_configured,
+        )
+        if transcription_line:
+            commit_summary_line += "\n" + transcription_line
     if forecast is not None:
         # (task-2223 ruling) Zero imports + ≥1 predicted match keeps Start
         # ENABLED (the dedup probe is capped best-effort, never a blocker)
@@ -3294,11 +3405,7 @@ def build_library_ingest_state(
         and start_enabled
         and (
             start_confirm_line
-            or (
-                warning_lines
-                and forecast is not None
-                and forecast.consent_affected
-            )
+            or (warning_lines and forecast is not None and forecast.consent_affected)
         )
     )
     if start_confirm_active:
@@ -3337,8 +3444,7 @@ def build_library_ingest_state(
             # sentence lives in the intro lines, which are hidden the
             # moment a path is typed -- exactly when this line renders.
             unsupported_line = (
-                f"Unsupported: {unsupported_names}. "
-                f"{SUPPORTED_FORMATS_COPY}"
+                f"Unsupported: {unsupported_names}. {SUPPORTED_FORMATS_COPY}"
             )
         else:
             file_noun = "file" if unsupported_count == 1 else "files"
@@ -3361,17 +3467,12 @@ def build_library_ingest_state(
     # "1 will import" for a file it had just measured at 0 B.
     if empty_files and not errors:
         empty_count = len(empty_files)
-        empty_names = ", ".join(
-            PurePath(str(f)).name for f in empty_files[:3]
-        )
+        empty_names = ", ".join(PurePath(str(f)).name for f in empty_files[:3])
         if empty_count > 3:
             empty_names += ", ..."
         noun = "file" if empty_count == 1 else "files"
         verb = "is" if empty_count == 1 else "are"
-        empty_line = (
-            f"{empty_count} empty {noun} will fail — {empty_names} "
-            f"{verb} 0 B."
-        )
+        empty_line = f"{empty_count} empty {noun} will fail — {empty_names} {verb} 0 B."
     else:
         empty_line = ""
 
@@ -3396,16 +3497,12 @@ def build_library_ingest_state(
         )
     ]
     live_ids = {job.job_id for job in recent_jobs}
-    recent_jobs.extend(
-        job for job in recent_ledger if job.job_id not in live_ids
-    )
+    recent_jobs.extend(job for job in recent_ledger if job.job_id not in live_ids)
     recent_jobs = recent_jobs[:10]
     queue_empty_line = ""
     if not queue_rows:
         queue_empty_line = (
-            QUEUE_EMPTY_AFTER_ACTIVITY_COPY
-            if recent_jobs
-            else QUEUE_EMPTY_COPY
+            QUEUE_EMPTY_AFTER_ACTIVITY_COPY if recent_jobs else QUEUE_EMPTY_COPY
         )
 
     return LibraryIngestCanvasState(
@@ -3436,9 +3533,7 @@ def build_library_ingest_state(
         empty_line=empty_line,
         warning_lines=warning_lines,
         advisory_lines=advisory_lines,
-        tooling_detail_expanded=bool(
-            getattr(form, "tooling_detail_expanded", False)
-        ),
+        tooling_detail_expanded=bool(getattr(form, "tooling_detail_expanded", False)),
         preflight_checking=active_preflight_checking,
         expanded_type_groups=set(form.expanded_type_groups),
         type_groups=type_groups_list,
@@ -3462,9 +3557,7 @@ def build_library_ingest_state(
         # (xhigh review + live-verify round) Gated on visibility: a
         # stale armed flag can never label a hidden affordance.
         retry_confirm_armed=bool(retry_confirm_armed) and show_retry_last,
-        selection_has_nothing_importable=bool(
-            nothing_importable or nothing_sendable
-        ),
+        selection_has_nothing_importable=bool(nothing_importable or nothing_sendable),
         analyze_skipped_media_ids=analyze_skipped_media_ids,
         show_analyze_skipped=show_analyze_skipped,
         analyze_skipped_running=bool(analyze_running),

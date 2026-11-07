@@ -1,4 +1,3 @@
-
 # ADR-126: fence and enroll before runtime imports, including direct workers.
 from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
 
@@ -99,9 +98,7 @@ def __getattr__(name: str) -> Any:
     try:
         submodule, attribute = _LAZY_EXPORTS[name]
     except KeyError:
-        raise AttributeError(
-            f"module {__name__!r} has no attribute {name!r}"
-        ) from None
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
 
     try:
         from importlib import import_module

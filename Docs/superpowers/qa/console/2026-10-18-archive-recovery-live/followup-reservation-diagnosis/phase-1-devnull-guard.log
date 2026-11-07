@@ -1,0 +1,61 @@
+2026-10-18 08:57:54.878 | DEBUG    | tldw_chatbook.config:<module>:100 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-10-18 08:57:54.886 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/config-read-copy.toml
+2026-10-18 08:57:54.886 | INFO     | tldw_chatbook.config:_report_config_path_posture:476 - Hardened the effective config file to the private posture.
+2026-10-18 08:57:54.891 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6109 - Successfully loaded and merged CLI config from /private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/config-read-copy.toml
+2026-10-18 08:57:54.892 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'first_run', 'home']
+2026-10-18 08:57:54.892 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-18 08:57:54.893 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook
+2026-10-18 08:57:54.893 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook
+2026-10-18 08:57:54.894 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-18 08:57:54.895 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2188 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-18 08:57:54.897 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3403 - Ensured chat dictionaries folder exists: /private/tmp/archive-recovery-live-20261018/direct-bare-persona/data/task7_live/chat_dicts
+2026-10-18 08:57:54.897 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3413 - load_settings: Configuration cached for future use
+2026-10-18 08:57:54.897 | INFO     | tldw_chatbook.config:<module>:9618 - Default API Endpoint (from config.py global scope): openai
+2026-10-18 08:57:54.898 | DEBUG    | tldw_chatbook.config:<module>:9641 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-10-18 08:57:55.052 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1539 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-10-18 08:57:55.104 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3388 - Initializing CharactersRAGDB db_sha256=f47c88ee3171 [Client ID: offline-reservation-diagnosis]
+2026-10-18 08:57:55.105 | CRITICAL | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3429 - FATAL: Unexpected error during DB Initialization db_sha256=f47c88ee3171 exception_type=RuntimeError
+Traceback (most recent call last):
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 3397, in __init__
+    self._initialize_schema()
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 8593, in _initialize_schema
+    conn = self.get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 3709, in get_connection
+    self._get_thread_connection()
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 3541, in _get_thread_connection
+    conn = connect_private_sqlite(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/private_sqlite.py", line 882, in connect_private_sqlite
+    return _connect_registered_sqlite(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/private_sqlite.py", line 852, in _connect_registered_sqlite
+    prepare_in_helper(request, reservation=envelope, deadline=deadline)
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/private_sqlite.py", line 733, in prepare_in_helper
+    HelperLease.start(
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/private_sqlite_process.py", line 366, in start
+    lease._child = subprocess.Popen(
+                   ^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/subprocess.py", line 992, in __init__
+    errread, errwrite) = self._get_handles(stdin, stdout, stderr)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/subprocess.py", line 1740, in _get_handles
+    errwrite = self._get_devnull()
+               ^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/subprocess.py", line 1137, in _get_devnull
+    self._devnull = os.open(os.devnull, os.O_RDWR)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/probe.py", line 34, in audit
+    if not Path(os.fsdecode(path)).resolve().is_relative_to(ROOT):raise RuntimeError('external write forbidden')
+                                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: external write forbidden
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/probe.py", line 43, in <module>
+    db=CharactersRAGDB(COPY,client_id='offline-reservation-diagnosis')
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 3435, in __init__
+    raise CharactersRAGDBError(
+tldw_chatbook.DB.ChaChaNotes_DB.CharactersRAGDBError: Unexpected database initialization error: external write forbidden

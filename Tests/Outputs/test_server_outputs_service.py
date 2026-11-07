@@ -3,9 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-import tldw_chatbook.Outputs.server_outputs_service as outputs_module
 import tldw_chatbook.Outputs_Interop.server_outputs_service as outputs_interop_module
-from tldw_chatbook.Outputs import ServerOutputsService as PublicServerOutputsService
 from tldw_chatbook.Outputs_Interop import ServerOutputsService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
@@ -88,16 +86,11 @@ class ExplodingClientProvider:
         raise AssertionError("provider should not be used when direct client exists")
 
 
-async def _exercise_public_outputs(service, *, limit=50):
-    return await service.list_output_templates(limit=limit)
-
-
 async def _exercise_interop_outputs(service, *, limit=50):
     return await service.list_templates(limit=limit)
 
 
 OUTPUTS_IMPORT_PATHS = [
-    (PublicServerOutputsService, outputs_module, _exercise_public_outputs),
     (ServerOutputsService, outputs_interop_module, _exercise_interop_outputs),
 ]
 

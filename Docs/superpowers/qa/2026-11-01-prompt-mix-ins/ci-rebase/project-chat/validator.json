@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_project_chat_uat.py",
+    "--junit",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/fixed-all.xml",
+    "--artifacts",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/fixed-all-artifacts"
+  ],
+  "exit_code": 0,
+  "stdout": "Project-chat UAT: all four cases passed with complete receipts.\n",
+  "stderr": ""
+}

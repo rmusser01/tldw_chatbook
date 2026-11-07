@@ -85,6 +85,48 @@ def _statement_bindings(statements: list[ast.stmt]) -> set[str]:
     return names
 
 
+def _wiring_installer_bindings(module: str, tree: ast.Module) -> set[str]:
+    """Read literal publications from the two declared definition-time owners.
+
+    The installers publish their existing original wiring slots. Source-only
+    discovery follows only the exact reviewed calls, without importing either
+    helper or executing an installer; missing/changed calls remain detectable
+    by the existing runtime namespace equality control.
+    """
+    if module != "tldw_chatbook.app_service_wiring":
+        return set()
+    names: set[str] = set()
+    for helper, installer, call in (
+        ("app_skill_wiring", "_install_skill_source",
+         "_skill_wiring._install_skill_source(_defining_sys.modules[__name__])"),
+        ("app_collections_wiring", "_install_collections_source",
+         "_collections_wiring._install_collections_source(_defining_sys.modules[__name__])"),
+    ):
+        expected = ast.dump(ast.parse(call).body[0], include_attributes=False)
+        if not any(ast.dump(node, include_attributes=False) == expected for node in tree.body):
+            continue
+        spec = importlib.util.find_spec("tldw_chatbook." + helper)
+        if spec is None or spec.origin is None:
+            raise ModuleNotFoundError(helper)
+        defining = ast.parse(Path(spec.origin).read_text(encoding="utf-8"))
+        body = next(node for node in defining.body
+                    if isinstance(node, ast.FunctionDef) and node.name == installer)
+        receiver = body.args.args[0].arg
+        for node in ast.walk(body):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            target = node.func.value
+            if (node.func.attr == "update" and isinstance(target, ast.Call)
+                and isinstance(target.func, ast.Name) and target.func.id == "vars"
+                and len(target.args) == 1 and isinstance(target.args[0], ast.Name)
+                and target.args[0].id == receiver and len(node.args) == 1
+                and isinstance(node.args[0], ast.Dict)):
+                for key in node.args[0].keys:
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        names.add(key.value)
+    return names
+
+
 @functools.cache
 def module_scope_names(module: str) -> frozenset[str]:
     """Names ``module`` binds at module scope, read from its source.
@@ -101,7 +143,7 @@ def module_scope_names(module: str) -> frozenset[str]:
     if spec is None or spec.origin is None:
         raise ModuleNotFoundError(module)
     tree = ast.parse(Path(spec.origin).read_text(encoding="utf-8"))
-    return frozenset(_statement_bindings(tree.body))
+    return frozenset(_statement_bindings(tree.body) | _wiring_installer_bindings(module, tree))
 
 
 def _binding_extracted_modules(name: str) -> list[str]:

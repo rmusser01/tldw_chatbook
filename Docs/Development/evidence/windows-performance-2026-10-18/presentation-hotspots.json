@@ -1,0 +1,35 @@
+{
+  "before": {
+    "_ordered_candidates": 11,
+    "_build_console_inspector_state": 16,
+    "_with_console_conversation_browser_state": 19,
+    "get_conversation_appearances": 18,
+    "_unread_notification_count": 0
+  },
+  "after": {
+    "_ordered_candidates": 16,
+    "_build_console_inspector_state": 5,
+    "_with_console_conversation_browser_state": 3,
+    "get_conversation_appearances": 2,
+    "_unread_notification_count": 8
+  },
+  "control": {
+    "_ordered_candidates": 16,
+    "_build_console_inspector_state": 11,
+    "_with_console_conversation_browser_state": 11,
+    "get_conversation_appearances": 10,
+    "_unread_notification_count": 14
+  },
+  "final": {
+    "_ordered_candidates": 8,
+    "_build_console_inspector_state": 4,
+    "_with_console_conversation_browser_state": 1,
+    "get_conversation_appearances": 0,
+    "_unread_notification_count": 5
+  },
+  "source_sha256": {
+    "tldw_chatbook/Utils/textual_css_fastpath.py": "b6597c8d4122d6e914ea3b4839e08b001c217aa9a839201bab8dff4f847b083a",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "84e3a9aa760e203ef7b5287b6f20f54c912eb3e4a4af37860e854dfe875fa9fd",
+    "tldw_chatbook/UI/Console_Modules/workspace.py": "955982e5e51f48335dfb6f5fd914d0ed30b24e7260bf93eefc4433749a8187b7"
+  }
+}

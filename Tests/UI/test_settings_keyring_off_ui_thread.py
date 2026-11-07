@@ -308,7 +308,7 @@ async def _release_and_wait(pilot, loader: _BlockingLoader, predicate, message: 
 @private_profile_test
 async def test_image_gen_panel_loads_config_off_the_ui_thread(request, monkeypatch):
     import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
-    from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
+    from tldw_chatbook.UI.Settings_Modules.settings_image_gen_defaults import (
         ImageGenProbeResult,
     )
 

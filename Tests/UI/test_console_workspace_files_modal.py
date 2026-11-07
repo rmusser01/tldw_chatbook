@@ -1309,3 +1309,50 @@ async def test_production_bundle_geometry_keeps_pinned_controls_focusable(
             assert attention.region.width > 0 and attention.region.height > 0
             assert fold.region.width > 0 and fold.region.height > 0
             assert actions.region.width > 0 and actions.region.height > 0
+
+
+# --- TASK-35028: update_attention's gate compares the snapshot, not the counter
+
+
+@pytest.mark.asyncio
+async def test_attention_unchanged_snapshot_does_not_repaint_despite_new_generation() -> None:
+    """The publisher bumps its generation per Console sync tick, so the old
+    ``generation <=`` guard never blocked a tick (TASK-34991). TASK-35028
+    gates the repaint on the snapshot itself: unchanged copy writes nothing,
+    changed copy still repaints, and a stale counter still loses."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Unavailable", None, available=False),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        attention_row = modal.query_one("#console-workspace-files-attention", Static)
+        calls = []
+        original_update = attention_row.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        attention_row.update = counting_update
+        busy = WorkspaceFilesAttention("Console needs attention · 2 approvals waiting")
+        assert modal.update_attention(busy, 1) is True
+        assert len(calls) == 1
+        # Same snapshot, newer generation (what the Console sync tick does
+        # ~5x/s): adopts the ordering stamp, repaints nothing.
+        for generation in (2, 3, 4):
+            assert modal.update_attention(busy, generation) is False
+        assert len(calls) == 1, "unchanged snapshots must not repaint"
+        assert modal._attention_generation == 4
+        # Changed snapshot with a newer generation: repaints.
+        quiet = WorkspaceFilesAttention()
+        assert modal.update_attention(quiet, 5) is True
+        assert len(calls) == 2
+        assert str(attention_row.renderable) == "No pending Console attention."
+        # A stale counter with different content still cannot overwrite.
+        assert modal.update_attention(busy, 2) is False
+        assert len(calls) == 2
+        assert modal._attention == quiet

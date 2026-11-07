@@ -1,0 +1,24 @@
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_promotion_persists_sparse_context_policy_inside_the_bundle ________
+Tests/Chat/test_console_chat_store_atomic_promotion.py:439: in test_promotion_persists_sparse_context_policy_inside_the_bundle
+    conversation_id = store.promote_ephemeral_session(session.id)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:322: in transitioned
+    return method(self, session_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:19176: in promote_ephemeral_session
+    return self._promote_ephemeral_session_atomically(
+tldw_chatbook/Chat/console_chat_store.py:19548: in _promote_ephemeral_session_atomically
+    self._flush_context_policy_on_first_persist(session)
+Tests/Chat/test_console_chat_store_atomic_promotion.py:434: in <lambda>
+    lambda *_args, **_kwargs: (_ for _ in ()).throw(
+Tests/Chat/test_console_chat_store_atomic_promotion.py:434: in <genexpr>
+    lambda *_args, **_kwargs: (_ for _ in ()).throw(
+E   AssertionError: postcommit context-policy write
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_chat_store_atomic_promotion.py::test_promotion_persists_sparse_context_policy_inside_the_bundle
+1 failed, 1 passed in 7.69s

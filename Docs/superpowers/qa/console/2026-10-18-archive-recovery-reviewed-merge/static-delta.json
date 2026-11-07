@@ -1,0 +1,163 @@
+[
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "sha256": "b920a57d83a4a90f16662b291d6ab8f89312fff92965b37082ed21e1bb6ef764",
+    "baseline_ruff": 1,
+    "current_ruff": 1,
+    "introduced": []
+  },
+  {
+    "path": "Tests/Chat/test_archive_recovery_operations.py",
+    "sha256": "5f0c3276e276bd15ff4055c8f0d836f1c819dab0274da0e60ec9d35aebb499d4",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "Tests/Chat/test_archive_recovery_search.py",
+    "sha256": "dcdb3297ec435c5e4e6734df18db1d50cabb46b0bc7c9ee3b0ff30186febe480",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "Tests/DB/test_archive_chronology.py",
+    "sha256": "dbd3c8b6b18653c47bb5ee05cfb1e772cd0eefcf9a40869e4c2543fcf71e0e11",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "Tests/DB/test_archive_recovery_query.py",
+    "sha256": "16cb2f1e658330bfe25c938a18567ce07a50b197bd5c3e4ef17a2e61684df862",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "Tests/DB/test_operation_owned_connection_retirement.py",
+    "sha256": "6ed72b82921e657c041f0976df37ba4fde64c9cd11b610d71d5376b973c96c9f",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "Tests/Library/test_library_collections_service.py",
+    "sha256": "56e1df6c44d0a94b18d8ab7c68a78b13d5cd6d8852bef7857a6db567bca7b442",
+    "baseline_ruff": 2,
+    "current_ruff": 2,
+    "introduced": []
+  },
+  {
+    "path": "Tests/Performance/test_textual_css_fastpath.py",
+    "sha256": "c08c253f05d735340964be0aed4e219bd16ab327f400a82f47227772b9b7c231",
+    "baseline_ruff": 1,
+    "current_ruff": 1,
+    "introduced": []
+  },
+  {
+    "path": "Tests/UI/test_artifacts_dreams_question_track.py",
+    "sha256": "5e456c9e20a9e6c74025e4083c6166a0fbf5845fb1849277548e65c89cd016c9",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "Tests/UI/test_console_archive_recovery_cards.py",
+    "sha256": "fe3c0d520aef3f500db806621262bdb834961800471d3c39a58e4d0937e81d99",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "Tests/UI/test_console_archive_recovery_flow.py",
+    "sha256": "12cef161dd12eb5dab124acf55070adc3ad1db2a5c4a6eea13084f29b8fa6026",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/Agents/archive_recovery_tool_provider.py",
+    "sha256": "df28c652f5a85a998c0968f19ab36cace553f0f47c9588f2583e7655a60d7a71",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/operations.py",
+    "sha256": "a0c661e3a03a98184ec68ebe7dd24b6b66f8b13dba41e3c87352f8f09c7bcb89",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/runtime.py",
+    "sha256": "57731c8cb663275a0574842f652af6f70165be8598b5cc156ea6b88e9c1ceab7",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "sha256": "0715631b8b51f435be29c84d1b5cd73c394b4dd0d743c808f69e6a59e6e96c4a",
+    "baseline_ruff": 618,
+    "current_ruff": 618,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/DB/Dreams_DB.py",
+    "sha256": "201030d9a7da9d054b22e20da38e65f43f56ff3dbcfe2b163a3b3f3ddaa7ee8a",
+    "baseline_ruff": 3,
+    "current_ruff": 3,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/DB/conversation_archive_queries.py",
+    "sha256": "9557ebb334097e2d800d560fe87c7aecfb0c7423ebe0be1e5a8e80c17794a934",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/archive_recovery.py",
+    "sha256": "93a4b34c4c996f4552b924a6121411c58f35de02a2a05111e8943ecb6e44b4a1",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/artifacts_dreams_modal.py",
+    "sha256": "6760c6e18125147c0b566eb2ebdb0ab2734914b7624cc9ad5327196a412dcd3a",
+    "baseline_ruff": 1,
+    "current_ruff": 1,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/artifacts_screen.py",
+    "sha256": "7eeb06c659672c7160749eea12955ed716f7e0992e988b952d6d5edd1f915236",
+    "baseline_ruff": 19,
+    "current_ruff": 19,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "sha256": "647ca5a63267114d70de7d4075d72ccd3fca37b45257158cafe1e098c456c86d",
+    "baseline_ruff": 118,
+    "current_ruff": 118,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Chat_Widgets/archive_recovery_cards.py",
+    "sha256": "73dd384559576c65571360c1617eb95e060d919ae4e34b4075b9b9c8d7a35edd",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Settings_Modules/workspace_archive.py",
+    "sha256": "7d487723f00284c52dcfb3913d087eb2e48ef655e860a815536b67a90f9c48d5",
+    "baseline_ruff": 0,
+    "current_ruff": 0,
+    "introduced": []
+  }
+]

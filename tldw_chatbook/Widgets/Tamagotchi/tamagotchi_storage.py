@@ -208,8 +208,8 @@ class JSONStorage(StorageAdapter):
         """
         super().__init__(enable_recovery)
         self.filepath = Path(filepath).expanduser()
-        with raw._scope(self, "pet", writing=True) as operation:
-            raw._mkdirs(operation)
+        with raw.scope(self, "pet", writing=True) as operation:
+            raw.mkdirs(operation)
             self.max_backups = max_backups
 
             # Initialize file if it doesn't exist
@@ -221,7 +221,7 @@ class JSONStorage(StorageAdapter):
         """Read all data from JSON file."""
         try:
             if self.filepath.exists():
-                with raw._file(raw._local.operation, self.filepath, "r") as f:
+                with raw.file(raw._local.operation, self.filepath, "r") as f:
                     return json.load(f)
         except (json.JSONDecodeError, IOError) as e:
             logger.error("Error reading JSON storage: %s", e)
@@ -231,17 +231,17 @@ class JSONStorage(StorageAdapter):
     def _write_data(self, data: Dict[str, Dict[str, Any]]) -> bool:
         """Write all data to JSON file."""
         operation = raw._local.operation
-        temporary = raw._check(operation).temporary
+        temporary = raw.check(operation).temporary
         try:
-            with raw._file(operation, temporary, "w") as f:
+            with raw.file(operation, temporary, "w") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            raw._replace(operation, temporary, self.filepath)
+            raw.replace(operation, temporary, self.filepath)
             return True
         except IOError as e:
             logger.error("Error writing JSON storage: %s", e)
             return False
         finally:
-            raw._remove_temporary(operation, temporary)
+            raw.remove_temporary(operation, temporary)
 
     @pet_operation
     def load(self, pet_id: str) -> Optional[Dict[str, Any]]:
@@ -253,28 +253,28 @@ class JSONStorage(StorageAdapter):
     def _create_backup(self) -> None:
         """Create a backup of the current JSON file."""
         operation = raw._local.operation
-        state = raw._check(operation)
+        state = raw.check(operation)
         if not self.filepath.exists():
             return
         try:
-            with raw._file(operation, self.filepath, "r") as source:
-                with raw._file(operation, state.backup_temporary, "w") as destination:
+            with raw.file(operation, self.filepath, "r") as source:
+                with raw.file(operation, state.backup_temporary, "w") as destination:
                     while chunk := source.buffer.read(1024 * 1024):
                         destination.buffer.write(chunk)
             identity = state.created_files[state.backup_temporary]
-            raw._replace(operation, state.backup_temporary, state.backup)
+            raw.replace(operation, state.backup_temporary, state.backup)
             state.observed_files[state.backup] = identity
             self._cleanup_old_backups()
         except Exception as e:
             logger.warning(f"Failed to create backup: {e}")
         finally:
-            raw._remove_temporary(operation, state.backup_temporary)
+            raw.remove_temporary(operation, state.backup_temporary)
 
     @pet_operation
     def _cleanup_old_backups(self) -> None:
         """Prune only exact timestamp entries observed before mutation."""
         operation = raw._local.operation
-        state = raw._check(operation)
+        state = raw.check(operation)
         backups = sorted(state.observed_files)
         for oldest in backups[:max(0, len(backups) - max(0, self.max_backups))]:
             raw._unlink(operation, oldest)

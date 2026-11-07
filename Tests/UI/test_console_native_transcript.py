@@ -3025,7 +3025,9 @@ async def test_console_mounts_native_transcript_region():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_console_sync_replaces_effective_memory_banner_without_stacking(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -3034,6 +3036,17 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        async def sync_console():
+            for _ in range(400):
+                completed = await console._sync_native_console_chat_ui()
+                if completed is True:
+                    # The fixture changes presentation without a store revision.
+                    await console._sync_native_console_transcript(force=True)
+                    return
+                await pilot.pause(0.01)
+            assert completed is True, "Console transcript sync did not complete"
+
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         messages = [
@@ -3093,10 +3106,13 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         current_effective = [range_effective]
         controller = console._ensure_console_chat_controller()
         empty_overrides = ConsoleContextPolicyOverrides()
-        assert transcript_module.derive_console_memory_banner_presentation(
-            range_effective,
-            console._message._native_console_messages(),
-        ) is not None
+        assert (
+            transcript_module.derive_console_memory_banner_presentation(
+                range_effective,
+                console._message._native_console_messages(),
+            )
+            is not None
+        )
         monkeypatch.setattr(
             type(controller),
             "context_control_inputs",
@@ -3107,7 +3123,7 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
             ),
         )
 
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         assert transcript.memory_banner_presentation is not None
         await _wait_for_selector(
@@ -3128,7 +3144,7 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         )
 
         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
         assert transcript.selected_message_id == messages[-1].id
         assert transcript.to_plain_text(width=80) == plain_before
@@ -3139,18 +3155,18 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         )
 
         current_effective[0] = range_effective
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 1
 
         second_session = store.create_session(title="Second branch")
         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert store.active_session_id == second_session.id
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
 
         store.switch_session(session.id)
         current_effective[0] = range_effective
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 1
 
 
@@ -4186,7 +4202,9 @@ def test_console_transcript_plans_one_banner_above_exact_anchor(
     anchor_index = next(
         index
         for index, row in enumerate(rows)
-        if row.kind == "message" and row.message is not None and row.message.id == anchor
+        if row.kind == "message"
+        and row.message is not None
+        and row.message.id == anchor
     )
 
     assert len(banner_rows) == 1
@@ -4215,12 +4233,15 @@ def test_console_transcript_missing_or_duplicate_anchor_plans_no_banner(anchor: 
         )
     )
 
-    assert [row for row in transcript._flat_transcript_rows() if row.kind == "banner"] == []
+    assert [
+        row for row in transcript._flat_transcript_rows() if row.kind == "banner"
+    ] == []
     assert "Earlier turns summarized" not in transcript.to_plain_text(width=80)
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_summary_banner_mounts_and_clears():
+@private_profile_test
+async def test_console_transcript_summary_banner_mounts_and_clears(request):
     app = MutableTranscriptHarness()
     async with app.run_test(size=(100, 32)):
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
@@ -4234,7 +4255,9 @@ async def test_console_transcript_summary_banner_mounts_and_clears():
             for message_id in message_ids_before
         }
 
-        copy = "Context uses a summary of turns #2-#2 - full transcript remains visible."
+        copy = (
+            "Context uses a summary of turns #2-#2 - full transcript remains visible."
+        )
         transcript.set_memory_banner_presentation(
             _banner_presentation(kind="range", anchor="m3", copy=copy)
         )
@@ -4242,7 +4265,9 @@ async def test_console_transcript_summary_banner_mounts_and_clears():
         banners = transcript.query(".console-transcript-summary-banner")
         assert len(banners) == 1
         assert copy == str(list(banners)[0].renderable)
-        assert tuple(message.id for message in transcript._messages) == message_ids_before
+        assert (
+            tuple(message.id for message in transcript._messages) == message_ids_before
+        )
         assert transcript.selected_message_id == "m4"
         assert transcript.to_plain_text(width=80) == plain_before
         assert all(
@@ -4255,7 +4280,9 @@ async def test_console_transcript_summary_banner_mounts_and_clears():
         transcript.set_memory_banner_presentation(None)
         await transcript.refresh_messages()
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
-        assert tuple(message.id for message in transcript._messages) == message_ids_before
+        assert (
+            tuple(message.id for message in transcript._messages) == message_ids_before
+        )
         assert transcript.selected_message_id == "m4"
         assert transcript.to_plain_text(width=80) == plain_before
         assert all(
@@ -4390,7 +4417,10 @@ async def test_mounted_console_refreshes_tool_status_after_assistant_preamble():
         await pilot.click(disclosure.header)
         await pilot.pause()
         assert disclosure.expanded
-        assert "Arguments" in disclosure.query_one(".console-tool-detail", Static).content.plain
+        assert (
+            "Arguments"
+            in disclosure.query_one(".console-tool-detail", Static).content.plain
+        )
         await pilot.press("enter")
         await pilot.pause()
         assert not disclosure.expanded

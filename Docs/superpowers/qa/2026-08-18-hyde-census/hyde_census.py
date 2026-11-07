@@ -21,6 +21,7 @@ deepening k, which separates "the query embedding points elsewhere" (HyDE's
 actual theory of the case) from "this document is not findable by vector
 search on this corpus".
 """
+
 from __future__ import annotations
 
 import os
@@ -31,9 +32,9 @@ REPO = Path(__file__).resolve().parents[4]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-K = 10          # the gate's k
-K_DEEP = 200    # "reachable at all?" depth, following PRF's own deep probe
-BAR = 5         # registered in the task before this file existed
+K = 10  # the gate's k
+K_DEEP = 200  # "reachable at all?" depth, following PRF's own deep probe
+BAR = 5  # registered in the task before this file existed
 MODES = ("semantic", "hybrid")
 
 
@@ -86,7 +87,9 @@ def main() -> int:
     import tempfile
 
     if os.environ.get("RAG_EVAL") != "1":
-        raise SystemExit("refusing to run without RAG_EVAL=1 (this builds a real index)")
+        raise SystemExit(
+            "refusing to run without RAG_EVAL=1 (this builds a real index)"
+        )
 
     import tldw_chatbook
     from tldw_chatbook.Library.library_local_rag_search_service import (
@@ -129,11 +132,15 @@ def main() -> int:
                         try:
                             result = runtime.run(
                                 seam.search(
-                                    q.query, SOURCE_TYPES, "rag", top_k=depth, scope=scope
+                                    q.query,
+                                    SOURCE_TYPES,
+                                    "rag",
+                                    top_k=depth,
+                                    scope=scope,
                                 )
                             )
                             rows, _backend, err = _extract_rows(result)
-                        except Exception as exc:                    # noqa: BLE001
+                        except Exception as exc:  # noqa: BLE001
                             rows, err = [], f"{type(exc).__name__}: {exc}"
                         if err:
                             errors.append(f"{mode}/{q.id}@{depth}: {err}")
@@ -173,9 +180,15 @@ def main() -> int:
         print(f"\n  --- {mode} ---")
         print(f"    hitting at k={K}                      : {len(hitting)}")
         print(f"    excluded, negative (no target)        : {len(excl_neg)}")
-        print(f"    excluded, prompt (no vector index)    : {len(excl_prompt)} {excl_prompt}")
-        print(f"    MISS but found by k={K_DEEP} (HyDE's case): {len(deep_only)} {deep_only}")
-        print(f"    MISS and absent even at k={K_DEEP}       : {len(unfindable)} {unfindable}")
+        print(
+            f"    excluded, prompt (no vector index)    : {len(excl_prompt)} {excl_prompt}"
+        )
+        print(
+            f"    MISS but found by k={K_DEEP} (HyDE's case): {len(deep_only)} {deep_only}"
+        )
+        print(
+            f"    MISS and absent even at k={K_DEEP}       : {len(unfindable)} {unfindable}"
+        )
 
     best_mode = max(MODES, key=lambda m: len(reachable[m]))
     best = len(reachable[best_mode])

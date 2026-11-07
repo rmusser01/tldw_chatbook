@@ -211,9 +211,7 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         screen.query_one("#library-media-type-filter", Button).focus()
         await pilot.pause()
         screen.query_one("#library-media-type-filter", Button).press()
-        chooser = await _wait_for_selector(
-            screen, pilot, "#library-media-type-choices"
-        )
+        chooser = await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         assert isinstance(chooser, OptionList)
         chooser.highlighted = next(
             index

@@ -16,12 +16,25 @@ import pytest
 from textual.events import Key
 from textual.widgets import Button
 
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
+    _configure_native_ready_console,
     _build_console_send_test_app,
     _persist_console_provider_config,
     _select_llamacpp_console,
 )
+from Tests.UI.test_console_send_acknowledgement import (
+    build,
+    eager_tasks,
+    ready_console,
+    until,
+)
+from Tests.UI.test_console_send_admission_off_pump import (
+    _record_notices,
+    _sent_or_queued,
+)
+from Tests.UI.test_console_send_resend_guard import _idle, _speak_send
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -79,6 +92,32 @@ def _ready_openai_app(monkeypatch, reply: str):
 def _press_enter_synchronously(console) -> None:
     """Deliver Enter to the screen key handler without pumping messages."""
     console.on_key(Key(key="enter", character="\r"))
+
+
+def _capture_scheduled_sends(monkeypatch) -> list:
+    """Hold each visible send at its hand-off instead of starting it.
+
+    Enter paints its "Sending…" acknowledgement first (TASK-33620.5), then
+    hands the send to ``_start_send``, which runs it as a task no pump awaits
+    (TASK-33620.15). Held there, ``await scheduled[i]()`` runs it.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement
+
+    scheduled: list = []
+    monkeypatch.setattr(
+        send_acknowledgement,
+        "_start_send",
+        lambda _screen, send: scheduled.append(send),
+    )
+    return scheduled
+
+
+async def _until_scheduled(pilot, scheduled: list, count: int = 1) -> None:
+    for _ in range(150):
+        if len(scheduled) >= count:
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"Enter scheduled {len(scheduled)} send(s), not {count}")
 
 
 def test_composer_captured_revision_is_non_destructive_until_custody_commit() -> None:
@@ -235,6 +274,7 @@ async def test_mouse_send_completion_preserves_text_typed_after_acceptance(monke
 @pytest.mark.asyncio
 async def test_console_pre_durable_failure_keeps_newer_typing_and_recovery():
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -243,7 +283,7 @@ async def test_console_pre_durable_failure_keeps_newer_typing_and_recovery():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
         await pilot.pause()
@@ -299,10 +339,21 @@ async def test_console_unknown_command_hint_restores_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
+async def test_console_armed_unknown_tokenless_send_snapshots_before_skill_await(
     monkeypatch,
 ):
-    """Typing during the unknown-command check belongs to the next draft."""
+    """Skill parsing retains the captured send and preserves later typing.
+
+    ``handle_console_send_message`` is called directly, the tokenless path
+    the spoken "Console, send." takes. The edit lands as the held skill read
+    returns: one handled while the read is pending would disarm the command
+    (``ChatScreen._on_console_composer_draft_changed``) before the send
+    resumes. The received path's live-vs-stash check
+    (``wiring.receive_console_visible_intent``) no longer refuses it with
+    "Draft changed; Send again." (TASK-38689, owner decision 2026-11-03:
+    TASK-340 wins). Nothing is isolated: hook review runs live, and with no
+    hooks configured nothing is reviewed, so it does not re-check the draft.
+    """
 
     app = _ready_openai_app(monkeypatch, "unused")
     host = ConsoleHarness(app)
@@ -310,6 +361,9 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        # Arm the send only once the attach has ended and the Console's
+        # queue has drained, so no attach work runs inside the measured send.
+        await console_attach_ended(console)
         monkeypatch.setattr(
             console._prompt_queue, "_blocked_reason_accessor", lambda: ""
         )
@@ -321,6 +375,7 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         composer.load_draft(armed)
         store.set_session_draft(session.id, armed)
         console._console_unknown_send_armed = armed
+        assert console._console_runtime().view is console
 
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -328,6 +383,7 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         async def delayed_skill_context():
             entered.set()
             await release.wait()
+            composer.insert_text(" suffix")  # Typed as the skill read returns.
             return object()
 
         async def no_blocked_match(_name, _summaries):
@@ -345,6 +401,10 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
             no_blocked_match,
         )
         requests: list[object] = []
+        notices: list[str] = []
+        monkeypatch.setattr(
+            app, "notify", lambda message, **_kwargs: notices.append(str(message))
+        )
 
         def record_accept(request):
             requests.append(request)
@@ -357,19 +417,149 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         )
 
         await entered.wait()
-        composer.insert_text(" suffix")
         release.set()
 
-        assert await send_task
+        assert await send_task, notices
         assert len(requests) == 1
         assert requests[0].draft == armed
         assert composer.draft_text() == " suffix"
         assert store.session_draft(session.id) == " suffix"
 
 
+ARMED = "/nosuchcommand"
+
+
+async def _speak_armed_send(monkeypatch, host, pilot, gateway, as_read_returns):
+    """Speak "Console, send." on an armed unknown command; wait for its ack.
+
+    "Console, send." calls ``handle_console_send_message`` with no pending
+    send token, so ``wiring.receive_console_visible_intent`` gets no captured
+    inputs. Sending an armed unknown command captures the draft, then awaits
+    the skill context: the window between a tokenless capture and that check.
+    ``as_read_returns(composer)`` runs as the held read returns, before
+    ``ChatScreen._on_console_composer_draft_changed`` can disarm the command
+    (one handled while the read is pending would). Hook review runs live;
+    with no hooks configured nothing is reviewed, so it does not re-check
+    the draft.
+
+    Returns:
+        The console, composer, store, session id, spoken acks and notices.
+    """
+    console, composer = await ready_console(host, pilot, gateway)
+    store = console._ensure_console_chat_store()
+    session_id = store.active_session_id
+    composer.load_draft(ARMED)
+    store.set_session_draft(session_id, ARMED)
+    console._console_unknown_send_armed = ARMED
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_skill_context():
+        entered.set()
+        await release.wait()
+        as_read_returns(composer)
+        return object()
+
+    async def no_blocked_match(_name, _summaries):
+        return False
+
+    monkeypatch.setattr(
+        console._skill, "_fetch_console_skill_context", held_skill_context
+    )
+    monkeypatch.setattr(
+        console._skill, "_console_skill_blocked_summaries", lambda _c: ()
+    )
+    monkeypatch.setattr(
+        console._skill, "_console_skill_blocked_match_response", no_blocked_match
+    )
+    spoken: list[str] = []
+    monkeypatch.setattr(console, "_speak_status", spoken.append)
+    notices = _record_notices(host)
+    gateway.validation_release.set()
+
+    _speak_send(console, session_id)
+    await until(entered.is_set)
+    release.set()
+    await until(lambda: bool(spoken))
+    return console, composer, store, session_id, spoken, notices
+
+
+@pytest.mark.asyncio
+async def test_spoken_send_sends_its_capture_and_keeps_text_typed_after_it(
+    monkeypatch,
+):
+    """TASK-38689: a tokenless send edited after its capture is sent, not refused.
+
+    The edit lands as the skill read returns (``_speak_armed_send``). On dev
+    the wiring's live-vs-stash check then refused with "Draft changed; Send
+    again." and nothing was sent. Owner decision 2026-11-03 (TASK-340 wins):
+    the captured text reaches the provider and the edit stays as the next
+    draft.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer, store, session_id, spoken, notices = (
+                await _speak_armed_send(
+                    monkeypatch, host, pilot, gateway, lambda c: c.insert_text("x")
+                )
+            )
+            assert spoken == ["Sent."], notices
+            await until(lambda: gateway.stream_calls == 1)
+            await _idle(host, console, pilot, session_id)
+
+            assert _sent_or_queued(console, session_id) == [ARMED]
+            assert gateway.stream_calls == 1
+            assert composer.draft_text() == "x"
+            assert store.session_draft(session_id) == "x"
+            assert "Draft changed; Send again." not in notices
+
+
+@pytest.mark.asyncio
+async def test_spoken_send_of_a_capture_another_send_took_is_not_sent_again(
+    monkeypatch,
+):
+    """TASK-38689 review: a capture another send already took stays unsent.
+
+    Another send captures and commits the same draft as the spoken send's
+    skill read returns, so the spoken send's capture is spent. The wiring's
+    old refusal of any composer change covered this; declining alone sent
+    the draft a second time through the ordinary dispatch. A spent capture
+    is still not sent: "Not sent." and no provider call. No "Unknown command"
+    row either, so "Not sent." comes from the spent-capture check, not from
+    a disarmed command's hint.
+    """
+
+    def another_send_takes_it(composer):
+        assert composer.commit_captured_draft(composer.capture_draft_for_send())
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer, store, session_id, spoken, notices = (
+                await _speak_armed_send(
+                    monkeypatch, host, pilot, gateway, another_send_takes_it
+                )
+            )
+            assert spoken == ["Not sent."], notices
+            await _idle(host, console, pilot, session_id)
+
+            assert gateway.stream_calls == 0
+            assert _sent_or_queued(console, session_id) == []
+            assert composer.draft_text() == ""
+            system_rows = [
+                message.content
+                for message in store.messages_for_session(session_id)
+                if message.role.value == "system"
+            ]
+            assert not any(
+                row.startswith("Unknown command") for row in system_rows
+            ), system_rows
+
+
 @pytest.mark.asyncio
 async def test_console_blocked_send_retains_exact_recovery_after_runtime_custody():
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -378,18 +568,17 @@ async def test_console_blocked_send_retains_exact_recovery_after_runtime_custody
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
         await pilot.pause()
         composer.insert_text_as_paste("pasted payload " * 20)
         composer.insert_text(" tail")
-        # Unfurl the token fully (collapsed -> confirm -> expanded); Enter
-        # only sends once no token is awaiting the unfurl flow, and expanded
-        # segments retain their paste provenance.
-        assert composer.activate_focused_paste_token()
-        assert composer.activate_focused_paste_token()
-        assert not composer.activate_focused_paste_token()
+        # TASK-33622.1: this used to unfurl the token fully first (collapsed
+        # -> confirm -> expanded), because Enter only sent once no token was
+        # left to step. Enter always sends now (owner decision 2026-10-30),
+        # so the collapsed draft sends as it is, in full.
+        assert not composer.has_pending_paste_confirmation()
         assert composer.has_paste_segments()
         expected = composer.draft_text()
         turn_ids: list[str] = []
@@ -426,7 +615,9 @@ async def test_console_double_enter_sends_once_and_loses_nothing(monkeypatch):
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: False)
-        monkeypatch.setattr(console, "_should_capture_console_input", lambda _composer: True)
+        monkeypatch.setattr(
+            console, "_should_capture_console_input", lambda _composer: True
+        )
         monkeypatch.setattr(console, "_console_command_popup_or_none", lambda: None)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
@@ -509,7 +700,7 @@ async def test_console_submit_exception_retains_exact_recovery_and_keeps_app_ali
 
         assert composer.draft_text() == ""
         runtime = console._console_runtime()
-        recovery, = runtime.recoveries_for_session(controller.store.active_session_id)
+        (recovery,) = runtime.recoveries_for_session(controller.store.active_session_id)
         assert recovery.draft == "precious draft"
         runtime.restore_turn_recovery(recovery.turn_id)
         console._prompt_queue._load_recovered_turn(recovery.session_id)
@@ -540,7 +731,9 @@ async def test_console_fresh_profile_first_send_resolves_real_session_not_sentin
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: False)
-        monkeypatch.setattr(console, "_should_capture_console_input", lambda _composer: True)
+        monkeypatch.setattr(
+            console, "_should_capture_console_input", lambda _composer: True
+        )
         monkeypatch.setattr(console, "_console_command_popup_or_none", lambda: None)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
@@ -904,12 +1097,7 @@ async def test_console_deferred_enter_refuses_after_owning_session_changes(
         composer.load_draft("draft for A")
         store.set_session_draft(session_a.id, "draft for A")
 
-        scheduled: list[object] = []
-        monkeypatch.setattr(
-            console.app,
-            "call_later",
-            lambda callback, *_args, **_kwargs: scheduled.append(callback),
-        )
+        scheduled = _capture_scheduled_sends(monkeypatch)
         context_sessions: list[str] = []
         original_context = console._session._build_console_turn_execution_context
 
@@ -924,14 +1112,14 @@ async def test_console_deferred_enter_refuses_after_owning_session_changes(
         runtime = console._console_runtime()
         original_accept = runtime.accept_turn
 
-        def record_accept(request):
+        def record_accept(request, **kwargs):
             accepted_sessions.append(request.session_id)
-            return original_accept(request)
+            return original_accept(request, **kwargs)
 
         monkeypatch.setattr(runtime, "accept_turn", record_accept)
 
         _press_enter_synchronously(console)
-        assert len(scheduled) == 1
+        await _until_scheduled(pilot, scheduled)
 
         session_b = store.create_session(title="Session B")
         store.set_session_draft(session_b.id, "draft for B")
@@ -976,12 +1164,7 @@ async def test_console_same_session_send_waits_for_pending_enter_token(monkeypat
         composer.load_draft("one A draft")
         store.set_session_draft(session.id, composer.draft_text())
 
-        scheduled: list[object] = []
-        monkeypatch.setattr(
-            console.app,
-            "call_later",
-            lambda callback, *_args, **_kwargs: scheduled.append(callback),
-        )
+        scheduled = _capture_scheduled_sends(monkeypatch)
         context_sessions: list[str] = []
         original_context = console._session._build_console_turn_execution_context
 
@@ -996,14 +1179,14 @@ async def test_console_same_session_send_waits_for_pending_enter_token(monkeypat
         runtime = console._console_runtime()
         original_accept = runtime.accept_turn
 
-        def record_accept(request):
+        def record_accept(request, **kwargs):
             requests.append(request)
-            return original_accept(request)
+            return original_accept(request, **kwargs)
 
         monkeypatch.setattr(runtime, "accept_turn", record_accept)
 
         _press_enter_synchronously(console)
-        assert len(scheduled) == 1
+        await _until_scheduled(pilot, scheduled)
         pending = console._console_pending_send
         send_button = console.query_one("#console-send-message", Button)
 
@@ -1051,12 +1234,7 @@ async def test_console_mouse_send_cannot_claim_another_sessions_pending_enter(
         composer.load_draft("draft for A")
         store.set_session_draft(session_a.id, "draft for A")
 
-        scheduled: list[object] = []
-        monkeypatch.setattr(
-            console.app,
-            "call_later",
-            lambda callback, *_args, **_kwargs: scheduled.append(callback),
-        )
+        scheduled = _capture_scheduled_sends(monkeypatch)
         context_sessions: list[str] = []
         original_context = console._session._build_console_turn_execution_context
 
@@ -1074,23 +1252,24 @@ async def test_console_mouse_send_cannot_claim_another_sessions_pending_enter(
             attachment_sessions.append(session_id)
             return original_pending_attachments(session_id)
 
-        monkeypatch.setattr(store, "pending_attachments", record_pending_attachments)
         requests: list[object] = []
         runtime = console._console_runtime()
         original_accept = runtime.accept_turn
 
-        def record_accept(request):
+        def record_accept(request, **kwargs):
             requests.append(request)
-            return original_accept(request)
+            return original_accept(request, **kwargs)
 
         monkeypatch.setattr(runtime, "accept_turn", record_accept)
 
         _press_enter_synchronously(console)
-        assert len(scheduled) == 1
+        await _until_scheduled(pilot, scheduled)
 
         session_b = store.create_session(title="Session B")
         store.set_session_draft(session_b.id, "draft for B")
         console._session._sync_console_session_draft()
+        # From B's send on (A's acknowledgement paint read A's own state).
+        monkeypatch.setattr(store, "pending_attachments", record_pending_attachments)
         send_button = console.query_one("#console-send-message", Button)
 
         assert await console.handle_console_send_message(Button.Pressed(send_button))
@@ -1113,7 +1292,7 @@ async def test_console_mouse_send_cannot_claim_another_sessions_pending_enter(
         composer.load_draft("next draft for B")
         store.set_session_draft(session_b.id, composer.draft_text())
         _press_enter_synchronously(console)
-        assert len(scheduled) == 2
+        await _until_scheduled(pilot, scheduled, count=2)
 
 
 @pytest.mark.asyncio
@@ -1160,7 +1339,11 @@ async def test_console_session_switch_during_admission_does_not_commit_into_new_
 
 @pytest.mark.asyncio
 async def test_console_enter_schedules_visible_send_without_a_watchdog(monkeypatch):
-    """Enter uses the app pump directly; no screen timer owns the capture."""
+    """Enter hands its capture to one scheduled send; no timer releases it.
+
+    The send is painted "Sending…" first (TASK-33620.5): its frame-length
+    hand-off hops dispatch the send and never release the capture.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1180,24 +1363,16 @@ async def test_console_enter_schedules_visible_send_without_a_watchdog(monkeypat
         send_button = console.query_one("#console-send-message", Button)
         send_button.styles.display = "block"
         send_button.disabled = False
-        scheduled: list[object] = []
-        timers: list[object] = []
-        monkeypatch.setattr(
-            console.app,
-            "call_later",
-            lambda callback, *_args, **_kwargs: scheduled.append(callback),
-        )
-        monkeypatch.setattr(
-            console,
-            "set_timer",
-            lambda *_args, **_kwargs: timers.append(object()),
-        )
+        scheduled = _capture_scheduled_sends(monkeypatch)
 
         _press_enter_synchronously(console)
+        pending = console._console_pending_send
+        assert pending is not None
+        await _until_scheduled(pilot, scheduled)
+        await pilot.pause(0.3)
 
         assert len(scheduled) == 1
-        assert timers == []
-        assert console._console_pending_send is not None
+        assert console._console_pending_send is pending
         assert composer.draft_text() == "scheduled directly"
 
 
@@ -1213,8 +1388,13 @@ async def _finish_test_custody(console):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("keyboard,late_text", [(False, ""), (False, "new draft"), (True, ""), (True, "new draft")])
-async def test_setup_refusal_after_custody_preserves_exact_recovery(monkeypatch, keyboard, late_text):
+@pytest.mark.parametrize(
+    "keyboard,late_text",
+    [(False, ""), (False, "new draft"), (True, ""), (True, "new draft")],
+)
+async def test_setup_refusal_after_custody_preserves_exact_recovery(
+    monkeypatch, keyboard, late_text
+):
     app = _ready_openai_app(monkeypatch, "never used")
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1236,12 +1416,16 @@ async def test_setup_refusal_after_custody_preserves_exact_recovery(monkeypatch,
 
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
         if keyboard:
-            assert await console._dispatch_console_draft_send("original draft", stash=stash, session_id=session.id)
+            assert await console._dispatch_console_draft_send(
+                "original draft", stash=stash, session_id=session.id
+            )
         else:
-            assert await console.handle_console_send_message(Button.Pressed(console.query_one("#console-send-message", Button)))
+            assert await console.handle_console_send_message(
+                Button.Pressed(console.query_one("#console-send-message", Button))
+            )
         runtime, turn_id = await _finish_test_custody(console)
         assert composer.draft_text() == late_text
-        recovery, = runtime.recoveries_for_session(session.id)
+        (recovery,) = runtime.recoveries_for_session(session.id)
         assert recovery.turn_id == turn_id
         assert recovery.draft == "original draft"
         if late_text:
@@ -1257,7 +1441,9 @@ async def test_setup_refusal_after_custody_preserves_exact_recovery(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(monkeypatch):
+async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(
+    monkeypatch,
+):
     app = _ready_openai_app(monkeypatch, "never used")
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1280,7 +1466,9 @@ async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(m
             return ConsoleSubmitResult(False, False, "Setup cancelled")
 
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
-        assert await console._dispatch_console_draft_send("A private draft", stash=stash, session_id=session.id)
+        assert await console._dispatch_console_draft_send(
+            "A private draft", stash=stash, session_id=session.id
+        )
         runtime, turn_id = await _finish_test_custody(console)
         assert composer.draft_text() == "B private draft"
         runtime.restore_turn_recovery(turn_id)
@@ -1292,7 +1480,9 @@ async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(m
 @pytest.mark.asyncio
 @pytest.mark.parametrize("keyboard", [False, True])
 @pytest.mark.parametrize("durable", [False, True])
-async def test_custody_refusal_recovery_respects_durable_acceptance_and_undo(monkeypatch, keyboard, durable):
+async def test_custody_refusal_recovery_respects_durable_acceptance_and_undo(
+    monkeypatch, keyboard, durable
+):
     app = _ready_openai_app(monkeypatch, "never used")
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1319,9 +1509,13 @@ async def test_custody_refusal_recovery_respects_durable_acceptance_and_undo(mon
         monkeypatch.setattr(controller, "submit_draft", refuse)
         monkeypatch.setattr(controller, "run_prompt_chain", run_chain)
         if keyboard:
-            assert await console._dispatch_console_draft_send("original draft", stash=stash, session_id=session.id)
+            assert await console._dispatch_console_draft_send(
+                "original draft", stash=stash, session_id=session.id
+            )
         else:
-            assert await console.handle_console_send_message(Button.Pressed(console.query_one("#console-send-message", Button)))
+            assert await console.handle_console_send_message(
+                Button.Pressed(console.query_one("#console-send-message", Button))
+            )
         runtime, turn_id = await _finish_test_custody(console)
         assert composer.draft_text() == ""
         assert not composer.undo()

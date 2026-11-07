@@ -1,0 +1,86 @@
+ 1:  85161d7094 =  1:  01d4137720 docs: design workspace guidance and optional project indexing
+ 2:  e9fd86c2d7 =  2:  45907855c9 docs: plan staged workspace guidance and project indexes
+ 3:  bbe609a676 =  3:  47c3fdf732 docs: resolve workspace context plan review findings
+ 4:  8e02f7883d =  4:  62aba9a2ce feat(console): guide project questions toward admitted workspace files
+ 5:  6678eecb0d =  5:  a44dbc4520 fix(tools): match full native Windows workspace identity
+ 6:  278687992c =  6:  4a666c793f fix(console): allow workspace grounding alongside Library evidence
+ 7:  196b0d3a8e !  7:  6cc6f5ec9a test(console): qualify workspace guidance with preserved Library policy
+    @@ Docs/Architecture/console-file-authority.md: The fixed narrowing order: config g
+      5. Persona `require_confirmation` floors can only narrow; a persona can never lift a permission-store ask or deny.
+     
+      ## Docs/Architecture/console.md ##
+    -@@ Docs/Architecture/console.md: Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech control
+    +@@ Docs/Architecture/console.md: Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session
+      
+    - Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
+    + Project-instruction authority callbacks run directly when already on Textual's owning thread; worker callbacks use `call_from_thread` synchronously. A dispatch confirmation that never becomes answerable is cancelled after its finite notice deadline, preserving the chat's project-instruction preference. Once-mounted decisions retain the existing detached-view pause contract. Unsent-turn Restore/Discard releases only the exact refused turn's retrieval-paused preparation; newer preparations and authored input remain owned by their own flows. Refusal and unexpected settlement diagnostics record status/error categories without draft, instruction, provider-error or endpoint bodies.
+      
+     +Workspace project guidance (ADR-240) uses the owning run's admitted roots and
+     +final advertised readers. It prompts exploration for natural project questions
+ 8:  0cfd2977d2 =  8:  dd98350553 docs(qa): correct mixed-run receipt ownership and evidence limits
+ 9:  7dae24220b !  9:  cc770ba48c docs: record reviewed workspace guidance implementation
+    @@ backlog/decisions/240-workspace-project-context-and-folder-bound-index.md
+      roots, ADR-126 recovery, ADR-174 binding exclusions
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: failed drafts were valid or that any product input behavior was fixed.
+    - ## Worker failure injection must leave unrelated work running
+    - 
+    - **PR3146 / TASK-34406.11,2026-10-17.** Required UI8 failed the close-tab retry journey because its run_worker replacement refused every group. A real tray-recompose callback submitted `console-workspace-context-legacy-aliases` while the patch was active; that injected exception killed Textual and the later tab geometry never settled, although the tab IDs matched. Force that original callback in the test, then refuse only the exact `console-close-session:<id>` submission and delegate other groups to the original bound method. RED reproduced the unrelated refusal; GREEN completed all6 original recovery journeys with the same real clicks, exact failure toast, retained tab, successful retry and10s bounds. Scope a failure to the operation whose recovery is being checked.
+    -+
+    +@@ backlog/docs/lessons-testing-evidence.md: holds now wait for explicit release; their existing `finally` releases both
+    + before worker retirement, and the test/process deadline remains the bound.
+    + Preserve the original navigation, Close and sibling-decision assertions.
+    + An early app-startup failure is not evidence that held-worker cleanup passed.
+     +
+     +## Inspect native ACLs when a private Windows test ancestor becomes shared-writable (TASK-35932, 2026-10-21)
+     +
+10:  c2578bca5d = 10:  92abdaacdb fix(console): guide canonical mixed-source citations
+11:  43054ffa6f ! 11:  a180b42e91 docs: close workspace guidance qualification and review
+    @@ Docs/superpowers/qa/2026-10-20-workspace-project-context/guidance/whole-branch-r
+     +The branch's authority, policy-preservation, native identity and automatic-grounding changes are narrowly implemented and well supported by targeted and real-provider evidence. Add the missing canonical mixed-citation instruction and correct the two small documentation/receipt defects before final approval; no Critical security or data-loss regression was identified.
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: failed drafts were valid or that any product input behavior was fixed.
+    +@@ backlog/docs/lessons-testing-evidence.md: An early app-startup failure is not evidence that held-worker cleanup passed.
+      **What worked.** The controller verified the exact task-owned path, backed up its DACL, removed only those two identified explicit grants, and verified that the parent and native-temp child again inherited read-only sandbox access plus owner/System/Admin access. The next real retry authority/payload guard passed in 40.20s without a product or admission-guard change. Further task-private scratch writes used normal-user/escalated shell commands.
+      
+      **Rule.** When an established private Windows test ancestor suddenly fails admission, compare its native ACL with its parents before changing fixtures or code. Restore only evidenced task-owned setup grants; do not apply a broad permission reset to user profiles or the worktree, and do not weaken the private-path guard. Treat a refused launch as zero executed live scenarios.
+12:  33fa199eca = 12:  278d9551ee docs: start folder-bound keyword indexing execution
+13:  8bdb4be36d = 13:  6718d8ad66 feat(workspaces): add folder-bound project index storage
+14:  b25e1f4ff3 = 14:  12fa09b907 docs: close keyword storage gate and start bounded scanner
+15:  be4b117637 = 15:  9f99a04c77 docs: retain keyword storage command evidence
+16:  10d738ccc8 = 16:  74f7695e47 docs: make scanner processing policy explicit per job
+17:  db10df9a25 = 17:  c7f20fb08a feat(workspaces): scan project trees in bounded resumable pages
+18:  6cbee38fe0 = 18:  4ee98453ef fix(workspaces): reserve live scan sender buffer headroom
+19:  e65c6a033e ! 19:  fd56396b48 docs(workspaces): close scanner gate and prepare index lifecycle
+    @@ backlog/decisions/240-workspace-project-context-and-folder-bound-index.md: The f
+      | Alternative | Reason not selected |
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: failed drafts were valid or that any product input behavior was fixed.
+    +@@ backlog/docs/lessons-testing-evidence.md: An early app-startup failure is not evidence that held-worker cleanup passed.
+      ### Compare Unicode QA text with retained raw observations (TASK-35931, 2026-10-21)
+      
+      During workspace-guidance qualification, compact final-answer fields and some tool-result strings contained UTF-8 decoded as Windows cp1252 even though the retained raw observations were correct. The final review found five nonempty answers differed only by that transformation; restoring their raw Unicode and comparing exact strings caught the artifact error without changing model prose or rerunning the provider. A later packaging diagnostic print also raised UnicodeEncodeError after valid UTF-8 writes had already completed. Keep raw snapshots, read/write JSON with an explicit UTF-8 encoding, and verify claimed exact text directly against raw values and call IDs. A parseable JSON file or matching message-array digest alone does not prove its separately copied answer/result strings are exact. Treat diagnostic console encoding separately from artifact writes and model outcomes.
+20:  7f5255e270 = 20:  7e86edda2e feat(workspaces): own project index refresh recovery and revocation
+21:  485c23cf7e = 21:  90bc9e7bab fix(workspaces): fence index unit admission and cancellation targets
+22:  9e6d127a0d = 22:  0afa2e8424 docs(index): close lifecycle review and prepare authorized search
+23:  8ea34f516f = 23:  5870773918 feat(tools): search authorized project index candidates
+24:  4f744897ff = 24:  f5cebc068a fix(project-index): preserve consent and shared read bounds
+25:  7d79700e02 ! 25:  10315ec12d docs: close keyword search gate and start settings
+    @@ backlog/decisions/240-workspace-project-context-and-folder-bound-index.md: stora
+     +The app-owned service shares its at-most-two index-read budget across durable writer scans and live Capture queries. Permits survive until actual reader retirement, including failure paths; writer cache/lifetime ownership remains separate. A whole-operation permit may conservatively reduce query concurrency while a build runs. Waiting occurs outside publication/disclosure fences and locks needed by cancellation. Writer Refresh/Resume uses nonblocking admission before pins/fences/service locks; when both slots are occupied it returns the existing LifetimeBusy outcome without changing scope/job state or queuing deferred work. UI copy offers retry and does not infer that another build is running. This service boundary does not impose a machine-wide budget on ordinary file tools or independent applications.
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: failed drafts were valid or that any product input behavior was fixed.
+    +@@ backlog/docs/lessons-testing-evidence.md: An early app-startup failure is not evidence that held-worker cleanup passed.
+      During workspace-guidance qualification, compact final-answer fields and some tool-result strings contained UTF-8 decoded as Windows cp1252 even though the retained raw observations were correct. The final review found five nonempty answers differed only by that transformation; restoring their raw Unicode and comparing exact strings caught the artifact error without changing model prose or rerunning the provider. A later packaging diagnostic print also raised UnicodeEncodeError after valid UTF-8 writes had already completed. Keep raw snapshots, read/write JSON with an explicit UTF-8 encoding, and verify claimed exact text directly against raw values and call IDs. A parseable JSON file or matching message-array digest alone does not prove its separately copied answer/result strings are exact. Treat diagnostic console encoding separately from artifact writes and model outcomes.
+      
+      During optional keyword scanner qualification (TASK-36003, 2026-10-21), retaining an appended Markdown report as UTF-8 failed on a single Windows cp1252 em-dash byte (0x97) in its heading. The command evidence was intact; normalizing that one heading byte and decoding the entire report strictly as UTF-8 completed retention without a test rerun. An explicit UTF-8 file open does not repair text already recoded while passing through a shell pipe: prefer ASCII shell script text or Unicode escapes for such writes, and validate the final artifact with a strict UTF-8 read.
+26:  0295b820b5 = 26:  16502bcf3a feat(settings): manage optional workspace keyword indexes
+27:  3820fe1157 = 27:  64116af442 fix(settings): keep index cleanup independent of policy drafts
+28:  5d927a98ff = 28:  7e08638f7d perf(index): normalize query exclusions before candidate filtering
+29:  2210c0b5f5 = 29:  9f2b00708e docs(index): retain keyword qualification and close task gates
+30:  3b616994e6 = 30:  7988ddf74a Fix project index retirement and detached cache cleanup
+31:  8ee6bd9aea = 31:  99857a64e7 Document keyword index qualification and reviewed limitations

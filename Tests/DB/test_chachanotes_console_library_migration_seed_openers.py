@@ -19,7 +19,9 @@ def _production_characters_rag_db_calls() -> list[tuple[Path, ast.Call]]:
 
     calls: list[tuple[Path, ast.Call]] = []
     for source_path in _PRODUCTION_PACKAGE.rglob("*.py"):
-        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        tree = ast.parse(
+            source_path.read_text(encoding="utf-8"), filename=str(source_path)
+        )
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 if node.func.id == "CharactersRAGDB":
@@ -67,13 +69,16 @@ def test_every_production_characters_rag_db_opener_passes_explicit_seed() -> Non
     missing_seed = [
         f"{source_path.relative_to(_REPOSITORY_ROOT)}:{call.lineno}"
         for source_path, call in calls
-        if "console_library_migration_seed" not in {keyword.arg for keyword in call.keywords}
+        if "console_library_migration_seed"
+        not in {keyword.arg for keyword in call.keywords}
     ]
 
     assert missing_seed == []
 
 
-def test_fresh_database_accepts_no_console_library_migration_seed(tmp_path: Path) -> None:
+def test_fresh_database_accepts_no_console_library_migration_seed(
+    tmp_path: Path,
+) -> None:
     """A new database has no legacy policy to migrate, so no seed is needed."""
 
     path = tmp_path / "fresh.sqlite"
@@ -83,7 +88,9 @@ def test_fresh_database_accepts_no_console_library_migration_seed(tmp_path: Path
     db.close_connection()
 
 
-def test_current_database_accepts_no_console_library_migration_seed(tmp_path: Path) -> None:
+def test_current_database_accepts_no_console_library_migration_seed(
+    tmp_path: Path,
+) -> None:
     """An already-current database does not need a seed on subsequent opens."""
 
     path = tmp_path / "current.sqlite"

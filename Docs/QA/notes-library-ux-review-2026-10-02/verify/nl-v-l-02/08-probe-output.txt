@@ -1,0 +1,7 @@
+config path: $HARNESS/runs/nl-v-l-02-1/config.toml
+'analysis_defaults' in load_settings(): False
+raw TOML analysis_defaults: {'provider': 'OpenAI', 'model': 'gpt-4.1-mini', 'temperature': 0.7, 'top_p': 0.95, 'min_p': 0.05, 'top_k': 50, 'system_prompt': 'You are an AI assistant specialized in analyzing and summarizing media content. Provide comprehensive, insightful analysis with clear structure and key takeaways.', 'max_tokens': 4096, 'default_prompt_search': '', 'default_keyword_filter': '', 'auto_save': False, 'show_analysis_button': True}
+resolve(load_settings()): ready=False reason='no analysis provider is configured'
+  UI reason: No analysis provider is configured · Set one in Settings ▸ Providers & Models.
+resolve(load_settings()+analysis_defaults): ready=True dispatch='openai' model='gpt-4.1-mini' reason=''
+  UI reason: ''

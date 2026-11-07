@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────────┐  I    ‹ Items   Preview   Details                │
+│ │ Navigation                     │  a  │ Reports · Local                                                  │  t   Daily Brief                                 │
+│ │     Import…                    │  v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  e   Watchlist copy · disappears if its          │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ ▊  Find reports by Watchlist…                                  ▎ │  m   Watchlist is deleted                        │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  s                                               │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ✓ All reports   Kept   Newest                                   │                                                  │
+│ │                                │     │ 1–1 of 1 copies                                                  │      Daily Briefing: Key Developments from       │
+│ │ ─────────────────────────────  │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │      Your Watchlist                              │
+│ │ Browse                    ▾    │     │ ▊ Daily Brief                                                  ▎ │                                                  │
+│ │    Media (0) — your files      │     │ ▊ 2026-10-09 15:12 PDT                                         ▎ │                                                  │
+│ │    Conversations (0)           │     │ ▊ Live · complete · #1                                         ▎ │      Amazon's Space and Device Advances          │
+│ │    Notes (0)                   │     │ ▊                                                              ▎ │                                                  │
+│ │    Prompts (0) — reuse         │     │ ▊                                                              ▎ │      Amazon has reached a milestone with the     │
+│ │    Skills (1) — AI add-ons     │<--- │ ▊                                                              ▎ │      construction of its 1,000th satellite,      │
+│ │    Collections (0)             │     │ ▊                                                              ▎ │      positioning the company to launch its       │
+│ │    Search / RAG — find all     │     │ ▊                                                              ▎ │      space internet service by the end of        │
+│ │ ─────────────────────────────  │     │ ▊                                                              ▎ │      2026. This ambitious project highlights     │
+│ │ Artifacts                 ▾    │     │ ▊                                                              ▎ │      the complexity of deploying global          │
+│ │    All artifacts               │     │ ▊                                                              ▎ │<---  satellite internet, a feat few have         │
+│ │    Chatbooks                   │     │ ▊                                                              ▎ │      achieved [item 72]. Meanwhile, Amazon's     │
+│ │  ▸ Reports                     │     │ ▊                                                              ▎ │      new Alexa Tablets have dropped the Fire     │
+│ │ ─────────────────────────────  │     │ ▊                                                              ▎ │      branding and now rely fully on Google       │
+│ │ Create                    ▾    │     │ ▊                                                              ▎ │      Play, following the shutdown of Amazon's    │
+│ │    New note                    │     │ ▊                                                              ▎ │      own app store. These tablets are more       │
+│ │    New prompt                  │<--- │ ▊                                                              ▎ │      Android-based than ever, signaling a        │
+│ │    New skill                   │     │ ▊                                                              ▎ │      shift in Amazon's device ecosystem          │
+│ │ ─────────────────────────────  │     │ ▊                                                              ▎ │      strategy [item 71].                         │
+│ │ Study                     ▾    │     │ ▊                                                              ▎ │                                                  │
+│ │    Study decks (0)             │     │ ▊                                                              ▎ │                                                  │
+│ │    Flashcards due: 0           │     │ ▊                                                              ▎ │      Space Industry and Satellite Coordination   │
+│ │    Quizzes (0)                 │     │ ▊                                                              ▎ │                                                  │
+│ │ ─────────────────────────────  │     │ ▊                                                              ▎ │      SpaceX has called for improved              │
+│ │ Import / Export           ▾    │     │ ▊                                                              ▎ │      coordination in orbit after several         │
+│ │    Import…                     │     │ ▊                                                              ▎ │      near-miss incidents involving its           │
+│ │    Export                      │     │ ▊                                                              ▎ │      Starlink satellites, with conjunctions      │
+│ │ ─────────────────────────────▇ │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │      dangerously close at tens to hundreds of    │
+│ │  ▾ scroll for more             │     │  First   Prev   Next   Last                                      │       Keep in Library   Export…                  │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────────────────┘       Watchlists                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc items | / find | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

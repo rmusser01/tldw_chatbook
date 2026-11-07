@@ -1,0 +1,222 @@
+{
+  "character-bench": [
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\character-bench\\child-0.xml",
+      "portable": "character-bench/child-0.xml.gz",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "458bc9420554a3a87b72f134a2ed3a8eedff65856380947d5eb8ea9fb3a849a7",
+      "nodes": [
+        "test_character_save_publication[ordinary]"
+      ]
+    },
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\character-bench\\child-1.xml",
+      "portable": "character-bench/child-1.xml.gz",
+      "cases": 1,
+      "failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "c7e73dcacfc2e5ff4e067c5b739033b66479cfdd078b5951b7deb84c52fdc2c5",
+      "nodes": [
+        "test_character_save_publication[later-input]"
+      ]
+    },
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\character-bench\\child-2.xml",
+      "portable": "character-bench/child-2.xml.gz",
+      "cases": 1,
+      "failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "d3f9b480acc5c98fc01e991c4165319188cd97a1df299391678b408935c78c7b",
+      "nodes": [
+        "test_character_save_publication[during-refresh]"
+      ]
+    },
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\character-bench\\child-3.xml",
+      "portable": "character-bench/child-3.xml.gz",
+      "cases": 1,
+      "failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "675d5a02051d12a912563e654bffe255c9be9ad8e5b8ee07120788a046c648c6",
+      "nodes": [
+        "test_character_save_publication[departure]"
+      ]
+    },
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\character-bench\\child-4.xml",
+      "portable": "character-bench/child-4.xml.gz",
+      "cases": 1,
+      "failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "16b73f98cebd4999bc7647b8aab18c808e416aefc3cba796428e43f26992761a",
+      "nodes": [
+        "test_character_save_publication[departure-pending]"
+      ]
+    },
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\character-bench\\parent.xml",
+      "portable": "character-bench/parent.xml.gz",
+      "cases": 5,
+      "failures": 4,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "5990ad6141ec243aca4bd1b94b70f565453292695c89fec266f3e140761648d3",
+      "nodes": [
+        "test_character_save_publication[ordinary]",
+        "test_character_save_publication[later-input]",
+        "test_character_save_publication[during-refresh]",
+        "test_character_save_publication[departure]",
+        "test_character_save_publication[departure-pending]"
+      ]
+    }
+  ],
+  "research": [
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\research\\attempt2\\child-0.xml",
+      "portable": "research/attempt2/child-0.xml.gz",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "5e2acd1ba9c553e08a234f3634dca9e9d96edf00f737d405ee6b212c98b83faa",
+      "nodes": [
+        "test_native_runs_observations[ordinary]"
+      ]
+    },
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\research\\attempt2\\child-1.xml",
+      "portable": "research/attempt2/child-1.xml.gz",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "5149ba9b6ab570ee7b0e3be289d1cb7f525ed6a0de0628fdda2d8cc9483b128a",
+      "nodes": [
+        "test_native_runs_observations[held_selection]"
+      ]
+    },
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\research\\attempt2\\child-2.xml",
+      "portable": "research/attempt2/child-2.xml.gz",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "9d638729ad493fe194e21969874a623966129e0df886ac7dadd0e82844b1c4c6",
+      "nodes": [
+        "test_native_runs_observations[held_source]"
+      ]
+    },
+    {
+      "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-after3283\\research\\attempt2\\result.xml",
+      "portable": "research/attempt2/result.xml.gz",
+      "cases": 3,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "sha256": "a0e57bc72e7c1eb6af645a89670d98157170e0d45c1551751766c47c8753d14a",
+      "nodes": [
+        "test_native_runs_observations[ordinary]",
+        "test_native_runs_observations[held_selection]",
+        "test_native_runs_observations[held_source]"
+      ]
+    }
+  ],
+  "notes": {
+    "reports": [
+      {
+        "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\book3283-notes-03\\result.xml",
+        "portable": "notes/qualified/0-result.xml.gz",
+        "cases": 2,
+        "failures": 1,
+        "errors": 0,
+        "skips": 0,
+        "sha256": "7798149106ec1b0081553495cf82517847af51c2ed186ecfe5dc5e560b50ff93",
+        "nodes": [
+          "test_note_export_keeps_app_dispatch_available[ordinary]",
+          "test_note_export_keeps_app_dispatch_available[held-writer]"
+        ]
+      },
+      {
+        "source": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-20708dc7bc614b2aa7900ac712c9244a\\pytest\\test_note_export_keeps_app_dis0\\private-profile-process\\pytest.xml",
+        "portable": "notes/qualified/1-pytest.xml.gz",
+        "cases": 1,
+        "failures": 0,
+        "errors": 0,
+        "skips": 0,
+        "sha256": "87e09e7078e820c52bcc7325ffe558a7e8d4fb9e84b22dd99f929843ccc15994",
+        "nodes": [
+          "test_note_export_keeps_app_dispatch_available[ordinary]"
+        ]
+      },
+      {
+        "source": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-20708dc7bc614b2aa7900ac712c9244a\\pytest\\test_note_export_keeps_app_dis1\\private-profile-process\\pytest.xml",
+        "portable": "notes/qualified/2-pytest.xml.gz",
+        "cases": 1,
+        "failures": 1,
+        "errors": 0,
+        "skips": 0,
+        "sha256": "e4d2034d7fd0100c0be5cda3bd8153f18a4abf30389e04bf7aed1292aa35ca06",
+        "nodes": [
+          "test_note_export_keeps_app_dispatch_available[held-writer]"
+        ]
+      }
+    ],
+    "observations": [
+      {
+        "held": false,
+        "timeline": [
+          {
+            "event": "writer-entered",
+            "time": 608094.921,
+            "thread": 160764,
+            "main_thread": 160764
+          },
+          {
+            "event": "writer-completed",
+            "time": 608094.921
+          }
+        ],
+        "dispatched_before_release": []
+      },
+      {
+        "held": true,
+        "timeline": [
+          {
+            "event": "writer-entered",
+            "time": 608201.687,
+            "thread": 130324,
+            "main_thread": 130324
+          },
+          {
+            "event": "key-posted",
+            "time": 608201.687
+          },
+          {
+            "event": "watchdog-released-writer",
+            "time": 608204.687
+          },
+          {
+            "event": "writer-completed",
+            "time": 608204.703
+          },
+          {
+            "event": "app-key-dispatched",
+            "time": 608205.203,
+            "before_release": false
+          }
+        ],
+        "dispatched_before_release": [
+          false
+        ]
+      }
+    ]
+  }
+}

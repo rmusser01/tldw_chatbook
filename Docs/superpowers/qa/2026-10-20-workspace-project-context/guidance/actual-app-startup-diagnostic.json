@@ -1,0 +1,203 @@
+{
+  "provider_calls": 0,
+  "purpose": "bounded diagnostic-only real application startup; no Console question submitted",
+  "profile": "fresh private task-local profile",
+  "model": "deepseek-flash",
+  "protocol": "native tools",
+  "scenarios": [],
+  "startup_diagnostic": {
+    "is_running": true,
+    "ui_ready": true,
+    "initial_screen_pushed": true,
+    "splash_active": false,
+    "screen_types": [
+      "Screen",
+      "ChatScreen"
+    ],
+    "app_exception_type": "NoneType",
+    "task_count": 573,
+    "task_stack_groups": [
+      {
+        "count": 530,
+        "example_task_names": [
+          "message pump Static(id='console-library-rag-scope', classes='destination-section')",
+          "message pump Vertical(classes='h-auto')",
+          "message pump Button(id='compact-sidebar-toggle', classes='compact-bar-toggle -style-default')"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\message_pump.py",
+            "line": 571,
+            "function": "_process_messages"
+          }
+        ]
+      },
+      {
+        "count": 23,
+        "example_task_names": [
+          "set_interval#1",
+          "set_interval#1",
+          "set_interval#1"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\timer.py",
+            "line": 146,
+            "function": "_run_timer"
+          }
+        ]
+      },
+      {
+        "count": 13,
+        "example_task_names": [
+          "Task-1756",
+          "Task-2427",
+          "Task-1754"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\_win_sleep.py",
+            "line": 113,
+            "function": "wait"
+          }
+        ]
+      },
+      {
+        "count": 1,
+        "example_task_names": [
+          "backup-maintenance-monitor"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\runtime_maintenance.py",
+            "line": 710,
+            "function": "monitor_app"
+          }
+        ]
+      },
+      {
+        "count": 1,
+        "example_task_names": [
+          "Task-1"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-guidance\\live_g3_startup_diagnostic.py",
+            "line": 94,
+            "function": "main"
+          }
+        ]
+      },
+      {
+        "count": 1,
+        "example_task_names": [
+          "Task-26"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\Chat\\console_runtime.py",
+            "line": 4237,
+            "function": "run"
+          }
+        ]
+      },
+      {
+        "count": 1,
+        "example_task_names": [
+          "g3-startup-observer"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-guidance\\live_g3_startup_diagnostic.py",
+            "line": 100,
+            "function": "<module>"
+          },
+          {
+            "file": "C:\\Python312\\Lib\\asyncio\\runners.py",
+            "line": 195,
+            "function": "run"
+          },
+          {
+            "file": "C:\\Python312\\Lib\\asyncio\\runners.py",
+            "line": 118,
+            "function": "run"
+          },
+          {
+            "file": "C:\\Python312\\Lib\\asyncio\\base_events.py",
+            "line": 678,
+            "function": "run_until_complete"
+          },
+          {
+            "file": "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+            "line": 322,
+            "function": "run_forever"
+          },
+          {
+            "file": "C:\\Python312\\Lib\\asyncio\\base_events.py",
+            "line": 645,
+            "function": "run_forever"
+          },
+          {
+            "file": "C:\\Python312\\Lib\\asyncio\\base_events.py",
+            "line": 1999,
+            "function": "_run_once"
+          },
+          {
+            "file": "C:\\Python312\\Lib\\asyncio\\events.py",
+            "line": 88,
+            "function": "_run"
+          },
+          {
+            "file": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-guidance\\live_g3_startup_diagnostic.py",
+            "line": 85,
+            "function": "watchdog"
+          }
+        ]
+      },
+      {
+        "count": 1,
+        "example_task_names": [
+          "Task-1725"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\worker.py",
+            "line": 370,
+            "function": "_run"
+          }
+        ]
+      },
+      {
+        "count": 1,
+        "example_task_names": [
+          "run_test TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+            "line": 2191,
+            "function": "run_app"
+          }
+        ]
+      },
+      {
+        "count": 1,
+        "example_task_names": [
+          "console-canvas-policy-watch"
+        ],
+        "frames": [
+          {
+            "file": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\Chat\\console_runtime.py",
+            "line": 3981,
+            "function": "_watch_canvas_policy"
+          }
+        ]
+      }
+    ]
+  },
+  "user_profile_unchanged": {
+    "config_sha256_unchanged": true,
+    "user_data_file_metadata_unchanged": true
+  },
+  "limit": "Diagnostic-only: actual startup succeeded by 40 seconds, with no provider calls. All original task names/stacks retained in ignored raw scratch; identical frame stacks grouped here. No thread dump fired because normal shutdown finished before 45-second timer."
+}

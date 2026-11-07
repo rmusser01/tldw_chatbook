@@ -55,7 +55,7 @@ register(
         ),
         legacy_config_path="prompts.document_generation.timeline.prompt",
         contract_note=(
-            "Code appends \"\\n\\nConversation Context:\\n{context}\" after "
+            'Code appends "\\n\\nConversation Context:\\n{context}" after '
             "this text in Python (string concatenation, not token "
             "substitution) — no placeholders here."
         ),
@@ -92,7 +92,7 @@ register(
         ),
         legacy_config_path="prompts.document_generation.study_guide.prompt",
         contract_note=(
-            "Code appends \"\\n\\nConversation Context:\\n{context}\" after "
+            'Code appends "\\n\\nConversation Context:\\n{context}" after '
             "this text in Python (string concatenation, not token "
             "substitution) — no placeholders here."
         ),
@@ -129,7 +129,7 @@ register(
         ),
         legacy_config_path="prompts.document_generation.briefing.prompt",
         contract_note=(
-            "Code appends \"\\n\\nConversation Context:\\n{context}\" after "
+            'Code appends "\\n\\nConversation Context:\\n{context}" after '
             "this text in Python (string concatenation, not token "
             "substitution) — no placeholders here."
         ),

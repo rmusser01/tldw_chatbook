@@ -24,6 +24,7 @@ chooser, not a cycler, so it loses the ``⇄``.
 from types import SimpleNamespace
 
 import pytest
+
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -41,6 +42,14 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+
+# task-31249: every test in this module mounts the real Library app through
+# LibraryHarness, whose service/config reads go through the config-participant
+# admission. Under the per-test sandbox redirect that admission fails closed
+# with ``RecoveryRequired("raw_source_selection_changed")`` (the TASK-32628
+# class; whole-module enrollment follows the TASK-32873 precedent -- the
+# suite is all real-app mounts, not a mostly-sandbox suite with a few).
+pytestmark = pytest.mark.bootstrap_profile
 
 #: task-14900's two width regimes (mirrors test_library_media_side_by_side).
 WIDE_SIZE = LIBRARY_TEST_SIZE
@@ -186,9 +195,7 @@ async def test_media_type_strip_opens_full_set_marks_active_and_picks():
         assert str(opener.label) == "type: All types"
 
         opener.press()
-        chooser = await _wait_for_selector(
-            screen, pilot, "#library-media-type-choices"
-        )
+        chooser = await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         assert isinstance(chooser, OptionList)
         labels = {str(option.prompt) for option in chooser.options}
         # Full option set on screen, ✓ on the active option only.
@@ -236,16 +243,15 @@ async def test_media_type_strip_escape_closes_without_change():
         # The opener regains focus so Escape round-trips for keyboard users.
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "id", None)
-            == "library-media-type-filter",
+            lambda: getattr(screen.focused, "id", None) == "library-media-type-filter",
             message=(
-                "Escape never refocused the type opener; focused: "
-                f"{screen.focused!r}"
+                f"Escape never refocused the type opener; focused: {screen.focused!r}"
             ),
         )
         assert len(list(screen.query(".library-media-row"))) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_type_strip_works_in_both_layouts():
     """task-14900 interaction: the strip must render and pick in BOTH the
@@ -258,10 +264,27 @@ async def test_media_type_strip_works_in_both_layouts():
         async with host.run_test(size=size) as pilot:
             screen = await _open_media_list(host, pilot)
             host_pane = screen.query_one("#library-canvas")
+            shell_grid = screen.query_one("#library-shell-grid")
+
+            def _stacked_regime(grid=shell_grid, pane=host_pane) -> bool:
+                # task-31249: this used to probe only the legacy
+                # ``library-notes-compact`` canvas class. Since the
+                # adaptive media reader (40a1b99576) the compact media
+                # regime deliberately DROPS that class off the canvas
+                # (library_notes_controller.py: "Adaptive readers share
+                # only the shell box-model contract") and paints
+                # ``library-adaptive-compact`` on the shell grid instead,
+                # so the probe accepts the mounted evidence from either
+                # regime. The widgets bind as defaults so the loop's next
+                # iteration cannot rebind them under the poll lambda.
+                return grid.has_class("library-adaptive-compact") or (
+                    pane.has_class("library-notes-compact")
+                )
+
             await _wait_for_condition(
                 pilot,
-                lambda: host_pane.has_class("library-notes-compact") is compact,
-                message=f"compact class never reached {compact} at {size}",
+                lambda expected=compact: _stacked_regime() is expected,
+                message=f"compact/stacked regime never reached {compact} at {size}",
             )
 
             screen.query_one("#library-media-type-filter", Button).press()
@@ -308,8 +331,7 @@ async def test_media_type_strip_keyboard_only_path():
         # Focus lands in the chooser with the active unfiltered option highlighted.
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "id", "")
-            == "library-media-type-choices",
+            lambda: getattr(screen.focused, "id", "") == "library-media-type-choices",
             message=f"Focus never entered the strip; focused: {screen.focused!r}",
         )
         chooser = screen.query_one("#library-media-type-choices", OptionList)
@@ -356,9 +378,7 @@ async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
         requested_before = controller.requested_scope
 
         screen.query_one("#library-media-type-filter", Button).press()
-        chooser = await _wait_for_selector(
-            screen, pilot, "#library-media-type-choices"
-        )
+        chooser = await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         assert isinstance(chooser, OptionList)
         assert len(screen.query("#library-media-type-choices")) == 1
         assert chooser.option_count == 64
@@ -378,8 +398,10 @@ async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_scope is not None
-            and controller.applied_scope.media_type == "type-62",
+            lambda: (
+                controller.applied_scope is not None
+                and controller.applied_scope.media_type == "type-62"
+            ),
             message="Keyboard commit never selected the final complete type.",
         )
         assert not screen.query("#library-media-type-choices")
@@ -541,8 +563,7 @@ async def test_skills_sort_strip_opens_and_applies():
         opener.press()
         await _wait_for_selector(screen, pilot, "#library-skills-sort-choices")
         labels = [
-            str(button.label)
-            for button in screen.query(".library-skills-sort-choice")
+            str(button.label) for button in screen.query(".library-skills-sort-choice")
         ]
         assert labels == ["✓ Name", "Status"]
 

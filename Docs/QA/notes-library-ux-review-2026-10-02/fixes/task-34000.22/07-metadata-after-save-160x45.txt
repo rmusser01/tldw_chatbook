@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N    I       ‹ Back                                                                                                      │
+│ │ Navigation                     │  a    t  Workshop handout (edited)                                                                                        │
+│ │     Import…                    │  v    e  Seed                                                                                                             │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       m    ○ Find  Note  Read later  Use in Console  More ▴                                                               │
+│ │ ▊ Search Library…        ▎▊x▎  │       s  This tab has no text to search · switch to Read or Analysis.                                                     │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │                                                                                                                           │
+│ │                                │            Edit metadata    Open original    Open manager       Move to trash                                             │
+│ │ ─────────────────────────────  │            Read  Analysis  Highlights  Info (selected)                                                                    │
+│ │ Browse                    ▾    │          Type: pdf                                                                                                        │
+│ │  ▸ Media (23) — your files     │          Author: Seed                                                                                                     │
+│ │    Conversations (0)           │          Keywords: seed, pdf                                                                                              │
+│ │    Notes (122)                 │          Updated: now                                                                                                     │
+│ │    Prompts (0) — reuse         │                                                                                                                           │
+│ │    Skills (1) — AI add-ons     │<---      Backend: local                                                                                                   │
+│ │    Collections (0)             │          Canonical ID: local:media:23                                                                                     │
+│ │    Search / RAG — find all     │          Original source: local://seed/22                                                                                 │
+│ │ ─────────────────────────────  │          Stored representation: Complete stored text                                                                      │
+│ │ Artifacts                 ▾    │          Use in Console sends: Complete stored text excerpt                                                               │
+│ │    All artifacts               │     --->                                                                                                                  │
+│ │    Chatbooks                   │                                                                                                                           │
+│ │    Reports                     │                                                                                                                           │
+│ │    Dreams                      │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Create                    ▾    │                                                                                                                           │
+│ │    New note                    │<---                                                                                                                       │
+│ │    New prompt                  │                                                                                                                           │
+│ │    New skill                   │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Study                     ▾    │                                                                                                                           │
+│ │    Study decks (0)             │                                                                                                                           │
+│ │    Flashcards due: 0           │                                                                                                                           │
+│ │    Quizzes (0)                 │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                              ╭──────────────────────────────────────────────────────────╮ │
+│ │ Import / Export           ▾    │                                                              │                                                          │ │
+│ │    Import…                     │                                                              │ Unsaved media details — Save or Discard changes first.   │ │
+│ │    Export                    ▇ │                                                              │                                                          │ │
+│ │  ▾ scroll for more             │                                                              ╰──────────────────────────────────────────────────────────╯ │
+│ └────────────────────────────────┘                                                                                                                           │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | n note | l read later | c use in Console | t trash | esc close | F1 help · Ctrl+P palette · Ctrl+Q quit

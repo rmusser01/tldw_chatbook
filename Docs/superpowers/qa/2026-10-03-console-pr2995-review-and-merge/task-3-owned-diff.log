@@ -1,0 +1,540 @@
+diff --git a/Tests/Chat/test_console_chat_create_integration.py b/Tests/Chat/test_console_chat_create_integration.py
+index 877c3264c9..a5f3e730a2 100644
+--- a/Tests/Chat/test_console_chat_create_integration.py
++++ b/Tests/Chat/test_console_chat_create_integration.py
+@@ -1230,3 +1230,38 @@ def test_primary_remembered_bridge_still_confirms_each_child_request(
+         not controller._chat_creation_records
+         and not controller.pending_chat_create_ids()
+     )
++
++
++@pytest.mark.parametrize(
++    ("arguments", "category"),
++    [
++        ({"title": "x" * 121}, "payload_too_large"),
++        ({"opening_prompt": "x" * 20_001}, "payload_too_large"),
++        ({"instructions": "x" * 20_001}, "payload_too_large"),
++        ({"destination": ["secret-payload"]}, "invalid_args"),
++        ({"mode": None}, "invalid_args"),
++        ({"mode": "start", "opening_prompt": " \n\t"}, "invalid_args"),
++        ({"provider": {"secret-payload": "private"}}, "invalid_args"),
++    ],
++)
++def test_new_chat_tool_and_controller_reject_before_authority_or_execution(
++    real_db_controller, arguments, category
++):
++    controller, _db = real_db_controller
++    confirm, executor = _FakeConfirm([]), _FakeExecutor()
++    preparations = []
++    _, new_chat = build_chat_create_tool_closures(
++        confirm=confirm,
++        execute=executor,
++        session_id="s1",
++        run_id="r1",
++        prepare=lambda payload: preparations.append(payload),
++    )
++    result = new_chat(arguments)
++    assert not result.ok and result.error.startswith(category + ":")
++    assert "secret-payload" not in result.error
++    assert confirm.payloads == executor.calls == preparations == []
++    with pytest.raises(ValueError) as captured:
++        controller.prepare_agent_chat_create(arguments)
++    assert str(captured.value).startswith(category + ":")
++    assert "secret-payload" not in str(captured.value)
+diff --git a/Tests/Chat/test_console_note_span_actions.py b/Tests/Chat/test_console_note_span_actions.py
+index 131c12142a..0caabbb676 100644
+--- a/Tests/Chat/test_console_note_span_actions.py
++++ b/Tests/Chat/test_console_note_span_actions.py
+@@ -25,9 +25,11 @@ from tldw_chatbook.Chat.console_provider_gateway import (
+     AuxiliaryCompletionResult,
+     ConsoleProviderResolution,
+ )
++from tldw_chatbook.Chat.message_metadata import AgentChatStartMetadata, MessageMetadata
+ from tldw_chatbook.Chat.provider_usage import ProviderUsage
+ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+ from Tests.console_provider_doubles import provider_resolution
++from Tests.private_profile import private_profile_test
+ 
+ 
+ class NoteSummaryGateway:
+@@ -105,8 +107,9 @@ def _seed_rows(store, session_id):
+ 
+ 
+ @pytest.mark.asyncio
++@private_profile_test
+ async def test_build_transcript_note_is_inclusive_and_user_assistant_only(
+-    tmp_path,
++    tmp_path, request
+ ):
+     controller, store, session, _gateway, _db = _note_controller(tmp_path)
+     rows = _seed_rows(store, session.id)
+@@ -126,7 +129,8 @@ async def test_build_transcript_note_is_inclusive_and_user_assistant_only(
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_build_transcript_note_accepts_assistant_target(tmp_path):
++@private_profile_test
++async def test_build_transcript_note_accepts_assistant_target(tmp_path, request):
+     controller, store, session, _gateway, _db = _note_controller(tmp_path)
+     rows = _seed_rows(store, session.id)
+ 
+@@ -137,7 +141,8 @@ async def test_build_transcript_note_accepts_assistant_target(tmp_path):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_note_actions_block_off_path_and_unknown_targets(tmp_path):
++@private_profile_test
++async def test_note_actions_block_off_path_and_unknown_targets(tmp_path, request):
+     controller, store, session, _gateway, _db = _note_controller(tmp_path)
+     _rows = _seed_rows(store, session.id)
+ 
+@@ -153,8 +158,9 @@ async def test_note_actions_block_off_path_and_unknown_targets(tmp_path):
+ 
+ 
+ @pytest.mark.asyncio
++@private_profile_test
+ async def test_summarize_span_as_note_returns_draft_without_compaction_writes(
+-    tmp_path,
++    tmp_path, request
+ ):
+     controller, store, session, gateway, db = _note_controller(tmp_path)
+     rows = _seed_rows(store, session.id)
+@@ -187,7 +193,8 @@ async def test_summarize_span_as_note_returns_draft_without_compaction_writes(
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_summarize_span_as_note_blocks_when_provider_not_ready(tmp_path):
++@private_profile_test
++async def test_summarize_span_as_note_blocks_when_provider_not_ready(tmp_path, request):
+     controller, store, session, _gateway, _db = _note_controller(
+         tmp_path, gateway=NoteSummaryGateway(ready=False)
+     )
+@@ -201,7 +208,10 @@ async def test_summarize_span_as_note_blocks_when_provider_not_ready(tmp_path):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_summarize_span_as_note_blocks_oversized_span(tmp_path, monkeypatch):
++@private_profile_test
++async def test_summarize_span_as_note_blocks_oversized_span(
++    tmp_path, monkeypatch, request
++):
+     controller, store, session, gateway, _db = _note_controller(tmp_path)
+     rows = _seed_rows(store, session.id)
+     # Shrink the span budget so the seeded span blows past it; the action
+@@ -254,7 +264,8 @@ def _dispatch_event(action_id: str, message_id: str):
+ 
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+-async def test_note_actions_dispatch_one_exclusive_note_worker(action_id):
++@private_profile_test
++async def test_note_actions_dispatch_one_exclusive_note_worker(action_id, request):
+     """Each More-menu note action routes to the shared console-note-actions
+     worker group (never console-run, so it can never cancel a live stream)."""
+     import asyncio
+@@ -290,7 +301,8 @@ async def test_note_actions_dispatch_one_exclusive_note_worker(action_id):
+ 
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+-async def test_note_actions_mid_run_notify_instead_of_summarizing(action_id):
++@private_profile_test
++async def test_note_actions_mid_run_notify_instead_of_summarizing(action_id, request):
+     """With a run streaming, the note actions must not reach a provider
+     call: the worker resolves to the controller's active-run rejection and
+     surfaces it as a notice."""
+@@ -341,7 +353,18 @@ async def test_note_actions_mid_run_notify_instead_of_summarizing(action_id):
+ 
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+-async def test_note_actions_persist_through_notes_service(action_id):
++@pytest.mark.parametrize(
++    ("origin", "speaker"),
++    [
++        ("", "User"),
++        ("agent_chat_start", "Agent handoff"),
++        ("untrusted", "Unverified handoff"),
++    ],
++)
++@private_profile_test
++async def test_note_actions_persist_through_notes_service(
++    action_id, origin, speaker, request
++):
+     """End-to-end (review follow-up): driving each action's worker against
+     a stubbed notes service persists the draft with the expected title,
+     content, scope, keywords, and the app's configured notes identity."""
+@@ -358,7 +381,19 @@ async def test_note_actions_persist_through_notes_service(action_id):
+     screen._ensure_console_chat_controller()
+     store = screen._ensure_console_chat_store()
+     session = store.ensure_session()
+-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="the question")
++    store.append_message(
++        session.id,
++        role=ConsoleMessageRole.USER,
++        content="the question",
++        metadata=MessageMetadata(
++            origin=origin,
++            agent_chat_start=(
++                AgentChatStartMetadata("attempt-1", "run-1", "source-1")
++                if origin == "agent_chat_start"
++                else None
++            ),
++        ),
++    )
+     completed = store.append_message(
+         session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+     )
+@@ -412,12 +447,15 @@ async def test_note_actions_persist_through_notes_service(action_id):
+         assert call["content"].startswith("> Generated: ")
+         assert "STUB SUMMARY" in call["content"]
+     else:
+-        assert "**User:** the question" in call["content"]
++        assert f"**{speaker}:** the question" in call["content"]
++        assert call["content"].startswith("> Generated: ")
++        assert f"> Up to message: {completed.id}" in call["content"]
+         assert "**Assistant:** the answer" in call["content"]
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_oversized_span_blocks_at_the_real_budget(tmp_path):
++@private_profile_test
++async def test_oversized_span_blocks_at_the_real_budget(tmp_path, request):
+     """Review follow-up (bug fix): the budget check must see the UNTRIMMED
+     span. _build_summary_span_text silently drops oldest turns, so checking
+     after it could never fire; a >12k-token span must now block outright."""
+@@ -442,7 +480,8 @@ async def test_oversized_span_blocks_at_the_real_budget(tmp_path):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_capture_note_dispatches_one_exclusive_note_worker():
++@private_profile_test
++async def test_capture_note_dispatches_one_exclusive_note_worker(request):
+     """The new per-message capture rides the same note worker group as the
+     TASK-31759 span actions (never console-run, so it cannot cancel a
+     live stream)."""
+@@ -475,7 +514,8 @@ async def test_capture_note_dispatches_one_exclusive_note_worker():
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_capture_note_records_the_conversation_and_message_it_came_from():
++@private_profile_test
++async def test_capture_note_records_the_conversation_and_message_it_came_from(request):
+     """task-32146 AC#2: the captured note is titled by the answer's own
+     first line, carries the answer verbatim, and records its provenance as
+     keywords; the created note id is handed to the receipt."""
+@@ -525,7 +565,8 @@ async def test_capture_note_records_the_conversation_and_message_it_came_from():
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_console_note_writes_use_the_configured_notes_identity():
++@private_profile_test
++async def test_console_note_writes_use_the_configured_notes_identity(request):
+     """Regression (task-32146): Save as... > Note wrote under a `current_user`
+     attribute that nothing in the tree ever sets, so every note it saved
+     carried the literal "default_user" as its author id (the client_id sync
+@@ -555,7 +596,10 @@ async def test_console_note_writes_use_the_configured_notes_identity():
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_capture_note_dispatch_refuses_a_temporary_chat_before_any_worker():
++@private_profile_test
++async def test_capture_note_dispatch_refuses_a_temporary_chat_before_any_worker(
++    request,
++):
+     """task-32146 fix round 1 (review finding 3): the ephemeral registry is
+     consulted again at dispatch -- the same defence the regenerate
+     image/video branches carry -- so a temporary chat gets the registry's
+diff --git a/Tests/UI/test_console_composer_run_controls.py b/Tests/UI/test_console_composer_run_controls.py
+index 24085f8546..2e218f5f0c 100644
+--- a/Tests/UI/test_console_composer_run_controls.py
++++ b/Tests/UI/test_console_composer_run_controls.py
+@@ -1502,3 +1502,58 @@ def test_palette_lists_stop_and_the_composer_menu_actions_class_safe():
+         "Console: Improve current draft…",
+     ):
+         assert expected in labels, expected
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
++@private_profile_test
++async def test_redirect_fit_boundary_keeps_run_controls_in_place(
++    threshold_offset, request
++):
++    """Fit comes from the visible control cells and draft/reason floors."""
++    gateway, host = _held_run_host()
++    async with host.run_test(size=(235, 52)) as pilot:
++        console, composer = await _mounted(host, pilot)
++        await pilot.pause(0.2)
++        row = composer.query_one("#console-composer-expanded")
++        chrome = host.size.width - row.content_size.width
++        # Independent geometry: left Menu/collapse 12+6; Send reserves 14
++        # for its longest label (Preparing... plus padding),
++        # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
++        # 32; widest reason 52. No production budget method supplies this.
++        threshold = chrome + 12 + 6 + 14 + 2 + 11 + 6 + 10 + 2 + 32 + 52
++        await pilot.resize_terminal(threshold + threshold_offset, 52)
++        await pilot.pause(0.3)
++        actions = composer.query_one("#console-composer-actions")
++        send = composer.query_one("#console-send-message", Button)
++        dictate = composer.query_one("#console-dictation", Button)
++        redirect = composer.query_one("#console-redirect-generation", Button)
++        draft = composer.query_one("#console-command-visible-text", Static)
++
++        def geometry():
++            return (actions.region, send.region, dictate.region)
++
++        resting = geometry()
++        expected_fit = threshold_offset >= 0
++        assert composer._redirect_budgeted is expected_fit
++        try:
++            await _start_held_run(console, composer, pilot)
++            await pilot.pause(0.2)
++            assert redirect.display is expected_fit
++            assert geometry() == resting, (
++                "run activation shifted the action row or controls"
++            )
++            assert draft.region.width >= 32
++            if expected_fit:
++                assert redirect.region.width == 10
++                assert actions.region.contains_region(redirect.region)
++                assert _painted_at(host, redirect)
++            composer.query_one("#console-stop-generation", Button).press()
++            await _wait_for(pilot, lambda: not composer.run_active, "run never stopped")
++            await pilot.pause(0.2)
++            assert not redirect.display
++            assert geometry() == resting, (
++                "run deactivation shifted the action row or controls"
++            )
++        finally:
++            gateway.release.set()
+diff --git a/tldw_chatbook/Chat/console_agent_bridge.py b/tldw_chatbook/Chat/console_agent_bridge.py
+index 0180a06102..9a29da25fc 100644
+--- a/tldw_chatbook/Chat/console_agent_bridge.py
++++ b/tldw_chatbook/Chat/console_agent_bridge.py
+@@ -11379,38 +11379,26 @@ def build_chat_create_tool_closures(
+ 
+ 
+ def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
+-    """Validate public creation fields without carrying model-supplied authority."""
+-    defaults = {
+-        "title": "",
+-        "opening_prompt": "",
+-        "instructions": "",
+-        "destination": "same_workspace",
+-        "mode": "draft",
+-        "provider": "",
+-        "model": "",
+-        "preset": "",
+-    }
+-    values = {key: arguments.get(key, default) for key, default in defaults.items()}
+-    for key, value in values.items():
+-        if not isinstance(value, str):
+-            raise ValueError(f"invalid_args: {key} must be a string")
+-    if len(values["title"]) > CHAT_CREATE_TITLE_MAX:
+-        raise ValueError("payload_too_large: title exceeds 120 characters")
+-    if any(
+-        len(values[key]) > CHAT_CREATE_PAYLOAD_MAX
+-        for key in ("opening_prompt", "instructions")
+-    ):
+-        raise ValueError(
+-            "payload_too_large: prompt/instructions exceed 20000 characters"
+-        )
+-    if values["destination"] not in {"same_workspace", "casual"}:
+-        raise ValueError("invalid_args: destination")
+-    if values["mode"] not in {"draft", "start"}:
+-        raise ValueError("invalid_args: mode")
+-    if values["mode"] == "start" and not values["opening_prompt"].strip():
+-        raise ValueError("invalid_args: start requires a nonblank opening_prompt")
+-    values["title"] = values["title"].strip()
+-    return values
++    """Validate public creation fields without carrying model-supplied authority.
++
++    Args:
++        arguments: Public title, opening_prompt, instructions, destination,
++            mode, and optional provider/model/preset strings. Omitted fields
++            retain empty-string, same_workspace, and draft defaults. Unknown
++            authority fields are discarded by the shared validator.
++
++    Returns:
++        The eight validated fields, with title trimmed after its length check
++        and literal prompts, instructions, and routing strings preserved.
++
++    Raises:
++        ValueError: An input-free invalid_args or payload_too_large category for
++            non-string fields, unsupported choices, exceeded limits, or a
++            blank opening_prompt in start mode.
++    """
++    from tldw_chatbook.Utils.input_validation import validate_console_new_chat_arguments
++
++    return validate_console_new_chat_arguments(arguments)
+ 
+ 
+ def _release_chat_creation_token(payload: dict) -> None:
+diff --git a/tldw_chatbook/Chat/console_chat_controller.py b/tldw_chatbook/Chat/console_chat_controller.py
+index 817dcc0c4a..7b7117edce 100644
+--- a/tldw_chatbook/Chat/console_chat_controller.py
++++ b/tldw_chatbook/Chat/console_chat_controller.py
+@@ -22252,10 +22252,20 @@ class ConsoleChatController:
+         if isinstance(span, ConsoleSubmitResult):
+             return span
+         title = "Transcript: " + (span[0].content.strip().splitlines() or [""])[0][:48]
+-        body_lines = [
+-            f"**{'User' if m.role is ConsoleMessageRole.USER else 'Assistant'}:** {m.content}"
+-            for m in span
+-        ]
++        body_lines = []
++        for message in span:
++            if message.role is ConsoleMessageRole.USER:
++                origin = getattr(message.metadata, "origin", None)
++                speaker = (
++                    "Agent handoff"
++                    if origin == "agent_chat_start"
++                    else "Unverified handoff"
++                    if origin == "untrusted"
++                    else "User"
++                )
++            else:
++                speaker = "Assistant"
++            body_lines.append(f"**{speaker}:** {message.content}")
+         content = (
+             self._note_provenance_header(session_id, message_id)
+             + "\n\n"
+diff --git a/tldw_chatbook/Utils/input_validation.py b/tldw_chatbook/Utils/input_validation.py
+index 4d913e32d5..58bcf505b0 100644
+--- a/tldw_chatbook/Utils/input_validation.py
++++ b/tldw_chatbook/Utils/input_validation.py
+@@ -9,6 +9,7 @@ import re
+ import time
+ import unicodedata
+ from collections.abc import Mapping
++from functools import cache
+ from itertools import islice
+ from typing import Annotated, Any, Literal, NoReturn, Optional, TypeVar, Union
+ from urllib.parse import urlparse
+@@ -21,6 +22,7 @@ from pydantic import (
+     TypeAdapter,
+     ValidationInfo,
+     field_validator,
++    model_validator,
+ )
+ from pydantic import (
+     ValidationError as PydanticValidationError,
+@@ -104,6 +106,108 @@ class ConsoleHookInput(BaseModel):
+         return value
+ 
+ 
++@cache
++def _console_new_chat_input_model() -> type[BaseModel]:
++    """Build the creation-only schema lazily, outside application startup."""
++    from pydantic_core import PydanticCustomError
++
++    from ..Agents.agent_models import CHAT_CREATE_PAYLOAD_MAX, CHAT_CREATE_TITLE_MAX
++
++    class ConsoleNewChatInput(BaseModel):
++        """Strict public fields; authority remains outside this projection."""
++
++        model_config = ConfigDict(
++            extra="ignore", frozen=True, strict=True, hide_input_in_errors=True
++        )
++
++        title: str = Field(default="", max_length=CHAT_CREATE_TITLE_MAX)
++        opening_prompt: str = Field(
++            default="", max_length=CHAT_CREATE_PAYLOAD_MAX, repr=False
++        )
++        instructions: str = Field(
++            default="", max_length=CHAT_CREATE_PAYLOAD_MAX, repr=False
++        )
++        destination: Literal["same_workspace", "casual"] = "same_workspace"
++        mode: Literal["draft", "start"] = "draft"
++        provider: str = ""
++        model: str = ""
++        preset: str = ""
++
++        @field_validator("destination", "mode", mode="before")
++        @classmethod
++        def _strict_choice_string(cls, value: object) -> str:
++            if not isinstance(value, str):
++                raise PydanticCustomError(
++                    "string_type", "Input should be a valid string"
++                )
++            return value
++
++        @field_validator("title")
++        @classmethod
++        def _trim_title(cls, value: str) -> str:
++            # Field length validation has already checked the untrimmed input.
++            return value.strip()
++
++        @model_validator(mode="after")
++        def _require_start_prompt(self) -> "ConsoleNewChatInput":
++            if self.mode == "start" and not self.opening_prompt.strip():
++                raise ValueError("start requires a nonblank opening_prompt")
++            return self
++
++    return ConsoleNewChatInput
++
++
++def validate_console_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
++    """Validate public chat creation fields without retaining supplied authority.
++
++    Args:
++        arguments: Candidate title, opening_prompt, instructions, destination,
++            mode, provider, model, and preset. Strings are required without
++            coercion. Omitted fields default to empty strings, same_workspace,
++            and draft; unknown fields are discarded.
++
++    Returns:
++        The eight validated fields. Title is trimmed after its length check;
++        prompts, instructions, and routing strings retain their literal bytes.
++
++    Raises:
++        ValueError: With an input-free invalid_args or payload_too_large category
++            for invalid types, limits, choices, or a blank start prompt.
++    """
++    from ..Agents.agent_models import CHAT_CREATE_PAYLOAD_MAX, CHAT_CREATE_TITLE_MAX
++
++    try:
++        return _console_new_chat_input_model().model_validate(arguments).model_dump()
++    except PydanticValidationError as exc:
++        errors = exc.errors(
++            include_input=False, include_context=False, include_url=False
++        )
++        # Preserve the original type-first contract even when an earlier field
++        # also exceeds a limit. Only known schema locations and error types
++        # participate; raw inputs, messages, and exception context never do.
++        for error in errors:
++            if error["type"] == "string_type":
++                raise ValueError(
++                    f"invalid_args: {error['loc'][0]} must be a string"
++                ) from None
++        for error in errors:
++            if error["type"] == "string_too_long":
++                if error["loc"] == ("title",):
++                    raise ValueError(
++                        f"payload_too_large: title exceeds {CHAT_CREATE_TITLE_MAX} characters"
++                    ) from None
++                raise ValueError(
++                    "payload_too_large: prompt/instructions exceed "
++                    f"{CHAT_CREATE_PAYLOAD_MAX} characters"
++                ) from None
++        for field in ("destination", "mode"):
++            if any(error["loc"] == (field,) for error in errors):
++                raise ValueError(f"invalid_args: {field}") from None
++        raise ValueError(
++            "invalid_args: start requires a nonblank opening_prompt"
++        ) from None
++
++
+ _BATCH_TRANSCRIPTION_PROVIDER = TypeAdapter(
+     Literal["default", "faster-whisper", "parakeet-onnx", "transcribe-cpp"]
+ )
+diff --git a/tldw_chatbook/Widgets/Console/console_composer_bar.py b/tldw_chatbook/Widgets/Console/console_composer_bar.py
+index 394f24c52c..6d6b84f135 100644
+--- a/tldw_chatbook/Widgets/Console/console_composer_bar.py
++++ b/tldw_chatbook/Widgets/Console/console_composer_bar.py
+@@ -880,7 +880,6 @@ class ConsoleComposerBar(Horizontal):
+         return (
+             BASE_ACTIONS_WIDTH
+             + (self._send_button_width - 6)
+-            + (10 if self._run_active else 0)  # Visible Redirect control.
+             + (4 if attachment_visible else 0)
+             + (REDIRECT_ACTION_WIDTH if redirect_budgeted else 0)
+         )

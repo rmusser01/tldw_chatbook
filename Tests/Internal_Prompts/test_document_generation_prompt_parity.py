@@ -13,7 +13,9 @@ at module scope (Internal_Prompts must stay off the config import chain)."""
 from tldw_chatbook.Internal_Prompts import CATALOG
 
 ORIGINAL_TIMELINE_SYSTEM = "You are an expert at creating clear, chronological timelines from conversations and content."
-ORIGINAL_STUDY_GUIDE_SYSTEM = "You are an educational expert specializing in creating comprehensive study guides."
+ORIGINAL_STUDY_GUIDE_SYSTEM = (
+    "You are an educational expert specializing in creating comprehensive study guides."
+)
 ORIGINAL_BRIEFING_SYSTEM = "You are an expert at creating executive briefing documents with actionable insights."
 
 
@@ -43,7 +45,9 @@ def test_timeline_user_matches_shipped_toml_default():
 
     assert (
         CATALOG["document_generation.timeline_user"].default
-        == DEFAULT_CONFIG_FROM_TOML["prompts"]["document_generation"]["timeline"]["prompt"]
+        == DEFAULT_CONFIG_FROM_TOML["prompts"]["document_generation"]["timeline"][
+            "prompt"
+        ]
     )
 
 
@@ -52,7 +56,9 @@ def test_study_guide_user_matches_shipped_toml_default():
 
     assert (
         CATALOG["document_generation.study_guide_user"].default
-        == DEFAULT_CONFIG_FROM_TOML["prompts"]["document_generation"]["study_guide"]["prompt"]
+        == DEFAULT_CONFIG_FROM_TOML["prompts"]["document_generation"]["study_guide"][
+            "prompt"
+        ]
     )
 
 
@@ -61,7 +67,9 @@ def test_briefing_user_matches_shipped_toml_default():
 
     assert (
         CATALOG["document_generation.briefing_user"].default
-        == DEFAULT_CONFIG_FROM_TOML["prompts"]["document_generation"]["briefing"]["prompt"]
+        == DEFAULT_CONFIG_FROM_TOML["prompts"]["document_generation"]["briefing"][
+            "prompt"
+        ]
     )
 
 

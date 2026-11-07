@@ -1,0 +1,4 @@
+{
+  "sha256": "9dd78d1487444b55bc170d2a2458be87285e1adacf884a6c82dc97aef3e37fd4",
+  "raw_text": "........................................................................ [ 63%]\n.........................................                                [100%]\n============================= slowest 25 durations =============================\n3.31s call     Tests/Architecture/test_diagnostic_path_privacy.py::test_task_19864_owner_files_have_no_raw_path_diagnostics\n\n(24 durations < 1s hidden.)\n113 passed in 4.69s\n"
+}

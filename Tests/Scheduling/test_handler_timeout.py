@@ -28,7 +28,9 @@ def db(tmp_path):
         database.close()
 
 
-def _make_hourly(db, *, next_run_at=NOW, timeout_seconds=None, enabled=True, title="hourly"):
+def _make_hourly(
+    db, *, next_run_at=NOW, timeout_seconds=None, enabled=True, title="hourly"
+):
     kwargs = {}
     if timeout_seconds is not None:
         kwargs["timeout_seconds"] = timeout_seconds

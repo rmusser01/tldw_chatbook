@@ -1,0 +1,10 @@
+index plan pins: 326 index names declared under tldw_chatbook/DB, 325 census rows, 108 plan-pinned.
+
+FAIL: 1 index(es) are created but absent from scripts\index_plan_pin_census.tsv.
+  Adding an index is a query-plan decision, not a schema detail: with no sqlite_stat1
+  the planner may simply never choose it (TASK-21126 shipped 5 MB of dead index that way).
+  Capture EXPLAIN QUERY PLAN on a corpus with sqlite_stat1 ABSENT, then paste ONE of:
+    directories_eligible	plan-pinned	<test file> (tldw_chatbook\DB\Workspace_Project_Index_DB.py, tldw_chatbook\DB\migrations\workspace_project_index_003.sql)
+    directories_eligible	pre-convention	<why no plan pin> (tldw_chatbook\DB\Workspace_Project_Index_DB.py, tldw_chatbook\DB\migrations\workspace_project_index_003.sql)
+
+STDERR

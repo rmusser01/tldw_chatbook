@@ -1,0 +1,24 @@
+{
+  "source_head_before_repair": "faad416272dd0bf8d66c15b620b27b912fef3f8e",
+  "archive": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/r1-completion-offline-evidence.tar.gz",
+  "sha256": "8e4a74834e6efa36d3bcbfa107098245224d96a5d3c40e020d1b4176ae152040",
+  "members_sha256": {
+    "task35582-r1-completion-red.log": "1a6fcd9cafd664d67089f3e66d842ab5f44ae3eb37dd994077820ff4ff7adffe",
+    "task35582-r1-completion-green.log": "2637796b86759d844d323e14f81c624cdffb36fddd427ccf75ffc00b971e6a99",
+    "task35582-r1-completion-targeted.log": "34acff845e7745f3f60f73917a6653df175fa0ac39058aa15edc5fecb8a19dcb",
+    "task35582-r1-completion-final.log": "12628d343d46685478f5e970b5ae67a88d6713b4e31870b765ad991f41fd7629",
+    "task35582-r1-completion-static.json": "6d918a41cd0936cf65aace2626bb6bea7bff1c36b72f4a17fa2bd69a0c9dc4ab",
+    "task35582-r1-completion-review.md": "df36749340ec09b95c3711eac927dd2fb7ab47f6608805138bf60697b17d777f",
+    "task35582-primary-offline-diagnosis.md": "80ea33b654a448a68d74a458a4ad65726b2f9c669c9504b2a6bc2b54389afea0",
+    "task35582-primary-evidence-summary.json": "9a96ad3669e858951f7faa3535e0d9581c8cbed0090697d3619dd9d935fddabc",
+    "test_task35582_primary_response_boundary.py": "4f2ab80490f3441617e1d5c9ba90dcace5cfc2be6029fa56bcfb48d2dff8e122",
+    "task35582-primary-response-boundary-tests-final.log": "19c125d31806d18864e65615c2bbc3408e654979875aa1f6bccad40947b27a21",
+    "task35582-r1-offline-pr-before.json": "cba73414fb452b2e660d8cc0778e73d32c67bbba15a5443c004b2b8fda4323a9"
+  },
+  "qualification_run": false,
+  "new_live_requests": 0,
+  "new_product_children": 0,
+  "cumulative_live_requests": 412,
+  "cumulative_product_children": 28,
+  "previous_live_evidence": "../v1-final60/retention.json"
+}

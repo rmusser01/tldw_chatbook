@@ -19,6 +19,7 @@ Nine tools, named with the `fs_`/`web_`/`todo_` domain-prefix convention establi
 |---|---|---|
 | `fs_read` | migrate `ReadFileTool` | Line-numbered output, `offset`/`limit` paging, 32 KiB byte-fitted cap (ADR-030), binary/image refusal with a clear message |
 | `fs_write` | migrate `WriteFileTool` | Full-file create/overwrite, path-validated. Parent directory must exist — a deliberate divergence from claude-code's Write (which creates parents) to catch model path typos early |
+| `fs_mkdir` | added (TASK-35081, 2026-10-15) | Directory creation including missing parents, path-validated and denylist-guarded (`refuses_new_directory_chain` applied to the target itself). An existing directory is a success no-op; a non-directory at the target is refused. The parent-must-exist rule above still governs every file writer — `fs_mkdir` is the family's only directory creator |
 | `fs_list` | migrate `ListDirectoryTool` | Depth-capped listing, entry-count cap |
 | `fs_edit` | new | Exact `old_string`→`new_string` replacement; fails unless the match is unique (or `replace_all: true`). Ambiguity errors include the match count so the model can self-correct |
 | `fs_glob` | new | Pure-Python pattern match under the workspace root, sorted by mtime, result-capped. No ripgrep dependency |

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
+from tldw_chatbook.MCP.execution_log import MCPExecutionLog, build_record
+
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_prompt_reducer import (
     PermissionPromptReport,
     build_permission_prompt_report,
     format_permission_prompt_report,
 )
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 
 
 def _tool(
@@ -15,6 +21,7 @@ def _tool(
     *,
     executable: bool = True,
     stale: bool = False,
+    tags: tuple[str, ...] = (),
 ) -> HubTool:
     return HubTool(
         server_key=server_key,
@@ -23,7 +30,7 @@ def _tool(
         name=name,
         description=f"{name} description",
         input_schema={"type": "object"},
-        tags=(),
+        tags=tags,
         stale=stale,
         executable=executable,
     )
@@ -45,6 +52,9 @@ def _record(
         "decision": decision,
         "ok": True,
         "duration_ms": 10,
+        "definition_hash": definition_hash(
+            f"{tool_name} description", {"type": "object"}
+        ),
     }
 
 
@@ -73,9 +83,9 @@ def test_recommends_repeated_agent_approved_ask_gated_tool():
 
     report = build_permission_prompt_report(records, [tool], states)
 
-    assert [(r.server_key, r.tool_name, r.approved_count) for r in report.recommendations] == [
-        ("local:docs", "search", 2)
-    ]
+    assert [
+        (r.server_key, r.tool_name, r.approved_count) for r in report.recommendations
+    ] == [("local:docs", "search", 2)]
     assert report.recommendations[0].last_seen == "2026-08-01T20:03:00+00:00"
     assert report.total_records == 2
 
@@ -140,8 +150,7 @@ def test_excludes_non_agent_and_non_approved_decisions():
     records = [
         _record("local:docs", "search", "approved", initiator="test"),
         _record("local:docs", "search", "allowed"),
-        _record("local:docs", "search", "approved-session"),
-        _record("local:docs", "search", "approved-session"),
+        _record("local:docs", "search", "downgraded"),
         _record("local:docs", "search", "denied"),
         _record("local:docs", "search", "denied-timeout"),
     ]
@@ -152,6 +161,32 @@ def test_excludes_non_agent_and_non_approved_decisions():
     assert report.recommendations == []
     assert report.approval_records == 0
     assert ("local:docs", "search") not in report.excluded
+
+
+def test_session_grant_reuse_does_not_count_as_another_human_approval():
+    tool = _tool("local:docs", "search")
+    records = [
+        _record("local:docs", "search", "approved"),
+        _record("local:docs", "search", "approved-session"),
+        _record("local:docs", "search", "approved-session"),
+    ]
+    report = build_permission_prompt_report(
+        records, [tool], {("local:docs", "search"): _state("ask")}
+    )
+    assert report.recommendations == []
+    assert report.approval_records == 1
+
+
+def test_legacy_or_changed_fingerprint_approvals_cannot_support_suggestion():
+    tool = _tool("local:docs", "search")
+    records = [
+        dict(_record("local:docs", "search", "approved"), definition_hash=None),
+        dict(_record("local:docs", "search", "approved"), definition_hash="a" * 64),
+    ]
+    report = build_permission_prompt_report(
+        records, [tool], {("local:docs", "search"): _state("ask")}
+    )
+    assert report.recommendations == []
 
 
 def test_excludes_missing_stale_or_unexecutable_live_tools():
@@ -282,3 +317,95 @@ def test_format_report_summarizes_all_exclusion_reasons():
         "permission state unavailable (1)",
     ):
         assert explanation in rendered
+
+
+def test_excludes_high_risk_tagged_tools_even_when_plainly_ask_gated():
+    """TASK-18928 AC#4: "never suggested" is a CLASS guarantee, not only the
+    rug-pull/downgrade flag. ``resolve_effective_state`` floors an
+    INHERITED allow to ask (risk_floored=True), but a high-risk-tagged tool
+    sitting at plain ask under the global default resolves
+    risk_floored=False -- the reducer must still refuse to suggest it,
+    because accepting would write exactly the tool-level allow the risk
+    floor deliberately spares that origin from."""
+    tool = _tool("local:docs", "write_file", tags=("mutates",))
+    records = [
+        _record("local:docs", "write_file", "approved"),
+        _record("local:docs", "write_file", "approved"),
+    ]
+    states = {("local:docs", "write_file"): _state("ask")}
+
+    report = build_permission_prompt_report(records, [tool], states)
+
+    assert report.recommendations == []
+    assert report.excluded[("local:docs", "write_file")] == "high-risk-floor"
+
+
+def test_excludes_always_ask_tools_by_identity():
+    """The code-owned ALWAYS_ASK set (floors even explicit allows) is shared
+    with the reducer: its members are never suggested either."""
+    tool = _tool("local:__local__", "character_save")
+    records = [
+        _record("local:__local__", "character_save", "approved"),
+        _record("local:__local__", "character_save", "approved"),
+    ]
+    states = {("local:__local__", "character_save"): _state("ask")}
+
+    report = build_permission_prompt_report(records, [tool], states)
+
+    assert report.recommendations == []
+    assert report.excluded[("local:__local__", "character_save")] == "high-risk-floor"
+
+
+@pytest.mark.parametrize("source", ["producer", "raw_record"])
+@pytest.mark.parametrize(
+    "field, original, sanitized",
+    [
+        ("tool_name", "secret_search", "invalid"),
+        ("server_key", "local:secret_docs", "invalid"),
+        ("tool_name", " search ", "search"),
+        ("server_key", " local:docs ", "local:docs"),
+    ],
+)
+def test_lossy_audit_identity_cannot_support_another_tool(
+    tmp_path, source, field, original, sanitized
+):
+    live_server = sanitized if field == "server_key" else "local:docs"
+    live_name = sanitized if field == "tool_name" else "search"
+    tool = _tool(live_server, live_name)
+    kwargs = dict(
+        server_key=live_server,
+        tool_name=live_name,
+        initiator="agent",
+        decision="approved",
+        ok=True,
+        duration_ms=1,
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    if source == "producer":
+        kwargs[field] = original
+        record = build_record(**kwargs)
+    else:
+        record = replace(
+            build_record(**kwargs),
+            **{field: original},
+            definition_hash=kwargs["definition_hash"],
+        )
+    log = MCPExecutionLog(tmp_path / "audit.jsonl")
+    log.append(record)
+    log.append(record)
+    rows = log.read_recent()
+    assert len(rows) == 2
+    assert all(row[field] == sanitized for row in rows)
+    report = build_permission_prompt_report(
+        rows, [tool], {(live_server, live_name): _state("ask")}
+    )
+    assert report.recommendations == []
+
+
+def test_legacy_sentinel_identity_never_qualifies_even_with_matching_hash():
+    tool = _tool("local:docs", "invalid")
+    rows = [_record("local:docs", "invalid", "approved") for _ in range(2)]
+    report = build_permission_prompt_report(
+        rows, [tool], {("local:docs", "invalid"): _state("ask")}
+    )
+    assert report.recommendations == []

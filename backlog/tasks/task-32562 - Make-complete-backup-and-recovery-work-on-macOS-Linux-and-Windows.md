@@ -1,13 +1,15 @@
 ---
 id: TASK-32562
 title: Make complete backup and recovery work on macOS Linux and Windows
-status: In Progress
-created_date: 2026-09-12 16:36
+status: Done
+assignee: []
+created_date: '2026-09-12 16:36'
+updated_date: '2026-10-02 01:08'
 labels:
-- backup-recovery
+  - backup-recovery
+dependencies: []
 references:
-- https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-15 08:05
+  - 'https://github.com/rmusser01/tldw_chatbook/pull/2642'
 ---
 
 ## Description
@@ -35,6 +37,7 @@ ADR: update existing backlog/decisions/126-complete-local-backup-and-recovery.md
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Linux product baseline at 98b5 failed actual installed F9 with missing fcntl.F_FULLFSYNC, not merely component refusal. Reviewed Linux fix commit5b7e60d96: 39 native tests passed on supplied host. First product run then found installed package directories0775 from remoteumask0002; corrected only private driver umask077 with failed receipts preserved. Actual mounted F9 archive creation/readback/resumed writes now passed23.94s; full F9/roundtrip/rollback still running. Windows Actions run34706507112 atce115673e executed25cases:20passed,5failed,0skips with two installed package hash receipts. Native WinError5 ACL hardening and WinError87 directory rename under correction, plus requiredSYSTEMROOT subprocess environment and missing adapter integration. Reviewer additionally found inherited-only public ACL and query-only directory barrier defects; both assigned to native implementer. No platform completion claim.
 Linux actual product evidence for source5b7e60d96: installed F9 backup/restore/open all3 modes passed, combined replacement and later rollback passed, final two-profile capture/restore/open passed after removing group/other-write only from disposable codeload source directories. Raw fixtures/logs remain private on Linux host; automatic review rejected unnecessary bulk transfer. macOS facade regression:81native/crypto tests and3actual installed F9 modes passed. Private SQLite regression3failures reproduced unchanged on clean ce115673e baseline; current324passed. Windows run34706507112 actual25cases20pass5fail; native round1 fixes and remaining facade/path/SQLite reader integration now under review. Work remains In Progress; no completion based on component-only tests.
@@ -389,11 +392,16 @@ Final backup-diagnostic contract correction independently APPROVED: root exact o
 Final remote verification confirms04e2pushed/openagainstdev but GitHub reportsCONFLICTING. Read-only merge-tree againstcurrentdev4e4558bff21a6c158432df4e08dad73b832eea79 proves the sole conflict is concurrent appended lessons-textual.md entries. Other application files merge automatically. Resolve only the shared lesson document through Backlog MCP by preserving full currentdev document plus the already-reviewed backup lesson; no110-file dev/application integration is needed. Verify both exact prefixes/entries retained and local merge-tree+remote PR mergeability after commit. Existing user conflict-resolution authorization covers this documentation-only reconciliation; Models proposal remains untouched.
 Documentation conflict verification: merely combining both appended endings retained text but Git still reported overlapping EOF additions. Moved the unchanged backup lesson before the first existing lesson, retaining upstream document byte-for-byte after removing that one inserted entry. A private three-way git merge-file proof now returns0 and exactly the candidate content. This changes only chapter placement in the shared lesson; all application/tests/workflows unchanged. Amend only the unpublished documentation commit, then verify merge-tree and remote PR state before claiming conflict resolution.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+Cross-platform backup/recovery implementation was merged in PR #2642 on 2026-09-16 (merge 24094f23d59c7a9d3cfac964c19fd263bc0393b2). Its three acceptance criteria were already checked; the In Progress status was stale. Later backup work and native credential qualification were completed in PR #2935/TASK-33422. This closure adds no product changes or new test claims.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Python local backup/recovery and all original UAT findings are implemented with revision-qualified macOS, Linux SSH and Windows Actions evidence. Native identity/publication protections and explicit credential/replacement/rollback review remain. Latest dc96b Windows59native+16product and Linux10 pass, including installed F9 backup/restore/Open; earlier2031d installed captures and earlier encrypted/replacement/rollback journeys retain verified sources. Final receipts independently verify artifact and installed-source hashes. The stale backup diagnostic CI contract is also corrected and reviewed: root5PASS, independent5PASS,7invalid workflow mutations rejected, no new static findings. PR2642 remains open againstdev, unmerged; task stays In Progress pending PR checks. Separate Windows Models startup fails and its fixture proposal remains unapplied after automatic approval review rejected scope expansion, pending explicit user approval. No Go or new backup feature scope.
+Cross-platform backup/recovery implementation was merged in PR #2642 on 2026-09-16 (merge 24094f23d59c7a9d3cfac964c19fd263bc0393b2). Its three acceptance criteria were already checked; the In Progress status was stale. Later backup work and native credential qualification were completed in PR #2935/TASK-33422. This closure adds no product changes or new test claims.
 <!-- SECTION:FINAL_SUMMARY:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->

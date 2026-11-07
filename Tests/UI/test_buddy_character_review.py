@@ -1,5 +1,6 @@
 """Mounted Buddy conversion review and cancellation contracts."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -489,8 +490,29 @@ async def test_unavailable_destination_releases_import_dialog_slot(
         _notify=Mock(),
     )
     if shared_picker:
-        with pytest.raises(OSError, match="profile unavailable"):
-            await PersonasScreen._import_dialog_worker(screen)
+        # Frame slice B2b: the one Import picker's worker serves every kind.
+        # On dev this OSError escaped the Characters picker's worker, which
+        # closed the app; now the picker still opens, and only a Buddy pick
+        # is refused, with dev's own words.
+        shown = []
+
+        async def no_pick(picker):
+            shown.append(picker)
+            return None
+
+        screen.app = SimpleNamespace(push_screen_wait=no_pick)
+        screen._roleplay_import_running = True
+        screen._import_intent_now = lambda: (0, 0)
+        await PersonasScreen._roleplay_import_worker(screen)
+        assert len(shown) == 1
+        assert not screen._roleplay_import_running
+        refused = await PersonasScreen._route_roleplay_import(
+            screen, Path("pack.tldw-persona-vpack"), None, (0, 0)
+        )
+        assert refused is False
+        screen._notify.assert_called_once_with(
+            "Buddy source or destination is unavailable.", "error"
+        )
     else:
         await workflow.review_buddy_character(screen, archive=True)
         screen._notify.assert_called_once()

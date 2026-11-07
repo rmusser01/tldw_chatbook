@@ -1,0 +1,19 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/Architecture/test_module_size_ratchet.py",
+      "Tests/UI/test_design_token_governance.py",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/private/tmp/mixins-f70-final/static-pytest"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "exit_code": 0,
+    "seconds": 33.418,
+    "log": "/private/tmp/mixins-f70-final/static-0.log"
+  }
+]

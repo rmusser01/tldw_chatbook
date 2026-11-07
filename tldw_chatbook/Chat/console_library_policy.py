@@ -182,3 +182,30 @@ def normalize_policy_read(raw_policy: object) -> ConsoleLibraryPolicyReadResult:
         snapshot=_safe_snapshot(source="unavailable", error_code=error_code),
         durable_policy=None,
     )
+
+
+def repairs_missing_policy(
+    authority: ConsoleLibraryPolicySnapshot,
+    candidate: ConsoleLibraryPolicyCandidate,
+) -> bool:
+    """Whether a turn's commit may write its conversation's missing policy row.
+
+    TASK-33620.3: a legacy or imported conversation has no Library-policy row,
+    so its sends run under the safe Never/Blocked snapshot (source
+    ``missing``). The durable commit used to refuse every such turn. It may
+    instead write that same safe policy as the conversation's first row --
+    but only that: any other candidate is a staged change nobody saved.
+
+    Args:
+        authority: The Library policy the turn was frozen under.
+        candidate: The policy values the session would persist.
+
+    Returns:
+        True only for the safe missing-row default on both sides.
+    """
+    safe = (ConsoleAutoRetrieve.NEVER, ConsoleAssistantLibraryAccess.BLOCKED)
+    return (
+        authority.source == "missing"
+        and (authority.auto_retrieve, authority.assistant_access) == safe
+        and (candidate.auto_retrieve, candidate.assistant_access) == safe
+    )

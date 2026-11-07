@@ -383,7 +383,9 @@ class TestSemanticSearchEnhancedMapping:
         tools = MCPTools.__new__(MCPTools)
         tools.rag_service = service
 
-        results = await tools.perform_rag_search("anything")  # use_semantic defaults True
+        results = await tools.perform_rag_search(
+            "anything"
+        )  # use_semantic defaults True
 
         assert results == [
             {

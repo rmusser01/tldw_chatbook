@@ -132,7 +132,9 @@ def test_symlink_escape_is_indistinguishable_from_missing(script_service, tmp_pa
         # "Supporting file path too long: ..." message.
     ],
 )
-def test_validator_rejection_is_indistinguishable_from_missing(script_service, bad_path):
+def test_validator_rejection_is_indistinguishable_from_missing(
+    script_service, bad_path
+):
     """A `validate_supporting_file_path` rejection must carry the SAME error
     KIND as a genuinely missing file (Qodo #871 finding 3).
 
@@ -320,7 +322,9 @@ async def test_scratch_root_config_knob_is_reachable(
 
 
 @pytest.mark.asyncio
-async def test_scratch_root_inside_skill_directory_is_rejected(script_service, monkeypatch):
+async def test_scratch_root_inside_skill_directory_is_rejected(
+    script_service, monkeypatch
+):
     """A configured scratch root inside a skill's own bundle must be rejected.
 
     PROBED regression: pointing `[skills] script_scratch_root` at a path
@@ -540,9 +544,7 @@ def test_plan_for_script_does_not_read_the_whole_file_into_memory(
     _skill_dir, path = service._resolve_script(name, "scripts/hello.py")
 
     def _forbidden_read_bytes(self, *args, **kwargs):
-        raise AssertionError(
-            "_plan_for_script must not read_bytes() the whole file"
-        )
+        raise AssertionError("_plan_for_script must not read_bytes() the whole file")
 
     monkeypatch.setattr(PathModule, "read_bytes", _forbidden_read_bytes)
 
@@ -650,7 +652,9 @@ async def test_scope_service_forwards_explicit_console_output_root(
 
 
 @pytest.mark.asyncio
-async def test_scope_enforce_run_script_denies_when_policy_off(script_scope_service_denied):
+async def test_scope_enforce_run_script_denies_when_policy_off(
+    script_scope_service_denied,
+):
     from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
     scope, _name = script_scope_service_denied

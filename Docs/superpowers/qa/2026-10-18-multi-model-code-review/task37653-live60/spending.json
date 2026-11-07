@@ -1,0 +1,54 @@
+{
+ "task": "TASK-37653",
+ "date": "2026-11-02",
+ "head": "949ddbc452a42fe6c1de85fad4095c82ceeb76d7",
+ "history_before": {
+  "requests": 484,
+  "children": 33,
+  "retired_unused_requests": 131
+ },
+ "runs": [
+  {
+   "invocation": "live60",
+   "attempt": "attempt-_2f9i5ac",
+   "owner_grant": "60 requests / 3 children",
+   "generation_requests": 40,
+   "by_model": {
+    "unsloth/Qwen3.8-27B-GGUF:Q8_0": 27,
+    "gpt-6-luna": 6,
+    "deepseek-flash": 7,
+    "claude-haiku-5-5": 0
+   },
+   "metadata_gets": 6,
+   "children": 2,
+   "result": "live_report_incomplete_V1 (harness never installed the report presenter)",
+   "retired_unused": {
+    "requests": 20,
+    "children": 1
+   }
+  },
+  {
+   "invocation": "live60b",
+   "attempt": "attempt-tnqqou64",
+   "owner_grant": "60 requests / 3 children",
+   "generation_requests": 50,
+   "by_model": {
+    "unsloth/Qwen3.8-27B-GGUF:Q8_0": 25,
+    "gpt-6-luna": 6,
+    "deepseek-flash": 8,
+    "claude-haiku-5-5": 11
+   },
+   "children": 3,
+   "result": "observations_saved: verifier sealed, unified report expands R2-F1..F3 once each",
+   "retired_unused": {
+    "requests": 10,
+    "children": 0
+   }
+  }
+ ],
+ "history_after": {
+  "requests": 574,
+  "children": 38,
+  "retired_unused_requests": 161
+ }
+}

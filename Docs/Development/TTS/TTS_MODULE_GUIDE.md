@@ -330,7 +330,7 @@ Slice 2B does not provide character-assignment UI or authority acquisition,
 roleplay routing, profile/card portability or synchronization, legacy-provider
 profile execution, provider connection details, or managed audio.cpp process
 behavior. See
-[ADR-028](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md).
+[ADR-294](../../../backlog/decisions/294-character-tts-generation-profile-ownership.md).
 
 ### Slice 3A assignment mutation service
 

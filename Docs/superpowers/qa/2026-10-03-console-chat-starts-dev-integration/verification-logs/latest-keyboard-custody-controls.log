@@ -1,0 +1,8 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+6.98s call     Tests/UI/test_console_cost_chip_screen.py::test_keyboard_send_cancels_idle_refresh_before_run_starts
+5.18s call     Tests/UI/test_console_cost_chip_screen.py::test_runtime_custody_cancels_before_validating_and_leaves_other_chat_idle
+4.37s call     Tests/UI/test_console_cost_chip_screen.py::test_refused_send_cancels_idle_refresh_and_next_idle_edit_rearms
+
+(6 durations < 1s hidden.)
+3 passed in 20.11s

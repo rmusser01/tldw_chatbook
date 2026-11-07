@@ -1,0 +1,8 @@
+import os,sys
+sys.path.insert(0,os.getcwd())
+import pytest
+class Profile:
+ def pytest_collection_modifyitems(self,items):
+  for item in items:item.add_marker(pytest.mark.bootstrap_profile)
+nodes=['Tests/Tools/test_character_tool_service.py::test_avatar_resolution_stays_cold_until_tool_use','Tests/Tools/test_character_tool_service.py::test_save_with_generated_avatar_is_one_write','Tests/Tools/test_character_tool_service.py::test_create_generate_avatar_without_description_or_prompt_fails_but_saves_text','Tests/Tools/test_character_tool_service.py::test_create_over_limit_validates_before_avatar_generation','Tests/Tools/test_character_tool_service.py::test_create_with_remove_avatar_reports_none','Tests/Tools/test_character_tool_service.py::test_save_reports_avatar_failure_but_keeps_text','Tests/Tools/test_character_tool_service.py::test_approval_summary_survives_a_broken_image_config','Tests/Tools/test_character_tool_service.py::test_malformed_avatar_never_reaches_the_backend','Tests/UI/test_console_command_composer.py::test_console_prompt_command_unique_exact_name_replaces_draft','Tests/UI/test_console_command_composer.py::test_console_prompt_command_uses_shared_dialog_and_shared_value','Tests/UI/test_console_command_composer.py::test_console_prompt_command_use_original_keeps_placeholders','Tests/UI/test_console_prompt_picker.py::test_console_picker_captures_ordinary_segment_draft_at_opening','Tests/UI/test_console_prompt_picker.py::test_console_picker_refuses_when_draft_changes_after_opening']
+raise SystemExit(pytest.main(nodes+['-q','--tb=short','-p','no:cacheprovider','--basetemp=/private/tmp/mixins-final-cold-controls-tmp'],plugins=[Profile()]))

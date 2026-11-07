@@ -46,6 +46,7 @@ def install_adapters() -> tuple[OwnerAdapter, ...]:
     factories = (
         ("DB.recovery_core", "core_adapters"),
         ("DB.recovery_operations", "recovery_adapters"),
+        ("DB.recovery_dreams_guardian", "recovery_adapters"),
         ("Backup_Recovery.config_adapter", "recovery_adapters"),
         ("Backup_Recovery.recovered_media", "recovery_adapters"),
         ("Backup_Recovery.rag_inventory", "recovery_adapters"),

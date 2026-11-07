@@ -1,5 +1,7 @@
 """Capture mode must preserve selected private provider history at dispatch."""
 
+import asyncio
+import sqlite3
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -184,8 +186,38 @@ async def replay_harness(tmp_path, monkeypatch, request):
     try:
         yield harness
     finally:
-        await gateway.aclose()
-        database.close()
+        try:
+            await controller.shutdown()
+        finally:
+            try:
+                await gateway.aclose()
+            finally:
+                with database.quiesce_connections(timeout_seconds=2.0):
+                    pass
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_replay_harness_retires_held_worker_native_connection(
+    tmp_path, monkeypatch
+):
+    fixture = replay_harness.__wrapped__(
+        tmp_path, monkeypatch, SimpleNamespace(param=(True, "thinking"))
+    )
+    harness = await anext(fixture)
+    try:
+        # Retain the worker handle so GC cannot stand in for native retirement.
+        worker_connection = await asyncio.to_thread(harness.database.get_connection)
+        assert worker_connection is not harness.database.get_connection()
+        await fixture.aclose()
+
+        assert harness.database.registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connection.execute("SELECT 1")
+    finally:
+        await fixture.aclose()
+        with harness.database.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio

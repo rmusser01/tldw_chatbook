@@ -1,0 +1,1 @@
+warning: in the working copy of 'backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md', LF will be replaced by CRLF the next time Git touches it

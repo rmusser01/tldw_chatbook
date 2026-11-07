@@ -1,0 +1,89 @@
+{
+  "attempt": 1,
+  "createdAt": "2026-11-03T02:22:30Z",
+  "databaseId": 41565707823,
+  "event": "pull_request",
+  "headSha": "97a53c67aefeb64fab42eca1592dc2cf7d6bff46",
+  "job": {
+    "completedAt": "2026-11-03T03:09:07Z",
+    "conclusion": "failure",
+    "databaseId": 125692942270,
+    "name": "PR Fast Lane (admission-sensitive)",
+    "startedAt": "2026-11-03T02:51:28Z",
+    "status": "completed",
+    "steps": [
+      {
+        "completedAt": "2026-11-03T02:51:29Z",
+        "conclusion": "success",
+        "name": "Set up job",
+        "number": 1,
+        "startedAt": "2026-11-03T02:51:29Z",
+        "status": "completed"
+      },
+      {
+        "completedAt": "2026-11-03T02:51:53Z",
+        "conclusion": "success",
+        "name": "Run actions/checkout@v4",
+        "number": 2,
+        "startedAt": "2026-11-03T02:51:29Z",
+        "status": "completed"
+      },
+      {
+        "completedAt": "2026-11-03T02:51:55Z",
+        "conclusion": "success",
+        "name": "Run actions/setup-python@v5",
+        "number": 3,
+        "startedAt": "2026-11-03T02:51:53Z",
+        "status": "completed"
+      },
+      {
+        "completedAt": "2026-11-03T02:52:09Z",
+        "conclusion": "success",
+        "name": "Install fast-lane dependencies",
+        "number": 4,
+        "startedAt": "2026-11-03T02:51:55Z",
+        "status": "completed"
+      },
+      {
+        "completedAt": "2026-11-03T03:09:05Z",
+        "conclusion": "failure",
+        "name": "Run admission-sensitive suites",
+        "number": 5,
+        "startedAt": "2026-11-03T02:52:09Z",
+        "status": "completed"
+      },
+      {
+        "completedAt": "2026-11-03T03:09:05Z",
+        "conclusion": "skipped",
+        "name": "Post Run actions/setup-python@v5",
+        "number": 9,
+        "startedAt": "2026-11-03T03:09:05Z",
+        "status": "completed"
+      },
+      {
+        "completedAt": "2026-11-03T03:09:05Z",
+        "conclusion": "success",
+        "name": "Post Run actions/checkout@v4",
+        "number": 10,
+        "startedAt": "2026-11-03T03:09:05Z",
+        "status": "completed"
+      },
+      {
+        "completedAt": "2026-11-03T03:09:05Z",
+        "conclusion": "success",
+        "name": "Complete job",
+        "number": 11,
+        "startedAt": "2026-11-03T03:09:05Z",
+        "status": "completed"
+      }
+    ],
+    "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41565707823/job/125692942270"
+  },
+  "updatedAt": "2026-11-03T02:41:20Z",
+  "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41565707823",
+  "retained_log": {
+    "path": "/private/tmp/mixins-97a-admission1.log",
+    "sha256": "b813f101396299b2970d29844f98488788b32018353205b00ec690ecd63322b1",
+    "bytes": 147562
+  }
+}

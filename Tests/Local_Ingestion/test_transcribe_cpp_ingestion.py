@@ -230,7 +230,11 @@ def test_parse_worker_preserves_bounded_stt_failure_and_failed_attempt(
         failed_attempt=failed_attempt,
     )
 
-    def fail(_path: str, _options: dict[str, object]) -> None:
+    # (TASK-20973) ``run_parse_job`` now forwards the threaded
+    # ``url_provenance`` keyword to the parse seam; the stub keeps
+    # **kwargs so it tracks the real signature without naming every
+    # parameter.
+    def fail(_path: str, _options: dict[str, object], **_kwargs: object) -> None:
         raise error
 
     monkeypatch.setattr(local_file_ingestion, "parse_local_file_for_ingest", fail)

@@ -139,9 +139,7 @@ class ResearchSourceInspectorModal(
                     id="research-source-annotation-list",
                 )
                 with Horizontal(id="research-source-annotation-actions"):
-                    yield Button(
-                        "New annotation", id="research-source-annotation-new"
-                    )
+                    yield Button("New annotation", id="research-source-annotation-new")
                     yield Button(
                         "Delete annotation",
                         id="research-source-annotation-delete",
@@ -199,11 +197,7 @@ class ResearchSourceInspectorModal(
     def select_annotation(self, event: Select.Changed) -> None:
         annotation_id = str(event.value or "")
         annotation = next(
-            (
-                item
-                for item in self.annotations
-                if item.annotation_id == annotation_id
-            ),
+            (item for item in self.annotations if item.annotation_id == annotation_id),
             None,
         )
         self._selected_annotation_id = annotation_id if annotation is not None else ""
@@ -212,8 +206,12 @@ class ResearchSourceInspectorModal(
         )
         if annotation is None:
             return
-        self.query_one("#research-source-annotation-quote", Input).value = annotation.quote
-        self.query_one("#research-source-annotation-note", TextArea).text = annotation.note
+        self.query_one(
+            "#research-source-annotation-quote", Input
+        ).value = annotation.quote
+        self.query_one(
+            "#research-source-annotation-note", TextArea
+        ).text = annotation.note
 
     @on(Button.Pressed, "#research-source-annotation-new")
     def new_annotation(self) -> None:

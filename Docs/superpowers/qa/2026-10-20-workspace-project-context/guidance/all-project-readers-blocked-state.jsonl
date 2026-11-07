@@ -1,0 +1,501 @@
+{"screen": "ChatScreen", "size": [180, 50], "active_session": "b1d09be5-1632-4b73-a9f3-6d332b1e9b47"}
+{"id": "nav-overflow-hint-left", "type": "Static", "display": false, "text": "‹"}
+{"id": "nav-destination-strip", "type": "Horizontal", "display": true, "text": ""}
+{"id": "nav-home", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-console", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-library", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-personas", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-watchlists_collections", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-schedules", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-workflows", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-mcp", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-acp", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-lab", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-logs", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-settings", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-research", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-meetings", "type": "NavigationButton", "display": true, "text": ""}
+{"id": "nav-overflow-hint", "type": "Button", "display": true, "text": ""}
+{"id": "screen-content", "type": "Container", "display": true, "text": ""}
+{"id": "console-shell", "type": "Vertical", "display": true, "text": ""}
+{"id": "console-workbench-header", "type": "DestinationHeader", "display": true, "text": ""}
+{"id": "workbench-header-title", "type": "Static", "display": true, "text": "Console"}
+{"id": "workbench-header-subtitle", "type": "Static", "display": true, "text": "— Chat, source handoffs, live runs, and control actions."}
+{"id": "console-speech-controls", "type": "ConsoleSpeechControls", "display": true, "text": ""}
+{"id": "console-auto-speak-control", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-auto-speak-label", "type": "Static", "display": true, "text": "Speak replies"}
+{"id": "console-auto-speak", "type": "Switch", "display": true, "text": ""}
+{"id": "console-hands-free-control", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-hands-free-label", "type": "Static", "display": true, "text": "Hands-free"}
+{"id": "console-hands-free-switch", "type": "Switch", "display": true, "text": ""}
+{"id": "workbench-header-status", "type": "Static", "display": true, "text": "Running"}
+{"id": "console-workbench-mode-strip", "type": "ModeStrip", "display": false, "text": ""}
+{"id": "workbench-mode-provider", "type": "Static", "display": true, "text": "Provider: DeepSeek"}
+{"id": "workbench-mode-model", "type": "Static", "display": true, "text": "Model: deepseek-flash"}
+{"id": "workbench-mode-assistant", "type": "Static", "display": true, "text": "Assistant: General"}
+{"id": "workbench-mode-rag", "type": "Static", "display": true, "text": "Library · Auto off · Agent access off"}
+{"id": "workbench-mode-sources", "type": "Static", "display": true, "text": "Sources: 0"}
+{"id": "workbench-mode-tools", "type": "Static", "display": true, "text": "Tools: —"}
+{"id": "workbench-mode-approvals", "type": "Static", "display": true, "text": "Approvals: 0 pending"}
+{"id": "console-workbench-command-strip", "type": "CommandStrip", "display": false, "text": ""}
+{"id": "workbench-action-new-tab", "type": "Button", "display": true, "text": ""}
+{"id": "workbench-action-settings", "type": "Button", "display": true, "text": ""}
+{"id": "workbench-action-hooks", "type": "Button", "display": true, "text": ""}
+{"id": "workbench-action-attach-context", "type": "Button", "display": true, "text": ""}
+{"id": "workbench-action-run-library-rag", "type": "Button", "display": true, "text": ""}
+{"id": "workbench-action-send", "type": "Button", "display": true, "text": ""}
+{"id": "workbench-action-stop", "type": "Button", "display": true, "text": ""}
+{"id": "workbench-action-help", "type": "Button", "display": true, "text": ""}
+{"id": "workbench-recovery-callout", "type": "RecoveryCallout", "display": false, "text": ""}
+{"id": "workbench-recovery-title", "type": "Static", "display": true, "text": ""}
+{"id": "workbench-recovery-body", "type": "Static", "display": true, "text": ""}
+{"id": "workbench-recovery-action", "type": "Button", "display": false, "text": ""}
+{"id": "console-title", "type": "Static", "display": false, "text": "Console"}
+{"id": "console-purpose", "type": "Static", "display": false, "text": "Agent workbench for chat, source handoffs, live runs, and control actions."}
+{"id": "console-status-row", "type": "Static", "display": false, "text": "Console | Agentic control surface | Chat-first | Local runtime"}
+{"id": "console-mode-bar", "type": "Static", "display": false, "text": "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools — | Approvals 0 | Run: Agent running."}
+{"id": "console-control-bar", "type": "ConsoleControlBar", "display": true, "text": ""}
+{"id": "console-control-action-row", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-control-new-tab", "type": "Button", "display": true, "text": ""}
+{"id": "console-control-settings", "type": "Button", "display": true, "text": ""}
+{"id": "console-control-hooks", "type": "Button", "display": true, "text": ""}
+{"id": "console-control-attach-context", "type": "Button", "display": true, "text": ""}
+{"id": "console-control-run-library-rag", "type": "Button", "display": true, "text": ""}
+{"id": "console-control-help", "type": "Button", "display": true, "text": ""}
+{"id": "console-auto-speak-row", "type": "Horizontal", "display": false, "text": ""}
+{"id": "console-auto-speak-retry", "type": "Button", "display": false, "text": ""}
+{"id": "console-auto-speak-resume", "type": "Button", "display": false, "text": ""}
+{"id": "console-control-status-line", "type": "Static", "display": false, "text": "Provider: DeepSeek | Model: deepseek-flash | Assistant: General | Library · Auto off · Agent access off | Sources: 0 | Tools: — | Approvals: 0 pending"}
+{"id": "console-provider-label", "type": "Static", "display": false, "text": "Provider: DeepSeek"}
+{"id": "console-model-label", "type": "Static", "display": false, "text": "Model: deepseek-flash"}
+{"id": "console-assistant-label", "type": "Static", "display": false, "text": "Assistant: General"}
+{"id": "console-rag-label", "type": "Static", "display": false, "text": "Library · Auto off · Agent access off"}
+{"id": "console-sources-label", "type": "Static", "display": false, "text": "Sources: 0"}
+{"id": "console-tools-label", "type": "Static", "display": false, "text": "Tools: —"}
+{"id": "console-approvals-label", "type": "Static", "display": false, "text": "Approvals: 0 pending"}
+{"id": "console-compact-model-bar", "type": "CompactModelBar", "display": false, "text": ""}
+{"id": "compact-api-provider", "type": "Select", "display": true, "text": ""}
+{"id": "label", "type": "NonSelectableStatic", "display": true, "text": "DeepSeek"}
+{"id": "compact-api-model", "type": "Select", "display": true, "text": ""}
+{"id": "label", "type": "NonSelectableStatic", "display": true, "text": "deepseek-v4-flash"}
+{"id": "compact-temperature", "type": "Input", "display": true, "text": ""}
+{"id": "compact-sidebar-toggle", "type": "Button", "display": true, "text": ""}
+{"id": "console-workspace-grid", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-context-rail-handle", "type": "ConsoleRailHandle", "display": false, "text": ""}
+{"id": "console-context-rail-open", "type": "Button", "display": false, "text": ""}
+{"id": "console-context-rail-badge", "type": "Static", "display": false, "text": "workspace"}
+{"id": "console-left-rail", "type": "ConsoleLeftRail", "display": true, "text": ""}
+{"id": "console-context-rail-collapse", "type": "Button", "display": true, "text": ""}
+{"id": "console-agent-fleet-summary", "type": "Static", "display": false, "text": ""}
+{"id": "console-terminal-open", "type": "Button", "display": true, "text": ""}
+{"id": "console-left-rail-body", "type": "_ContextOuterBody", "display": true, "text": ""}
+{"id": "console-rail-section-header-workspace", "type": "DestinationRailSectionHeader", "display": true, "text": ""}
+{"id": "console-rail-section-title-workspace", "type": "Static", "display": true, "text": "Workspaces"}
+{"id": "console-rail-section-toggle-workspace", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-workspace", "type": "_ContextBoundedSection", "display": false, "text": ""}
+{"id": "console-rail-section-body-workspace", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-workspaces-context", "type": "ConsoleWorkspaceContextTray", "display": true, "text": ""}
+{"id": "console-active-workspace", "type": "ConsoleWorkspaceStatusPair", "display": true, "text": ""}
+{"id": "console-active-workspace-label", "type": "Static", "display": true, "text": "Workspace"}
+{"id": "console-active-workspace-value", "type": "Static", "display": true, "text": "Synthetic project"}
+{"id": "console-workspace-action-row", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-change-workspace", "type": "Button", "display": true, "text": ""}
+{"id": "console-new-workspace", "type": "Button", "display": true, "text": ""}
+{"id": "console-workspace-rag-scope-open", "type": "Button", "display": true, "text": ""}
+{"id": "console-workspace-files-row", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-workspace-files-open", "type": "Button", "display": true, "text": ""}
+{"id": "console-workspace-search", "type": "ConsoleBrowserSearchInput", "display": true, "text": ""}
+{"id": "console-workspace-tree", "type": "ConsoleWorkspaceTree", "display": true, "text": ""}
+{"id": "console-bounded-section-workspace-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-rail-section-header-conversations", "type": "DestinationRailSectionHeader", "display": true, "text": ""}
+{"id": "console-rail-section-title-conversations", "type": "Static", "display": true, "text": "Conversations"}
+{"id": "console-rail-section-toggle-conversations", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-conversations", "type": "_ContextBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-conversations-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-rail-section-body-conversations", "type": "Vertical", "display": true, "text": ""}
+{"id": "console-workspace-context", "type": "ConsoleWorkspaceContextTray", "display": true, "text": ""}
+{"id": "console-new-workspace-conversation", "type": "Button", "display": true, "text": ""}
+{"id": "console-archive-chat", "type": "Button", "display": true, "text": ""}
+{"id": "console-open-archive", "type": "Button", "display": true, "text": ""}
+{"id": "console-search-all", "type": "Button", "display": true, "text": ""}
+{"id": "console-workspace-selected-conversation", "type": "Static", "display": true, "text": "No active conversation."}
+{"id": "console-workspace-conversation-search-row", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-workspace-conversation-search", "type": "ConsoleBrowserSearchInput", "display": true, "text": ""}
+{"id": "console-workspace-conversation-search-clear", "type": "Button", "display": true, "text": ""}
+{"id": "console-workspace-conversations", "type": "Vertical", "display": true, "text": ""}
+{"id": "console-conversation-browser-chats-title", "type": "Static", "display": true, "text": "Chats"}
+{"id": "console-conversation-browser-section-toggle-chats", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-conversations-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-rail-section-header-character", "type": "DestinationRailSectionHeader", "display": true, "text": ""}
+{"id": "console-rail-section-title-character", "type": "Static", "display": true, "text": "Character · No chats"}
+{"id": "console-rail-section-toggle-character", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-character", "type": "_ContextBoundedSection", "display": false, "text": ""}
+{"id": "console-bounded-section-character-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-rail-section-body-character", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-character-avatar-frame", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-character-avatar", "type": "ClickableAvatarBox", "display": true, "text": ""}
+{"id": "console-character-avatar-empty", "type": "Static", "display": false, "text": ""}
+{"id": "console-character-name", "type": "Static", "display": false, "text": "No character in this chat"}
+{"id": "console-character-identity", "type": "Static", "display": true, "text": "No current character · Local · No open chat"}
+{"id": "console-character-reaction-state", "type": "Static", "display": true, "text": "Reaction: Automatic"}
+{"id": "console-character-reaction-open", "type": "Button", "display": true, "text": ""}
+{"id": "console-character-context", "type": "ConsoleCharacterContext", "display": true, "text": ""}
+{"id": "console-character-search", "type": "Input", "display": true, "text": ""}
+{"id": "console-character-open-roleplay", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-character-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-rail-section-header-model", "type": "DestinationRailSectionHeader", "display": true, "text": ""}
+{"id": "console-rail-section-title-model", "type": "Static", "display": true, "text": "Model"}
+{"id": "console-rail-section-toggle-model", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-model", "type": "_ContextBoundedSection", "display": false, "text": ""}
+{"id": "console-bounded-section-model-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-rail-section-body-model", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-model-section-temperature", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-model-section-max-tokens", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-model-section-streaming", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-model-section-recovery", "type": "Static", "display": true, "text": "Ready · not tested"}
+{"id": "console-generation-recovery-row", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-retry-generation-settings", "type": "Button", "display": true, "text": ""}
+{"id": "console-context-recovery-row", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-context-recovery-copy", "type": "Static", "display": true, "text": "Not saved: context settings"}
+{"id": "console-retry-context-settings", "type": "Button", "display": true, "text": ""}
+{"id": "console-default-recovery-row", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-default-recovery-copy", "type": "Static", "display": true, "text": ""}
+{"id": "console-retry-default-save", "type": "Button", "display": false, "text": ""}
+{"id": "console-discard-default-retry", "type": "Button", "display": false, "text": ""}
+{"id": "console-refresh-running-app", "type": "Button", "display": false, "text": ""}
+{"id": "console-dismiss-default-refresh", "type": "Button", "display": false, "text": ""}
+{"id": "console-rail-system-line", "type": "Static", "display": true, "text": "System: none ▸"}
+{"id": "console-model-section-configure", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-model-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-rail-section-header-agent", "type": "DestinationRailSectionHeader", "display": true, "text": ""}
+{"id": "console-rail-section-title-agent", "type": "Static", "display": true, "text": "Agent"}
+{"id": "console-rail-section-toggle-agent", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-agent", "type": "_ContextBoundedSection", "display": false, "text": ""}
+{"id": "console-bounded-section-agent-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-rail-section-body-agent", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-agent-section-status", "type": "Static", "display": true, "text": "Agent: setup"}
+{"id": "console-agent-section-steps", "type": "Static", "display": true, "text": ""}
+{"id": "console-agent-cancel-all", "type": "Button", "display": false, "text": ""}
+{"id": "console-agent-steering-bar", "type": "ConsoleAgentSteeringBar", "display": false, "text": ""}
+{"id": "console-agent-steering-input", "type": "Input", "display": true, "text": ""}
+{"id": "console-agent-steering-queued", "type": "Static", "display": false, "text": ""}
+{"id": "console-agent-steering-note", "type": "Static", "display": false, "text": ""}
+{"id": "console-agent-drilldown-back", "type": "Button", "display": false, "text": ""}
+{"id": "console-agent-view-full-log", "type": "Button", "display": false, "text": ""}
+{"id": "console-agent-progress", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-agent-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-rail-section-header-details", "type": "DestinationRailSectionHeader", "display": true, "text": ""}
+{"id": "console-rail-section-title-details", "type": "Static", "display": true, "text": "Details"}
+{"id": "console-rail-section-toggle-details", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-details", "type": "_ContextBoundedSection", "display": false, "text": ""}
+{"id": "console-bounded-section-details-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-rail-section-body-details", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-workspace-details", "type": "ConsoleWorkspaceDetailsTray", "display": true, "text": ""}
+{"id": "console-workspace-default-persona", "type": "Button", "display": true, "text": ""}
+{"id": "console-workspace-default-persona-scope", "type": "Static", "display": true, "text": "Applies to future new conversations."}
+{"id": "console-workspace-authority-label", "type": "Static", "display": true, "text": "Storage"}
+{"id": "console-workspace-authority-value", "type": "Static", "display": true, "text": "local"}
+{"id": "console-workspace-runtime-label", "type": "Static", "display": true, "text": "Local files"}
+{"id": "console-workspace-runtime-value", "type": "Static", "display": true, "text": "Private scratch + 1 folder"}
+{"id": "console-workspace-server-features-collapsed", "type": "Static", "display": true, "text": "Server features (sync, handoff, ACP): not configured. Chats stay local."}
+{"id": "console-workspace-handoff-title", "type": "Static", "display": true, "text": "Handoff"}
+{"id": "console-workspace-handoff-rows", "type": "Vertical", "display": true, "text": ""}
+{"id": "console-workspace-handoff-0", "type": "Static", "display": true, "text": "all-project-readers-blocked - reference"}
+{"id": "console-bounded-section-details-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-left-rail-outer-hint", "type": "Static", "display": true, "text": "▼ Conversations · +4"}
+{"id": "console-main-column", "type": "ProviderContinuationTranscriptRegion", "display": true, "text": ""}
+{"id": "console-transcript-region", "type": "Vertical", "display": true, "text": ""}
+{"id": "console-trace-title", "type": "Static", "display": true, "text": "Trace capture blocked"}
+{"id": "console-trace-status", "type": "Static", "display": true, "text": "Choose one action."}
+{"id": "console-trace-actions", "type": "Vertical", "display": true, "text": ""}
+{"id": "console-trace-save-send", "type": "Button", "display": false, "text": ""}
+{"id": "console-trace-retry", "type": "Button", "display": false, "text": ""}
+{"id": "console-trace-compact-send", "type": "Button", "display": false, "text": ""}
+{"id": "console-trace-send-uncompacted", "type": "Button", "display": false, "text": ""}
+{"id": "console-trace-send-without", "type": "Button", "display": false, "text": ""}
+{"id": "console-trace-cancel", "type": "Button", "display": false, "text": ""}
+{"id": "console-continuation-title", "type": "Static", "display": true, "text": "Interrupted tool run"}
+{"id": "console-continuation-impact", "type": "Static", "display": true, "text": ""}
+{"id": "console-continuation-status", "type": "Static", "display": true, "text": "Choose an action to continue."}
+{"id": "console-continuation-actions", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-continuation-resume", "type": "Button", "display": true, "text": ""}
+{"id": "console-continuation-take-over", "type": "Button", "display": true, "text": ""}
+{"id": "console-continuation-discard", "type": "Button", "display": true, "text": ""}
+{"id": "console-continuation-reload", "type": "Button", "display": true, "text": ""}
+{"id": "console-session-surface", "type": "ConsoleSessionSurface", "display": true, "text": ""}
+{"id": "console-transcript-title", "type": "Static", "display": true, "text": "Conversation | all-project-readers-blocked"}
+{"id": "console-tab-overflow-left", "type": "Static", "display": true, "text": "◂"}
+{"id": "console-native-tab-strip", "type": "ConsoleSessionTabStrip", "display": true, "text": ""}
+{"id": "console-session-tab-c209893c-c37b-4c8f-8abf-812829ba7b6e", "type": "ConsoleSessionTabButton", "display": true, "text": ""}
+{"id": "console-close-session-tab-c209893c-c37b-4c8f-8abf-812829ba7b6e", "type": "Button", "display": true, "text": ""}
+{"id": "console-session-tab-b1d09be5-1632-4b73-a9f3-6d332b1e9b47", "type": "ConsoleSessionTabButton", "display": true, "text": ""}
+{"id": "console-close-session-tab-b1d09be5-1632-4b73-a9f3-6d332b1e9b47", "type": "Button", "display": true, "text": ""}
+{"id": "console-new-chat-tab", "type": "Button", "display": true, "text": ""}
+{"id": "console-new-temporary-tab", "type": "Button", "display": true, "text": ""}
+{"id": "console-tab-overflow-right", "type": "Static", "display": true, "text": "▸"}
+{"id": "console-fleet-coachmark", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-fleet-coachmark-text", "type": "Static", "display": true, "text": "Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior)."}
+{"id": "console-fleet-coachmark-dismiss", "type": "Button", "display": true, "text": ""}
+{"id": "console-task-surface", "type": "ChatTaskCards", "display": false, "text": ""}
+{"id": "chat-approval-card", "type": "ChatApprovalCard", "display": false, "text": ""}
+{"id": "approval-title", "type": "Static", "display": true, "text": "Approval required"}
+{"id": "approval-deadline", "type": "Static", "display": false, "text": ""}
+{"id": "approval-summary", "type": "Static", "display": false, "text": ""}
+{"id": "approval-batch-body", "type": "Container", "display": false, "text": ""}
+{"id": "approval-batch-rows", "type": "Vertical", "display": true, "text": ""}
+{"id": "approval-batch-actions", "type": "Horizontal", "display": true, "text": ""}
+{"id": "approval-deny-all", "type": "ApprovalActionButton", "display": true, "text": ""}
+{"id": "approval-approve-all", "type": "ApprovalActionButton", "display": true, "text": ""}
+{"id": "approval-submit", "type": "ApprovalActionButton", "display": true, "text": ""}
+{"id": "chat-skill-install-card", "type": "SkillInstallConfirmCard", "display": false, "text": ""}
+{"id": "skill-install-prompt", "type": "Static", "display": true, "text": "An agent wants to install a skill:"}
+{"id": "skill-install-url", "type": "Static", "display": true, "text": ""}
+{"id": "skill-install-note", "type": "Static", "display": true, "text": "It will be installed pending your review and cannot run until you approve it in Library > Skills."}
+{"id": "skill-install-buttons", "type": "Horizontal", "display": true, "text": ""}
+{"id": "skill-install-allow", "type": "Button", "display": true, "text": ""}
+{"id": "skill-install-deny", "type": "Button", "display": true, "text": ""}
+{"id": "chat-skill-script-card", "type": "SkillScriptConfirmCard", "display": false, "text": ""}
+{"id": "skill-script-prompt", "type": "Static", "display": true, "text": "An agent wants to run a script from a skill:"}
+{"id": "skill-script-target", "type": "Static", "display": true, "text": ""}
+{"id": "skill-script-args", "type": "Static", "display": true, "text": ""}
+{"id": "skill-script-note", "type": "Static", "display": true, "text": "It runs with a scrubbed environment in a temporary folder (not the skill's own folder); only its output comes back."}
+{"id": "skill-script-buttons", "type": "Horizontal", "display": true, "text": ""}
+{"id": "skill-script-allow", "type": "Button", "display": true, "text": ""}
+{"id": "skill-script-always", "type": "Button", "display": true, "text": ""}
+{"id": "skill-script-deny", "type": "Button", "display": true, "text": ""}
+{"id": "console-watchlists-operation-cards", "type": "Vertical", "display": true, "text": ""}
+{"id": "chat-resume-panel", "type": "ChatResumePanel", "display": false, "text": ""}
+{"id": "resume-title", "type": "Static", "display": true, "text": "Current task"}
+{"id": "resume-summary", "type": "Static", "display": true, "text": ""}
+{"id": "resume-last-step", "type": "Static", "display": true, "text": ""}
+{"id": "resume-diff-summary", "type": "Static", "display": true, "text": ""}
+{"id": "resume-next-action", "type": "Static", "display": true, "text": ""}
+{"id": "console-activity-outcome-notice", "type": "ConsoleActivityOutcomeNotice", "display": false, "text": ""}
+{"id": "console-activity-outcome-copy", "type": "Static", "display": true, "text": ""}
+{"id": "console-activity-outcome-mark-seen", "type": "Button", "display": true, "text": ""}
+{"id": "console-activity-outcome-dismiss", "type": "Button", "display": true, "text": ""}
+{"id": "console-transcript-surface", "type": "ConsoleTranscriptSurface", "display": true, "text": ""}
+{"id": "console-native-transcript", "type": "ConsoleTranscript", "display": true, "text": ""}
+{"id": "console-message-3fafcf67-cc20-427c-92a4-a78e3efeb925", "type": "ConsoleTranscriptMessage", "display": true, "text": "User  Summarize this project"}
+{"id": "console-message-header-3fafcf67-cc20-427c-92a4-a78e3efeb925", "type": "ConsoleMessageHeader", "display": true, "text": ""}
+{"id": "console-assistant-turn-485ce3be-c4fa-45cd-b35c-f9b6ce153d76", "type": "ConsoleAssistantTurnWidget", "display": true, "text": ""}
+{"id": "console-message-header-485ce3be-c4fa-45cd-b35c-f9b6ce153d76", "type": "ConsoleMessageHeader", "display": true, "text": ""}
+{"id": "console-assistant-activities-485ce3be-c4fa-45cd-b35c-f9b6ce153d76", "type": "Vertical", "display": true, "text": ""}
+{"id": "console-message-485ce3be-c4fa-45cd-b35c-f9b6ce153d76", "type": "ConsoleMarkdownMessage", "display": true, "text": ""}
+{"id": "console-assistant-adjuncts-485ce3be-c4fa-45cd-b35c-f9b6ce153d76", "type": "Vertical", "display": true, "text": ""}
+{"id": "console-transcript-jump-pill", "type": "ConsoleTranscriptJumpPill", "display": false, "text": ""}
+{"id": "console-kb-selection-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-transcript-background-effect", "type": "ConsoleBackgroundEffect", "display": true, "text": ""}
+{"id": "console-right-rail", "type": "ConsoleInspectorRail", "display": false, "text": ""}
+{"id": "console-inspector-rail-header", "type": "Horizontal", "display": false, "text": ""}
+{"id": "console-inspector-rail-collapse", "type": "Button", "display": false, "text": ""}
+{"id": "console-project-instruction-status", "type": "ConsoleProjectInstructionStatusRow", "display": false, "text": ""}
+{"id": "console-project-instruction-status-button", "type": "Button", "display": false, "text": ""}
+{"id": "console-send-authority-summary", "type": "ConsoleSendAuthoritySummary", "display": false, "text": ""}
+{"id": "console-send-authority-heading", "type": "Static", "display": false, "text": "What happens if I send now?"}
+{"id": "console-send-authority-where", "type": "Static", "display": false, "text": "Where: Synthetic project › all-project-readers-blocked"}
+{"id": "console-send-authority-scope", "type": "Static", "display": false, "text": "Scope: Everything available"}
+{"id": "console-send-authority-run", "type": "Static", "display": false, "text": "Run: Running"}
+{"id": "console-send-authority-sources", "type": "Static", "display": false, "text": "Sources: None staged"}
+{"id": "console-send-authority-approvals", "type": "Static", "display": false, "text": "Approvals: None pending"}
+{"id": "console-inspector-rail-body", "type": "_InspectorOuterBody", "display": false, "text": ""}
+{"id": "console-environment-section", "type": "ConsoleInspectorSection", "display": false, "text": ""}
+{"id": "console-inspector-section-environment-header", "type": "Horizontal", "display": false, "text": ""}
+{"id": "console-inspector-section-environment-title", "type": "Static", "display": false, "text": "Environment"}
+{"id": "console-inspector-section-environment-toggle", "type": "Button", "display": false, "text": ""}
+{"id": "console-inspector-section-environment-body", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-inspector-section-environment-view-all", "type": "Button", "display": false, "text": ""}
+{"id": "console-tasks-section", "type": "ConsoleInspectorSection", "display": false, "text": ""}
+{"id": "console-inspector-section-tasks-header", "type": "Horizontal", "display": false, "text": ""}
+{"id": "console-inspector-section-tasks-title", "type": "Static", "display": false, "text": "Tasks"}
+{"id": "console-inspector-section-tasks-toggle", "type": "Button", "display": false, "text": ""}
+{"id": "console-inspector-section-tasks-body", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-agent-section-subagents", "type": "ConsoleInspectorSection", "display": true, "text": ""}
+{"id": "console-inspector-section-agent-fleet-header", "type": "Horizontal", "display": false, "text": ""}
+{"id": "console-inspector-section-agent-fleet-title", "type": "Static", "display": false, "text": "Agents"}
+{"id": "console-inspector-section-agent-fleet-summary", "type": "Static", "display": false, "text": "Run history"}
+{"id": "console-inspector-section-agent-fleet-toggle", "type": "Button", "display": false, "text": ""}
+{"id": "console-inspector-section-agent-fleet-body", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-inspector-section-agent-fleet-view-all", "type": "Button", "display": false, "text": ""}
+{"id": "console-staged-context-tray", "type": "ConsoleStagedContextTray", "display": false, "text": ""}
+{"id": "console-staged-context-title", "type": "Static", "display": false, "text": "Sources — next send"}
+{"id": "console-staged-context-count", "type": "Static", "display": false, "text": "none"}
+{"id": "console-bounded-section-sources", "type": "ConsoleBoundedSection", "display": false, "text": ""}
+{"id": "console-bounded-section-sources-viewport", "type": "BoundedSectionViewport", "display": false, "text": ""}
+{"id": "console-staged-context-empty", "type": "Static", "display": false, "text": "No sources attached. Stage sources from Library."}
+{"id": "console-bounded-section-sources-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-library-search-region", "type": "Container", "display": false, "text": ""}
+{"id": "console-library-rag-scope", "type": "Static", "display": false, "text": "Sources: Notes, Media, Conversations (Prompts off)"}
+{"id": "console-library-rag-query-input", "type": "Input", "display": false, "text": ""}
+{"id": "console-run-library-rag", "type": "Button", "display": false, "text": ""}
+{"id": "console-retrieval-scope-row", "type": "ConsoleRetrievalScopeRow", "display": false, "text": ""}
+{"id": "console-retrieval-scope-label", "type": "Static", "display": false, "text": "Scope: everything"}
+{"id": "console-retrieval-scope-narrow", "type": "Button", "display": false, "text": ""}
+{"id": "console-run-inspector", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-run-inspector-state", "type": "ConsoleRunInspector", "display": false, "text": ""}
+{"id": "console-inspector-run-heading", "type": "Static", "display": true, "text": "Run"}
+{"id": "console-bounded-section-run", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-run-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-run-recipe", "type": "Static", "display": true, "text": "Run recipe: DeepSeek / deepseek-flash / sources not staged / tools 0 / approvals 0"}
+{"id": "console-inspector-live-work", "type": "Static", "display": true, "text": "Live work: Generating…"}
+{"id": "console-inspector-provider", "type": "Static", "display": true, "text": "Provider: ready"}
+{"id": "console-bounded-section-run-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-source-readiness-heading", "type": "Static", "display": true, "text": "Source Readiness"}
+{"id": "console-bounded-section-source-readiness", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-source-readiness-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-retrieval", "type": "Static", "display": true, "text": "Retrieval: not staged"}
+{"id": "console-bounded-section-source-readiness-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-more", "type": "ConsoleInspectorMore", "display": true, "text": ""}
+{"id": "console-inspector-more-toggle", "type": "ConsoleInspectorMoreButton", "display": true, "text": ""}
+{"id": "console-inspector-more-body", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-inspector-tools-heading", "type": "Static", "display": true, "text": "Tools"}
+{"id": "console-bounded-section-tools", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-tools-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-tools", "type": "Static", "display": true, "text": "Tools: —"}
+{"id": "console-bounded-section-tools-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-approvals-heading", "type": "Static", "display": true, "text": "Approvals"}
+{"id": "console-bounded-section-approvals", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-approvals-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-approvals", "type": "Static", "display": true, "text": "Approvals: 0 pending"}
+{"id": "console-inspector-review-approval", "type": "Button", "display": true, "text": ""}
+{"id": "console-inspector-review-approval-reason", "type": "Static", "display": true, "text": "No approval is pending."}
+{"id": "console-bounded-section-approvals-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-artifacts-heading", "type": "Static", "display": true, "text": "Artifacts"}
+{"id": "console-bounded-section-artifacts", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-artifacts-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-artifacts", "type": "Static", "display": true, "text": "Artifacts: unavailable"}
+{"id": "console-inspector-save-chatbook", "type": "Button", "display": true, "text": ""}
+{"id": "console-inspector-save-chatbook-reason", "type": "Static", "display": true, "text": "No Chatbook artifact is available."}
+{"id": "console-bounded-section-artifacts-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-selected-conversation-heading", "type": "Static", "display": true, "text": "Selected Conversation"}
+{"id": "console-bounded-section-selected-conversation", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-selected-conversation-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-conversation-source", "type": "Static", "display": true, "text": "Conversation source: saved conversation"}
+{"id": "console-inspector-resume-state", "type": "Static", "display": true, "text": "Resume state: restored from fdfdc571-085a-4ecf-983c-8388fb441367"}
+{"id": "console-bounded-section-selected-conversation-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-changes-heading", "type": "Static", "display": true, "text": "Changes"}
+{"id": "console-bounded-section-changes", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-changes-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-review-changes", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-changes-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-dictionaries-heading", "type": "Static", "display": true, "text": "Chat Dictionaries"}
+{"id": "console-bounded-section-chat-dictionaries", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-chat-dictionaries-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-dictionaries-row-0", "type": "Static", "display": true, "text": "No dictionaries in play: "}
+{"id": "console-inspector-dictionaries-attach", "type": "Button", "display": true, "text": ""}
+{"id": "console-inspector-dictionaries-detach", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-chat-dictionaries-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-worldbooks-heading", "type": "Static", "display": true, "text": "World Books"}
+{"id": "console-bounded-section-world-books", "type": "ConsoleBoundedSection", "display": true, "text": ""}
+{"id": "console-bounded-section-world-books-viewport", "type": "BoundedSectionViewport", "display": true, "text": ""}
+{"id": "console-inspector-worldbooks-row-0", "type": "Static", "display": true, "text": "No world books in play: "}
+{"id": "console-inspector-worldbooks-attach", "type": "Button", "display": true, "text": ""}
+{"id": "console-inspector-worldbooks-detach", "type": "Button", "display": true, "text": ""}
+{"id": "console-bounded-section-world-books-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-selected-turn", "type": "ConsoleSelectedTurnActivity", "display": false, "text": ""}
+{"id": "console-selected-turn-heading", "type": "Static", "display": false, "text": "Selected turn"}
+{"id": "console-selected-turn-cited-sources", "type": "Static", "display": false, "text": "Cited sources (0)"}
+{"id": "console-selected-turn-library-activity", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-selected-turn-library-activity-heading", "type": "Static", "display": false, "text": "Library activity (0 actions)"}
+{"id": "console-bounded-section-library-activity", "type": "ConsoleBoundedSection", "display": false, "text": ""}
+{"id": "console-bounded-section-library-activity-viewport", "type": "BoundedSectionViewport", "display": false, "text": ""}
+{"id": "console-library-activity-empty", "type": "Static", "display": false, "text": "No Library activity for this turn."}
+{"id": "console-bounded-section-library-activity-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-settings-summary", "type": "ConsoleSettingsSummary", "display": false, "text": ""}
+{"id": "console-settings-header", "type": "Horizontal", "display": false, "text": ""}
+{"id": "console-settings-title", "type": "Static", "display": false, "text": "Chat settings"}
+{"id": "console-settings-open", "type": "Button", "display": false, "text": ""}
+{"id": "console-bounded-section-session-settings", "type": "ConsoleBoundedSection", "display": false, "text": ""}
+{"id": "console-bounded-section-session-settings-viewport", "type": "BoundedSectionViewport", "display": false, "text": ""}
+{"id": "console-settings-readiness-row", "type": "Static", "display": true, "text": "Ready · not tested"}
+{"id": "console-settings-provider-row", "type": "Static", "display": true, "text": "Provider: DeepSeek"}
+{"id": "console-settings-model-row", "type": "Static", "display": true, "text": "Model: deepseek-flash"}
+{"id": "console-settings-context-row", "type": "Static", "display": true, "text": "Context: 10 / 32,000 tokens (assumed; window unknown); 2,048 response tokens reserved"}
+{"id": "console-settings-endpoint-row", "type": "Static", "display": true, "text": "Endpoint · Not tested"}
+{"id": "console-settings-credential-row", "type": "Static", "display": true, "text": "Credential · Present — not verified (environment variable)"}
+{"id": "console-settings-model-evidence-row", "type": "Static", "display": true, "text": "Model · Selected — not verified at this endpoint"}
+{"id": "console-settings-generation-row", "type": "Static", "display": true, "text": "Generation · Not tested"}
+{"id": "console-settings-transport-row", "type": "Static", "display": true, "text": "Streaming: on"}
+{"id": "console-settings-sampling-row", "type": "Static", "display": true, "text": "Sampling: T 0.70, P 0.95, max_tokens 2048"}
+{"id": "console-settings-identity-row", "type": "Static", "display": true, "text": "Assistant: General"}
+{"id": "console-bounded-section-session-settings-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-live-work-section", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-live-work-header", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-live-work-status-badge", "type": "Static", "display": false, "text": "Pending Console launch"}
+{"id": "console-live-work-source-readiness-title", "type": "Static", "display": false, "text": "Live work sources"}
+{"id": "console-bounded-section-live-work", "type": "ConsoleBoundedSection", "display": false, "text": ""}
+{"id": "console-bounded-section-live-work-viewport", "type": "BoundedSectionViewport", "display": false, "text": ""}
+{"id": "console-live-work-source-readiness", "type": "Container", "display": false, "text": ""}
+{"id": "console-live-work-source-wc", "type": "Static", "display": false, "text": "Watchlists: Available - Home run details."}
+{"id": "console-live-work-source-workflows", "type": "Static", "display": false, "text": "Workflows: Available - Stage run context."}
+{"id": "console-live-work-source-schedules", "type": "Static", "display": false, "text": "Schedules: Available - Open job context."}
+{"id": "console-live-work-source-acp", "type": "Static", "display": false, "text": "ACP: Blocked - Configure ACP runtime."}
+{"id": "console-live-work-source-mcp", "type": "Static", "display": false, "text": "MCP: Not wired - MCP servers."}
+{"id": "console-live-work-source-rag", "type": "Static", "display": false, "text": "RAG: Unavailable - Install embeddings."}
+{"id": "console-live-work-source-artifacts", "type": "Static", "display": false, "text": "Artifacts: Available - Launch Chatbooks."}
+{"id": "console-bounded-section-live-work-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-outer-scroll-hint", "type": "Static", "display": false, "text": ""}
+{"id": "console-inspector-rail-handle", "type": "ConsoleRailHandle", "display": true, "text": ""}
+{"id": "console-inspector-rail-open", "type": "Button", "display": true, "text": ""}
+{"id": "console-inspector-rail-badge", "type": "Static", "display": true, "text": "running"}
+{"id": "console-staged-evidence-strip", "type": "ConsoleStagedEvidenceStrip", "display": false, "text": ""}
+{"id": "console-dispatch-recovery", "type": "ConsoleDispatchRecoveryRegion", "display": true, "text": ""}
+{"id": "console-dispatch-recovery-copy", "type": "Static", "display": true, "text": ""}
+{"id": "console-dispatch-recovery-warning", "type": "Static", "display": true, "text": ""}
+{"id": "console-dispatch-recovery-actions", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-prompt-queue", "type": "ConsolePromptQueueRegion", "display": true, "text": ""}
+{"id": "console-prompt-queue-row", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-prompt-queue-summary", "type": "Static", "display": true, "text": "Queue 0/10 · Draining"}
+{"id": "console-prompt-queue-preview", "type": "Static", "display": true, "text": ""}
+{"id": "console-prompt-queue-manage", "type": "Button", "display": true, "text": ""}
+{"id": "console-prompt-queue-pause", "type": "Button", "display": true, "text": ""}
+{"id": "console-status-chips", "type": "ConsoleStatusChips", "display": true, "text": ""}
+{"id": "console-status-chip-scroll", "type": "HorizontalScroll", "display": true, "text": ""}
+{"id": "console-status-text", "type": "ConsoleStatusText", "display": true, "text": "[@click=\"segment_styled('run')\"]Run: Agent running.[/] · [@click=\"segment_styled('provider')\"]Provider: DeepSeek[/] · [@click=\"segment_styled('model')\"]Model: deepseek-flash[/] · [@click=\"segment_styled('system-prompt')\"]System Prompt: off[/] · [@click=\"segment_styled('assistant')\"]Assistant: General[/] · [@click=\"segment_styled('sources')\"][dim]Sources: 0[/dim][/] · [@click=\"segment_styled('approvals')\"][dim]Approvals: 0 pending[/dim][/] · [@click=\"segment_styled('cost')\"][dim]Context 0% · Current 0 tok · On next send unavailable[/dim][/]"}
+{"id": "console-status-scroll-left", "type": "Button", "display": true, "text": ""}
+{"id": "console-status-scroll-right", "type": "Button", "display": true, "text": ""}
+{"id": "console-native-composer", "type": "ConsoleComposerBar", "display": true, "text": ""}
+{"id": "console-composer-expanded", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-composer-collapse", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-composer-menu", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-command-visible-text", "type": "Static", "display": true, "text": "▌Ask, command, or paste task..."}
+{"id": "console-composer-recovery", "type": "Static", "display": false, "text": ""}
+{"id": "console-voice-status", "type": "Static", "display": false, "text": ""}
+{"id": "console-raw-cli-status", "type": "Static", "display": false, "text": ""}
+{"id": "console-attachment-indicator", "type": "Static", "display": false, "text": ""}
+{"id": "console-command-input", "type": "Input", "display": false, "text": ""}
+{"id": "console-composer-status", "type": "Static", "display": false, "text": "No active Console session."}
+{"id": "console-send-disabled-reason", "type": "Static", "display": true, "text": "Wait for the current run to finish"}
+{"id": "console-composer-actions", "type": "Horizontal", "display": true, "text": ""}
+{"id": "console-send-message", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-dictation", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-redirect-generation", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-stop-generation", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-clear-attachment", "type": "ComposerControlButton", "display": false, "text": ""}
+{"id": "console-composer-collapsed", "type": "Horizontal", "display": false, "text": ""}
+{"id": "console-composer-expand", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-composer-collapsed-status", "type": "Static", "display": true, "text": "Composer hidden"}
+{"id": "console-collapsed-stop-generation", "type": "ComposerControlButton", "display": false, "text": ""}
+{"id": "console-prompt-improvement-recovery", "type": "Horizontal", "display": false, "text": ""}
+{"id": "console-prompt-improvement-status", "type": "Static", "display": true, "text": "Draft improved"}
+{"id": "console-prompt-improvement-undo", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-prompt-improvement-review", "type": "ComposerControlButton", "display": true, "text": ""}
+{"id": "console-command-popup", "type": "ConsoleCommandPopup", "display": false, "text": ""}
+{"id": "console-command-popup-options", "type": "OptionList", "display": true, "text": ""}
+{"id": "console-setup-modal", "type": "ConsoleSetupModal", "display": false, "text": ""}
+{"id": "console-setup-modal-card", "type": "Vertical", "display": false, "text": ""}
+{"id": "console-setup-modal-title", "type": "Static", "display": false, "text": "Get started"}
+{"id": "console-setup-modal-subtitle", "type": "Static", "display": false, "text": "A provider is the AI service that answers your messages — for example OpenAI, Anthropic, or a server running on this computer.\nCloud setup opens Settings and comes back here, except for custom endpoints. Press Enter to use the highlighted action."}
+{"id": "console-setup-modal-staged-notice", "type": "Static", "display": false, "text": ""}
+{"id": "console-setup-step-1", "type": "Static", "display": false, "text": ""}
+{"id": "console-setup-step-2", "type": "Static", "display": false, "text": ""}
+{"id": "console-setup-step-3", "type": "Static", "display": false, "text": ""}
+{"id": "console-setup-modal-action", "type": "Button", "display": false, "text": ""}
+{"id": "console-setup-modal-notes-action", "type": "Button", "display": false, "text": ""}
+{"id": "console-setup-modal-detected-action", "type": "Button", "display": false, "text": ""}
+{"id": "screen-footer-status", "type": "AppFooterStatus", "display": true, "text": ""}
+{"id": "footer-key-quit", "type": "Static", "display": true, "text": "Ctrl+G stop run | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q"}
+{"id": "footer-spacer", "type": "Static", "display": true, "text": ""}
+{"id": "footer-word-count", "type": "Static", "display": false, "text": ""}
+{"id": "footer-token-count", "type": "Static", "display": false, "text": ""}
+{"id": "internal-db-size-indicator", "type": "Static", "display": false, "text": ""}

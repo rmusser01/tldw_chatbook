@@ -1,0 +1,162 @@
+{
+  "dev_commit": "2f0b142d42cfff88ad4cd44aa04cd9afe068fdf4",
+  "schema_version": 84,
+  "common_pytest_args": [
+    "-q",
+    "-o",
+    "addopts=",
+    "-p",
+    "no:cacheprovider",
+    "--tb=short",
+    "--show-capture=no"
+  ],
+  "runs": {
+    "schema_recovery": {
+      "passed": 89,
+      "failed": 0,
+      "seconds": 45.2,
+      "pytest_args": [
+        "Tests/ChaChaNotesDB/test_portrait_performance_migration.py",
+        "Tests/ChaChaNotesDB/test_portrait_regions_migration.py",
+        "Tests/Backup_Recovery/test_core_owners.py",
+        "Tests/ChaChaNotesDB/test_canvas_migration.py",
+        "Tests/DB/test_response_rules_migration.py"
+      ],
+      "log_sha256": "6051b6b938fb4406476bfaeba96e284764fbea42a50f4f72c07cba09cafb5a18"
+    },
+    "core_exports_packaging": {
+      "passed": 122,
+      "failed": 2,
+      "seconds": 23.37,
+      "pytest_args": [
+        "Tests/Character_Chat/test_portrait_compositing.py",
+        "Tests/Character_Chat/test_portrait_performance.py",
+        "Tests/Character_Chat/test_portrait_performance_authoring.py",
+        "Tests/Character_Chat/test_portrait_performance_generation.py",
+        "Tests/ChaChaNotesDB/test_portrait_performance_repository.py",
+        "Tests/ChaChaNotesDB/test_portrait_region_settings.py",
+        "Tests/Actor_Packs/test_actor_pack_export.py",
+        "Tests/Character_Chat/test_character_backup_export_image.py",
+        "Tests/Chatbooks/test_local_chatbook_service_export.py",
+        "Tests/DB/test_schema_table_allowlist_guard.py",
+        "Tests/Packaging/test_profile_core_packaging.py",
+        "--import-mode=importlib"
+      ],
+      "log_sha256": "2c42bcae4e41d8a76da0aaa1ef4a29549532e9c1afc174cba2540dbb1e82b386"
+    },
+    "speech_ownership_renderer": {
+      "passed": 323,
+      "failed": 0,
+      "seconds": 25.51,
+      "pytest_args": [
+        "Tests/Audio/test_speech_presentation.py",
+        "Tests/Audio/test_streaming_sink.py",
+        "Tests/Audio/test_streaming_sink_presentation.py",
+        "Tests/TTS/test_console_speech_presentation.py",
+        "Tests/TTS/test_buddy_guarded_speech.py",
+        "Tests/TTS/test_console_speak_autoplay.py",
+        "Tests/TTS/test_console_speech_snapshot_admission.py",
+        "Tests/TTS_Events/test_spoken_feedback_streaming.py",
+        "Tests/Chat/test_portrait_performance_state.py",
+        "Tests/Utils/test_mosaic_render.py"
+      ],
+      "log_sha256": "4b90e65cdf21776692f7b9533f90c26c4f304ffd25fd7a5b81150468c49b7947"
+    },
+    "portrait_authoring": {
+      "passed": 80,
+      "failed": 0,
+      "seconds": 174.03,
+      "pytest_args": [
+        "Tests/UI/test_portrait_region_editor.py",
+        "Tests/UI/test_personas_portrait_performance_generate.py",
+        "Tests/UI/test_portrait_composition_review.py",
+        "Tests/UI/test_personas_portrait_performance.py"
+      ],
+      "log_sha256": "1ae47bb1fe9ccf7d5fc5ac2df09bb55dc8fe630358c2a048d4ddf9559440c671"
+    },
+    "console_adjacent": {
+      "passed": 53,
+      "failed": 6,
+      "seconds": 182.91,
+      "pytest_args": [
+        "Tests/UI/test_console_portrait_performance.py",
+        "Tests/UI/test_console_radio_portrait.py",
+        "Tests/UI/test_console_partial_resize.py",
+        "Tests/UI/test_console_resize_reflow.py::test_production_bounded_rail_resize_reconciles_geometry_and_focus",
+        "Tests/UI/test_console_resize_reflow.py::test_console_live_resize_converges_to_cold_start_layout",
+        "Tests/UI/test_personas_editor_save_in_place.py",
+        "Tests/UI/test_personas_pending_save_drafts.py",
+        "Tests/UI/test_personas_pending_avatar_saves.py",
+        "Tests/UI/test_console_hands_free_wiring.py::test_countdown_chip_painted_and_two_stage_send_drives_real_flow"
+      ],
+      "log_sha256": "ab5d077e94c01a6cc45855e70917a9b749c9e0f096f1ca4418d19b458d127986"
+    },
+    "live_probe_controls": {
+      "passed": 10,
+      "failed": 0,
+      "seconds": 0.38,
+      "pytest_args": [
+        "Tests/ProductionApp/test_portrait_live_probe.py"
+      ],
+      "log_sha256": "0bc71eae01baba759f0487603ef9ba23810c47cd33eb5a89dec4026aaf08963f"
+    },
+    "css_tokens": {
+      "passed": 13,
+      "failed": 0,
+      "seconds": 26.19,
+      "pytest_args": [
+        "Tests/UI/test_css_bundle_sync_guard.py",
+        "Tests/UI/test_design_token_governance.py"
+      ],
+      "log_sha256": "baf3cac251b42992057d340c9a898c86f85ea7f54f9d067014e28c24d957b1db"
+    },
+    "prompt_boundaries": {
+      "passed": 15,
+      "failed": 0,
+      "seconds": 0.42,
+      "pytest_args": [
+        "Tests/Character_Chat/test_expression_generation.py",
+        "Tests/Character_Chat/test_portrait_performance_generation.py"
+      ],
+      "log_sha256": "1c0c1e50aff5c6b526a2cc1202e5bee1ed0085155468b29fc3bb9dd57e4a7c29"
+    },
+    "native_restore_original": {
+      "passed": 1,
+      "failed": 0,
+      "seconds": 51.19,
+      "pytest_args": [
+        "Tests/Backup_Recovery/test_portrait_performance_restore.py"
+      ],
+      "log_sha256": "d10c056b6da1668e425ffb9fde7202fefc3a7fc5a3db94cb48a519a1cc06b80e"
+    },
+    "legacy_handsfree_standalone": {
+      "passed": 10,
+      "failed": 43,
+      "seconds": 16.0,
+      "pytest_args": [
+        "Tests/UI/test_console_hands_free_wiring.py"
+      ],
+      "log_sha256": "7062d844c14656a282d961d09c0af1afe7f32723f2b6633787d7af60444b5f5e"
+    }
+  },
+  "installed_authoring_console": {
+    "passed": 1,
+    "combined_initial_run": {
+      "passed": 1,
+      "failed": 1,
+      "seconds": 127.38
+    },
+    "evidence": "installed-journey.json",
+    "note": "The initial native child timed out after validated restore; diagnostic 54.35s and original isolated 51.19s runs passed with original timeouts. Temporary step instrumentation was removed byte-for-byte."
+  },
+  "distinct_passing_feature_integration_tests": 704,
+  "count_note": "Includes the installed authoring and final original restore nodes; three repeated prompt nodes count once. Excludes diagnostic/repeated/partial runs and the extra standalone legacy wiring passes.",
+  "broader_failed_nodes": 51,
+  "dev_failed_nodes": 52,
+  "branch_only_failed_nodes": [],
+  "full_suite_run": false,
+  "live_image_requests": 0,
+  "live_adapter_qualified": false,
+  "new_live_tts_or_hardware_qualification": false,
+  "historical_capture_hashes_unchanged": 15
+}

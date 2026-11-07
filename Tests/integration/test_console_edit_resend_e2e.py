@@ -95,9 +95,7 @@ def _resume_into_fresh_store(db: CharactersRAGDB, conversation_id: str):
 async def test_console_edit_and_resend_full_lifecycle_persist_resume_swipe(tmp_path):
     db = CharactersRAGDB(str(tmp_path / "chat.db"), "test_client")
     try:
-        store, controller, session = _new_controller(
-            db, replies=["A1", "edited-reply"]
-        )
+        store, controller, session = _new_controller(db, replies=["A1", "edited-reply"])
 
         # ---- Step 1: send U1 -> A1 (linear) ----
         result1 = await controller.submit_draft("U1")
@@ -145,15 +143,11 @@ async def test_console_edit_and_resend_full_lifecycle_persist_resume_swipe(tmp_p
 
         # ---- Step 3: swipe the USER row: `<` to the old branch, `>` back ----
         store.set_active_leaf(session.id, store._leaf_under(u1.id))
-        old_branch_view = [
-            m.content for m in store.messages_for_session(session.id)
-        ]
+        old_branch_view = [m.content for m in store.messages_for_session(session.id)]
         assert old_branch_view == ["U1", "A1"]
 
         store.set_active_leaf(session.id, store._leaf_under(new_user_id))
-        new_branch_view = [
-            m.content for m in store.messages_for_session(session.id)
-        ]
+        new_branch_view = [m.content for m in store.messages_for_session(session.id)]
         assert new_branch_view == ["edited prompt", "edited-reply"]
 
         conversation_id = session.persisted_conversation_id
@@ -178,16 +172,13 @@ async def test_console_edit_and_resend_full_lifecycle_persist_resume_swipe(tmp_p
             resumed_new_user.id
         )
         assert resumed_count == 2
-        resumed_u1 = next(
-            s for s in resumed_sibs if s.id != resumed_new_user.id
-        )
+        resumed_u1 = next(s for s in resumed_sibs if s.id != resumed_new_user.id)
         assert resumed_u1.content == "U1"
         resumed_store.set_active_leaf(
             resumed_session.id, resumed_store._leaf_under(resumed_u1.id)
         )
         assert [
-            m.content
-            for m in resumed_store.messages_for_session(resumed_session.id)
+            m.content for m in resumed_store.messages_for_session(resumed_session.id)
         ] == ["U1", "A1"]
         # Swipe back to the edited branch before moving on.
         resumed_store.set_active_leaf(
@@ -210,8 +201,7 @@ async def test_console_edit_and_resend_full_lifecycle_persist_resume_swipe(tmp_p
         assert after_count == before_count  # no new branch created
         assert resumed_store.get_message(resumed_edited_user_id).content == "typo fix"
         assert [
-            m.content
-            for m in resumed_store.messages_for_session(resumed_session.id)
+            m.content for m in resumed_store.messages_for_session(resumed_session.id)
         ] == ["typo fix"]
         assert db.get_message_by_id(stale_reply_persisted_id) is None
     finally:

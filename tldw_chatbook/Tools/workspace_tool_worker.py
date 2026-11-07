@@ -339,9 +339,7 @@ def _sanitized_domain_error(error: LocalToolError, root_locator: object) -> str:
         message = message.replace(root_text + separator, "")
     message = message.replace(root_text, ".")
     message = "".join(
-        character
-        for character in message
-        if unicodedata.category(character) != "Cc"
+        character for character in message if unicodedata.category(character) != "Cc"
     )
     return message[:_MAX_DOMAIN_ERROR_CHARS] or "workspace operation failed"
 

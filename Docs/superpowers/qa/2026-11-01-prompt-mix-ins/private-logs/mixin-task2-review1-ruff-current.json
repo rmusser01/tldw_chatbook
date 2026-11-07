@@ -1,0 +1,4968 @@
+[
+  {
+    "cell": null,
+    "code": "N999",
+    "end_location": {
+      "column": 1,
+      "row": 1
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Invalid module name: 'Prompts_Interop'",
+    "name": "invalid-module-name",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-module-name"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 26,
+      "row": 36
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "import json\nimport logging  # Retained for example, but loguru is preferred\nimport os  # For example usage\nimport re\nimport tempfile  # For example usage\nfrom pathlib import Path\nfrom typing import Any, Callable, Dict, List, Optional, Tuple, Union\n\n#\n# 3rd-party Libraries\nfrom loguru import logger\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 38
+          },
+          "location": {
+            "column": 1,
+            "row": 26
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 26
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 26,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 69,
+      "row": 29
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from typing import List, Tuple, Dict, Any, Optional, Union\nfrom collections.abc import Callable",
+          "end_location": {
+            "column": 69,
+            "row": 29
+          },
+          "location": {
+            "column": 1,
+            "row": 29
+          }
+        }
+      ],
+      "message": "Import from `collections.abc`"
+    },
+    "location": {
+      "column": 1,
+      "row": 29
+    },
+    "message": "Import from `collections.abc` instead: `Callable`",
+    "name": "deprecated-import",
+    "noqa_row": 29,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 69,
+      "row": 29
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 29
+    },
+    "message": "`typing.List` is deprecated, use `list` instead",
+    "name": "deprecated-import",
+    "noqa_row": 29,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 69,
+      "row": 29
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 29
+    },
+    "message": "`typing.Tuple` is deprecated, use `tuple` instead",
+    "name": "deprecated-import",
+    "noqa_row": 29,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 69,
+      "row": 29
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 29
+    },
+    "message": "`typing.Dict` is deprecated, use `dict` instead",
+    "name": "deprecated-import",
+    "noqa_row": 29,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 58,
+      "row": 76
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from tldw_chatbook.config import get_cli_config_path\nfrom tldw_chatbook.DB.Prompts_DB import (\n    ConflictError,\n    DatabaseError,\n    InputError,\n    PromptsDatabase,\n    SchemaError,\n)\nfrom tldw_chatbook.DB.Prompts_DB import (\n    export_prompt_keywords_to_csv as db_export_prompt_keywords_to_csv,\n)\nfrom tldw_chatbook.DB.Prompts_DB import (\n    export_prompts_formatted as db_export_prompts_formatted,\n)\nfrom tldw_chatbook.DB.Prompts_DB import (\n    load_prompt_details_for_ui as db_load_prompt_details_for_ui,\n)\nfrom tldw_chatbook.DB.Prompts_DB import (\n    view_prompt_keywords_markdown as db_view_prompt_keywords_markdown,\n)\nfrom tldw_chatbook.Utils.path_validation import validate_path\n\nfrom .prompt_artifact_codec import decode_prompt_artifact\nfrom .server_prompt_adapter import (\n    local_prompt_to_preview_payload,\n    local_prompt_to_server_payload,\n    server_prompt_to_local_update,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 77
+          },
+          "location": {
+            "column": 1,
+            "row": 58
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 58
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 58,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 40,
+      "row": 82
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "PromptsDatabase | None",
+          "end_location": {
+            "column": 40,
+            "row": 82
+          },
+          "location": {
+            "column": 15,
+            "row": 82
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 15,
+      "row": 82
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 82,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 44,
+      "row": 83
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Union[str, Path] | None",
+          "end_location": {
+            "column": 44,
+            "row": 83
+          },
+          "location": {
+            "column": 18,
+            "row": 83
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 18,
+      "row": 83
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 83,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 43,
+      "row": 83
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | Path",
+          "end_location": {
+            "column": 43,
+            "row": 83
+          },
+          "location": {
+            "column": 27,
+            "row": 83
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 27,
+      "row": 83
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 83,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 33,
+      "row": 84
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 33,
+            "row": 84
+          },
+          "location": {
+            "column": 20,
+            "row": 84
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 20,
+      "row": 84
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 84,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 49,
+      "row": 95
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | Path",
+          "end_location": {
+            "column": 49,
+            "row": 95
+          },
+          "location": {
+            "column": 33,
+            "row": 95
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 33,
+      "row": 95
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 95,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 176
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 176
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 176,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 44,
+      "row": 192
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 44,
+            "row": 192
+          },
+          "location": {
+            "column": 39,
+            "row": 192
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 39,
+      "row": 192
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 192,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 58,
+      "row": 192
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | None",
+          "end_location": {
+            "column": 58,
+            "row": 192
+          },
+          "location": {
+            "column": 45,
+            "row": 192
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 45,
+      "row": 192
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 192,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 73,
+      "row": 192
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 73,
+            "row": 192
+          },
+          "location": {
+            "column": 60,
+            "row": 192
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 60,
+      "row": 192
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 192,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 26,
+      "row": 200
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 26,
+            "row": 200
+          },
+          "location": {
+            "column": 13,
+            "row": 200
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 13,
+      "row": 200
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 200,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 27,
+      "row": 201
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 27,
+            "row": 201
+          },
+          "location": {
+            "column": 14,
+            "row": 201
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 14,
+      "row": 201
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 201,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 33,
+      "row": 202
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 33,
+            "row": 202
+          },
+          "location": {
+            "column": 20,
+            "row": 202
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 20,
+      "row": 202
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 202,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 31,
+      "row": 203
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 31,
+            "row": 203
+          },
+          "location": {
+            "column": 18,
+            "row": 203
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 18,
+      "row": 203
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 203,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 34,
+      "row": 204
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "List[str] | None",
+          "end_location": {
+            "column": 34,
+            "row": 204
+          },
+          "location": {
+            "column": 15,
+            "row": 204
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 15,
+      "row": 204
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 204,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 28,
+      "row": 204
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 28,
+            "row": 204
+          },
+          "location": {
+            "column": 24,
+            "row": 204
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 24,
+      "row": 204
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 204,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 33,
+      "row": 206
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 33,
+            "row": 206
+          },
+          "location": {
+            "column": 20,
+            "row": 206
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 20,
+      "row": 206
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 206,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 41,
+      "row": 207
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | None",
+          "end_location": {
+            "column": 41,
+            "row": 207
+          },
+          "location": {
+            "column": 28,
+            "row": 207
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 28,
+      "row": 207
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 207,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 37,
+      "row": 208
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Any | None",
+          "end_location": {
+            "column": 37,
+            "row": 208
+          },
+          "location": {
+            "column": 24,
+            "row": 208
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 24,
+      "row": 208
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 208,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 33,
+      "row": 209
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 33,
+            "row": 209
+          },
+          "location": {
+            "column": 20,
+            "row": 209
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 20,
+      "row": 209
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 209,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 11,
+      "row": 211
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 11,
+            "row": 211
+          },
+          "location": {
+            "column": 6,
+            "row": 211
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 6,
+      "row": 211
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 211,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 25,
+      "row": 211
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | None",
+          "end_location": {
+            "column": 25,
+            "row": 211
+          },
+          "location": {
+            "column": 12,
+            "row": 211
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 12,
+      "row": 211
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 211,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 40,
+      "row": 211
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 40,
+            "row": 211
+          },
+          "location": {
+            "column": 27,
+            "row": 211
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 27,
+      "row": 211
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 211,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 67,
+      "row": 230
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 67,
+            "row": 230
+          },
+          "location": {
+            "column": 63,
+            "row": 230
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 63,
+      "row": 230
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 230,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 47,
+      "row": 237
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | str",
+          "end_location": {
+            "column": 47,
+            "row": 237
+          },
+          "location": {
+            "column": 32,
+            "row": 237
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 32,
+      "row": 237
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 237,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 36,
+      "row": 239
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | None",
+          "end_location": {
+            "column": 36,
+            "row": 239
+          },
+          "location": {
+            "column": 23,
+            "row": 239
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 23,
+      "row": 239
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 239,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 86,
+      "row": 269
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Dict | None",
+          "end_location": {
+            "column": 86,
+            "row": 269
+          },
+          "location": {
+            "column": 72,
+            "row": 269
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 72,
+      "row": 269
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 269,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 85,
+      "row": 269
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 85,
+            "row": 269
+          },
+          "location": {
+            "column": 81,
+            "row": 269
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 81,
+      "row": 269
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 269,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 20,
+      "row": 277
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Dict | None",
+          "end_location": {
+            "column": 20,
+            "row": 277
+          },
+          "location": {
+            "column": 6,
+            "row": 277
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 6,
+      "row": 277
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 277,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 19,
+      "row": 277
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 19,
+            "row": 277
+          },
+          "location": {
+            "column": 15,
+            "row": 277
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 15,
+      "row": 277
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 277,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 83,
+      "row": 283
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Dict | None",
+          "end_location": {
+            "column": 83,
+            "row": 283
+          },
+          "location": {
+            "column": 69,
+            "row": 283
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 69,
+      "row": 283
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 283,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 82,
+      "row": 283
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 82,
+            "row": 283
+          },
+          "location": {
+            "column": 78,
+            "row": 283
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 78,
+      "row": 283
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 283,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 11,
+      "row": 294
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 11,
+            "row": 294
+          },
+          "location": {
+            "column": 6,
+            "row": 294
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 6,
+      "row": 294
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 294,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 16,
+      "row": 294
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 16,
+            "row": 294
+          },
+          "location": {
+            "column": 12,
+            "row": 294
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 12,
+      "row": 294
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 294,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 21,
+      "row": 294
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 21,
+            "row": 294
+          },
+          "location": {
+            "column": 17,
+            "row": 294
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 17,
+      "row": 294
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 294,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 47,
+      "row": 301
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | str",
+          "end_location": {
+            "column": 47,
+            "row": 301
+          },
+          "location": {
+            "column": 32,
+            "row": 301
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 32,
+      "row": 301
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 301,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 20,
+      "row": 302
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Dict | None",
+          "end_location": {
+            "column": 20,
+            "row": 302
+          },
+          "location": {
+            "column": 6,
+            "row": 302
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 6,
+      "row": 302
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 302,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 19,
+      "row": 302
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 19,
+            "row": 302
+          },
+          "location": {
+            "column": 15,
+            "row": 302
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 15,
+      "row": 302
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 302,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 66,
+      "row": 311
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 66,
+            "row": 311
+          },
+          "location": {
+            "column": 62,
+            "row": 311
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 62,
+      "row": 311
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 311,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 10,
+      "row": 330
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 10,
+            "row": 330
+          },
+          "location": {
+            "column": 6,
+            "row": 330
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 6,
+      "row": 330
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 330,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 78,
+      "row": 348
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Dict[str, Any] | None",
+          "end_location": {
+            "column": 78,
+            "row": 348
+          },
+          "location": {
+            "column": 54,
+            "row": 348
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 54,
+      "row": 348
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 348,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 67,
+      "row": 348
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 67,
+            "row": 348
+          },
+          "location": {
+            "column": 63,
+            "row": 348
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 63,
+      "row": 348
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 348,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 30,
+      "row": 366
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Dict[str, Any] | None",
+          "end_location": {
+            "column": 30,
+            "row": 366
+          },
+          "location": {
+            "column": 6,
+            "row": 366
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 6,
+      "row": 366
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 366,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 19,
+      "row": 366
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 19,
+            "row": 366
+          },
+          "location": {
+            "column": 15,
+            "row": 366
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 15,
+      "row": 366
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 366,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 47,
+      "row": 389
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | str",
+          "end_location": {
+            "column": 47,
+            "row": 389
+          },
+          "location": {
+            "column": 32,
+            "row": 389
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 32,
+      "row": 389
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 389,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 10,
+      "row": 390
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 10,
+            "row": 390
+          },
+          "location": {
+            "column": 6,
+            "row": 390
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 6,
+      "row": 390
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 390,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 47,
+      "row": 399
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | str",
+          "end_location": {
+            "column": 47,
+            "row": 399
+          },
+          "location": {
+            "column": 32,
+            "row": 399
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 32,
+      "row": 399
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 399,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 10,
+      "row": 400
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 10,
+            "row": 400
+          },
+          "location": {
+            "column": 6,
+            "row": 400
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 6,
+      "row": 400
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 400,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 52,
+      "row": 408
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 52,
+            "row": 408
+          },
+          "location": {
+            "column": 48,
+            "row": 408
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 48,
+      "row": 408
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 408,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 71,
+      "row": 408
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 71,
+            "row": 408
+          },
+          "location": {
+            "column": 67,
+            "row": 408
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 67,
+      "row": 408
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 408,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 47,
+      "row": 432
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | str",
+          "end_location": {
+            "column": 47,
+            "row": 432
+          },
+          "location": {
+            "column": 32,
+            "row": 432
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 32,
+      "row": 432
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 432,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 62,
+      "row": 432
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 62,
+            "row": 432
+          },
+          "location": {
+            "column": 58,
+            "row": 432
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 58,
+      "row": 432
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 432,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 10,
+      "row": 433
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 10,
+            "row": 433
+          },
+          "location": {
+            "column": 6,
+            "row": 433
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 6,
+      "row": 433
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 433,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 62,
+      "row": 454
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 62,
+            "row": 454
+          },
+          "location": {
+            "column": 58,
+            "row": 454
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 58,
+      "row": 454
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 454,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 10,
+      "row": 462
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 10,
+            "row": 462
+          },
+          "location": {
+            "column": 6,
+            "row": 462
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 6,
+      "row": 462
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 462,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 32,
+      "row": 469
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 32,
+            "row": 469
+          },
+          "location": {
+            "column": 19,
+            "row": 469
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 19,
+      "row": 469
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 469,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 39,
+      "row": 470
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "List[str] | None",
+          "end_location": {
+            "column": 39,
+            "row": 470
+          },
+          "location": {
+            "column": 20,
+            "row": 470
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 20,
+      "row": 470
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 470,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 33,
+      "row": 470
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 33,
+            "row": 470
+          },
+          "location": {
+            "column": 29,
+            "row": 470
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 29,
+      "row": 470
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 470,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 35,
+      "row": 474
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 35,
+            "row": 474
+          },
+          "location": {
+            "column": 22,
+            "row": 474
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 22,
+      "row": 474
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 474,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 11,
+      "row": 475
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 11,
+            "row": 475
+          },
+          "location": {
+            "column": 6,
+            "row": 475
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 6,
+      "row": 475
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 475,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 16,
+      "row": 475
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 16,
+            "row": 475
+          },
+          "location": {
+            "column": 12,
+            "row": 475
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 12,
+      "row": 475
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 475,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 21,
+      "row": 475
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 21,
+            "row": 475
+          },
+          "location": {
+            "column": 17,
+            "row": 475
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 17,
+      "row": 475
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 475,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 51,
+      "row": 490
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | None",
+          "end_location": {
+            "column": 51,
+            "row": 490
+          },
+          "location": {
+            "column": 38,
+            "row": 490
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 38,
+      "row": 490
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 490,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 10,
+      "row": 491
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 10,
+            "row": 491
+          },
+          "location": {
+            "column": 6,
+            "row": 491
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 6,
+      "row": 491
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 491,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 15,
+      "row": 491
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 15,
+            "row": 491
+          },
+          "location": {
+            "column": 11,
+            "row": 491
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 11,
+      "row": 491
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 491,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 45,
+      "row": 497
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 45,
+            "row": 497
+          },
+          "location": {
+            "column": 41,
+            "row": 497
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 41,
+      "row": 497
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 497,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 26,
+      "row": 510
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 26,
+            "row": 510
+          },
+          "location": {
+            "column": 13,
+            "row": 510
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 13,
+      "row": 510
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 510,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 27,
+      "row": 511
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 27,
+            "row": 511
+          },
+          "location": {
+            "column": 14,
+            "row": 511
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 14,
+      "row": 511
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 511,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 33,
+      "row": 512
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 33,
+            "row": 512
+          },
+          "location": {
+            "column": 20,
+            "row": 512
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 20,
+      "row": 512
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 512,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 31,
+      "row": 513
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 31,
+            "row": 513
+          },
+          "location": {
+            "column": 18,
+            "row": 513
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 18,
+      "row": 513
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 513,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 34,
+      "row": 514
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "List[str] | None",
+          "end_location": {
+            "column": 34,
+            "row": 514
+          },
+          "location": {
+            "column": 15,
+            "row": 514
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 15,
+      "row": 514
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 514,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 28,
+      "row": 514
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 28,
+            "row": 514
+          },
+          "location": {
+            "column": 24,
+            "row": 514
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 24,
+      "row": 514
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 514,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 33,
+      "row": 515
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 33,
+            "row": 515
+          },
+          "location": {
+            "column": 20,
+            "row": 515
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 20,
+      "row": 515
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 515,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 41,
+      "row": 516
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | None",
+          "end_location": {
+            "column": 41,
+            "row": 516
+          },
+          "location": {
+            "column": 28,
+            "row": 516
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 28,
+      "row": 516
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 516,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 37,
+      "row": 517
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Any | None",
+          "end_location": {
+            "column": 37,
+            "row": 517
+          },
+          "location": {
+            "column": 24,
+            "row": 517
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 24,
+      "row": 517
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 517,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 33,
+      "row": 518
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 33,
+            "row": 518
+          },
+          "location": {
+            "column": 20,
+            "row": 518
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 20,
+      "row": 518
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 518,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 11,
+      "row": 519
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 11,
+            "row": 519
+          },
+          "location": {
+            "column": 6,
+            "row": 519
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 6,
+      "row": 519
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 519,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 25,
+      "row": 519
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | None",
+          "end_location": {
+            "column": 25,
+            "row": 519
+          },
+          "location": {
+            "column": 12,
+            "row": 519
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 12,
+      "row": 519
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 519,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 40,
+      "row": 519
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 40,
+            "row": 519
+          },
+          "location": {
+            "column": 27,
+            "row": 519
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 27,
+      "row": 519
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 519,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 11,
+      "row": 543
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 11,
+            "row": 543
+          },
+          "location": {
+            "column": 6,
+            "row": 543
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 6,
+      "row": 543
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 543,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 53,
+      "row": 552
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 53,
+            "row": 552
+          },
+          "location": {
+            "column": 48,
+            "row": 552
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 48,
+      "row": 552
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 552,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 41,
+      "row": 572
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "List[str] | None",
+          "end_location": {
+            "column": 41,
+            "row": 572
+          },
+          "location": {
+            "column": 22,
+            "row": 572
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 22,
+      "row": 572
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 572,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 35,
+      "row": 572
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 35,
+            "row": 572
+          },
+          "location": {
+            "column": 31,
+            "row": 572
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 31,
+      "row": 572
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 572,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 42,
+      "row": 578
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 42,
+            "row": 578
+          },
+          "location": {
+            "column": 29,
+            "row": 578
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 29,
+      "row": 578
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 578,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 11,
+      "row": 579
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 11,
+            "row": 579
+          },
+          "location": {
+            "column": 6,
+            "row": 579
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 6,
+      "row": 579
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 579,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 38,
+      "row": 614
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 38,
+            "row": 614
+          },
+          "location": {
+            "column": 34,
+            "row": 614
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 34,
+      "row": 614
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 614,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 57,
+      "row": 614
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 57,
+            "row": 614
+          },
+          "location": {
+            "column": 53,
+            "row": 614
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 53,
+      "row": 614
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 614,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 678
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 678
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 678,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 58,
+      "row": 686
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 58,
+            "row": 686
+          },
+          "location": {
+            "column": 54,
+            "row": 686
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 54,
+      "row": 686
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 686,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 63,
+      "row": 686
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 63,
+            "row": 686
+          },
+          "location": {
+            "column": 59,
+            "row": 686
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 59,
+      "row": 686
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 686,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 87,
+      "row": 697
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 697
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 697,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 700
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 700
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 700,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 58,
+      "row": 705
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 58,
+            "row": 705
+          },
+          "location": {
+            "column": 54,
+            "row": 705
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 54,
+      "row": 705
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 705,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 63,
+      "row": 705
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 63,
+            "row": 705
+          },
+          "location": {
+            "column": 59,
+            "row": 705
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 59,
+      "row": 705
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 705,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 729
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 729
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 729,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 75,
+      "row": 746
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Dict[str, Any] | None",
+          "end_location": {
+            "column": 75,
+            "row": 746
+          },
+          "location": {
+            "column": 51,
+            "row": 746
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 51,
+      "row": 746
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 746,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 64,
+      "row": 746
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 64,
+            "row": 746
+          },
+          "location": {
+            "column": 60,
+            "row": 746
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 60,
+      "row": 746
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 746,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 58,
+      "row": 760
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 58,
+            "row": 760
+          },
+          "location": {
+            "column": 54,
+            "row": 760
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 54,
+      "row": 760
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 760,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 62,
+      "row": 795
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 62,
+            "row": 795
+          },
+          "location": {
+            "column": 58,
+            "row": 795
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 58,
+      "row": 795
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 795,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 67,
+      "row": 795
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 67,
+            "row": 795
+          },
+          "location": {
+            "column": 63,
+            "row": 795
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 63,
+      "row": 795
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 795,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 22,
+      "row": 824
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 22,
+            "row": 824
+          },
+          "location": {
+            "column": 18,
+            "row": 824
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 18,
+      "row": 824
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 824,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "RUF019",
+    "end_location": {
+      "column": 69,
+      "row": 911
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "parsed_data.get(\"keywords_str\")",
+          "end_location": {
+            "column": 69,
+            "row": 911
+          },
+          "location": {
+            "column": 8,
+            "row": 911
+          }
+        }
+      ],
+      "message": "Replace with `dict.get`"
+    },
+    "location": {
+      "column": 8,
+      "row": 911
+    },
+    "message": "Unnecessary key check before dictionary access",
+    "name": "unnecessary-key-check",
+    "noqa_row": 911,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unnecessary-key-check"
+  },
+  {
+    "cell": null,
+    "code": "RUF051",
+    "end_location": {
+      "column": 40,
+      "row": 916
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "parsed_data.pop(\"keywords_str\", None)",
+          "end_location": {
+            "column": 40,
+            "row": 916
+          },
+          "location": {
+            "column": 5,
+            "row": 915
+          }
+        }
+      ],
+      "message": "Replace `if` statement with `.pop(..., None)`"
+    },
+    "location": {
+      "column": 9,
+      "row": 916
+    },
+    "message": "Use `pop` instead of `key in dict` followed by `del dict[key]`",
+    "name": "if-key-in-dict-del",
+    "noqa_row": 916,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/if-key-in-dict-del"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 57,
+      "row": 929
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 57,
+            "row": 929
+          },
+          "location": {
+            "column": 53,
+            "row": 929
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 53,
+      "row": 929
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 929,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 62,
+      "row": 929
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 62,
+            "row": 929
+          },
+          "location": {
+            "column": 58,
+            "row": 929
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 58,
+      "row": 929
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 929,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 53,
+      "row": 939
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 53,
+            "row": 939
+          },
+          "location": {
+            "column": 40,
+            "row": 939
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 40,
+      "row": 939
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 939,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 22,
+      "row": 954
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 22,
+            "row": 954
+          },
+          "location": {
+            "column": 18,
+            "row": 954
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 18,
+      "row": 954
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 954,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 11,
+      "row": 955
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple",
+          "end_location": {
+            "column": 11,
+            "row": 955
+          },
+          "location": {
+            "column": 6,
+            "row": 955
+          }
+        }
+      ],
+      "message": "Replace with `tuple`"
+    },
+    "location": {
+      "column": 6,
+      "row": 955
+    },
+    "message": "Use `tuple` instead of `Tuple` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 955,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 25,
+      "row": 955
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "int | None",
+          "end_location": {
+            "column": 25,
+            "row": 955
+          },
+          "location": {
+            "column": 12,
+            "row": 955
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 12,
+      "row": 955
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 955,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 40,
+      "row": 955
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 40,
+            "row": 955
+          },
+          "location": {
+            "column": 27,
+            "row": 955
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 27,
+      "row": 955
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 955,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 57,
+      "row": 998
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | Path | List[Union[str, Path]]",
+          "end_location": {
+            "column": 57,
+            "row": 998
+          },
+          "location": {
+            "column": 17,
+            "row": 998
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 17,
+      "row": 998
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 998,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 38,
+      "row": 998
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 38,
+            "row": 998
+          },
+          "location": {
+            "column": 34,
+            "row": 998
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 34,
+      "row": 998
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 998,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP007",
+    "end_location": {
+      "column": 55,
+      "row": 998
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | Path",
+          "end_location": {
+            "column": 55,
+            "row": 998
+          },
+          "location": {
+            "column": 39,
+            "row": 998
+          }
+        }
+      ],
+      "message": "Convert to `X | Y`"
+    },
+    "location": {
+      "column": 39,
+      "row": 998
+    },
+    "message": "Use `X | Y` for type annotations",
+    "name": "non-pep604-annotation-union",
+    "noqa_row": 998,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-union"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 34,
+      "row": 999
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 34,
+            "row": 999
+          },
+          "location": {
+            "column": 21,
+            "row": 999
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 21,
+      "row": 999
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 999,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 10,
+      "row": 1000
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 10,
+            "row": 1000
+          },
+          "location": {
+            "column": 6,
+            "row": 1000
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 6,
+      "row": 1000
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 1000,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 15,
+      "row": 1000
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 15,
+            "row": 1000
+          },
+          "location": {
+            "column": 11,
+            "row": 1000
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 11,
+      "row": 1000
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 1000,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 18,
+      "row": 1046
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 18,
+            "row": 1046
+          },
+          "location": {
+            "column": 14,
+            "row": 1046
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 14,
+      "row": 1046
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 1046,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 23,
+      "row": 1046
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 23,
+            "row": 1046
+          },
+          "location": {
+            "column": 19,
+            "row": 1046
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 19,
+      "row": 1046
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 1046,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 21,
+      "row": 1047
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 21,
+            "row": 1047
+          },
+          "location": {
+            "column": 17,
+            "row": 1047
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1047
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 1047,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 47,
+      "row": 1047
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list",
+          "end_location": {
+            "column": 47,
+            "row": 1047
+          },
+          "location": {
+            "column": 43,
+            "row": 1047
+          }
+        }
+      ],
+      "message": "Replace with `list`"
+    },
+    "location": {
+      "column": 43,
+      "row": 1047
+    },
+    "message": "Use `list` instead of `List` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 1047,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP006",
+    "end_location": {
+      "column": 52,
+      "row": 1047
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict",
+          "end_location": {
+            "column": 52,
+            "row": 1047
+          },
+          "location": {
+            "column": 48,
+            "row": 1047
+          }
+        }
+      ],
+      "message": "Replace with `dict`"
+    },
+    "location": {
+      "column": 48,
+      "row": 1047
+    },
+    "message": "Use `dict` instead of `Dict` for type annotation",
+    "name": "non-pep585-annotation",
+    "noqa_row": 1047,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep585-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 1118
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1118
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1118,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 1194
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 1194
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1194,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 63,
+      "row": 1437
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1437
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1437,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 65,
+      "row": 1439
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1439
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1439,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 78,
+      "row": 1440
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1440
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1440,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 46,
+      "row": 1442
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1442
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1442,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 76,
+      "row": 1444
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1444
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1444,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 79,
+      "row": 1446
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1446
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1446,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 77,
+      "row": 1456
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1456
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1456,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 10,
+      "row": 1468
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1466
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1466,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 47,
+      "row": 1471
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1471
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1471,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 14,
+      "row": 1476
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1474
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1474,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 71,
+      "row": 1477
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1477
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1477,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 75,
+      "row": 1478
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1478
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1478,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 75,
+      "row": 1480
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1480
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1480,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 10,
+      "row": 1528
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1526
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1526,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 77,
+      "row": 1530
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1530
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1530,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 56,
+      "row": 1533
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1533
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1533,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 49,
+      "row": 1536
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1536
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1536,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 10,
+      "row": 1542
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1540
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1540,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 14,
+      "row": 1546
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1544
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1544,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 64,
+      "row": 1549
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1549
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1549,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 46,
+      "row": 1551
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1551
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1551,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 40,
+      "row": 1552
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1552
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1552,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 76,
+      "row": 1557
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1557
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1557,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 14,
+      "row": 1561
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1559
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1559,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 48,
+      "row": 1564
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1564
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1564,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 71,
+      "row": 1567
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1567
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1567,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 14,
+      "row": 1571
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1569
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1569,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 14,
+      "row": 1575
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1573
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1573,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 43,
+      "row": 1578
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1578
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1578,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 50,
+      "row": 1580
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1580
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1580,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 14,
+      "row": 1584
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1582
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1582,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "LOG015",
+    "end_location": {
+      "column": 71,
+      "row": 1589
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1589
+    },
+    "message": "`info()` call on root logger",
+    "name": "root-logger-call",
+    "noqa_row": 1589,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/root-logger-call"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 1602
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Prompt_Management/Prompts_Interop.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 1602
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1602,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  }
+]

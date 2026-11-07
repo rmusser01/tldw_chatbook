@@ -1,0 +1,23 @@
+{
+  "library": [
+    "_study_source_items",
+    "_source_study_context",
+    "_source_study_handoff_titles",
+    "_has_source_study_context",
+    "_study_handoff_copy",
+    "_study_handoff_ready_copy"
+  ],
+  "chat": [
+    "_console_unknown_command_hint",
+    "_record_console_command_dispatch",
+    "_console_suggestion_usage_counts",
+    "_rank_console_command_suggestions"
+  ],
+  "files": [
+    "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py",
+    "tldw_chatbook/UI/Screens/library_screen.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py",
+    "tldw_chatbook/UI/Library_Modules/screen_helpers.py",
+    "tldw_chatbook/UI/Console_Modules/command_handoff.py"
+  ]
+}

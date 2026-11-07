@@ -1,0 +1,51 @@
+[
+  {
+    "command": [
+      "C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Scripts/ruff.exe",
+      "check",
+      "tldw_chatbook/Workspaces/project_index/service.py",
+      "Tests/Workspaces/test_project_index_service.py"
+    ],
+    "exit_code": 0,
+    "output": "review-i1-static-1.txt"
+  },
+  {
+    "command": [
+      "C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Scripts/ruff.exe",
+      "format",
+      "--check",
+      "tldw_chatbook/Workspaces/project_index/service.py",
+      "Tests/Workspaces/test_project_index_service.py"
+    ],
+    "exit_code": 0,
+    "output": "review-i1-static-2.txt"
+  },
+  {
+    "command": [
+      "git",
+      "-c",
+      "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "output": "review-i1-static-3.txt"
+  },
+  {
+    "AST_compile": [
+      "tldw_chatbook/Workspaces/project_index/service.py",
+      "Tests/Workspaces/test_project_index_service.py",
+      "Tests/Chat/test_console_chat_controller.py"
+    ],
+    "exit_code": 0
+  },
+  {
+    "base_commit": "e16100e2b3",
+    "path": "Tests/Chat/test_console_chat_controller.py",
+    "base_count": 3,
+    "current_count": 3,
+    "introduced": [],
+    "removed": [],
+    "comparison": "rule/message/exact source line; line-number shifts ignored"
+  }
+]

@@ -144,7 +144,7 @@ def _call_anthropic(monkeypatch, tmp_path, auth_source, cred_kwargs=None, api_ke
             captured["url"] = url
             captured["json"] = json
             return _FakeResp()
-    monkeypatch.setattr(mod, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(mod, "create_pooled_default_session", lambda **kwargs: _Session())
 
     result = mod.chat_with_anthropic(
         input_data=[{"role": "user", "content": "hi"}],
@@ -479,7 +479,7 @@ def test_cache_degrade_retry_preserves_oauth_beta(monkeypatch, tmp_path):
         def post(self, url, headers=None, json=None, data=None, stream=False, timeout=None, **kw):
             posts.append(headers)
             return _Resp400() if len(posts) == 1 else _Resp200()
-    monkeypatch.setattr(mod, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(mod, "create_pooled_default_session", lambda **kwargs: _Session())
 
     mod.chat_with_anthropic(
         input_data=[{"role": "user", "content": "hi"}],

@@ -18,7 +18,9 @@ def test_cap_allows_up_to_limit_then_refuses_persistently():
     assert policy.check("run-1", "web_search") == (True, None)
     assert policy.check("run-1", "web_search") == (True, None)
     ok, refusal = policy.check("run-1", "web_search")
-    assert ok is False and refusal == PERSONA_POLICY_CALL_CAP_REFUSAL.format(name="web_search")
+    assert ok is False and refusal == PERSONA_POLICY_CALL_CAP_REFUSAL.format(
+        name="web_search"
+    )
     assert policy.check("run-1", "web_search")[0] is False  # stays refused
     assert policy.check("run-2", "web_search")[0] is True  # per-run counters
     assert policy.check("run-1", "fs_read") == (True, None)  # uncapped untouched

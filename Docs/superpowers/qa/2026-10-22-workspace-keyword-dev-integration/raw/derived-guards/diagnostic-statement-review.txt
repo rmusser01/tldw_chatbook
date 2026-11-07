@@ -1,0 +1,17 @@
+tldw_chatbook/Chat/console_chat_controller.py: 69 -> 71 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 2
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + debug b8793619bd8fab20 (now line 15527)
+      | logger.debug("Project index preparation unavailable")
+  + debug 01e2062d57c54aa9 (now line 15568)
+      | logger.debug("Project index unavailable for this run binding")
+
+tldw_chatbook/Workspaces/registry_service.py: 12 -> 13 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + debug 06be657767104d9b (now line 2672)
+      | logger.debug("Project index invalidation observer failed")
+
+STDERR

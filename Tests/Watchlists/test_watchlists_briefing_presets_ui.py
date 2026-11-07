@@ -117,7 +117,9 @@ async def test_modal_lists_presets_name_ascending(tmp_path):
         assert await _wait_until(
             pilot, lambda: bool(modal.query("#bpm-preset-list Button"))
         )
-        labels = [str(button.label) for button in modal.query("#bpm-preset-list Button")]
+        labels = [
+            str(button.label) for button in modal.query("#bpm-preset-list Button")
+        ]
 
     assert labels == ["Alpha digest", "Zebra hour"]
 
@@ -194,9 +196,7 @@ async def test_duplicate_speaker_name_shows_inline_error_and_does_not_persist(
         await pilot.click("#bpm-save")
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                str(modal.query_one("#bpm-error", Static).renderable).strip()
-            ),
+            lambda: bool(str(modal.query_one("#bpm-error", Static).renderable).strip()),
         )
 
         error_content = modal.query_one("#bpm-error", Static).renderable
@@ -238,9 +238,7 @@ async def test_inline_error_paints_a_markup_shaped_speaker_name_literally(tmp_pa
         await pilot.click("#bpm-save")
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                str(modal.query_one("#bpm-error", Static).renderable).strip()
-            ),
+            lambda: bool(str(modal.query_one("#bpm-error", Static).renderable).strip()),
         )
 
         error_content = modal.query_one("#bpm-error", Static).renderable
@@ -281,9 +279,7 @@ async def test_an_overlong_preset_name_is_refused_inline_and_nothing_is_written(
         await pilot.click("#bpm-save")
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                str(modal.query_one("#bpm-error", Static).renderable).strip()
-            ),
+            lambda: bool(str(modal.query_one("#bpm-error", Static).renderable).strip()),
         )
 
         error_content = modal.query_one("#bpm-error", Static).renderable
@@ -322,7 +318,9 @@ async def test_delete_asks_confirmation_and_hard_deletes(tmp_path):
         )
         await pilot.click("#confirm-button")
 
-        assert await _wait_until(pilot, lambda: db.get_briefing_preset(preset_id) is None)
+        assert await _wait_until(
+            pilot, lambda: db.get_briefing_preset(preset_id) is None
+        )
 
         await pilot.click("#bpm-close")
         assert await _wait_until(pilot, lambda: results != [])
@@ -390,8 +388,9 @@ async def test_editing_preserves_untouched_fields(tmp_path):
         await pilot.click("#bpm-save")
         assert await _wait_until(
             pilot,
-            lambda: (db.get_briefing_preset(preset_id) or {}).get("model")
-            == "gpt-4o-mini",
+            lambda: (
+                (db.get_briefing_preset(preset_id) or {}).get("model") == "gpt-4o-mini"
+            ),
         )
 
     row = db.get_briefing_preset(preset_id)
@@ -433,8 +432,7 @@ async def test_editing_an_existing_preset_and_saving_dismisses_true(tmp_path):
         await pilot.click("#bpm-save")
         assert await _wait_until(
             pilot,
-            lambda: (db.get_briefing_preset(preset_id) or {}).get("name")
-            == "New name",
+            lambda: (db.get_briefing_preset(preset_id) or {}).get("name") == "New name",
         )
 
         await pilot.click("#bpm-close")
@@ -875,9 +873,7 @@ async def test_open_briefing_preset_manager_notifies_when_briefings_db_unavailab
 async def test_open_briefing_preset_manager_passes_built_options_to_the_modal():
     app = _build_test_app()
     fake_characters = Mock()
-    fake_characters.list_character_cards = Mock(
-        return_value=[{"id": 5, "name": "Ada"}]
-    )
+    fake_characters.list_character_cards = Mock(return_value=[{"id": 5, "name": "Ada"}])
     app.chachanotes_db = fake_characters
     fake_voice_service = Mock()
     fake_voice_service.list_profiles = AsyncMock(

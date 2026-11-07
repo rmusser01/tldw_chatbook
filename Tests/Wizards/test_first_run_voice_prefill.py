@@ -1,0 +1,808 @@
+"""TASK-34100.8: the Voice step's pure decisions.
+
+What the step prefills from the raw ``[app_tts]`` table, when Next may write
+at all (an untouched step writes nothing), what a save carries, and how a
+failed sample is explained. The mounted behaviour is pinned in
+``test_first_run_voice_step_sf3.py``.
+"""
+
+from __future__ import annotations
+
+import io
+import socket
+import threading
+import wave
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs
+
+import pytest
+
+from tldw_chatbook.UI.Wizards import first_run_voice_prefill as prefill
+from tldw_chatbook.UI.Wizards import first_run_voice_status as status
+from tldw_chatbook.UI.Wizards import first_run_voice_step_state as vs
+
+pytestmark = pytest.mark.allow_network
+
+_OFFICIAL = "https://api.openai.com/v1/audio/speech"
+
+
+def _draft(**changes: object) -> vs.VoiceSetupDraft:
+    values: dict[str, object] = {
+        "endpoint": vs.POCKET_TTS_ENDPOINT,
+        "authentication_mode": "none",
+        "model_id": vs.POCKET_TTS_MODEL,
+        "voice_id": vs.POCKET_TTS_VOICE,
+        "response_format": "wav",
+        "speed": 1.0,
+        "sample_text": vs.DEFAULT_SAMPLE_TEXT,
+        "use_as_default": False,
+    }
+    values.update(changes)
+    return vs.VoiceSetupDraft(**values)  # type: ignore[arg-type]
+
+
+# -- PocketTTS preset ------------------------------------------------------
+
+
+def test_pocket_tts_preset_targets_the_servers_native_route() -> None:
+    """voice-speech-03 root: the official server has no OpenAI route."""
+    assert vs.POCKET_TTS_ENDPOINT == "http://127.0.0.1:8000/tts"
+    pocket = vs.apply_voice_preset(
+        _draft(endpoint=_OFFICIAL, authentication_mode="api_key"),
+        vs.VOICE_PRESET_POCKET_TTS,
+    )
+    assert (pocket.endpoint, pocket.authentication_mode) == (
+        "http://127.0.0.1:8000/tts",
+        "none",
+    )
+    assert (pocket.model_id, pocket.voice_id, pocket.response_format) == (
+        "pocket-tts",
+        "alba",
+        "wav",
+    )
+
+
+# -- prefill from the raw [app_tts] table ----------------------------------
+
+
+@pytest.mark.parametrize("raw", (None, {}, {"OPENAI_ORG_ID": "org"}))
+def test_nothing_saved_prefills_no_voice(raw) -> None:
+    assert prefill.saved_voice_from_config(raw) is None
+
+
+def test_saved_official_openai_voice_prefills_the_openai_preset() -> None:
+    saved = prefill.saved_voice_from_config(
+        {
+            "OPENAI_BASE_URL": _OFFICIAL,
+            "OPENAI_AUTH_MODE": "api_key",
+            "default_provider": "openai",
+            "default_model": "tts-1-hd",
+            "default_voice": "shimmer",
+            "default_format": "mp3",
+            "default_speed": 1.0,
+        }
+    )
+
+    assert saved is not None
+    assert saved.preset == vs.VOICE_PRESET_OFFICIAL_OPENAI
+    assert saved.draft.endpoint == _OFFICIAL
+    assert saved.draft.authentication_mode == "api_key"
+    assert (saved.draft.model_id, saved.draft.voice_id) == ("tts-1-hd", "shimmer")
+    assert saved.draft.use_as_default is True
+    assert prefill.current_voice_copy(saved) == (
+        "Current voice: OpenAI · tts-1-hd · shimmer — unchanged unless you edit it."
+    )
+
+
+def test_a_default_provider_without_an_endpoint_is_the_official_openai_voice() -> None:
+    saved = prefill.saved_voice_from_config(
+        {"default_provider": "openai", "default_voice": "nova"}
+    )
+
+    assert saved is not None
+    assert saved.preset == vs.VOICE_PRESET_OFFICIAL_OPENAI
+    assert saved.draft.voice_id == "nova"
+    assert saved.draft.model_id == "tts-1-hd"  # the runtime's own fallback
+
+
+def test_saved_custom_endpoint_prefills_custom_with_its_axes() -> None:
+    saved = prefill.saved_voice_from_config(
+        {
+            "OPENAI_BASE_URL": "http://127.0.0.1:8880/v1/audio/speech",
+            "OPENAI_AUTH_MODE": "none",
+            "default_provider": "openai",
+            "default_model": "kokoro",
+            "default_voice": "af_bella",
+            "default_format": "flac",
+            "default_speed": 1.25,
+        }
+    )
+
+    assert saved is not None
+    assert saved.preset == vs.VOICE_PRESET_CUSTOM
+    assert saved.draft.endpoint == "http://127.0.0.1:8880/v1/audio/speech"
+    assert (saved.draft.model_id, saved.draft.voice_id) == ("kokoro", "af_bella")
+    assert (saved.draft.response_format, saved.draft.speed) == ("flac", 1.25)
+
+
+def test_saved_pocket_tts_endpoint_prefills_pocket_tts() -> None:
+    saved = prefill.saved_voice_from_config(
+        {"OPENAI_BASE_URL": vs.POCKET_TTS_ENDPOINT, "OPENAI_AUTH_MODE": "none"}
+    )
+
+    assert saved is not None
+    assert saved.preset == vs.VOICE_PRESET_POCKET_TTS
+    # Review round 1 (F1): with no default_provider saved the runtime reads
+    # replies with the OpenAI slot, so this IS the reply voice.
+    assert saved.draft.use_as_default is True
+
+
+_LEGACY_UNTOUCHED_WRITE = {
+    # What the old wizard wrote on every untouched Voice Next.
+    "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+    "OPENAI_AUTH_MODE": "none",
+    "default_provider": "openai",
+    "default_model": "tts-1-hd",
+    "default_voice": "shimmer",
+    "default_format": "mp3",
+}
+
+
+def test_the_old_wizards_pocket_tts_address_is_never_preselected() -> None:
+    """Review round 1 (F2): pocket-tts never serves :8765/v1/audio/speech, so
+    that table cannot speak; it must not read as a working Custom voice."""
+    saved = prefill.saved_voice_from_config(_LEGACY_UNTOUCHED_WRITE)
+
+    assert saved is not None
+    assert saved.legacy is True
+    assert saved.preset == vs.VOICE_PRESET_NONE
+    assert saved.slot_preset == vs.VOICE_PRESET_CUSTOM
+    copy = prefill.current_voice_copy(saved)
+    assert "127.0.0.1:8765" in copy
+    assert "can't speak" in copy
+    assert "unchanged unless you edit it" not in copy
+
+
+def test_the_old_wizards_write_is_named_the_same_way_wherever_it_shows() -> None:
+    """Found live (review round 1, F2 follow-up): the line under the radio
+    called it "PocketTTS at 127.0.0.1:8765", while the help under "Use this
+    voice…" said a new pick "replaces Custom endpoint 127.0.0.1:8765 ·
+    tts-1-hd · shimmer" -- one broken write, two names, the second of which
+    reads like a working voice."""
+    saved = prefill.saved_voice_from_config(_LEGACY_UNTOUCHED_WRITE)
+
+    label = prefill.voice_label(saved)
+    assert label.startswith("PocketTTS at 127.0.0.1:8765")
+    assert "Custom endpoint" not in label
+    assert "tts-1-hd" not in label
+    help_line = status.default_help_copy(
+        vs.VOICE_PRESET_POCKET_TTS, locked=True, ticked=True, replaces=label
+    )
+    assert "it replaces PocketTTS at 127.0.0.1:8765" in help_line
+
+
+def test_the_same_address_with_an_api_key_is_somebody_elses_server() -> None:
+    saved = prefill.saved_voice_from_config(
+        dict(_LEGACY_UNTOUCHED_WRITE, OPENAI_AUTH_MODE="api_key")
+    )
+
+    assert saved is not None
+    assert saved.legacy is False
+    assert saved.preset == vs.VOICE_PRESET_CUSTOM
+
+
+#: A resume checkpoint the old wizard wrote after an untouched Voice step.
+_LEGACY_CHECKPOINT = {
+    "preset": "pocket_tts",
+    "endpoint": "http://127.0.0.1:8765/v1/audio/speech",
+    "authentication_mode": "none",
+    "model_id": "pocket-tts",
+    "voice_id": "alba",
+    "response_format": "wav",
+    "speed": 1.0,
+    "sample_text": vs.DEFAULT_SAMPLE_TEXT,
+    "use_as_default": False,
+}
+
+
+@pytest.mark.parametrize(
+    ("changes", "legacy"),
+    (
+        ({}, True),
+        ({"endpoint": "http://127.0.0.1:8765/v1"}, True),  # normalizes to it
+        ({"authentication_mode": "api_key"}, False),  # somebody else's server
+        ({"preset": "custom"}, False),  # typed on purpose in the new wizard
+        ({"endpoint": vs.POCKET_TTS_ENDPOINT}, False),
+        ({"endpoint": 8765}, False),
+    ),
+)
+def test_the_old_wizards_resume_checkpoint_is_recognised(changes, legacy) -> None:
+    """Review round 2 (R2-F4): resuming an old run brought the 8765 address
+    back as a working-looking Custom voice that Next then saved."""
+    values = dict(_LEGACY_CHECKPOINT, **changes)
+
+    assert prefill.is_legacy_checkpoint(values) is legacy
+
+
+def test_another_default_provider_is_the_current_voice_even_with_an_endpoint() -> None:
+    """Review round 1 (F3): kokoro reads replies; the saved OpenAI endpoint is
+    not "the current voice", and tts-1-hd / shimmer were invented."""
+    saved = prefill.saved_voice_from_config(
+        {
+            "default_provider": "kokoro",
+            "default_voice": "af_bella",
+            "OPENAI_BASE_URL": _OFFICIAL,
+        }
+    )
+
+    assert saved is not None
+    assert saved.preset == vs.VOICE_PRESET_NONE
+    assert saved.other_provider == "kokoro"
+    assert saved.slot_preset == vs.VOICE_PRESET_OFFICIAL_OPENAI
+    assert saved.draft.use_as_default is False
+    copy = prefill.current_voice_copy(saved)
+    assert copy.startswith("Current voice: kokoro")
+    assert "tts-1-hd" not in copy and "shimmer" not in copy
+
+
+@pytest.mark.parametrize(
+    "table",
+    (
+        {"default_provider": "kokoro", "OPENAI_BASE_URL": "http://127.0.0.1:8766/tts"},
+        {"OPENAI_BASE_URL": "http://127.0.0.1:8766/tts"},
+    ),
+)
+def test_a_saved_pocket_tts_address_on_any_port_fills_pocket_tts_axes(table) -> None:
+    """Review round 2 (G8-R2-F2): the fallback model, voice and format were
+    chosen by the preset, so a /tts address off port 8000 (Custom) got
+    tts-1-hd / shimmer / mp3 -- a draft pocket-tts can never speak, which
+    silently disabled Test and Hear and made an untouched Next refuse."""
+    saved = prefill.saved_voice_from_config(table)
+
+    assert saved is not None
+    assert saved.slot_preset == vs.VOICE_PRESET_CUSTOM
+    draft = saved.draft
+    assert (draft.model_id, draft.voice_id, draft.response_format) == (
+        "pocket-tts",
+        "alba",
+        "wav",
+    )
+    assert vs.validate_voice_setup_draft(draft).configuration_valid
+
+
+@pytest.mark.parametrize(
+    ("preset", "table", "locked"),
+    (
+        (vs.VOICE_PRESET_POCKET_TTS, {}, True),
+        (vs.VOICE_PRESET_CUSTOM, {"default_provider": "openai"}, True),
+        (vs.VOICE_PRESET_OFFICIAL_OPENAI, {"OPENAI_BASE_URL": _OFFICIAL}, True),
+        (vs.VOICE_PRESET_POCKET_TTS, {"default_provider": "kokoro"}, False),
+        (vs.VOICE_PRESET_POCKET_TTS, {"default_provider": "omnivoice"}, False),
+        (vs.VOICE_PRESET_OMNIVOICE, {}, False),
+        # Review round 2 (R2-F2): OmniVoice reading replies cannot be
+        # unticked away -- an unticked Next posted nothing and it kept
+        # reading them.
+        (vs.VOICE_PRESET_OMNIVOICE, {"default_provider": "omnivoice"}, True),
+        (vs.VOICE_PRESET_OMNIVOICE, {"default_provider": "kokoro"}, False),
+        (vs.VOICE_PRESET_NONE, {}, False),
+    ),
+)
+def test_the_default_box_is_locked_while_the_openai_slot_reads_replies(
+    preset, table, locked
+) -> None:
+    """Review round 1 (F1 / G8-V1-F1): the OpenAI-compatible slot has one
+    endpoint and, with no other default provider, it reads replies. Saving a
+    service there is choosing the reply voice, whatever the box says."""
+    assert prefill.default_box_locked(preset, table) is locked
+
+
+@pytest.mark.parametrize(
+    ("table", "name"),
+    (
+        ({"default_provider": "omnivoice"}, "OmniVoice"),
+        ({"default_provider": "kokoro"}, "kokoro"),
+        ({"default_provider": "openai", "OPENAI_BASE_URL": _OFFICIAL}, ""),
+    ),
+)
+def test_the_reply_voice_is_named_for_every_other_provider(table, name) -> None:
+    """Review round 2 (R2-F1): with OmniVoice reading replies, the help line
+    named nobody ("Replies will use this voice instead of .")."""
+    saved = prefill.saved_voice_from_config(table)
+
+    assert prefill.reply_voice_name(saved) == name
+    assert prefill.reply_voice_name(None) == ""
+
+
+def test_saved_omnivoice_default_prefills_omnivoice() -> None:
+    saved = prefill.saved_voice_from_config(
+        {"default_provider": "omnivoice", "default_speed": 1.5}
+    )
+
+    assert saved is not None
+    assert saved.preset == vs.VOICE_PRESET_OMNIVOICE
+    assert saved.draft.speed == 1.5
+    assert saved.draft.use_as_default is True
+
+
+def test_another_providers_default_is_named_and_left_alone() -> None:
+    saved = prefill.saved_voice_from_config({"default_provider": "kokoro"})
+
+    assert saved is not None
+    assert saved.preset == vs.VOICE_PRESET_NONE
+    assert "kokoro" in prefill.current_voice_copy(saved)
+
+
+def test_the_raw_table_is_read_from_the_comprehensive_raw_config() -> None:
+    """The loaded view back-fills default_provider = openai; never trust it."""
+    app_config = {
+        "APP_TTS_CONFIG": {"default_provider": "openai"},
+        "app_tts": {"default_provider": "openai"},
+        "COMPREHENSIVE_CONFIG_RAW": {"general": {}},
+    }
+
+    assert prefill.raw_app_tts(app_config) == {}
+    assert prefill.saved_voice_from_config(prefill.raw_app_tts(app_config)) is None
+
+
+# -- the delta gate ------------------------------------------------------------
+
+
+def test_an_untouched_draft_is_not_persisted() -> None:
+    saved = prefill.saved_voice_from_config(
+        {
+            "OPENAI_BASE_URL": _OFFICIAL,
+            "OPENAI_AUTH_MODE": "api_key",
+            "default_provider": "openai",
+            "default_model": "tts-1-hd",
+            "default_voice": "shimmer",
+            "default_format": "mp3",
+        }
+    )
+    assert saved is not None
+
+    assert not prefill.should_persist_voice_config(
+        saved.draft, saved.draft, acted_this_run=False
+    )
+    # The sample text never persists, so editing it is not an edit.
+    assert not prefill.should_persist_voice_config(
+        vs.replace_draft(saved.draft, sample_text="Other words."),
+        saved.draft,
+        acted_this_run=False,
+    )
+
+
+def test_an_edit_a_test_or_a_tick_is_persisted() -> None:
+    baseline = _draft()
+
+    assert prefill.should_persist_voice_config(
+        _draft(voice_id="marius"), baseline, acted_this_run=False
+    )
+    assert prefill.should_persist_voice_config(baseline, baseline, acted_this_run=True)
+    assert prefill.should_persist_voice_config(baseline, None, acted_this_run=False)
+
+
+# -- what a save carries -------------------------------------------------------
+
+
+def test_unticked_save_writes_no_default_selection() -> None:
+    """Only reachable while another provider reads replies (the box is locked
+    on otherwise), so the shared default axes stay that provider's."""
+    event = vs.build_voice_setup_save_event(_draft())
+
+    assert event.settings == {
+        "OPENAI_BASE_URL": vs.POCKET_TTS_ENDPOINT,
+        "OPENAI_AUTH_MODE": "none",
+    }
+    assert event.preferences is None
+    assert event.persist_default_preferences is False
+    assert event.commit_defaults_after_handoff is False
+
+
+def test_ticked_save_makes_the_drafts_own_axes_the_default() -> None:
+    event = vs.build_voice_setup_save_event(_draft(use_as_default=True))
+
+    assert event.persist_default_preferences is True
+    assert event.commit_defaults_after_handoff is True
+    assert event.preferences is not None
+    assert (
+        event.preferences.provider_id,
+        event.preferences.model_id,
+        event.preferences.voice_id,
+        event.preferences.response_format,
+    ) == ("openai", "pocket-tts", "alba", "wav")
+
+
+def test_a_staged_key_travels_on_the_same_setting_settings_uses() -> None:
+    event = vs.build_voice_setup_save_event(
+        _draft(endpoint=_OFFICIAL, authentication_mode="api_key", use_as_default=True),
+        credential="sk-test-staged",
+    )
+
+    assert event.settings["openai_api_key"] == "sk-test-staged"
+
+
+def test_a_blank_sample_does_not_block_a_save() -> None:
+    event = vs.build_voice_setup_save_event(_draft(sample_text="   "))
+
+    assert event.settings["OPENAI_BASE_URL"] == vs.POCKET_TTS_ENDPOINT
+
+
+# -- labels --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "label"),
+    (
+        (
+            {
+                "default_provider": "openai",
+                "OPENAI_BASE_URL": _OFFICIAL,
+                "default_model": "tts-1-hd",
+                "default_voice": "shimmer",
+            },
+            "OpenAI · tts-1-hd · shimmer",
+        ),
+        (
+            {
+                "default_provider": "openai",
+                "OPENAI_BASE_URL": vs.POCKET_TTS_ENDPOINT,
+                "default_model": "pocket-tts",
+                "default_voice": "alba",
+            },
+            "PocketTTS · pocket-tts · alba",
+        ),
+        ({"default_provider": "omnivoice"}, "OmniVoice"),
+    ),
+)
+def test_voice_label_names_service_model_and_voice(raw, label) -> None:
+    saved = prefill.saved_voice_from_config(raw)
+    assert saved is not None
+    assert prefill.voice_label(saved) == label
+
+
+# -- the sample request and its failures -------------------------------------
+
+
+def _streamed_wav() -> bytes:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(24_000)
+        audio.writeframes(b"\x01\x00" * 2400)
+    body = bytearray(output.getvalue())
+    body[4:8] = (0x77359424).to_bytes(4, "little")
+    body[40:44] = (0x77359400).to_bytes(4, "little")
+    return bytes(body)
+
+
+class _Server:
+    def __init__(self, handler: type[BaseHTTPRequestHandler]) -> None:
+        self.server = HTTPServer(("127.0.0.1", 0), handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self) -> str:
+        self.thread.start()
+        return f"http://127.0.0.1:{self.server.server_port}"
+
+    def __exit__(self, *_exc) -> None:
+        self.server.shutdown()
+        self.thread.join(timeout=5)
+        self.server.server_close()
+
+
+def _handler(status_code: int, body: bytes, content_type: str, seen: list):
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            seen.append((self.path, self.headers.get("Content-Type", ""), raw))
+            self.send_response(status_code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args) -> None:
+            return
+
+    return Handler
+
+
+@pytest.mark.asyncio
+async def test_pocket_tts_sample_sends_the_native_form_and_plays() -> None:
+    seen: list = []
+    with _Server(_handler(200, _streamed_wav(), "audio/wav", seen)) as origin:
+        result = await vs.run_voice_sample(_draft(endpoint=f"{origin}/tts"))
+
+    assert result.playable is True
+    [(path, content_type, raw)] = seen
+    assert path == "/tts"
+    assert content_type.startswith("application/x-www-form-urlencoded")
+    assert {k: v[0] for k, v in parse_qs(raw.decode()).items()} == {
+        "text": vs.DEFAULT_SAMPLE_TEXT,
+        "voice_url": "alba",
+    }
+
+
+def _closed_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+@pytest.mark.asyncio
+async def test_a_closed_local_port_is_classified_as_not_running() -> None:
+    port = _closed_port()
+
+    with pytest.raises(vs.VoiceSampleError) as caught:
+        await vs.run_voice_sample(_draft(endpoint=f"http://127.0.0.1:{port}/tts"))
+
+    assert caught.value.kind == "not_running"
+    copy = status.voice_test_failure_copy(
+        caught.value, preset=vs.VOICE_PRESET_POCKET_TTS
+    )
+    assert copy.startswith("Test failed — ")
+    assert f"isn't running at 127.0.0.1:{port}" in copy
+    assert "PocketTTS" in copy
+
+
+def test_a_pocket_tts_address_on_another_port_keeps_the_pocket_tts_advice() -> None:
+    """pocket-tts started with --port is "Custom" (its endpoint is not the
+    preset's), but a /tts address is still pocket-tts's own API, so a refused
+    connection still gets the start-it advice."""
+    error = vs.VoiceSampleError("not_running", host="127.0.0.1:19399")
+
+    custom_pocket = status.voice_test_failure_copy(
+        error, preset=vs.VOICE_PRESET_CUSTOM, endpoint="http://127.0.0.1:19399/tts"
+    )
+    custom_openai = status.voice_test_failure_copy(
+        error,
+        preset=vs.VOICE_PRESET_CUSTOM,
+        endpoint="http://127.0.0.1:19399/v1/audio/speech",
+    )
+
+    assert custom_pocket.startswith(
+        "Test failed — PocketTTS isn't running at 127.0.0.1:19399."
+    )
+    # Review round 1 (G8-V1-F5): plain "pocket-tts serve" listens on 8000,
+    # which still would not answer at this address.
+    assert "pocket-tts serve --port 19399" in custom_pocket
+    assert custom_openai.startswith(
+        "Test failed — the speech server isn't running at 127.0.0.1:19399."
+    )
+
+
+@pytest.mark.parametrize(
+    ("status_code", "body", "content_type", "kind", "words"),
+    (
+        (401, b"{}", "application/json", "key_rejected", "rejected the API key"),
+        (403, b"{}", "application/json", "key_rejected", "rejected the API key"),
+        (404, b"{}", "application/json", "no_endpoint", "no speech endpoint"),
+        (200, b"<html>hi</html>", "text/html", "not_audio", "not with audio"),
+        (500, b"{}", "application/json", "http_status", "HTTP 500"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_server_answers_are_classified(
+    status_code, body, content_type, kind, words
+) -> None:
+    seen: list = []
+    with _Server(_handler(status_code, body, content_type, seen)) as origin:
+        with pytest.raises(vs.VoiceSampleError) as caught:
+            await vs.run_voice_sample(
+                _draft(endpoint=f"{origin}/v1/audio/speech", model_id="m")
+            )
+
+    assert caught.value.kind == kind
+    copy = status.voice_test_failure_copy(caught.value, preset=vs.VOICE_PRESET_CUSTOM)
+    assert copy.startswith("Test failed — ")
+    assert words in copy
+
+
+@pytest.mark.asyncio
+async def test_a_silent_server_is_classified_as_a_timeout() -> None:
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        with pytest.raises(vs.VoiceSampleError) as caught:
+            await vs.run_voice_sample(
+                _draft(endpoint=f"http://127.0.0.1:{port}/tts"), timeout_seconds=0.3
+            )
+    finally:
+        listener.close()
+
+    assert caught.value.kind == "timeout"
+    assert "didn't answer within" in status.voice_test_failure_copy(
+        caught.value, preset=vs.VOICE_PRESET_POCKET_TTS
+    )
+
+
+# -- the reachability probe ------------------------------------------------------
+
+
+def test_probe_is_one_short_connect() -> None:
+    assert status.PROBE_TIMEOUT_SECONDS < 1.0
+    port = _closed_port()
+    assert status.probe_endpoint_reachable(f"http://127.0.0.1:{port}/tts") is False
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    try:
+        url = f"http://127.0.0.1:{listener.getsockname()[1]}/tts"
+        assert status.probe_endpoint_reachable(url) is True
+    finally:
+        listener.close()
+
+
+def test_pocket_tts_start_advice_names_a_non_default_port() -> None:
+    """Review round 1 (G8-V1-F5)."""
+    default = status.voice_test_failure_copy(
+        vs.VoiceSampleError("not_running", host="127.0.0.1:8000"),
+        preset=vs.VOICE_PRESET_POCKET_TTS,
+        endpoint=vs.POCKET_TTS_ENDPOINT,
+    )
+    assert "start it with pocket-tts serve," in default
+    assert "--port" not in default
+    custom_line = status.service_status_copy(
+        vs.VOICE_PRESET_CUSTOM, endpoint="http://127.0.0.1:19555/tts", reachable=False
+    )
+    assert custom_line == (
+        "Custom — PocketTTS isn't running at 127.0.0.1:19555. Start it with "
+        "pocket-tts serve --port 19555, or check Endpoint under Advanced."
+    )
+
+
+def test_service_status_lines_say_whether_a_service_will_work() -> None:
+    assert status.service_status_copy(
+        vs.VOICE_PRESET_POCKET_TTS, endpoint=vs.POCKET_TTS_ENDPOINT, reachable=False
+    ) == (
+        "PocketTTS — not running at 127.0.0.1:8000. It is a separate local "
+        "server: start it with pocket-tts serve, or pick another service."
+    )
+    # Live finding (g8): the probe is one TCP connect, and 127.0.0.1:8000 was
+    # a tldw_server, not pocket-tts. A connect proves only that something
+    # listens there, so the line must not claim "running".
+    assert status.service_status_copy(
+        vs.VOICE_PRESET_POCKET_TTS, endpoint=vs.POCKET_TTS_ENDPOINT, reachable=True
+    ) == (
+        "PocketTTS — a server is listening at 127.0.0.1:8000. Test and Hear "
+        "checks that it is PocketTTS."
+    )
+    assert "key found" in status.service_status_copy(
+        vs.VOICE_PRESET_OFFICIAL_OPENAI, endpoint=_OFFICIAL, key_found=True
+    )
+    assert "no OpenAI API key found" in status.service_status_copy(
+        vs.VOICE_PRESET_OFFICIAL_OPENAI, endpoint=_OFFICIAL, key_found=False
+    )
+    assert status.service_status_copy(vs.VOICE_PRESET_NONE, endpoint="") == (
+        "Nothing is saved. Set up a voice any time in Settings ▸ Speech & TTS."
+    )
+
+
+def test_no_voice_for_now_says_what_happens_to_a_saved_voice() -> None:
+    """Review round 1 (F6 / G8-V1-F2): with a voice saved, "No voice for now"
+    keeps it; the line used to say "Nothing is saved"."""
+    working = prefill.saved_voice_from_config(
+        {
+            "OPENAI_BASE_URL": _OFFICIAL,
+            "OPENAI_AUTH_MODE": "api_key",
+            "default_provider": "openai",
+            "default_model": "tts-1-hd",
+            "default_voice": "shimmer",
+        }
+    )
+
+    assert status.no_voice_copy(None) == status.NO_VOICE_COPY
+    kept = status.no_voice_copy(working)
+    assert kept.startswith("Keeps your current voice (OpenAI · tts-1-hd · shimmer)")
+    assert "Speak replies" in kept
+    assert "Nothing is saved" not in kept
+    legacy = status.no_voice_copy(
+        prefill.saved_voice_from_config(_LEGACY_UNTOUCHED_WRITE)
+    )
+    assert "127.0.0.1:8765" in legacy
+    other = status.no_voice_copy(
+        prefill.saved_voice_from_config({"default_provider": "kokoro"})
+    )
+    assert other.startswith("Current voice: kokoro")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "lead"),
+    (
+        (
+            {"locked": True, "ticked": True},
+            "Replies will use this voice — no other voice is set up.",
+        ),
+        (
+            {"locked": True, "ticked": True, "replaces": "OpenAI · tts-1-hd · shimmer"},
+            "This becomes the voice replies use — it replaces OpenAI · tts-1-hd "
+            "· shimmer.",
+        ),
+        (
+            {"locked": False, "ticked": True, "reply_voice": "kokoro"},
+            "Replies will use this voice instead of kokoro.",
+        ),
+        (
+            {"locked": False, "ticked": False, "reply_voice": "kokoro"},
+            "Saved for later; replies keep using kokoro.",
+        ),
+    ),
+)
+def test_the_default_help_line_says_which_voice_replies_use(kwargs, lead) -> None:
+    copy = status.default_help_copy(vs.VOICE_PRESET_POCKET_TTS, **kwargs)
+
+    assert copy == f"{lead} {status.DEFAULT_HELP_COPY}"
+    assert status.default_help_copy(
+        vs.VOICE_PRESET_OMNIVOICE, locked=False, ticked=False
+    ) == (status.DEFAULT_HELP_COPY)
+
+
+def test_probe_passes_its_sub_second_timeout_to_one_connect(monkeypatch) -> None:
+    """Review round 2 (F3): a closed loopback port refuses at once, so the
+    timeout was never exercised; pin that the one connect carries it."""
+    calls: list[tuple[object, object]] = []
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    def connect(address, timeout=None, *_args, **_kwargs):
+        calls.append((address, timeout))
+        return _Connection()
+
+    monkeypatch.setattr(status.socket, "create_connection", connect)
+
+    assert status.probe_endpoint_reachable("http://127.0.0.1:8000/tts") is True
+    [(address, timeout)] = calls
+    assert address == ("127.0.0.1", 8000)
+    assert isinstance(timeout, float) and timeout < 1.0
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://tts.example.invalid:9000/v1/audio/speech",
+        "https://speech.lan/v1/audio/speech",
+    ),
+)
+def test_probe_never_waits_on_dns(monkeypatch, url) -> None:
+    """Review round 1 (F7): create_connection's timeout covers neither the
+    name lookup nor more than one address, so a typed Custom hostname queued
+    unbounded DNS lookups on every typing pause. Names that need DNS are not
+    probed; Test and Hear checks them."""
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("the probe must not resolve or connect here")
+
+    monkeypatch.setattr(status.socket, "create_connection", forbidden)
+    monkeypatch.setattr(status.socket, "getaddrinfo", forbidden)
+
+    assert status.probe_endpoint_reachable(url) is None
+    copy = status.service_status_copy(
+        vs.VOICE_PRESET_CUSTOM, endpoint=url, reachable=None
+    )
+    assert "Test and Hear checks it" in copy
+
+
+@pytest.mark.parametrize(
+    "url",
+    ("http://localhost:8000/tts", "http://[::1]:8000/tts", "http://10.0.0.5/tts"),
+)
+def test_loopback_names_and_ip_literals_are_probed(monkeypatch, url) -> None:
+    calls: list[object] = []
+
+    def refuse(address, timeout=None, *_args, **_kwargs):
+        calls.append(address)
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(status.socket, "create_connection", refuse)
+
+    assert status.probe_endpoint_reachable(url) is False
+    assert len(calls) == 1

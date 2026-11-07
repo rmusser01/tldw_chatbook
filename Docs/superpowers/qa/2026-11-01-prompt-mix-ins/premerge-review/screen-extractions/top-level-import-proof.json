@@ -1,0 +1,22 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/screen_helpers.py",
+    "added_top_level_import_modules": [],
+    "removed_top_level_import_modules": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+    "added_top_level_import_modules": [],
+    "removed_top_level_import_modules": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "added_top_level_import_modules": [],
+    "removed_top_level_import_modules": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "added_top_level_import_modules": [],
+    "removed_top_level_import_modules": []
+  }
+]

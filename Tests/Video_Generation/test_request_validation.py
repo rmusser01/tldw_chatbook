@@ -1,4 +1,3 @@
-
 from tldw_chatbook.Video_Generation.request_validation import (
     REFERENCE_AUDIO_MAX_BYTES,
     REFERENCE_IMAGE_MAX_BYTES,
@@ -47,6 +46,7 @@ def _valid_structured(**overrides):
 
 def _asset(kind, *, content=b"x", mime="image/png"):
     from tldw_chatbook.Video_Generation.adapters.base import ResolvedReferenceAsset
+
     return ResolvedReferenceAsset(kind=kind, content=content, mime_type=mime)
 
 
@@ -55,13 +55,16 @@ def test_valid_request_passes():
 
 
 def test_prompt_too_long_rejected():
-    issues = validate_video_generation_request(_valid_structured(prompt="x" * 101), config=CONFIG)
+    issues = validate_video_generation_request(
+        _valid_structured(prompt="x" * 101), config=CONFIG
+    )
     assert [i.path for i in issues] == ["prompt"]
 
 
 def test_duration_fps_bounds_rejected():
     issues = validate_video_generation_request(
-        _valid_structured(duration_seconds=16, fps=0), config=CONFIG,
+        _valid_structured(duration_seconds=16, fps=0),
+        config=CONFIG,
     )
     paths = {i.path for i in issues}
     assert paths == {"duration_seconds", "fps"}
@@ -69,26 +72,35 @@ def test_duration_fps_bounds_rejected():
 
 def test_dimension_and_pixel_bounds_rejected():
     issues = validate_video_generation_request(
-        _valid_structured(width=2560, height=1441), config=CONFIG,
+        _valid_structured(width=2560, height=1441),
+        config=CONFIG,
     )
     assert [i.path for i in issues] == ["height"]
     issues = validate_video_generation_request(
-        _valid_structured(width=2560, height=1440), config=CONFIG,
+        _valid_structured(width=2560, height=1440),
+        config=CONFIG,
     )
     assert issues == []  # exactly at the pixel cap is allowed
     issues = validate_video_generation_request(
-        _valid_structured(width=1280, height=720, ratio="wide"), config=CONFIG,
+        _valid_structured(width=1280, height=720, ratio="wide"),
+        config=CONFIG,
     )
     assert [i.path for i in issues] == ["ratio"]
 
 
 def test_ratio_adaptive_accepted():
-    assert validate_video_generation_request(_valid_structured(ratio="adaptive"), config=CONFIG) == []
+    assert (
+        validate_video_generation_request(
+            _valid_structured(ratio="adaptive"), config=CONFIG
+        )
+        == []
+    )
 
 
 def test_steps_and_cfg_bounds():
     issues = validate_video_generation_request(
-        _valid_structured(steps=51, cfg_scale=-1.0), config=CONFIG,
+        _valid_structured(steps=51, cfg_scale=-1.0),
+        config=CONFIG,
     )
     paths = {i.path for i in issues}
     assert paths == {"steps", "cfg_scale"}
@@ -96,18 +108,24 @@ def test_steps_and_cfg_bounds():
 
 def test_extra_params_allowlist_enforced():
     issues = validate_video_generation_request(
-        _valid_structured(extra_params={"callback_url": "https://example.invalid/hook"}), config=CONFIG,
+        _valid_structured(
+            extra_params={"callback_url": "https://example.invalid/hook"}
+        ),
+        config=CONFIG,
     )
     assert issues == []
     issues = validate_video_generation_request(
-        _valid_structured(extra_params={"not_allowed": 1}), config=CONFIG,
+        _valid_structured(extra_params={"not_allowed": 1}),
+        config=CONFIG,
     )
     assert [i.path for i in issues] == ["extra_params.not_allowed"]
 
 
 def test_cli_args_must_be_list_when_allowlisted():
     issues = validate_video_generation_request(
-        _valid_structured(backend="stable_diffusion_cpp", extra_params={"cli_args": "--unsafe"}),
+        _valid_structured(
+            backend="stable_diffusion_cpp", extra_params={"cli_args": "--unsafe"}
+        ),
         config=CONFIG,
     )
     assert [i.path for i in issues] == ["extra_params.cli_args"]
@@ -118,9 +136,13 @@ def test_reference_assets_valid_passes():
         _asset("first_frame", content=b"png-bytes"),
         _asset("reference_audio", content=b"wav-bytes", mime="audio/wav"),
     )
-    assert validate_video_generation_request(
-        _valid_structured(reference_assets=assets), config=CONFIG,
-    ) == []
+    assert (
+        validate_video_generation_request(
+            _valid_structured(reference_assets=assets),
+            config=CONFIG,
+        )
+        == []
+    )
 
 
 def test_reference_asset_mime_rejected():
@@ -133,14 +155,18 @@ def test_reference_asset_mime_rejected():
 
 def test_reference_asset_empty_and_oversize_rejected():
     issues = validate_video_generation_request(
-        _valid_structured(reference_assets=(_asset("reference_video", content=b"", mime="video/mp4"),)),
+        _valid_structured(
+            reference_assets=(_asset("reference_video", content=b"", mime="video/mp4"),)
+        ),
         config=CONFIG,
     )
     assert any("no content bytes" in i.message for i in issues)
 
     big = b"x" * (REFERENCE_VIDEO_MAX_BYTES + 1)
     issues = validate_video_generation_request(
-        _valid_structured(reference_assets=(_asset("reference_video", content=big, mime="video/mp4"),)),
+        _valid_structured(
+            reference_assets=(_asset("reference_video", content=big, mime="video/mp4"),)
+        ),
         config=CONFIG,
     )
     assert any("50MB" in i.message for i in issues)
@@ -154,7 +180,11 @@ def test_reference_asset_empty_and_oversize_rejected():
 
     big_audio = b"x" * (REFERENCE_AUDIO_MAX_BYTES + 1)
     issues = validate_video_generation_request(
-        _valid_structured(reference_assets=(_asset("reference_audio", content=big_audio, mime="audio/mpeg"),)),
+        _valid_structured(
+            reference_assets=(
+                _asset("reference_audio", content=big_audio, mime="audio/mpeg"),
+            )
+        ),
         config=CONFIG,
     )
     assert any("15MB" in i.message for i in issues)
@@ -166,7 +196,8 @@ def test_reference_asset_kind_counts_enforced():
         _asset("first_frame"),
     )
     issues = validate_video_generation_request(
-        _valid_structured(reference_assets=two_first_frames), config=CONFIG,
+        _valid_structured(reference_assets=two_first_frames),
+        config=CONFIG,
     )
     assert any(i.path == "reference_assets.first_frame" for i in issues)
 
@@ -177,9 +208,12 @@ def test_reference_asset_total_cap_enforced():
 
     assets = (_asset("first_frame"), _asset("last_frame"))
     issues = validate_video_generation_request(
-        _valid_structured(reference_assets=assets), config=_SmallCap(),
+        _valid_structured(reference_assets=assets),
+        config=_SmallCap(),
     )
-    assert any(i.path == "reference_assets" and "1-asset limit" in i.message for i in issues)
+    assert any(
+        i.path == "reference_assets" and "1-asset limit" in i.message for i in issues
+    )
 
 
 def test_unknown_asset_kind_rejected():

@@ -50,11 +50,11 @@ def _mounted_body(transcript: ConsoleTranscript, message_id: str) -> str:
     (
         (
             "accepted",
-            "Response accepted on another device; waiting for dispatch.",
+            "Response accepted; waiting for dispatch.",
         ),
         (
             "dispatch_started",
-            "Response delivery status is unknown on the source device.",
+            "Response delivery status is unknown.",
         ),
         ("complete", "No response was generated."),
         ("failed", "Response failed."),

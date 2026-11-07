@@ -49,7 +49,7 @@ Constraints.
 - ADR-126 RecoveryRequired in a clean worktree is environmental: compare failure-NAME sets against origin/dev.
 - Size ratchets never rise (ADR-097); console_settings_modal.py net lines <= 0 against its current row.
 - Geometry only through tokens in css/core/_variables.tcss (ADR-150/161); rebuild the CSS bundle with the repo script.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
 - TDD; real-implementation tests for config/provider surfaces; rewrite pinned tests on purpose and name them.
 - Commit per task `fix|feat(model-config): <summary> (TASK-33005.N)` + `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Never push; NEVER merge origin/dev into the branch.
 - Tick ACs, set Done, add Implementation Notes in each subtask file. Update Docs/User_Guide CONTENT; never add "Verified against" paragraphs (record verification in task notes).

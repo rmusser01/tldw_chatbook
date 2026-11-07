@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[fenced]",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/baseline-tmp"
+  ],
+  "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9/baseline",
+  "exit_code": 1,
+  "elapsed": 22.66748470789753
+}

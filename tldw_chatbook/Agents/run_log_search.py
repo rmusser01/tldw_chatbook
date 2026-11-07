@@ -377,7 +377,9 @@ def format_results(
         )
         if start > 0 or end < total:
             continuation = f" Use offset={end} to continue." if end < total else ""
-            body = f"{body}\n[showing chars {start}-{end} of {total} total.{continuation}]"
+            body = (
+                f"{body}\n[showing chars {start}-{end} of {total} total.{continuation}]"
+            )
         if record.truncated_from:
             # F7 (Qodo #7): the writer caps any record over
             # `run_log_max_record_bytes` and records the ORIGINAL size in
@@ -433,7 +435,9 @@ def _find_match_start(
     return None
 
 
-def _window_start(*, total: int, max_chars: int, offset: int, match_pos: int | None) -> int:
+def _window_start(
+    *, total: int, max_chars: int, offset: int, match_pos: int | None
+) -> int:
     """Pick the character index a record's rendered window starts at.
 
     Args:
@@ -745,7 +749,9 @@ def slice_records(
           searched.
     """
     resolved_from = max(1, from_record)
-    resolved_to = to_record if to_record > 0 else resolved_from + DEFAULT_SLICE_WIDTH - 1
+    resolved_to = (
+        to_record if to_record > 0 else resolved_from + DEFAULT_SLICE_WIDTH - 1
+    )
     if resolved_to < resolved_from:
         resolved_to = resolved_from
     matched = [r for r in records if resolved_from <= r.number <= resolved_to]
@@ -795,7 +801,9 @@ def format_slice(
         own empty-input message) instead of looking identical to it.
     """
     if not records:
-        return f"No records numbered {from_record:06d}-{to_record:06d} in this run's log."
+        return (
+            f"No records numbered {from_record:06d}-{to_record:06d} in this run's log."
+        )
     lo, hi = records[0].number, records[-1].number
     header = f"records {lo:06d}-{hi:06d} of this run's log"
     if total_matched > len(records):
@@ -1100,7 +1108,9 @@ def format_cross_run_results(
         "No matching records." when there were no hits.
     """
     not_attempted = len(result.not_searched_run_ids) + max(0, omitted_run_count)
-    total = len(result.searched_run_ids) + len(result.unresolved_run_ids) + not_attempted
+    total = (
+        len(result.searched_run_ids) + len(result.unresolved_run_ids) + not_attempted
+    )
     coverage = (
         f"Searched {len(result.searched_run_ids)} of {total} run(s) "
         "in this conversation"

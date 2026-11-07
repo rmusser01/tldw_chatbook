@@ -15,6 +15,8 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from Tests.console_provider_doubles import provider_resolution
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class StreamingGateway:
     async def resolve_for_send(self, selection):

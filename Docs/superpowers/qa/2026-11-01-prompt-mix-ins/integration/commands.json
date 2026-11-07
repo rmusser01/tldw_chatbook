@@ -1,0 +1,123 @@
+{
+  "storage2": {
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/Backup_Recovery/test_prompt_mixin_restore.py",
+      "Tests/DB/test_console_prompt_mixins.py",
+      "Tests/Backup_Recovery/test_core_owners.py::test_schema_policy_matches_installed_store",
+      "-q",
+      "--tb=short",
+      "--show-capture=no",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/test-storage2"
+    ]
+  },
+  "native": {
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/Chat/test_console_prompt_mixin_forks.py",
+      "Tests/Chat/test_console_prompt_mixin_retry.py",
+      "Tests/Chat/test_console_prompt_mixin_journey.py",
+      "Tests/Chat/test_console_prompt_mixin_admission.py",
+      "-q",
+      "--tb=short",
+      "--show-capture=no",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/test-native"
+    ]
+  },
+  "provider": {
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/Prompt_Management/test_prompt_mixins.py",
+      "Tests/Prompt_Management/test_prompt_chatbook_record.py",
+      "Tests/Prompt_Management/test_prompt_scope_service.py",
+      "Tests/Prompt_Management/test_server_prompt_service.py",
+      "Tests/Chat/test_console_prompt_mixin_caching.py",
+      "Tests/Chat/test_console_prompt_mixin_composition.py",
+      "Tests/Chat/test_console_prompt_mixin_values.py",
+      "Tests/Chat/test_anthropic_caching_degrade.py",
+      "Tests/Character_Chat/test_prompt_cache_review_regressions.py",
+      "Tests/Chat/test_cache_usage_metrics.py",
+      "Tests/Chatbooks/test_chatbook_prompt_round_trip.py",
+      "Tests/DB/test_migration_file_sources.py",
+      "-q",
+      "--tb=short",
+      "--show-capture=no",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/test-provider"
+    ]
+  },
+  "ui": {
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/UI/test_library_prompt_mixins.py",
+      "Tests/UI/test_console_prompt_mixins.py",
+      "Tests/UI/test_console_composer_menu.py",
+      "Tests/UI/test_design_token_governance.py",
+      "-q",
+      "--tb=short",
+      "--show-capture=no",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/test-ui"
+    ]
+  },
+  "owners": {
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/Chat/test_console_chat_fork.py",
+      "Tests/Chat/test_console_chat_fork_persistence.py",
+      "Tests/Chat/test_console_chat_store_atomic_promotion.py",
+      "Tests/Chat/test_console_transaction_contribution.py",
+      "Tests/Chat/test_console_trace_current_turn_transforms.py",
+      "Tests/Chat/test_console_regenerate_branching.py",
+      "Tests/Chat/test_console_edit_resend.py",
+      "Tests/Chat/test_console_received_intent_transitions.py",
+      "Tests/Chat/test_console_first_send_atomicity.py",
+      "Tests/Chat/test_console_settings_apply_store.py",
+      "-q",
+      "--tb=short",
+      "--show-capture=no",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/test-owners"
+    ]
+  },
+  "recovery-packaging": {
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/Packaging/test_installed_distribution.py::test_built_artifact_ships_the_migrations_its_own_code_opens",
+      "Tests/Backup_Recovery/test_response_rules_restore.py",
+      "Tests/DB/test_response_rules_migration.py",
+      "Tests/Backup_Recovery/test_sqlite_validation.py",
+      "-q",
+      "--tb=short",
+      "--show-capture=no",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/test-recovery-packaging"
+    ]
+  }
+}

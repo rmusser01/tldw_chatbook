@@ -78,8 +78,9 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
         width: 76;
         max-height: 90%;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -95,7 +96,7 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
 
     .console-review-notes-row {
         height: auto;
-        border: round gray;
+        border: round $tldw-boundary;
         padding: 0 1;
         margin: 0 0 1 0;
     }
@@ -285,9 +286,7 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
         if not await self._on_edit(annotation_id, new_text):
             return
         note["comment"] = new_text
-        self.query_one(_row_selector("comment", annotation_id), Static).update(
-            new_text
-        )
+        self.query_one(_row_selector("comment", annotation_id), Static).update(new_text)
         self._changed = True
         self._set_row_editing(annotation_id, editing=False)
         if self._editing_id == annotation_id:
@@ -310,12 +309,12 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
 
     def _set_row_editing(self, annotation_id: str, *, editing: bool) -> None:
         try:
-            self.query_one(_row_selector("comment", annotation_id), Static).display = (
-                not editing
-            )
-            self.query_one(_row_selector("edit", annotation_id), TextArea).display = (
-                editing
-            )
+            self.query_one(
+                _row_selector("comment", annotation_id), Static
+            ).display = not editing
+            self.query_one(
+                _row_selector("edit", annotation_id), TextArea
+            ).display = editing
             self.query_one(
                 _row_selector("edit-button", annotation_id), Button
             ).display = not editing

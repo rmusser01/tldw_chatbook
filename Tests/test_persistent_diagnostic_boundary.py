@@ -8,6 +8,7 @@ from loguru import logger as loguru_logger
 
 from tldw_chatbook.Logging_Config import (
     PrivateRotatingFileHandler,
+    RedactingFileFormatter,
     _forward_loguru_to_standard,
 )
 from tldw_chatbook.Utils.persistent_diagnostics import (
@@ -213,3 +214,98 @@ def test_metadata_helper_rejects_unregistered_fields_and_private_values(
     persisted = _all_generations(path)
     assert PRIVATE_SENTINEL not in persisted
     assert "tool_name=invalid" in persisted
+
+
+def test_forwarder_renders_only_a_plain_bound_exception_type() -> None:
+    """TASK-38989: a bounded log binds its failure class, and the forwarder
+    (the only production loguru sink) renders that one key, only as a plain
+    class name; the redacting formatter still covers the whole line."""
+
+    class _Capture(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__(logging.DEBUG)
+            self.records: list[logging.LogRecord] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.records.append(record)
+
+    handler = _Capture()
+    root = logging.getLogger()
+    old_level = root.level
+    root.setLevel(logging.DEBUG)
+    root.addHandler(handler)
+    sink_id = loguru_logger.add(_forward_loguru_to_standard, level="DEBUG")
+    try:
+        loguru_logger.bind(exception_type="RuntimeError").debug("r10a_case_one")
+        loguru_logger.bind(exception_type="Not /a/class").debug("r10a_case_two")
+        loguru_logger.bind(other=PRIVATE_SENTINEL).debug("r10a_case_three")
+        loguru_logger.bind(exception_type="ValueError").debug(
+            "r10a_case_four token=" + PRIVATE_SENTINEL
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+        root.removeHandler(handler)
+        root.setLevel(old_level)
+
+    ours = [record for record in handler.records if record.getMessage().startswith("r10a_")]
+    assert [record.getMessage() for record in ours[:3]] == [
+        "r10a_case_one: RuntimeError",
+        "r10a_case_two",
+        "r10a_case_three",
+    ]
+    formatted = RedactingFileFormatter("%(message)s").format(ours[3])
+    assert formatted.startswith("r10a_case_four")
+    assert PRIVATE_SENTINEL not in formatted
+
+
+
+def test_persona_policy_failure_forwards_only_its_error_class() -> None:
+    """TASK-39060: the raising-provider log names the class, through the real
+    forwarder, and neither the tool name nor the error text."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+
+    class _Capture(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__(logging.DEBUG)
+            self.records: list[logging.LogRecord] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.records.append(record)
+
+    def _raise() -> None:
+        raise RuntimeError(PRIVATE_SENTINEL)
+
+    loop = asyncio.new_event_loop()
+    provider = MCPToolProvider(
+        service=object(), main_loop=loop, persona_policy_provider=_raise
+    )
+    state = object()
+    handler = _Capture()
+    root = logging.getLogger()
+    old_level = root.level
+    root.setLevel(logging.DEBUG)
+    root.addHandler(handler)
+    sink_id = loguru_logger.add(_forward_loguru_to_standard, level="DEBUG")
+    try:
+        tool = SimpleNamespace(name="tool-" + PRIVATE_SENTINEL)
+        assert provider._persona_floor(state, tool) is state
+    finally:
+        loguru_logger.remove(sink_id)
+        root.removeHandler(handler)
+        root.setLevel(old_level)
+        loop.close()
+
+    ours = [
+        record
+        for record in handler.records
+        if record.getMessage().startswith("MCPToolProvider: persona_policy_provider")
+    ]
+    assert [record.getMessage() for record in ours] == [
+        "MCPToolProvider: persona_policy_provider failed: RuntimeError"
+    ]
+    formatted = RedactingFileFormatter("%(message)s").format(ours[0])
+    assert "RuntimeError" in formatted
+    assert PRIVATE_SENTINEL not in formatted

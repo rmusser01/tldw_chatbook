@@ -41,7 +41,7 @@ malformed archive structure fail closed for that record before a database
 mutation. Artifact compatibility state is not silently repaired:
 legacy, supported Console-v2, foreign-v1, future/unsupported, malformed, and
 mismatched stored definitions round-trip as stored data and remain subject to
-ADR-040 when a later operation tries to edit or apply them.
+ADR-305 when a later operation tries to edit or apply them.
 
 Library Export adds a local-only `prompts` scope and includes Prompts in
 `everything`. Counts and selections issue fresh uncapped active-ID queries
@@ -60,7 +60,7 @@ User text as one `content` value and drops author, keywords, artifact type,
 format, schema version, and definition; import always creates a legacy Prompt
 with that one value in the System lane.
 
-ADR-040 makes Prompt versus Recipe, schema dispatch, compiled compatibility
+ADR-305 makes Prompt versus Recipe, schema dispatch, compiled compatibility
 lanes, and exact stored definition part of the artifact contract. TASK-196 and
 TASK-198 added independent retained-history and collection lifecycles. A bulk
 backup that captured either lifecycle implicitly would blur ownership and make
@@ -120,7 +120,7 @@ media, characters, or kept briefings.
 | Export source Prompt IDs in the manifest and filenames | It leaks local identity and gives imports an accidental suggestion that row identity should be restored. Archive-local ordinals are sufficient for selection and lookup. |
 | Include retained history and collection memberships | Those are separately owned optional lifecycles from ADR-049 and TASK-198, not content intrinsic to the current Prompt/Recipe artifact. |
 | Skip a Prompt that fails during export | A successful-looking partial backup is data loss. The entire Prompt-bearing archive must fail before finalization instead. |
-| Reject compatibility-only or malformed stored definitions | Backup must preserve current stored artifacts without claiming they are editable. ADR-040 remains the authority for later apply/edit eligibility. |
+| Reject compatibility-only or malformed stored definitions | Backup must preserve current stored artifacts without claiming they are editable. ADR-305 remains the authority for later apply/edit eligibility. |
 
 ## Consequences
 
@@ -145,11 +145,11 @@ media, characters, or kept briefings.
 - Legacy Chatbooks remain inherently lossy because information absent from
   their old `content` payload cannot be reconstructed.
 - Compatibility-only definitions can be restored as compatibility-only data;
-  they remain non-editable/non-applicable until handled under ADR-040.
+  they remain non-editable/non-applicable until handled under ADR-305.
 
 ## Links
 
 - [TASK-197 design](../../Docs/superpowers/specs/2026-08-12-task-197-bulk-prompt-chatbook-export-design.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
-- [ADR-040: Versioned Prompt Artifacts and Safe Improvement Transactions](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
+- [ADR-305: Versioned Prompt Artifacts and Safe Improvement Transactions](305-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
 - [ADR-049: Local Prompt Retained Version History](049-local-prompt-retained-version-history.md)

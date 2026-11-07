@@ -29,7 +29,6 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
-from textual.widgets import Markdown
 
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Constants import TAB_SETTINGS
@@ -66,11 +65,6 @@ from tldw_chatbook.TTS.audio_cpp_guided_config import (
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.TTS_Generation import close_tts_resources
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
-
-# chat_message_enhanced is deliberately NOT imported at module scope
-# (TASK-21103): it pulls PIL and the textual_image package at import time.
-# The two TTS event handlers that query it import it function-locally.
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 # TASK-21108: the payload class only -- importing it from
@@ -120,9 +114,7 @@ async def handle_tts_request_event(app: TldwCli, event: TTSRequestEvent) -> None
         app: The running TldwCli.
         event: The request carrying the text (and optional voice) to speak.
     """
-    app.loguru_logger.info(
-        f"TTS request received for text: '{event.text[:50]}...'"
-    )
+    app.loguru_logger.info(f"TTS request received for text: '{event.text[:50]}...'")
     handler = await app._ensure_tts_handler()
     if handler:
         await handler.handle_tts_request(event)
@@ -270,10 +262,6 @@ async def handle_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> No
 
 async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> None:
     """Handle TTS generation completion."""
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
-        ChatMessageEnhanced,
-    )
-
     app.loguru_logger.info(f"TTS complete for message {event.message_id}")
     playback_lifecycle = getattr(event, "playback_lifecycle", None)
 
@@ -306,28 +294,6 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
         if playback_lifecycle is not None:
             playback_lifecycle.report("failed")
         app.notify(f"TTS failed: {event.error}", severity="error")
-        # Update widget state back to idle on error
-        try:
-            if event.message_id:
-                # Find the message widget and update state
-                for message_widget in list(app.query(ChatMessage)) + list(
-                    app.query(ChatMessageEnhanced)
-                ):
-                    if (
-                        getattr(message_widget, "message_id_internal", None)
-                        == event.message_id
-                    ):
-                        # Update TTS state to idle on error
-                        if hasattr(message_widget, "update_tts_state"):
-                            message_widget.update_tts_state("idle")
-                        # Remove TTS generating class
-                        text_widget = message_widget.query_one(
-                            ".message-text", Markdown
-                        )
-                        text_widget.remove_class("tts-generating")
-                        break
-        except Exception as e:
-            app.loguru_logger.error(f"Error updating message UI: {e}")
         # The Console transcript's action row renders from the screen's
         # `_console_speaking_message_id`, not from a legacy widget — on
         # failure it must be cleared too, or the row keeps "⏹ Stop
@@ -345,8 +311,7 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
                             await sync()
                         except Exception:
                             app.loguru_logger.error(
-                                "Console speak-state resync failed after a "
-                                "TTS error"
+                                "Console speak-state resync failed after a TTS error"
                             )
                     break
         if event.global_override_token is not None:
@@ -355,121 +320,42 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
                 name="tts_global_voice_confirmation",
             )
     else:
-        # Update widget state to ready with audio file
         if event.audio_file and event.audio_file.exists():
-            if (
-                playback_lifecycle is not None
-                and not playback_lifecycle.is_current()
-            ):
+            if playback_lifecycle is not None and not playback_lifecycle.is_current():
                 return
             try:
-                widget_found = False
-                if event.message_id:
-                    # Find the message widget and update state
-                    for message_widget in list(app.query(ChatMessage)) + list(
-                        app.query(ChatMessageEnhanced)
-                    ):
-                        if (
-                            getattr(message_widget, "message_id_internal", None)
-                            == event.message_id
-                        ):
-                            widget_found = True
-                            # Update TTS state to ready with audio file
-                            if hasattr(message_widget, "update_tts_state"):
-                                message_widget.update_tts_state(
-                                    "ready", event.audio_file
-                                )
-                            # Remove TTS generating class
-                            try:
-                                text_widget = message_widget.query_one(
-                                    ".message-text", Markdown
-                                )
-                                text_widget.remove_class("tts-generating")
-                            except Exception:
-                                pass
-                            break
-                if widget_found:
-                    # A legacy ChatMessage/ChatMessageEnhanced widget owns
-                    # this message and exposes its own play control - let
-                    # the user trigger playback explicitly rather than
-                    # auto-playing underneath them.
-                    app.notify(
-                        "TTS audio ready - click play to listen",
-                        severity="information",
-                    )
-                else:
-                    # No legacy widget claims this message (e.g. Console,
-                    # which has no per-message playback control), so
-                    # there is nothing for the user to click - play the
-                    # generated audio immediately instead of going silent.
-                    accepted = TldwCli._post_speech_delivery(
-                        app,
-                        TTSPlaybackEvent(
-                            action="play",
-                            message_id=event.message_id,
-                            playback_lifecycle=playback_lifecycle,
-                        ),
-                    )
-                    if accepted is False and playback_lifecycle is not None:
-                        playback_lifecycle.report("failed")
+                # No per-message playback widget exists anymore (the legacy
+                # ChatMessage/ChatMessageEnhanced family was removed); the
+                # Console transcript has no per-message play control, so
+                # play the generated audio immediately instead of going
+                # silent.
+                accepted = TldwCli._post_speech_delivery(
+                    app,
+                    TTSPlaybackEvent(
+                        action="play",
+                        message_id=event.message_id,
+                        playback_lifecycle=playback_lifecycle,
+                        presentation=event.presentation,
+                    ),
+                )
+                if accepted is False and playback_lifecycle is not None:
+                    playback_lifecycle.report("failed")
             except Exception as e:
                 if playback_lifecycle is not None:
                     playback_lifecycle.report("failed")
                 app.loguru_logger.error(f"Error playing audio: {e}")
                 app.notify("Failed to play audio", severity="error")
         elif (
-            playback_lifecycle is not None
-            and playback_lifecycle.state == "generating"
+            playback_lifecycle is not None and playback_lifecycle.state == "generating"
         ):
             playback_lifecycle.report("failed")
-
-        # Remove TTS generating class from message
-        try:
-            if event.message_id:
-                for message_widget in list(app.query(ChatMessage)) + list(
-                    app.query(ChatMessageEnhanced)
-                ):
-                    if (
-                        getattr(message_widget, "message_id_internal", None)
-                        == event.message_id
-                    ):
-                        text_widget = message_widget.query_one(
-                            ".message-text", Markdown
-                        )
-                        text_widget.remove_class("tts-generating")
-                        break
-        except Exception as e:
-            app.loguru_logger.error(f"Error updating message UI: {e}")
 
 
 async def handle_tts_progress_event(app: TldwCli, event: TTSProgressEvent) -> None:
     """Handle TTS generation progress updates."""
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
-        ChatMessageEnhanced,
-    )
-
     app.loguru_logger.debug(
         f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}"
     )
-
-    try:
-        if event.message_id:
-            # Find the message widget and update progress
-            for message_widget in list(app.query(ChatMessage)) + list(
-                app.query(ChatMessageEnhanced)
-            ):
-                if (
-                    getattr(message_widget, "message_id_internal", None)
-                    == event.message_id
-                ):
-                    # Update TTS progress
-                    if hasattr(message_widget, "update_tts_progress"):
-                        message_widget.update_tts_progress(
-                            event.progress, event.status
-                        )
-                    break
-    except Exception as e:
-        app.loguru_logger.error(f"Error updating TTS progress: {e}")
 
 
 async def handle_tts_playback_event(app: TldwCli, event: TTSPlaybackEvent) -> None:
@@ -705,15 +591,11 @@ async def _audio_cpp_model_library_observation_snapshot(
     profile_service = await app._ensure_tts_profile_service()
     if profile_service is None:
         raise ProfileRepositoryError("unavailable")
-    profiles_with_counts = (
-        await profile_service.bounded_profile_assignment_snapshot()
-    )
+    profiles_with_counts = await profile_service.bounded_profile_assignment_snapshot()
 
     try:
-        configuration = (
-            await app.tts_service.registry.provider_configuration_snapshot(
-                "audio_cpp"
-            )
+        configuration = await app.tts_service.registry.provider_configuration_snapshot(
+            "audio_cpp"
         )
         staged_config = (
             None
@@ -995,7 +877,9 @@ def _defer_speech_playback(app: TldwCli, event: TTSPlaybackEvent) -> None:
 def _post_speech_delivery(app: TldwCli, event) -> bool:
     """Retain only the installed speech completion/notification routes."""
     if type(event) not in {
-        TTSCompleteEvent, TTSPlaybackEvent, STTSProviderConfigurationChanged
+        TTSCompleteEvent,
+        TTSPlaybackEvent,
+        STTSProviderConfigurationChanged,
     }:
         raise TypeError("unsupported_speech_delivery")
     if (

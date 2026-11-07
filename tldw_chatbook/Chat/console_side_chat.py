@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from typing import Any
 
-from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from tldw_chatbook.Provider_Contract import ChatProviderError
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.config import DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
 

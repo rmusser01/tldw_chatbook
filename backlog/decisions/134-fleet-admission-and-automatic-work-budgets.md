@@ -223,3 +223,17 @@ admission/manual reserves, durable chain reservations, then wake enforcement and
 visible pause/recovery. Document each as implemented only after its actual
 runtime path and cancellation/restart tests pass. Until then the baseline
 limitations above remain real.
+
+
+## ADR-281 review-boundary amendment (TASK-35582, 2026-10-26)
+
+[ADR-281](281-primary-agent-multi-model-code-review.md#native-acceptance-and-continuation-implementation-amendment-task35582-slice-7)
+adds host-sealed exact-next-review-slot eligibility to the existing
+`ConsoleFleetWakeCoordinator` / automatic-work ledger. AgentRuns' normal 24→25
+migration adds `automatic_review_boundary_claims` and nullable boundary identity
+on wake attempts; no source or report bodies enter that database. The existing
+two-child turn ceiling, finite original chain, priority, acceptance, prepared-abort
+and consumed/uncertain replay fences remain authoritative. Restart cannot restore
+an ephemeral review bundle or mint a new stage grant. The original decision above
+retains its scope; the [qualification record](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md)
+distinguishes deterministic checks from missing live-provider evidence.

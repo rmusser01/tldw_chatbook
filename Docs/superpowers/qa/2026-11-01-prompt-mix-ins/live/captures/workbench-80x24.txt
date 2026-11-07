@@ -1,0 +1,24 @@
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+──▊ Prompt Workbench                                                         ▎──
+ C▊ Prompts / Mix-ins                                                        ▎
+  ▊ ──────────────────────────────────────────────────────────────────────── ▎
+  ▊                                                                          ▎
+  ▊ Mix-ins · 2 enabled                                                      ▎
+  ▊ Before / your message / After. Changes apply to future sends.            ▎
+  ▊       Browse Prompts / Recipes               Preview next send           ▎
+  ▊                                                                          ▎
+  ▊ Before                                                                   ▎
+  ▊ ▐X▌ Brief                                                                ▎
+  ▊           Inspect / Edit                         Move up                 ▎
+  ▊              Move down                            Remove               ▆ ▎
+  ▊                                                                          ▎
+  ▊ ▐X▌ Scene                                                                ▎
+  ▊           Inspect / Edit                         Move up                 ▎
+  ▊              Move down                            Remove                 ▎
+  ▊                                                                          ▎
+  ▊ After                                                                    ▎
+──▊ ──────────────────────────────────────────────────────────────────────── ▎──
+ P▊                                                                          ▎
+█ ▊                                                           Back   Close   ▎
+█ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+  Ctrl+P palette | Ctrl+Q quit

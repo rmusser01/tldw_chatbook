@@ -251,3 +251,17 @@ Python threads retain their existing cooperative cancellation limits.
 Automatic work moves to v17 and the runtime owner fence to v18 after the budget column at v16. Upstream v13-v15 remain reserved for run steps, spawn-event identity and activity receipts. Runtime migrations remain guarded by actual schema presence; opening either an upstream v15 database or a historical draft database preserves existing records and does not perform recovery. Standalone SQL references apply once in version order.
 
 Index verification captures the actual reservation lookup, active-wake check, and claim-release statements and checks their plans without sqlite_stat1. The unused conversation index on chains is omitted: production reads chains by primary id or unique root-submission identity.
+
+
+## ADR-281 review-boundary amendment (TASK-35582, 2026-10-26)
+
+[ADR-281](281-primary-agent-multi-model-code-review.md#native-acceptance-and-continuation-implementation-amendment-task35582-slice-7)
+adds host-sealed exact-next-review-slot eligibility to the existing
+`ConsoleFleetWakeCoordinator` / automatic-work ledger. AgentRuns' normal 24→25
+migration adds `automatic_review_boundary_claims` and nullable boundary identity
+on wake attempts; no source or report bodies enter that database. The existing
+two-child turn ceiling, finite original chain, priority, acceptance, prepared-abort
+and consumed/uncertain replay fences remain authoritative. Restart cannot restore
+an ephemeral review bundle or mint a new stage grant. The original decision above
+retains its scope; the [qualification record](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md)
+distinguishes deterministic checks from missing live-provider evidence.

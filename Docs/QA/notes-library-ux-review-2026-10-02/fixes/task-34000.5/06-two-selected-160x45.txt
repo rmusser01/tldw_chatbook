@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  Q3 planning memo                                         │
+│ │ Navigation                     │  a  │ Media (23)                                           │  t  Operations team                                          │
+│ │     Import…                    │  v  │ Media · 23 of 23 · all types · sort: Newest          │  e    Find  Read later  Use in Console  More                 │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m    Read  Analysis (selected)  Highlights  Info            │
+│ │ ▊ Search Library…         ▎▊x▎ │     │  ▊  Title/keyword…                  ▎                │  s  ┌──────────────────────────────────────────────────────┐ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │     │ *(mock reply)* You said: "Analyze and summarize the  │ │
+│ │                                │     │    type: All types                                   │     │ following content.                                   │ │
+│ │ ────────────────────────────── │     │                                                      │     │                                                      │ │
+│ │ Browse                     ▾   │     │  2 selected   Select all 20 shown                    │     │ ---                                                  │ │
+│ │  ▸ Media (23) — your files     │     │    Clear       Export       Review                   │     │                                                      │ │
+│ │    Conversations (12)          │     │                                                      │     │ Researchers disagree about the main drivers. Readers │ │
+│ │    Notes (122)                 │     │                                                      │     │ should treat ear". Staying in character as You are   │ │
+│ │    Prompts (10) — reuse        │     │      Analyze                                         │     │ an AI assistant specialized in analyzing and         │ │
+│ │    Skills (4) — AI add-ons     │<--- │          Delete                                      │     │ summari. The wind shifts, a lantern flickers, and    │ │
+│ │    Collections (6)             │     │    Done                                              │     │ the story moves forward one beat.                    │ │
+│ │    Search / RAG — find all     │     │  ☐ A field guide to Markdown tables                  │     └──────────────────────────────────────────────────────┘ │
+│ │ ────────────────────────────── │     │      article · updated 5d                            │                                                              │
+│ │ Artifacts                  ▾   │     │  ☑ Voice memo 2026-09-29                             │        Edit analysis      Regenerate                         │
+│ │    All artifacts               │     │      audio · updated 6d                              │<---                                                          │
+│ │    Chatbooks                   │     │  ☐ 学習メモ — 日本語の文法                           │                                                              │
+│ │    Reports                     │     │      document · updated 1w                           │                                                              │
+│ │ ────────────────────────────── │     │ █☑ Server logs excerpt 2026-09-27                    │                                                              │
+│ │ Create                     ▾   │     │ █    plaintext · updated 1w                          │                                                              │
+│ │    New note                    │     │  ☐ Spaced repetition, explained                      │                                                              │
+│ │    New prompt                  │<--- │      article · updated 1w                          ▇ │                                                              │
+│ │    New skill                   │     │  ☐ Podcast: Deep Work revisited (ep. 112) — trans…   │                                                              │
+│ │ ────────────────────────────── │     │      audio · updated 1w                              │                                                              │
+│ │ Study                      ▾   │     │  ☐ Grocery receipt (OCR text)                        │                                                              │
+│ │    Study decks (0)             │     │      plaintext · updated 1w                          │                                                              │
+│ │    Flashcards due: 0           │     │  ☐ Research notes — interview synthesis (export)     │                                                              │
+│ │    Quizzes (0)                 │     │      document · updated 1w                           │                                                              │
+│ │ ────────────────────────────── │     │  ☐ How SQLite FTS5 ranks results                     │                                                              │
+│ │ Import / Export            ▾   │     │      article · updated 2w                            │                                                              │
+│ │    Import…                     │     │  ☐ Lecture 4 — Transformers (transcript)             │                                                              │
+│ │    Export                      │     │               1-20 of 23 · Page 1 of 2               │                                                              │
+│ │ ────────────────────────────── │     │              Already on the first page.              │                                                              │
+│ │ Details                    ▸   │     │                 ○ Previous     Next                  │                                                              │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | space toggle selection | s done selecting | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -92,6 +92,7 @@ async def test_empty_transcript_displays_no_messages_yet():
         assert "No messages yet" in str(modal.query_one("#buddy-transcript").render())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 20), (80, 24), (120, 40)])
 async def test_pending_decision_is_reachable_while_reading_history(size):

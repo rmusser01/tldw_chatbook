@@ -183,12 +183,15 @@ def test_notes_producer_fails_closed_without_notes_dispatch_authority(tmp_path) 
     )
 
     assert result == {"status": "skipped", "reason": "notes_authority_unavailable"}
-    assert repo.list_sync_v2_outbox_entries(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope=None,
-        dataset_id="dataset-1",
-    ) == []
+    assert (
+        repo.list_sync_v2_outbox_entries(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            dataset_id="dataset-1",
+        )
+        == []
+    )
 
 
 def test_notes_producer_observes_keys_inserted_into_shared_cache_after_wiring(
@@ -225,14 +228,17 @@ def test_notes_producer_observes_keys_inserted_into_shared_cache_after_wiring(
     )
 
     assert enqueued["status"] == "enqueued"
-    assert len(
-        repo.list_pending_sync_v2_outbox_envelopes(
-            server_profile_id="server-a",
-            authenticated_principal_id="user-a",
-            workspace_scope=None,
-            dataset_id="dataset-1",
+    assert (
+        len(
+            repo.list_pending_sync_v2_outbox_envelopes(
+                server_profile_id="server-a",
+                authenticated_principal_id="user-a",
+                workspace_scope=None,
+                dataset_id="dataset-1",
+            )
         )
-    ) == 1
+        == 1
+    )
 
 
 def test_notes_producer_without_key_cache_owns_a_private_mapping(tmp_path) -> None:

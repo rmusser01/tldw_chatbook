@@ -25,6 +25,8 @@ thing itself.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from textual.events import Key
 
@@ -43,6 +45,23 @@ async def _focused_composer(host, pilot, text: str = "") -> ConsoleComposerBar:
     composer.focus()
     await pilot.pause()
     return composer
+
+
+async def _clear_focus(host, pilot) -> None:
+    """Clear focus once the Console's activation stops giving it to the composer.
+
+    The activation focuses the composer more than once in the first ~0.3 s
+    after it mounts. A single ``set_focus(None)`` made in that window was
+    undone by the next restore, so the "nothing is focused" precondition
+    below was left to chance (it raced on dev too). Clear again until focus
+    stays cleared for a quiet window.
+    """
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        host.set_focus(None)
+        await pilot.pause(0.3)
+        if host.focused is None:
+            return
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +284,8 @@ async def test_ctrl_z_undoes_a_typed_run_and_ctrl_shift_z_redoes_it():
 
 
 @pytest.mark.asyncio
-async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
+async def test_ctrl_e_expands_a_collapsed_paste_in_place():
+    """Owner decision 2026-10-30: Ctrl+E expands a token; Enter only sends."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         composer = await _focused_composer(host, pilot)
@@ -274,14 +294,15 @@ async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
         await pilot.pause()
 
         assert composer._display_draft_text() == (
-            f"Pasted text | {len(pasted)} characters | Expand"
+            f"Pasted text | {len(pasted)} characters | Ctrl+E expand"
         )
 
-        await pilot.press("enter")
+        await pilot.press("ctrl+e")
         await pilot.pause()
 
-        assert composer._display_draft_text() == "Expand?"
+        assert composer._display_draft_text() == pasted
         assert composer.draft_text() == pasted
+        assert composer.cursor_index == len(pasted)
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +317,7 @@ async def test_a_printable_key_reaches_the_composer_while_nothing_is_focused():
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
         await pilot.press("z")
@@ -315,8 +335,7 @@ async def test_an_edit_key_reaches_the_composer_while_nothing_is_focused():
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
         await pilot.press("left")
@@ -334,8 +353,7 @@ async def test_ctrl_c_does_not_clear_the_draft_while_nothing_is_focused():
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep me")
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
         await pilot.press("ctrl+c")

@@ -1,0 +1,109 @@
+[
+  {
+    "argv": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit": 0,
+    "stdout": "408453025fc58383b81cb018b01134579cb3141a\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--cached",
+      "--name-only"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--name-only"
+    ],
+    "exit": 0,
+    "stdout": "Docs/security/production-diagnostic-inventory.json\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "add",
+      "--",
+      "Docs/security/production-diagnostic-inventory.json"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--cached",
+      "--name-only"
+    ],
+    "exit": 0,
+    "stdout": "Docs/security/production-diagnostic-inventory.json\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--cached",
+      "--check"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "commit",
+      "-m",
+      "docs: record reviewed chat-start cleanup diagnostics"
+    ],
+    "exit": 0,
+    "stdout": "[codex/console-chat-starts-dev 9ceacaa9fd] docs: record reviewed chat-start cleanup diagnostics\n 1 file changed, 2 insertions(+), 2 deletions(-)\n",
+    "stderr": "Auto packing the repository in background for optimum performance.\nSee \"git help gc\" for manual housekeeping.\nwarning: The last gc run reported the following. Please correct the root cause\nand remove /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.git/worktrees/tldw_chatbook1/gc.log\nAutomatic cleanup will not be performed until the file is removed.\n\nwarning: There are too many unreachable loose objects; run 'git prune' to remove them.\n\n"
+  },
+  {
+    "argv": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit": 0,
+    "stdout": "9ceacaa9fd9d4eb37c68a137fa8975488da5ca40\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "status",
+      "--porcelain"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "show",
+      "--format=",
+      "--name-only",
+      "9ceacaa9fd9d4eb37c68a137fa8975488da5ca40"
+    ],
+    "exit": 0,
+    "stdout": "Docs/security/production-diagnostic-inventory.json\n",
+    "stderr": ""
+  }
+]

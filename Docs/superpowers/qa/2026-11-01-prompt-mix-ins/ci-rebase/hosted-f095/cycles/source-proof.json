@@ -1,0 +1,25 @@
+{
+  "head": "f09597cdd5a2b5af1b07dea7eabe2eb6d33d9c80",
+  "path": "Tests/UI/test_console_first_send_import_cycles.py",
+  "sha256": "51e0fe80324f61303d40b7f9d37999ce216acb0eb6fc02688f14647a6f2a0a78",
+  "unchanged_original_graph_oracle_asts": [
+    "_is_type_checking",
+    "_module_level_statements",
+    "_module_level_imports",
+    "_cycles",
+    "_graph",
+    "test_the_cycle_finder_names_a_cycle_through_an_unlisted_module",
+    "test_the_warm_up_imports_no_module_level_cycle",
+    "test_the_warm_up_modules_make_no_dynamic_import_at_module_level"
+  ],
+  "lint": {
+    "before": 1,
+    "after": 1,
+    "added": []
+  },
+  "local_optional_package": {
+    "distribution": "textual-serve",
+    "version": "1.1.3",
+    "spec_origin": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual_serve/__init__.py"
+  }
+}

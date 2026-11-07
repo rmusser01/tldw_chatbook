@@ -1,0 +1,22 @@
+{
+  "ci_head": "f4422372003676badd0d36342ea81b6ea94a3af8",
+  "failed_job": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279531",
+  "runs": {
+    "identity_assertion_red": {
+      "summary": "1 failed in 4.49s",
+      "log_sha256": "f9d4ff2447e933dfdd1be156883bdfad4373462f819795eb554163cea02a4296"
+    },
+    "semantic_outcomes_green": {
+      "summary": "82 passed in 32.28s",
+      "log_sha256": "0d0ca39dd59c36a9232b3200ce314a6edbc25d8506bad543ed5709959b33b66f"
+    }
+  },
+  "production_changes": false,
+  "assertions_retained": [
+    "live receipt viewport/hit target",
+    "real pointer click",
+    "Reader opens correct canonical id",
+    "Read later saves exactly that id"
+  ],
+  "control": "actual receipt recomposition during Pilot pre-mouse pause; no mouse or navigation event is replaced"
+}

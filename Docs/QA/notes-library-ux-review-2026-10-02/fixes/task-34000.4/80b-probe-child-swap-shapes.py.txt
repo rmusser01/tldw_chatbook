@@ -1,0 +1,84 @@
+"""Textual 8.2.8 probe v3 (no guard: plain Screen): region-scoped child swap
+awaited from different pumps, plus screen.call_next / refresh(recompose=True)
+and a worker owned by a removed ROOT."""
+import asyncio
+import os
+import sys
+
+from textual.app import App, ComposeResult
+from textual.containers import Vertical
+from textual.screen import Screen
+from textual.widgets import Static
+
+MODE = sys.argv[1]
+OBS: dict = {}
+
+
+class Main(Screen):
+    composed = 0
+
+    def compose(self) -> ComposeResult:
+        Main.composed += 1
+        with Vertical(id="host"):
+            with Vertical(id="outgoing"):
+                yield Static("nested", id="nested")
+
+    async def swap(self) -> None:
+        host = self.query_one("#host")
+        try:
+            await host.remove_children(tuple(host.children))
+            await host.mount(Static("incoming", id="incoming"))
+        except asyncio.CancelledError:
+            OBS["swap"] = "CANCELLED mid-swap"
+            raise
+        OBS["swap"] = "returned"
+
+    async def recompose_me(self) -> None:
+        await self.recompose()
+        OBS["swap"] = "returned"
+
+
+class Probe(App):
+    def on_mount(self) -> None:
+        self.push_screen(Main())
+
+
+async def main() -> None:
+    app = Probe()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        before = Main.composed
+        if MODE == "child_swap_from_nested":
+            screen.query_one("#nested").call_later(screen.swap)
+        elif MODE == "child_swap_from_outgoing_root":
+            screen.query_one("#outgoing").call_later(screen.swap)
+        elif MODE == "child_swap_from_host":
+            screen.query_one("#host").call_later(screen.swap)
+        elif MODE == "child_swap_from_screen":
+            screen.call_later(screen.swap)
+        elif MODE == "child_swap_worker_owned_by_outgoing_root":
+            screen.query_one("#outgoing").run_worker(screen.swap())
+        elif MODE == "recompose_via_screen_call_next_from_nested":
+            screen.query_one("#nested").call_later(lambda: screen.call_next(screen.recompose_me))
+        elif MODE == "recompose_via_refresh_from_nested":
+            screen.query_one("#nested").call_later(lambda: screen.refresh(recompose=True))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 4.0
+        done = False
+        while loop.time() < deadline:
+            await asyncio.sleep(0.05)
+            if MODE.startswith("child_swap"):
+                done = bool(screen.query("#incoming")) and not screen.query("#nested")
+            else:
+                done = Main.composed > before and bool(screen.query("#nested"))
+            if done:
+                break
+        verdict = "COMPLETED" if done else "NEVER LANDED (bounded 4s)"
+        with open("results3.txt", "a") as fh:
+            fh.write(f"{MODE:46s} {verdict:28s} {OBS}\n")
+        if not done:
+            os._exit(3)
+
+
+asyncio.run(main())

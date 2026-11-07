@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N  Media (5)      Sets                           I       ‹ Back
+  a  Media · 5 of 5 · all types · sort: Newest     t  meeting-notes
+  v   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter    e  file:///Users/macbook-dev/Documents/GitHub/tld
+      ▊  Title/keyword…          ▎                 m  w_chatbook/.worktrees/.nlrev-harness/fixtures/
+      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                 s  import-docs/meeting-notes.txt
+        type: All types    sort: Newest                 Find  Note  Read later
+                                                        Use in Console  More
+        Export…     Trash     Select                    Read (selected)  Analysis  Highlights  Info
+--->    Review these                                  ┌────────────────────────────────────────────┐
+        paper-retrieval-practice                      │ Meeting notes - weekly sync                │
+          plaintext · updated just now                │                                            │
+      ▸ meeting-notes                                 │ Attendees: the whole team.                 │
+          plaintext · updated just now · loaded  <--- │                                            │
+        reading-list                                  │ We reviewed the import queue work and      │
+          plaintext · updated just now                │ agreed that the receipt should open the    │
+        glossary                                      │ item it names. Two people reported that    │
+--->      plaintext · updated just now                │ Read later had saved a different           │
+        team-handbook                                 │ document than the one they were reading;   │
+          plaintext · updated just now                │ this is now tracked.                       │
+                                                      │                                            │
+                                                      │ Next steps: verify the fix with a          │
+                                                      │ five-item import and capture the result.   │
+                                                      │                                            │
+                                                      └────────────────────────────────────────────┘
+                       1-5 of 5
+  / focus search | F6 next pane | ] next item | [ prev item | F1 · Ctrl+P · Ctrl+Q

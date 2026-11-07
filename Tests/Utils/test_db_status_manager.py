@@ -100,9 +100,7 @@ async def test_update_db_sizes_uses_the_wal_inclusive_helper(tmp_path, monkeypat
     media_db = tmp_path / "media.db"
     media_db.write_bytes(b"x" * 1024)
 
-    monkeypatch.setattr(
-        "tldw_chatbook.config.get_prompts_db_path", lambda: prompts_db
-    )
+    monkeypatch.setattr("tldw_chatbook.config.get_prompts_db_path", lambda: prompts_db)
     monkeypatch.setattr(
         "tldw_chatbook.config.get_chachanotes_db_path", lambda: chachanotes_db
     )

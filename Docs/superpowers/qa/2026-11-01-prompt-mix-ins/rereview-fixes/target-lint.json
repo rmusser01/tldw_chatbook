@@ -1,0 +1,50 @@
+{
+  "base": "1a58f0af2cbc5129f9c8f01595d67c330a7defda",
+  "files": {
+    "Tests/Chat/test_console_prompt_mixin_admission.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/Chat/test_console_prompt_mixin_retry.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/Chat/test_console_received_intent_transitions.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/UI/test_console_prompt_mixins.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "base_count": 184,
+      "current_count": 184,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_native_commit.py": {
+      "base_count": 2,
+      "current_count": 2,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_prompt_mixin_service.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_received_dispatch.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+      "base_count": 14,
+      "current_count": 14,
+      "introduced": []
+    }
+  }
+}

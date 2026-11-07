@@ -1,0 +1,32 @@
+# Live re-run of the README procedure at 769dff7edc, 2026-10-04 03:07-03:11 (finding 6)
+
+Followed ../README.md step by step, with my own scratch driver (not committed):
+- Scratch profile written from the shipped template by a seed process whose HOME/XDG_* pointed at a second
+  scratch dir; users_name = "verify_p7t4fix1_live" and the same [first_run], [splash_screen], [model_catalog],
+  [console.onboarding], [chat_defaults], [api_settings.llama_cpp] and [providers] values as the README.
+  Every *_db_path in it is '~/...'; 'grep /Users' over the file found nothing.
+- A loopback stand-in on 127.0.0.1:18767 served /v1/models (the two ids) and a short streamed reply.
+- tmux server '-L p7t4fix1live' at 211x44; the app under env -i with HOME, XDG_CONFIG_HOME, XDG_DATA_HOME and
+  TLDW_CONFIG_PATH in the scratch dir, the null keyring, PYTHONPATH=<worktree>.
+- Steps 1-6 as listed in the README (typed message + Enter; F4 F6 Down Enter Esc; F6 Tab x4 'mistral' Down Enter
+  Esc; F6 Up Enter Down Enter; s; F6 Tab x4 and an SGR mouse press/release on the '▶ config key' title at
+  column 174, row 26 of a fresh capture). After step 5 the scratch config.toml held
+  [chat_defaults] provider = llama_cpp, model = mistral-7b-instruct-q5.
+
+## Captures vs the committed ones (cmp, both the .txt and the .ansi.txt of each)
+- 01-card-and-inspector-chat-with-work: .txt identical, .ansi.txt identical
+- 02-model-staged-guide-and-closed-config-key: .txt identical, .ansi.txt identical
+- 03-unsaved-edit-next-new-chat-note: .txt identical, .ansi.txt identical
+- 04-saved-next-new-chat-open-chat-keeps: .txt identical, .ansi.txt identical
+- 05-config-key-opened-keeps-the-model-key: .txt identical, .ansi.txt identical
+
+## The real profile was not written
+- While the app ran, lsof on its PID listed 0 open files under ~/.config/tldw_cli or ~/.local/share/tldw_cli;
+  its ChaChaNotes handles were under <scratch>/live/home/.local/share/tldw_cli/verify_p7t4fix1_live/.
+- A marker file touched at 03:07:22 (before the seed): after the app quit at 03:10:48,
+  'find ~/.config/tldw_cli ~/.local/share/tldw_cli ( -newer marker -o -cnewer marker )' printed 0 entries.
+- Task 4's whole window, implementation and this fix round (00:30:00 to 04:16:44): 'find ... ( -newermt -o -newerct
+  2026-10-04 00:30:00 )' printed 0 entries. The newest change anywhere in the real profile is the ~/.config/tldw_cli directory entry at
+  2026-10-03 19:59:57, before Task 4 began; ~/.config/tldw_cli/config.toml is dated 2026-09-26 07:01.
+- The app was quit with Ctrl+Q, the tmux server killed and the loopback server stopped; the scratch profile
+  (including the verify_p7t4fix1_live data dir) was deleted afterwards.

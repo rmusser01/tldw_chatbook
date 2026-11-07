@@ -1,0 +1,21 @@
+{
+  "rebased_source": "79e659dcde6f5360edb0070f9d184713bd8584d1",
+  "target_dev": "62a169f906508ed02bd7546ab278d916638d1607",
+  "ci_run": 41395825942,
+  "ci_job": 125116815632,
+  "ci_log_sha256": "df4ac05706915f0f0cd9849cfbcd6645941cf5108bf20470825957b6fa3b83d7",
+  "host_platform": "macOS-26.5.2-arm64-arm-64bit",
+  "environment_for_probes": {
+    "PYTEST_PLUGINS": "latency_probe",
+    "PYTHONPATH": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9",
+    "TLDW_TEST_CSS_CACHE": "0",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "MIXINS_LATENCY_PROBE_OUTPUT": "<private>/<current|baseline>-probe-timings.json"
+  },
+  "archive_command": [
+    "git",
+    "archive",
+    "62a169f906508ed02bd7546ab278d916638d1607"
+  ],
+  "archive_destination": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9/baseline"
+}

@@ -95,7 +95,7 @@ async def test_composer_pageup_scrolls_transcript_keyboard_only():
     async with host.run_test(size=(120, 30)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
         for n in range(30):
@@ -184,7 +184,7 @@ async def test_f6_rail_stop_paints_owned_divider_and_restores_on_leave():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         # The focus-frame contract needs the expanded rail; current Console
         # startup may leave Context collapsed while Inspector owns the band.
         console._set_console_rail_preference(

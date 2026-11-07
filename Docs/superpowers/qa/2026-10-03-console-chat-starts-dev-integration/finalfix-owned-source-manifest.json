@@ -1,0 +1,58 @@
+{
+  "base": "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+  "owned": [
+    {
+      "path": "Tests/Chat/test_console_chat_create_integration.py",
+      "before_sha256": "48d76566ab6ec09f7edc7ca58964f64f18deee7102ad34cc472dff08eff6f873",
+      "after_sha256": "a5f8aafabdecbf17c89c88debf3f7befcb9353d5bf6053ba7cf3889721b25778",
+      "unchanged_skip_xfail_decorators": []
+    },
+    {
+      "path": "Tests/Chat/test_console_chat_start.py",
+      "before_sha256": "f7c6587d305faa2b21c8bcd4898c02c09f1ff17d37ac6d1d439d4bae4679aa45",
+      "after_sha256": "aca8fcbd3f686afcb75205f37f52b25db5801bd4e8f96893e0636c04a99258e1",
+      "unchanged_skip_xfail_decorators": []
+    },
+    {
+      "path": "Tests/UI/test_console_runtime_ownership.py",
+      "before_sha256": "9e0a134a4579f101d5e9155071a8fc97ad11cef695a68793c2eb093220d1c2a3",
+      "after_sha256": "5ae9eb10b422574181744d277a2b80a34d94e6aaa53671e0148b2b1157ea032a",
+      "unchanged_skip_xfail_decorators": [
+        [
+          "test_captured_attach_timer_overlap_rearms_real_sync_worker",
+          "pytest.mark.xfail(reason='TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes.', strict=True)"
+        ]
+      ]
+    },
+    {
+      "path": "Tests/UI/test_console_session_controller.py",
+      "before_sha256": "0d162e6b63343c6609125016659f28de5a35eb62be1f3499bddb8fbdb86ebe48",
+      "after_sha256": "bc4a87948dbc9dfb8a1ac174b48420bea35d4362d7126082d8c02f2a523d0bfc",
+      "unchanged_skip_xfail_decorators": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+      "before_sha256": "359a787d4f4444a1e21797a3b15c8d0f5a246382ac94ee6c616d65a90da3031a",
+      "after_sha256": "27276862ff490858818740371a68ffa746180a1fe10d36f089e2b1076c9e8bff",
+      "unchanged_skip_xfail_decorators": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "before_sha256": "cb5f78e90f23aece23110b5c55b1a49cf2bb0d26635d2813ba4a1700174dfaef",
+      "after_sha256": "efc9953dcc565e3b275d4ea405c0a7622fc77b19eb906a3ebe5f3c4455a240d3",
+      "unchanged_skip_xfail_decorators": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_store.py",
+      "before_sha256": "be11678c78a28353be2db3350d8d14d0eef29461a1c61e1881798c3c4f510e17",
+      "after_sha256": "f41686e595dad1bf704166be56a40099c81c1636b473bfed8192e4ba3bb20422",
+      "unchanged_skip_xfail_decorators": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "before_sha256": "8e33e9bab83559396016ca30f8c3f8d0303b1a8076f31ff9dd2af4b603e37102",
+      "after_sha256": "c9868c21d635ff338f13849a30aaf37e1c79b2481fa8bce5d7e8086b6780f950",
+      "unchanged_skip_xfail_decorators": []
+    }
+  ]
+}

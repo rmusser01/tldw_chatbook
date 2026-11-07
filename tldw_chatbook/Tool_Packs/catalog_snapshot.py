@@ -300,6 +300,7 @@ class _V1PermissionInventoryRegistry(PermissionInventoryRegistry):
             from tldw_chatbook.MCP.local_server_tools import hub_character_service
 
             builtin_tools: dict[str, HubTool] = {}
+            # Lists/reviews tools only; no notes DB needed, default is fine.
             provider = BuiltinToolProvider()
             for entry in provider.list_catalog():
                 tool = provider.tool_for(entry.name)

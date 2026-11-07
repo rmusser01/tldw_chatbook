@@ -269,6 +269,19 @@ def _validate_state_authority(
         raise PersonaBuddyStateError()
 
 
+def _bounded_exception_type(error: BaseException) -> str:
+    """Return the exception's class name for a log field, never its message.
+
+    TASK-38989: Buddy logs are fixed ``persona_buddy_*`` categories with the
+    class bound as ``exception_type`` (Tests/Architecture/
+    test_persona_buddy_boundary.py), as ``preferences.py`` already logs.
+    """
+    name = type(error).__name__
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name) is None:
+        return "Exception"
+    return name
+
+
 def load_local_persona_portrait(
     local_persona_service: object,
     persona_record: Mapping[str, object],
@@ -304,7 +317,10 @@ def load_local_persona_portrait(
             data=image,
         )
     except Exception as exc:
-        logger.debug("Persona buddy portrait build failed: {}", type(exc).__name__)
+        exception_type = _bounded_exception_type(exc)
+        logger.bind(exception_type=exception_type).debug(
+            "persona_buddy_portrait_build_failed"
+        )
         return None
 
 
@@ -1105,9 +1121,10 @@ class PersonaBuddyController:
                 else self._reduced_motion
             )
         except Exception as exc:
-            logger.debug(
-                "Persona buddy reduced-motion preference unreadable; assuming on: {}",
-                type(exc).__name__,
+            # Assumes reduced motion is on.
+            exception_type = _bounded_exception_type(exc)
+            logger.bind(exception_type=exception_type).debug(
+                "persona_buddy_reduced_motion_unreadable"
             )
             return True
         return value if type(value) is bool else True
@@ -1156,9 +1173,9 @@ class PersonaBuddyController:
             # profile path (an OSError filename, a PrivatePathError). The class
             # name says what broke; attaching the payload would break the promise
             # this handler's comment has made since before logging existed here.
-            logger.debug(
-                "Persona buddy private library authority rejected: {}",
-                type(exc).__name__,
+            exception_type = _bounded_exception_type(exc)
+            logger.bind(exception_type=exception_type).debug(
+                "persona_buddy_library_authority_rejected"
             )
             return None
 
@@ -1189,8 +1206,9 @@ class PersonaBuddyController:
                 portrait = None
             return _LocalPersona(persona_id, revision, portrait)
         except Exception as exc:
-            logger.debug(
-                "Persona buddy local persona unreadable: {}", type(exc).__name__
+            exception_type = _bounded_exception_type(exc)
+            logger.bind(exception_type=exception_type).debug(
+                "persona_buddy_local_persona_unreadable"
             )
             return None
 
@@ -1207,8 +1225,9 @@ class PersonaBuddyController:
                 else repository.get_active_persona_pack(persona_id)
             )
         except Exception as exc:
-            logger.debug(
-                "Persona buddy visual graph unreadable: {}", type(exc).__name__
+            exception_type = _bounded_exception_type(exc)
+            logger.bind(exception_type=exception_type).debug(
+                "persona_buddy_visual_graph_unreadable"
             )
             return None
 
@@ -1238,9 +1257,9 @@ class PersonaBuddyController:
                 reduced_motion=reduced_motion,
             )
         except Exception as exc:
-            logger.debug(
-                "Persona buddy visual runtime could not be resolved: {}",
-                type(exc).__name__,
+            exception_type = _bounded_exception_type(exc)
+            logger.bind(exception_type=exception_type).debug(
+                "persona_buddy_visual_runtime_unresolved"
             )
             return None
 

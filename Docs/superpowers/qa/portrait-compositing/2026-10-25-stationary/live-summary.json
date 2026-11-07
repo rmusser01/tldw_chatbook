@@ -1,0 +1,111 @@
+{
+  "task": "TASK-36699",
+  "baseline_app_commit": "e4e4fd7846d57134b10f7da1169dc63eef724c29",
+  "token": "$ds-portrait-idle-offset-px: 0;",
+  "token_file_sha256": "200987a06ffbe03dc0e2bd4bb1ff8cbbfdfa55f6c705f9e0c7965da1189c2bdd",
+  "backend": "Pocket TTS 3.3.0, alba, native complete-WAV adapter and CoreAudio MacBook Pro Speakers",
+  "sampled_native_frames": 2993,
+  "all_native_offsets_zero": true,
+  "every_native_image_equals_its_stationary_prepared_role": true,
+  "renderer_adds_translation": false,
+  "clips": [
+    {
+      "slug": "saffron",
+      "samples": 447,
+      "all_offsets_zero": true,
+      "unique_native_images": 4,
+      "captured_mouth_indices": [
+        0,
+        1,
+        2
+      ],
+      "blink_captured": true,
+      "complete_speech_submitted": true
+    },
+    {
+      "slug": "rowan",
+      "samples": 413,
+      "all_offsets_zero": true,
+      "unique_native_images": 4,
+      "captured_mouth_indices": [
+        0,
+        1,
+        2
+      ],
+      "blink_captured": true,
+      "complete_speech_submitted": true
+    },
+    {
+      "slug": "sunny",
+      "samples": 417,
+      "all_offsets_zero": true,
+      "unique_native_images": 4,
+      "captured_mouth_indices": [
+        0,
+        1,
+        2
+      ],
+      "blink_captured": true,
+      "complete_speech_submitted": true
+    },
+    {
+      "slug": "switch",
+      "samples": 434,
+      "all_offsets_zero": true,
+      "unique_native_images": 4,
+      "captured_mouth_indices": [
+        0,
+        1,
+        2
+      ],
+      "blink_captured": true,
+      "complete_speech_submitted": true
+    },
+    {
+      "slug": "patch",
+      "samples": 421,
+      "all_offsets_zero": true,
+      "unique_native_images": 4,
+      "captured_mouth_indices": [
+        0,
+        1,
+        2
+      ],
+      "blink_captured": true,
+      "complete_speech_submitted": true
+    },
+    {
+      "slug": "pulse",
+      "samples": 434,
+      "all_offsets_zero": true,
+      "unique_native_images": 4,
+      "captured_mouth_indices": [
+        0,
+        1,
+        2
+      ],
+      "blink_captured": true,
+      "complete_speech_submitted": true
+    },
+    {
+      "slug": "vector",
+      "samples": 427,
+      "all_offsets_zero": true,
+      "unique_native_images": 4,
+      "captured_mouth_indices": [
+        0,
+        1,
+        2
+      ],
+      "blink_captured": true,
+      "complete_speech_submitted": true
+    }
+  ],
+  "checks": "67 targeted playback/UI/token/CSS tests passed; regression failed with offset1, passes with offset0; Ruff and diff checks pass; independent code review has no findings.",
+  "limits": [
+    "Headless mounted-app capture, with separately labelled full-resolution pose replay; graphics-terminal hardware not qualified.",
+    "Audio is device-buffer reconstruction with estimated DAC timing, not acoustic loopback.",
+    "Earlier timing hitches and brief mouth reversals are not fixed by this motion correction. Two sampled Switch silence positions are flagged in the new timing report; no claim of complete speech-quality signoff.",
+    "Configured live image-provider qualification TASK-36555 AC5 remains open."
+  ]
+}

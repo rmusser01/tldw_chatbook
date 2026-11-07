@@ -32,10 +32,18 @@ Press **Ctrl+8**, select **Workflows** in the navigation bar, or use **Ctrl+P** 
    becoming a valid saved revision. **More…** exposes history, duplication,
    reordering and draft recovery actions where applicable.
 
-At wide sizes the library, navigator and editor are visible together. Medium
+At wide sizes the library, navigator and editor are visible together. The
+library and the navigator are panel-coloured rails, each with a line down its
+right edge; the editor sits on the screen background. Medium
 widths retain the navigator and editor; compact widths use **Workflow…** and
 **Step / Overview…** selectors above the editor. **F6** moves between
 visible workbench panes; Tab moves through controls. Hidden panes are skipped.
+
+In the rails, the focused button or the focused library search field fills
+with the theme's focus colour. While the field is focused and empty, its hint
+is in italic. When Tab or **F6** brings you back to the field, the whole
+query is selected and shows in reversed colours, as the cursor does; typing
+replaces it.
 
 The library, saved-revision history and local-draft selectors show 20 items per
 page. Use **Previous**/**Next** in the library, or **Previous page**/**Next page**

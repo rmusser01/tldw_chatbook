@@ -1,0 +1,50 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Diagnostics
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────────────┐
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│  Filter categories (/)       │  │  │  State: Read-only here | Validation and reload expose status without writing raw TOML.                             │  │  │  Scope Inspector                     │
+│  No filter | / focus         │  │  │                                                                                                                    │  │  │                                      │
+│  category search             │  │  │  Diagnostics                                                                                                       │  │  │ Selected category: Diagnostics       │
+│                              │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │ No unsaved changes                   │
+│  Core                        │  │  │ │                                                                                                                │ │  │  │  Guided edits: use Validate/Reload.  │
+│      Overview (view)         │  │  │ │  Validate config                                                                                               │ │  │  │ Local-only: saves write your config  │
+│      Providers & Models      │  │  │ │  Config path:                                                                                                  │ │  │  │ file.                                │
+│      Web Search              │  │  │ │  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-qa/homes/v-cross-cutting-1/.con  │ │  │  │ Impact and boundaries                │
+│      Speech & TTS            │  │  │ │  fig/tldw_cli/config.toml                                                                                      │ │  │  │ Config validation, logs, and         │
+│  Interface                   │  │  │ │  Validation: raw TOML validation before advanced edits                                                         │ │  │  │ troubleshooting signals.             │
+│      Appearance              │  │  │ │  Reload: load current config into the running app                                                              │ │  │  │  Runtime owner: Diagnostics          │
+│      Theme                   │  │  │ │  Redaction: actionable errors without secrets                                                                  │ │  │  │  Writes allowed: No                  │
+│      Splash Screen           │  │  │ │  Write safety: validation is read-only                                                                         │ │  │  │  Owns: validation output             │
+│      Console Behavior        │  │  │ │  Diagnostics writes: not available yet - raw edits remain gated in Advanced Config                             │ │  │  │  reload status                       │
+│  Data & Privacy              │  │  │ │  Validate Config   Reload Config    Run Setup Wizard                                                           │ │  │  │  Read-only: Diagnostic checks are    │
+│      Storage                 │  │  │ │  Config validation: not run                                                                                    │ │  │  │  non-destructive by design.          │
+│      Workspaces              │  │  │ │  Config reload: not run                                                                                        │ │  │  │  Affected config: read-only          │
+│      Tool Profiles           │  │  │ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  validation, reload status, and      │
+│      Privacy & Security      │  │  │                                                                                                                    │  │  │  troubleshooting output              │
+│      Network                 │  │  │                                                                                                                    │  │  │  Recovery: validate first, reload    │
+│      My Profile              │  │  │                                                                                                                    │  │  │  only after confirming the config    │
+│  Troubleshooting             │  │  │                                                                                                                    │  │  │  source is correct                   │
+│ █  > Diagnostics (view)      │  │  │                                                                                                                    │  │  │  Boundary: diagnostics redact        │
+│      About (view)            │  │  │                                                                                                                    │  │  │  secrets and should not mutate       │
+│      Agents                  │  │  │                                                                                                                    │  │  │  advanced config                     │
+│  Expert                      │  │  │                                                                                                                    │  │  │                                      │
+│      Hooks                   │  │  │                                                                                                                    │  │  │                                      │
+│      Internal Prompts        │  │  │                                                                                                                    │  │  │                                      │
+│      Advanced Config         │  │  │                                                                                                                    │  │  │                                      │
+│   Domain Defaults ▸ (11)     │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────────────┘
+
+  t validate config | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -14,8 +14,8 @@ from tldw_profile_core import (
     ProfileControls,
     ProfilePayload,
     ProfilePromoteRequest,
-    ProfileProposeRequest,
     ProfileProposal,
+    ProfileProposeRequest,
     ProfileProvenance,
     ProfileRecord,
     ProposalOperation,
@@ -42,7 +42,7 @@ class PrivateDuplicateReviewRequired(RuntimeError):
 
 @dataclass(slots=True)
 class _QuotaReservation:
-    quota: "ProfileProposalQuota"
+    quota: ProfileProposalQuota
     turn_id: str
     session_id: str
     _released: bool = False
@@ -89,7 +89,7 @@ class ProfileProposalService:
 
     def __init__(
         self,
-        service: "PersonalContextService",
+        service: PersonalContextService,
         *,
         quota: ProfileProposalQuota,
     ) -> None:
@@ -173,7 +173,10 @@ class ProfileProposalService:
             if (
                 record.kind.value == payload.kind
                 and record.semantic_key == semantic_key
-                and record.controls.agent_visibility is AgentVisibility.USER_ONLY
+                and (
+                    record.controls.agent_visibility is AgentVisibility.USER_ONLY
+                    or record.controls.sync_mode is SyncMode.DEVICE_ONLY
+                )
             ):
                 raise PrivateDuplicateReviewRequired("private_duplicate")
 
@@ -479,8 +482,8 @@ class ProfileProposalService:
 
 
 __all__ = [
+    "PrivateDuplicateReviewRequired",
     "ProfileProposalQuota",
     "ProfileProposalService",
-    "PrivateDuplicateReviewRequired",
     "ProposalQuotaExceeded",
 ]

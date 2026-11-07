@@ -669,3 +669,31 @@ async def test_the_recognition_asks_the_shared_vault_predicate(tmp_path, monkeyp
     await controller.recognise_selected_folder(already_synced=False)
 
     assert controller.presentation_snapshot.vault_recognition == ""
+
+
+def test_the_location_line_says_a_held_sync_folder_needs_attention():
+    """TASK-34000.2 AC#4 (review finding N-02): the held state is never shortened.
+
+    A note in a wedged sync folder read "In a synced folder · …quotes.md ·
+    file written …" while nothing typed reached the file. The held state is
+    stated right after the world, in full, at every width; the path and the
+    write time give way as before. Healthy copy is untouched when the folder
+    is not held, and a note with no file keeps its database-only wording.
+    """
+    path = "/Users/someone/Documents/Vaults/Power vault/People/Samantha Reed.md"
+    held = "In a synced folder · ⚠ Sync needs attention · "
+    wide = library_note_location_line(path, "2026-09-15 08:06", 160, attention=True)
+    assert wide.startswith(held), wide
+    assert path in wide
+    assert wide.endswith("· file written 2026-09-15 08:06")
+
+    narrow = library_note_location_line(path, "2026-09-15 08:06", 72, attention=True)
+    assert narrow.startswith(held), narrow
+    assert "Samantha Reed.md" in narrow, narrow
+    assert "file written" not in narrow, narrow
+
+    assert library_note_location_line(path, "", 0, attention=True) == f"{held}{path}"
+    assert "needs attention" not in library_note_location_line(path, "", 0)
+    assert library_note_location_line("", "", 120, attention=True) == (
+        "In the Library database only — no file on disk"
+    )

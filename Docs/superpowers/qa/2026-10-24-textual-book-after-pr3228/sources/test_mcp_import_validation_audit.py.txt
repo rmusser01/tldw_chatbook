@@ -1,0 +1,94 @@
+"""Malformed importer shape must remain a recoverable preview error."""
+import asyncio
+import json
+from pathlib import Path
+import pytest
+from textual.widgets import Button, TextArea, Static
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_mcp_workbench import ProfileFormHubService
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
+from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
+
+class HubApp(ConsolidatedCSSApp):
+    def __init__(self):
+        super().__init__()
+        self.unified_mcp_service = ProfileFormHubService()
+    def compose(self):
+        yield ToolsHubPanel(self, id='settings-tools-hub')
+
+async def until(predicate):
+    async with asyncio.timeout(15):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('shape', ['valid', 'args_number', 'env_array'])
+@private_profile_test
+async def test_import_preview_shape_error_is_recoverable(request, shape):
+    app = HubApp()
+    entry = {'command': 'python', 'args': [], 'env': {}}
+    if shape == 'args_number': entry['args'] = 42
+    if shape == 'env_array': entry['env'] = ['not-an-object']
+    text = json.dumps({'mcpServers': {'audit-server': entry}})
+    evidence = {'shape': shape, 'text': text}
+    try:
+        async with app.run_test(size=(180, 60)) as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            app.query_one('#mcp-import-server', Button).press()
+            await until(lambda: bool(list(app.query(MCPImportPanel))))
+            await pilot.pause()
+            app.query_one('#mcp-import-text', TextArea).text = text
+            await pilot.pause()
+            app.query_one('#mcp-import-preview', Button).press()
+            await pilot.pause()
+            evidence['error_copy'] = str(app.query_one('#mcp-import-error', Static).renderable)
+            evidence['apply_disabled'] = app.query_one('#mcp-import-apply', Button).disabled
+            if shape == 'valid':
+                assert evidence['apply_disabled'] is False
+            else:
+                assert evidence['error_copy'], evidence
+                assert evidence['apply_disabled'] is True
+    finally:
+        evidence['app_exception_type'] = type(app._exception).__name__ if app._exception else None
+        evidence['app_exception'] = str(app._exception) if app._exception else None
+        (Path(__file__).parent/f'import-validation-{shape}.json').write_text(json.dumps(evidence, indent=2)+'\n', encoding='utf-8')
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_preview_with_installed_keepalive_guard(request):
+    from tldw_chatbook.app_lifecycle import LifecycleMixin
+    class GuardedHubApp(HubApp):
+        # Use exactly the installed error policy without booting TldwCli.
+        # The handler-error branch returns before LifecycleMixin's super().
+        def _handle_exception(self, error):
+            return LifecycleMixin._handle_exception(self, error)
+    app = GuardedHubApp()
+    app._keep_screen_alive_on_handler_error = True
+    evidence = {'scope': 'hosted pane with installed app error guard; no full TldwCli boot'}
+    async with app.run_test(size=(180, 60)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        app.query_one('#mcp-import-server', Button).press()
+        await until(lambda: bool(list(app.query(MCPImportPanel))))
+        await pilot.pause()
+        panel = app.query_one(MCPImportPanel)
+        area = app.query_one('#mcp-import-text', TextArea)
+        area.text = '{"mcpServers":{"audit-server":{"command":"python","env":["bad"]}}}'
+        app.query_one('#mcp-import-preview', Button).press()
+        await until(lambda: bool(list(app._notifications)))
+        await until(lambda: not panel.is_attached)
+        # The failed widget pump has ended. A clock witness is appropriate;
+        # Pilot.pause waits on every pump including the one that just died.
+        evidence['app_running'] = app.is_running
+        evidence['app_exception_type'] = type(app._exception).__name__ if app._exception else None
+        evidence['panel_attached'] = panel.is_attached
+        evidence['editor_attached'] = area.is_attached
+        evidence['live_editor_count'] = len(list(app.query('#mcp-import-text')))
+        evidence['notifications'] = [n.message for n in app._notifications]
+        (Path(__file__).parent/'import-validation-keepalive.json').write_text(json.dumps(evidence, indent=2)+'\n', encoding='utf-8')
+        assert evidence['app_running'] is True
+        assert evidence['app_exception_type'] is None
+        assert evidence['panel_attached'] is False
+        assert evidence['live_editor_count'] == 0

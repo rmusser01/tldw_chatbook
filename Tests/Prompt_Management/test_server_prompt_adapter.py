@@ -314,7 +314,7 @@ def test_repeated_markdown_fallback_collisions_allocate_distinct_legacy_names(tm
     import_path.write_text(
         "### TITLE ###\nRepeated Collision\n### SYSTEM ###\ncompiled system\n"
         "### USER ###\ncompiled user\n### ARTIFACT_TYPE ###\nprompt\n"
-        "### STRUCTURE ###\n```json\n{\"kind\":\n```\n",
+        '### STRUCTURE ###\n```json\n{"kind":\n```\n',
         encoding="utf-8",
     )
 
@@ -325,9 +325,9 @@ def test_repeated_markdown_fallback_collisions_allocate_distinct_legacy_names(tm
     assert fetch_prompt_details(first["prompt_uuid"], include_deleted=True)["name"] == (
         "Repeated Collision (2)"
     )
-    assert fetch_prompt_details(second["prompt_uuid"], include_deleted=True)["name"] == (
-        "Repeated Collision (3)"
-    )
+    assert fetch_prompt_details(second["prompt_uuid"], include_deleted=True)[
+        "name"
+    ] == ("Repeated Collision (3)")
 
 
 def test_concurrent_markdown_fallback_collisions_allocate_distinct_legacy_names(
@@ -359,7 +359,7 @@ def test_concurrent_markdown_fallback_collisions_allocate_distinct_legacy_names(
     import_path.write_text(
         "### TITLE ###\nConcurrent Collision\n### SYSTEM ###\ncompiled system\n"
         "### USER ###\ncompiled user\n### ARTIFACT_TYPE ###\nprompt\n"
-        "### STRUCTURE ###\n```json\n{\"kind\":\n```\n",
+        '### STRUCTURE ###\n```json\n{"kind":\n```\n',
         encoding="utf-8",
     )
 

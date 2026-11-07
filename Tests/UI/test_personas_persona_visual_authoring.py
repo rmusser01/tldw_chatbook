@@ -118,7 +118,9 @@ async def _open_editor(pilot) -> PersonasScreen:
     await pilot.click("#personas-mode-personas")
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
-    await pilot.click("#personas-library-row-persona-p-1")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(pilot, pilot.app.screen, "persona:p-1", via="click")
     await pilot.pause()
     screen.post_message(EditPersonaProfileRequested("p-1"))
     await pilot.pause()
@@ -997,3 +999,61 @@ async def test_actual_local_visual_editor_publishes_issued_sources(
             assert screen._persona_visual_pending == 0
     finally:
         db.close_connection()
+
+
+async def test_saved_pack_buddy_shortcut_reaches_existing_app_manager(
+    monkeypatch, mock_app_instance, stub_characters, local_scope
+):
+    from textual.widgets import Button
+
+    from Tests.UI.test_personas_persona_visual_pack import _inventory
+    from tldw_chatbook.UI.Navigation import buddy_management
+
+    monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    opened = []
+    monkeypatch.setattr(buddy_management, "open_buddy_management", opened.append)
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(130, 50)) as pilot:
+        screen = await _open_editor(pilot)
+        state = screen._persona_visual_authoring
+        browser = screen.query_one(PersonasPersonaVisualPackWidget)
+        browser.show_inventory(_inventory(), dirty=False)
+        browser.query_one("#personas-persona-visual-buddy", Button).press()
+        await pilot.pause()
+        assert opened == [app]
+        assert screen._persona_visual_authoring is state
+        assert not state.dirty
+        assert local_scope.update_persona_profile.await_count == 0
+        assert local_scope.create_persona_profile.await_count == 0
+
+
+@pytest.mark.parametrize("change", ("inventory", "navigation", "detached"))
+async def test_saved_pack_buddy_shortcut_rejects_stale_editor_request(
+    monkeypatch, mock_app_instance, stub_characters, local_scope, change
+):
+    from Tests.UI.test_personas_persona_visual_pack import _inventory
+    from tldw_chatbook.UI.Navigation import buddy_management
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
+        PersonaVisualBuddyManageRequested,
+    )
+
+    monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    opened = []
+    monkeypatch.setattr(buddy_management, "open_buddy_management", opened.append)
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(130, 50)) as pilot:
+        screen = await _open_editor(pilot)
+        browser = screen.query_one(PersonasPersonaVisualPackWidget)
+        browser.show_inventory(_inventory(), dirty=False)
+        message = PersonaVisualBuddyManageRequested(browser, browser.saved_inventory)
+        if change == "inventory":
+            browser.show_inventory(_inventory(), dirty=False)
+        elif change == "navigation":
+            await pilot.click("#personas-mode-characters")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+        else:
+            await browser.remove()
+        screen.post_message(message)
+        await pilot.pause()
+        assert opened == []

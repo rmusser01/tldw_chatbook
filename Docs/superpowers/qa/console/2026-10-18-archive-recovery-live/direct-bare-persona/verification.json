@@ -1,0 +1,24 @@
+{
+  "outcome": "Direct restore follow-up blocked before successor reservation/transport; not qualified",
+  "search_complete_capture_calls": 2,
+  "call_routes": [
+    "agent_first",
+    "tool_loop"
+  ],
+  "live_historical_thinking_blocks": 2,
+  "wire_observer_limit": "requests observer did not intercept native HTTPX; no HTTP status/SSE claims",
+  "request_accounting": {
+    "previous_used": 15,
+    "native_provider_entries_this_phase": 2,
+    "used_total": 17,
+    "remaining_of_20": 3,
+    "basis": "two complete durable call admissions/provider entries, no fallback route; not wire events"
+  },
+  "fixture_rows_messages_unchanged": true,
+  "predecessor_rows_reconstructions_unchanged": true,
+  "exact_search_current_user_source_pins": true,
+  "no_restore_or_open": true,
+  "cancel_refused": true,
+  "native_quit_pty_exit": 0,
+  "normal_profile_unchanged": true
+}

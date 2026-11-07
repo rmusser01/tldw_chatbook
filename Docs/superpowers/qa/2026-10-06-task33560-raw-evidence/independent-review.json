@@ -1,0 +1,253 @@
+{
+  "task": "TASK-33560",
+  "reviewer": "/root/final_hooks33648",
+  "status": "scoped Ready",
+  "findings": [],
+  "review_time_utc": "2026-10-07T02:04:42Z",
+  "read_only": true,
+  "tests_rerun": false,
+  "source_edits": false,
+  "task_cli_git_or_publication_actions": false,
+  "package": "/Users/macbook-dev/.codex/worktrees/agent-recovery-error/tldw_chatbook/Docs/superpowers/qa/2026-10-06-task33560-raw-evidence",
+  "package_hashes": {
+    "manifest.json": "06a1a9ab2533bc8d4e3b81d5ad5f1427292b57893e70c941a5ef5f3b836d8bfd",
+    "raw-evidence.zip": "a3769948918a501c4a1f008dad379f9ef570c78bfb5be0d8bd50ae849b9b695a",
+    "report.md": "3839fd0a8dec346dbc5511b73d869f3ba0d9b2d41df347b4b3caaa9a9f76327c"
+  },
+  "current_files": {
+    "tldw_chatbook/Backup_Recovery/admission.py": {
+      "sha256": "5b46849c05aff1a918935e9ff75918ab179fe69329fd91490d03e484f72eeab8",
+      "bytes": 40511
+    },
+    "tldw_chatbook/Backup_Recovery/config_participants.py": {
+      "sha256": "c2a35fc5d6253eb722e07162f2f8899815d8671a13ab3f4f821f1f96a80ebabc",
+      "bytes": 18197
+    },
+    "tldw_chatbook/Backup_Recovery/generation_witnesses.py": {
+      "sha256": "4d9628a910879142f627f0cd1c55b23eb6bd8aa2e7aab3365b03d94c1d69c8c6",
+      "bytes": 3761
+    },
+    "tldw_chatbook/Backup_Recovery/raw_participants.py": {
+      "sha256": "4ad0c84c992069c235a2cae540e4e207f4b31bdfda92da556762939276f62f17",
+      "bytes": 53350
+    },
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": {
+      "sha256": "d2b6be5f4223323a70b56998287d385b71308b3534784bde6f2291d792e33aa3",
+      "bytes": 118969
+    },
+    "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py": {
+      "sha256": "12cb16163df30e4134352ad1cb47b472a2b20f7f669ef2439798e39d34c0b49f",
+      "bytes": 33304
+    },
+    "backlog/decisions/126-complete-local-backup-and-recovery.md": {
+      "sha256": "c0058ebf357b064afd9f4f83849be2e7d762566f8746013411e0e00e8f029caf",
+      "bytes": 86177
+    },
+    "Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/boot_idle_probe.py": {
+      "sha256": "a454db126a6cf368b91f87bfc6f8d5551b325f8db36fcfe3badd70dff0ea4212",
+      "bytes": 8127
+    },
+    "Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/paired_probe_source.txt": {
+      "sha256": "da5ba790b5d59549bab2345f2418a98dc47a24fa6c77ab58e251039c4d94539f",
+      "bytes": 7560
+    },
+    "Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/raw-evidence.zip": {
+      "sha256": "a3769948918a501c4a1f008dad379f9ef570c78bfb5be0d8bd50ae849b9b695a",
+      "bytes": 306978
+    },
+    "Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/report.md": {
+      "sha256": "3839fd0a8dec346dbc5511b73d869f3ba0d9b2d41df347b4b3caaa9a9f76327c",
+      "bytes": 8831
+    }
+  },
+  "archive_entries_authenticated": 87,
+  "diff_sha256": "7838e4537860e3930c7045f94e11ebe5041f933a036d9d0bea6efc8fd60e098f",
+  "base": "6feb84c1d2203bc3c6d0eecd2823f4e2409b4b4e",
+  "head_at_freeze": "f9370f51c6efb68d630809d9827bc36120ad2d1f",
+  "source_assessment": [
+    "Whole witness derivation preserves the fresh actual lease.execution_context(path), includes source-scope and paired-generation checks, and caches only passive copied results. Complete evidence includes selectors/control records, all current registered roots, consulted historical path-token chains and activation generation required.json inputs; unknown/absent/symlink/pending cases fall back.",
+    "Derived reuse uses the existing same-serving hold, namespace, PID, epoch and settle rules, requires two bracketed positive derivations, reads/publishes bounded cache state under the coordinator lock, and keeps filesystem observation outside that lock. Concurrent confirmed publication is not demoted.",
+    "Pause group reuse retains the real registry lock, fresh gate opens, current held/path identities and nonblocking flock outcomes. A prior false probe cannot cache away actual native contention.",
+    "Raw parent reuse allocates a fresh independently owned descriptor, verifies complete ancestry before and after allocation plus full descriptor posture, and keeps original refusal, fallback and uncertain-close custody. Current operation/source/member checks and publication collision protection remain fresh.",
+    "Config companion reuse remains inside its original registry-lock lifetime, with fresh binding, parent and every member inode/type/link/foreign-overlap check. Directory descendant reuse is a separately twice-derived containment proof; fresh child chain/leaf observations occur outside the lock, and the independent lease is counted before final revalidation. File-only authority cannot prove a parent.",
+    "History read_recent retains fresh temporary creation/publication authority and cleanup. Permission/config/hook raw bodies still read current bytes; this metadata reuse does not reopen model/tool/native-hook consent gates."
+  ],
+  "tests_assessment": {
+    "controls": {
+      "required_safety": {
+        "receipt_sha256": "a4721fe01265061fe35d32312e9c88181ba04f1f10134f051464f8449587b0e6",
+        "raw_sha256": "d3ff0f0e55e85fea2744ee4ebcd20d9f2a043bcc12fd8ede54cedfc229da534d",
+        "xml_sha256": "4282079c820d586f02abcc6c16764c42f1c03df3c5f5e06302cfd148881d20db",
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "0",
+            "tests": "52",
+            "time": "12.642",
+            "timestamp": "2026-10-06T18:52:36.087560-07:00",
+            "hostname": "Roberts-MacBook-Pro-2.local"
+          }
+        ],
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py",
+          "-q",
+          "--junitxml=/private/tmp/final-followups-task33560-final-safety-fehdfi0f/results.xml"
+        ],
+        "exit_code": 0
+      },
+      "separate_original_refusal": {
+        "receipt_sha256": "62a72ae470e8941db5fd629e3e532204fbe053363707f7dec911c8572bceeb7c",
+        "raw_sha256": "56c1d6ccd3febff18f275ddd5987f42ea2b80e8e0a4cd9c2a9644fd9217e6d86",
+        "xml_sha256": "5bc890a5dba8e8d884f919728659ac6eabae6d6087333400a92d8bc974ab453e",
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "0",
+            "tests": "2",
+            "time": "1.390",
+            "timestamp": "2026-10-06T18:55:59.125931-07:00",
+            "hostname": "Roberts-MacBook-Pro-2.local"
+          }
+        ],
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_actual_permission_parse_pause_matches_original_refusal",
+          "-q",
+          "--junitxml=/private/tmp/final-followups-task33560-rmw-original-verdict-fixed-jvl_qlx5/results.xml"
+        ],
+        "exit_code": 0
+      },
+      "related_non_green": {
+        "receipt_sha256": "a12e16648ba2d4a4b98a5991afee28f191066ef20943773a0d3143ad5b49a4b7",
+        "raw_sha256": "3e53bbfc19460c73a18259c3ab09381da97b5c1a11c639f8932b2449617c2696",
+        "xml_sha256": "5d28fd66606dda58d565270d15c918f7ae532096e84c8a29c42f966b9da626b0",
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "1",
+            "skipped": "0",
+            "tests": "7",
+            "time": "3.870",
+            "timestamp": "2026-10-06T18:53:10.236885-07:00",
+            "hostname": "Roberts-MacBook-Pro-2.local"
+          }
+        ],
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "Tests/Backup_Recovery/test_admission_evidence_reuse.py::test_a_change_just_before_the_lease_is_counted_falls_back",
+          "Tests/Backup_Recovery/test_admission_evidence_reuse.py::test_a_failed_recheck_after_counting_closes_the_reused_lease",
+          "Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_permission_rmw_admitted_before_pause_finishes",
+          "Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_history_migration_and_rotation_finish_across_pause",
+          "Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_same_path_distinct_source_cannot_borrow_admitted_permission",
+          "-q",
+          "--junitxml=/private/tmp/final-followups-task33560-related-ordering-11ypatwc/results.xml"
+        ],
+        "exit_code": 1
+      }
+    },
+    "coverage": [
+      "5 real MCP warm readers reach bodies and skip complete expensive derivations",
+      "24 witness/pause oracle cases using existing full mutation catalog, with engaged cache prerequisite",
+      "dependency trace and omitted-registry/historical-path negative controls",
+      "activation requirements bytes/mode/identity, historical retargeting and defensive nested metadata copies",
+      "fresh descendant ancestor/mode/collision, file-only parent exclusion and foreign-inode source refusal",
+      "native gate contention, actual parent FD retirement and wrong-parent fallback",
+      "before/after native-close uncertainty and publication race custody",
+      "no stamp filesystem IO under coordinator lock, deliberate-under-lock negative oracle",
+      "concurrent earlier cold publication and original content settle margin",
+      "separate reuse-on/off exact original permission parse-pause refusal with unchanged bytes"
+    ]
+  },
+  "performance": {
+    "before_native_opens": 884,
+    "after_native_opens": 286,
+    "before_seconds": 10.001131625031121,
+    "after_seconds": 10.000683999969624,
+    "rate_reduction_percent": 67.64561072385105,
+    "same_measured_script_sha256": "da5ba790b5d59549bab2345f2418a98dc47a24fa6c77ab58e251039c4d94539f",
+    "actual_retained_leases_each": 8,
+    "native_probes_each": 10,
+    "credential_polls_each": 40,
+    "boot_fleet_drained": true,
+    "qualification": "Actual unchanged-work settled-idle threshold satisfied for this Darwin/Python3.12 task-owned app pair; no startup-speed certificate."
+  },
+  "owner_pause": {
+    "unchanged_runtime_source_sha256": "6b8ac0f4418701eb96e689a6128f69ffb463a9c46e256f1dc8c2e588ac294562",
+    "interval_seconds": 1.0,
+    "owner_approval_source": "tldw_chatbook/Backup_Recovery/runtime_maintenance.py:669-675 (owner decision 2026-09-29), unchanged from base; canonical ADR126 carries the same existing approval",
+    "measurement": {
+      "request_started": 704859.214828333,
+      "native_intent": 704859.216292958,
+      "local_pause": 704860.285852208,
+      "exclusive_entered": 704860.324974416,
+      "app_refusal": null,
+      "detected": 704860.192574291,
+      "notice_seconds": 0.9762813330162317,
+      "local_pause_seconds": 1.0695592500269413,
+      "exclusive_seconds": 1.1086814580485225,
+      "resumed": true
+    },
+    "qualification": "Separate real native request noticed after genuine scheduled probe; no cadence/protocol change. Earlier pause checkpoint retained with its exact scope; no fresh final-source pause rerun claimed."
+  },
+  "static": {
+    "receipt_sha256": "cb800f5a463ddbe90a6d025cd5719d984053b61a7219e75f681d48cebfb9ddfd",
+    "production": [
+      {
+        "file": "tldw_chatbook/Backup_Recovery/admission.py",
+        "baseline_diagnostics": 7,
+        "final_diagnostics": 7,
+        "unchanged": true
+      },
+      {
+        "file": "tldw_chatbook/Backup_Recovery/config_participants.py",
+        "baseline_diagnostics": 0,
+        "final_diagnostics": 0,
+        "unchanged": true
+      },
+      {
+        "file": "tldw_chatbook/Backup_Recovery/generation_witnesses.py",
+        "baseline_diagnostics": 0,
+        "final_diagnostics": 0,
+        "unchanged": true
+      },
+      {
+        "file": "tldw_chatbook/Backup_Recovery/raw_participants.py",
+        "baseline_diagnostics": 2,
+        "final_diagnostics": 2,
+        "unchanged": true
+      },
+      {
+        "file": "tldw_chatbook/Backup_Recovery/storage_admission.py",
+        "baseline_diagnostics": 13,
+        "final_diagnostics": 13,
+        "unchanged": true
+      }
+    ],
+    "baseline_total": 22,
+    "final_total": 22,
+    "new_diagnostics": 0,
+    "new_test_and_maintained_probe_lint_format_clean": true,
+    "changed_function_ranges_formatted": true,
+    "diff_check_exit_code": 0
+  },
+  "limits": [
+    "Related selection stays NON-GREEN: six pass, one false-seed fixture assertion. Failed persisted RMW finish and assertion-API attempts remain archived; separate two-pass control certifies original refusal/bytes, not nested RMW completion across pause.",
+    "Original full52 and separate2 selections are retained independently and are not presented as one combined54 run.",
+    "All meaningful RED, setup failures, intermediate 35.06%-only idle result, foreign late cleanup/cache warnings and earlier app enrollment/Buddy warnings remain preserved.",
+    "Whole-file lint/formatter cleanliness, original completed PR budgets, cross-platform qualification, broader capture/restore and live provider transport are not certified.",
+    "Maintained probe differs from exact measured bytes by stdlib import ordering, formatting and explicit check=False (the existing subprocess default); measurements bind the untouched frozen script.",
+    "Two read-only reviewer metadata lookups used a wrong UI directory path and a current-vs-final JSON key; corrected lookups authenticated the actual file/receipt. They have no application behavior implication."
+  ]
+}

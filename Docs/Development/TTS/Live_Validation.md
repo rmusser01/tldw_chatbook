@@ -221,6 +221,6 @@ fallback rejection, synchronization ordering on normal/error exits and
 settled allocator samples. They validate the observation tooling; a real
 NVIDIA host is still required to qualify CUDA inference and playback.
 
-The harness follows ADR-023 (TTS operation ownership), ADR-039 (Global/Studio
-settings ownership), and ADR-040 (Speech Lab audition). It is a test-only tool;
+The harness follows ADR-023 (TTS operation ownership), ADR-304 (Global/Studio
+settings ownership), and ADR-306 (Speech Lab audition). It is a test-only tool;
 production defects discovered by a run must be fixed and verified separately.

@@ -41,6 +41,9 @@ def _fake(focused) -> SimpleNamespace:
         # not the Search row -- so that branch is inert here.
         _library_selected_row_id="browse-media",
         focused=focused,
+        # TASK-34000.40 ruling T5-b: a Reader context's Escape goes back,
+        # never into another text field, so its "after esc:" keys stand.
+        _library_escape_lands_in_text_field=lambda: False,
     )
     fake._library_focus_enter_label = MethodType(
         LibraryScreen._library_focus_enter_label, fake

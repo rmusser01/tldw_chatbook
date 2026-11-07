@@ -1,0 +1,15 @@
+{
+  "grouped": {
+    "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists": [
+      "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists[clear_text]",
+      "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists[generate_tts]"
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound": [
+      "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound[ctrl+l-clear_text]",
+      "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound[ctrl+g-generate_tts]"
+    ]
+  },
+  "reason": "Guard cannot statically resolve set/dict-built argvalues; whole functions cover all four actual cases and future members. No test/guard changes.",
+  "final_floor": 1076,
+  "dev_floor": 965
+}

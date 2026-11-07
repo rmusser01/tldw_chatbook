@@ -1,0 +1,569 @@
+{
+ "stats": {
+  "PERF-01": {
+   "n": 8,
+   "P0": 0,
+   "P1": 0,
+   "P2": 4,
+   "P3": 4,
+   "findings": 8,
+   "unverified": 0
+  },
+  "PERF-02": {
+   "n": 4,
+   "P0": 1,
+   "P1": 0,
+   "P2": 2,
+   "P3": 1,
+   "findings": 6,
+   "unverified": 0
+  },
+  "PERF-03": {
+   "n": 13,
+   "P0": 0,
+   "P1": 0,
+   "P2": 4,
+   "P3": 9,
+   "findings": 16,
+   "unverified": 0
+  },
+  "PERF-04": {
+   "n": 1,
+   "P0": 0,
+   "P1": 1,
+   "P2": 0,
+   "P3": 0,
+   "findings": 2,
+   "unverified": 0
+  },
+  "PERF-05": {
+   "n": 3,
+   "P0": 1,
+   "P1": 2,
+   "P2": 0,
+   "P3": 0,
+   "findings": 5,
+   "unverified": 0
+  },
+  "PERF-06": {
+   "n": 15,
+   "P0": 4,
+   "P1": 4,
+   "P2": 5,
+   "P3": 2,
+   "findings": 24,
+   "unverified": 0
+  },
+  "PERF-07": {
+   "n": 14,
+   "P0": 4,
+   "P1": 7,
+   "P2": 3,
+   "P3": 0,
+   "findings": 21,
+   "unverified": 0
+  },
+  "PERF-08": {
+   "n": 41,
+   "P0": 6,
+   "P1": 14,
+   "P2": 16,
+   "P3": 5,
+   "findings": 56,
+   "unverified": 0
+  },
+  "PERF-09": {
+   "n": 20,
+   "P0": 6,
+   "P1": 8,
+   "P2": 3,
+   "P3": 3,
+   "findings": 30,
+   "unverified": 0
+  },
+  "PERF-10": {
+   "n": 5,
+   "P0": 4,
+   "P1": 1,
+   "P2": 0,
+   "P3": 0,
+   "findings": 6,
+   "unverified": 0
+  },
+  "PERF-11": {
+   "n": 4,
+   "P0": 1,
+   "P1": 3,
+   "P2": 0,
+   "P3": 0,
+   "findings": 5,
+   "unverified": 0
+  },
+  "PERF-12": {
+   "n": 46,
+   "P0": 2,
+   "P1": 11,
+   "P2": 20,
+   "P3": 13,
+   "findings": 51,
+   "unverified": 0
+  },
+  "PERF-13": {
+   "n": 89,
+   "P0": 2,
+   "P1": 8,
+   "P2": 39,
+   "P3": 40,
+   "findings": 103,
+   "unverified": 0
+  },
+  "PERF-14": {
+   "n": 24,
+   "P0": 1,
+   "P1": 7,
+   "P2": 10,
+   "P3": 6,
+   "findings": 28,
+   "unverified": 0
+  },
+  "PERF-15": {
+   "n": 43,
+   "P0": 3,
+   "P1": 13,
+   "P2": 14,
+   "P3": 13,
+   "findings": 47,
+   "unverified": 0
+  },
+  "PERF-16": {
+   "n": 27,
+   "P0": 0,
+   "P1": 11,
+   "P2": 7,
+   "P3": 9,
+   "findings": 32,
+   "unverified": 0
+  },
+  "PERF-17": {
+   "n": 44,
+   "P0": 0,
+   "P1": 4,
+   "P2": 17,
+   "P3": 23,
+   "findings": 49,
+   "unverified": 0
+  },
+  "PERF-18": {
+   "n": 8,
+   "P0": 1,
+   "P1": 1,
+   "P2": 4,
+   "P3": 2,
+   "findings": 9,
+   "unverified": 0
+  },
+  "PERF-19": {
+   "n": 2,
+   "P0": 0,
+   "P1": 1,
+   "P2": 1,
+   "P3": 0,
+   "findings": 2,
+   "unverified": 0
+  },
+  "PERF-20": {
+   "n": 20,
+   "P0": 0,
+   "P1": 3,
+   "P2": 5,
+   "P3": 12,
+   "findings": 20,
+   "unverified": 0
+  },
+  "PERF-21": {
+   "n": 78,
+   "P0": 3,
+   "P1": 21,
+   "P2": 25,
+   "P3": 29,
+   "findings": 79,
+   "unverified": 0
+  },
+  "PERF-22": {
+   "n": 41,
+   "P0": 0,
+   "P1": 4,
+   "P2": 27,
+   "P3": 10,
+   "findings": 45,
+   "unverified": 0
+  },
+  "PERF-23": {
+   "n": 14,
+   "P0": 0,
+   "P1": 6,
+   "P2": 3,
+   "P3": 5,
+   "findings": 16,
+   "unverified": 0
+  },
+  "PERF-24": {
+   "n": 41,
+   "P0": 2,
+   "P1": 7,
+   "P2": 9,
+   "P3": 23,
+   "findings": 42,
+   "unverified": 0
+  },
+  "PERF-25": {
+   "n": 99,
+   "P0": 2,
+   "P1": 12,
+   "P2": 38,
+   "P3": 47,
+   "findings": 105,
+   "unverified": 0
+  },
+  "PERF-26": {
+   "n": 5,
+   "P0": 0,
+   "P1": 2,
+   "P2": 3,
+   "P3": 0,
+   "findings": 6,
+   "unverified": 0
+  },
+  "PERF-27": {
+   "n": 44,
+   "P0": 0,
+   "P1": 8,
+   "P2": 26,
+   "P3": 10,
+   "findings": 46,
+   "unverified": 0
+  },
+  "PERF-28": {
+   "n": 24,
+   "P0": 0,
+   "P1": 0,
+   "P2": 13,
+   "P3": 11,
+   "findings": 25,
+   "unverified": 0
+  },
+  "PERF-29": {
+   "n": 48,
+   "P0": 0,
+   "P1": 2,
+   "P2": 26,
+   "P3": 20,
+   "findings": 52,
+   "unverified": 0
+  },
+  "PERF-30": {
+   "n": 79,
+   "P0": 0,
+   "P1": 5,
+   "P2": 34,
+   "P3": 40,
+   "findings": 84,
+   "unverified": 0
+  }
+ },
+ "known": {
+  "TASK-32644": [
+   "PERF-01",
+   "PERF-13"
+  ],
+  "TASK-32809.1": [
+   "PERF-01"
+  ],
+  "TASK-278": [
+   "PERF-02"
+  ],
+  "TASK-275": [
+   "PERF-03"
+  ],
+  "TASK-31806": [
+   "PERF-03"
+  ],
+  "TASK-32804.1": [
+   "PERF-06",
+   "PERF-07",
+   "PERF-08",
+   "PERF-21",
+   "PERF-25",
+   "PERF-30"
+  ],
+  "TASK-32804.3": [
+   "PERF-06",
+   "PERF-13",
+   "PERF-22",
+   "PERF-30"
+  ],
+  "TASK-33265": [
+   "PERF-06"
+  ],
+  "TASK-24454": [
+   "PERF-06"
+  ],
+  "TASK-2902": [
+   "PERF-06",
+   "PERF-14"
+  ],
+  "TASK-1320": [
+   "PERF-07",
+   "PERF-25"
+  ],
+  "TASK-31502": [
+   "PERF-08",
+   "PERF-28"
+  ],
+  "TASK-32804": [
+   "PERF-08",
+   "PERF-12",
+   "PERF-13",
+   "PERF-15",
+   "PERF-18",
+   "PERF-22",
+   "PERF-24",
+   "PERF-25",
+   "PERF-27",
+   "PERF-30"
+  ],
+  "TASK-33267": [
+   "PERF-08"
+  ],
+  "TASK-24457": [
+   "PERF-08",
+   "PERF-09",
+   "PERF-21"
+  ],
+  "TASK-32860": [
+   "PERF-08"
+  ],
+  "TASK-31501": [
+   "PERF-09",
+   "PERF-10"
+  ],
+  "TASK-32804.10": [
+   "PERF-09",
+   "PERF-14",
+   "PERF-29"
+  ],
+  "TASK-31966": [
+   "PERF-11"
+  ],
+  "TASK-33271": [
+   "PERF-12"
+  ],
+  "TASK-22205": [
+   "PERF-12",
+   "PERF-13"
+  ],
+  "TASK-33273": [
+   "PERF-12"
+  ],
+  "TASK-32804.12": [
+   "PERF-12",
+   "PERF-13",
+   "PERF-15",
+   "PERF-21",
+   "PERF-23",
+   "PERF-24",
+   "PERF-30"
+  ],
+  "TASK-31505": [
+   "PERF-12",
+   "PERF-13",
+   "PERF-15"
+  ],
+  "TASK-21244": [
+   "PERF-13"
+  ],
+  "TASK-26834": [
+   "PERF-13",
+   "PERF-21"
+  ],
+  "TASK-24300": [
+   "PERF-13"
+  ],
+  "TASK-32807.5": [
+   "PERF-13"
+  ],
+  "TASK-24452": [
+   "PERF-13",
+   "PERF-14",
+   "PERF-25"
+  ],
+  "TASK-22213": [
+   "PERF-13",
+   "PERF-15"
+  ],
+  "TASK-33081": [
+   "PERF-13",
+   "PERF-22",
+   "PERF-27"
+  ],
+  "TASK-32809.3": [
+   "PERF-13"
+  ],
+  "TASK-23175": [
+   "PERF-13",
+   "PERF-29",
+   "PERF-30"
+  ],
+  "TASK-23155": [
+   "PERF-13"
+  ],
+  "TASK-22503": [
+   "PERF-13"
+  ],
+  "TASK-21120": [
+   "PERF-14"
+  ],
+  "TASK-32921": [
+   "PERF-14"
+  ],
+  "TASK-231": [
+   "PERF-15"
+  ],
+  "TASK-33011": [
+   "PERF-16"
+  ],
+  "TASK-31510": [
+   "PERF-16"
+  ],
+  "TASK-21247": [
+   "PERF-16"
+  ],
+  "TASK-22504": [
+   "PERF-16"
+  ],
+  "TASK-186": [
+   "PERF-16"
+  ],
+  "TASK-32807.3": [
+   "PERF-16"
+  ],
+  "TASK-32904": [
+   "PERF-17"
+  ],
+  "TASK-33276": [
+   "PERF-17"
+  ],
+  "TASK-1378": [
+   "PERF-17"
+  ],
+  "TASK-285": [
+   "PERF-18"
+  ],
+  "TASK-18910": [
+   "PERF-19"
+  ],
+  "TASK-33289": [
+   "PERF-20",
+   "PERF-30"
+  ],
+  "TASK-32804.5": [
+   "PERF-21"
+  ],
+  "TASK-281": [
+   "PERF-21"
+  ],
+  "TASK-32804.11": [
+   "PERF-21"
+  ],
+  "TASK-31583": [
+   "PERF-21"
+  ],
+  "TASK-32804.4": [
+   "PERF-21"
+  ],
+  "TASK-32807.7": [
+   "PERF-21",
+   "PERF-25"
+  ],
+  "TASK-2834": [
+   "PERF-22",
+   "PERF-25",
+   "PERF-30"
+  ],
+  "TASK-33120": [
+   "PERF-22"
+  ],
+  "TASK-32804.7": [
+   "PERF-23"
+  ],
+  "TASK-16865": [
+   "PERF-24"
+  ],
+  "TASK-33284": [
+   "PERF-25"
+  ],
+  "TASK-33004.4": [
+   "PERF-25"
+  ],
+  "TASK-33078": [
+   "PERF-25"
+  ],
+  "TASK-32808.6": [
+   "PERF-25"
+  ],
+  "TASK-21127": [
+   "PERF-25"
+  ],
+  "TASK-32807": [
+   "PERF-25"
+  ],
+  "TASK-861": [
+   "PERF-25"
+  ],
+  "TASK-32905": [
+   "PERF-25"
+  ],
+  "TASK-31503": [
+   "PERF-26"
+  ],
+  "TASK-32803": [
+   "PERF-27"
+  ],
+  "TASK-399.3": [
+   "PERF-27"
+  ],
+  "TASK-32370": [
+   "PERF-27"
+  ],
+  "TASK-31504": [
+   "PERF-27"
+  ],
+  "TASK-21593": [
+   "PERF-28"
+  ],
+  "TASK-605": [
+   "PERF-29"
+  ],
+  "TASK-32807.2": [
+   "PERF-29"
+  ],
+  "TASK-32810.11": [
+   "PERF-29"
+  ],
+  "TASK-33288": [
+   "PERF-29"
+  ],
+  "TASK-31628": [
+   "PERF-30"
+  ],
+  "TASK-32922": [
+   "PERF-30"
+  ],
+  "TASK-32807.1": [
+   "PERF-30"
+  ],
+  "TASK-32898": [
+   "PERF-30"
+  ]
+ }
+}

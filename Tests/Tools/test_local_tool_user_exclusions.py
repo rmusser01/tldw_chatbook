@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,30 @@ def test_fs_edit_refused_on_excluded(repo: Path) -> None:
 
     assert caught.value.code == "invalid_request"
     assert (repo / "secrets" / "key.pem").read_text() == "SECRET"
+
+
+@pytest.mark.parametrize(
+    ("excluded_form", "selected_form"), (("NFC", "NFD"), ("NFD", "NFC"))
+)
+def test_fs_read_refuses_other_normalization_of_excluded_file(
+    tmp_path: Path, excluded_form: str, selected_form: str
+) -> None:
+    """TASK-37655: APFS opens an NFD spelling as the stored NFC file (and back)."""
+    excluded = unicodedata.normalize(excluded_form, "Données/naïve.txt")
+    selected = unicodedata.normalize(selected_form, "Données/naïve.txt")
+    (tmp_path / excluded).parent.mkdir()
+    (tmp_path / excluded).write_text("PRIVATE")
+    if not (tmp_path / selected).exists():  # normalization-sensitive filesystem
+        (tmp_path / selected).parent.mkdir(exist_ok=True)
+        (tmp_path / selected).write_text("PRIVATE")
+    executor = WorkspaceToolExecutor(
+        tmp_path, user_exclusion_paths=lambda: (tmp_path / excluded,)
+    )
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor.execute("fs_read", {"path": selected}, intent="read")
+
+    assert "PRIVATE" not in str(caught.value)
 
 
 def test_vcli_stat_refused_on_excluded(repo: Path) -> None:

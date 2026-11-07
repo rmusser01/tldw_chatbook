@@ -23,6 +23,7 @@ marker (production) and PRESERVED without it (test mode) — so the marker can
 never silently rot again. If the engine's detection logic ever moves, these
 fail loudly and the fixture must be re-derived, not deleted.
 """
+
 import os
 
 import pytest

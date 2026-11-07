@@ -178,7 +178,9 @@ class TestApplyTemplate:
         # Postprocessing demonstrably ran: under FLAT_DELETING the filter
         # drops the 10-char chunk that FLAT (min_length 10) keeps.
         deleting = tr.apply_template(FLAT_DELETING, PINNED_TEXT)
-        assert [c["text"] for c in deleting] == ["First sentence. Second sentence here."]
+        assert [c["text"] for c in deleting] == [
+            "First sentence. Second sentence here."
+        ]
 
     def test_flat_contract_synthesized(self):
         # AC 11: full flat contract on every chunk.
@@ -443,9 +445,7 @@ _RE_NAME_RESOLUTION = re.compile(
 _RE_FENCED_CONSTRUCTION = re.compile(
     r"(?<![A-Za-z0-9_])Template(?:Manager|Learner)\s*\("
 )
-_RE_CLASSIFIER_CONSTRUCTION = re.compile(
-    r"(?<![A-Za-z0-9_])TemplateClassifier\s*\("
-)
+_RE_CLASSIFIER_CONSTRUCTION = re.compile(r"(?<![A-Za-z0-9_])TemplateClassifier\s*\(")
 CLASSIFIER_CONSTRUCTION_ALLOWED = {"Chunking/auto_selection.py"}
 
 
@@ -534,8 +534,9 @@ class TestEnumerationGuards:
         # may appear anywhere else. The home module does not exist yet, so
         # the scan is empty today and this stays green by construction.
         hits = _scan(_RE_CLASSIFIER_CONSTRUCTION)
-        assert set(hits) <= CLASSIFIER_CONSTRUCTION_ALLOWED, \
+        assert set(hits) <= CLASSIFIER_CONSTRUCTION_ALLOWED, (
             f"TemplateClassifier constructed outside its home: {sorted(hits)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -548,9 +549,7 @@ class TestTemplateManagerFencing:
     def test_templates_directory_absent_with_positive_control(self):
         from tldw_chatbook.Chunking.engine.templates import TemplateManager
 
-        probe = (
-            Path(tr.__file__).resolve().parent / "engine" / "template_library"
-        )
+        probe = Path(tr.__file__).resolve().parent / "engine" / "template_library"
         assert not probe.exists(), (
             "engine/template_library exists: some code constructed TemplateManager"
         )
@@ -687,7 +686,9 @@ class TestRagIntegration:
             "chunk_end": omitted_chunk.get("end_char", len(omitted_chunk["text"])),
         }
         result = SearchResult(
-            id="tpl_b_chunk_0", score=1.0, document=omitted_chunk["text"],
+            id="tpl_b_chunk_0",
+            score=1.0,
+            document=omitted_chunk["text"],
             metadata=metadata,
         )
         probe = ChromaVectorStore.__new__(ChromaVectorStore)
@@ -795,7 +796,9 @@ class TestMediaNavigation:
         )
 
         chunks = tr.apply_template(FLAT, PINNED_TEXT)
-        assert chunks[0]["metadata"]["offset_basis"] == "preprocessed:normalize_whitespace"
+        assert (
+            chunks[0]["metadata"]["offset_basis"] == "preprocessed:normalize_whitespace"
+        )
         db = _NavDb(PINNED_TEXT)
         db.add_chunks(3, chunks)
         service = LocalMediaReadingService(db)

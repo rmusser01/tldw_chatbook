@@ -1,0 +1,40 @@
+{"seconds": 0.0, "kind": "windows_size", "size": [120, 36]}
+{"seconds": 0.812, "kind": "app_resize_event", "size": [80, 25]}
+{"seconds": 0.828, "kind": "driver", "name": "WindowsResizeDriver", "input_mode": 520, "output_isatty": true, "render_isatty": true, "windows_terminal": true, "textual": "8.2.8"}
+{"seconds": 2.515, "kind": "layout", "app": [80, 25], "screen": [80, 25], "regions": {"#screen-content": [0, 3, 80, 21], "#logs-destination-header": [0, 3, 80, 5], "#logs-window": [0, 8, 80, 16], "#app-log-display": [0, 9, 80, 13], "#screen-footer-status": [0, 24, 80, 1]}}
+{"seconds": 158.062, "kind": "app_resize_event", "size": [121, 36]}
+{"seconds": 158.078, "kind": "app_resize_event", "size": [122, 36]}
+{"seconds": 158.14, "kind": "windows_size", "size": [155, 42]}
+{"seconds": 158.14, "kind": "app_resize_event", "size": [129, 38]}
+{"seconds": 158.14, "kind": "app_resize_event", "size": [159, 43]}
+{"seconds": 158.218, "kind": "app_resize_event", "size": [171, 45]}
+{"seconds": 158.234, "kind": "app_resize_event", "size": [172, 45]}
+{"seconds": 158.531, "kind": "windows_size", "size": [216, 45]}
+{"seconds": 158.578, "kind": "app_resize_event", "size": [216, 45]}
+{"seconds": 158.609, "kind": "layout", "app": [216, 45], "screen": [216, 45], "regions": {"#screen-content": [0, 3, 172, 41], "#logs-destination-header": [0, 3, 172, 5], "#logs-window": [0, 8, 172, 36], "#app-log-display": [0, 9, 172, 33], "#screen-footer-status": [0, 44, 172, 1]}}
+{"seconds": 158.64, "kind": "app_resize_event", "size": [216, 46]}
+{"seconds": 158.765, "kind": "app_resize_event", "size": [224, 48]}
+{"seconds": 158.796, "kind": "windows_size", "size": [224, 48]}
+{"seconds": 158.921, "kind": "app_resize_event", "size": [225, 48]}
+{"seconds": 159.25, "kind": "windows_size", "size": [252, 56]}
+{"seconds": 159.265, "kind": "app_resize_event", "size": [229, 48]}
+{"seconds": 159.296, "kind": "layout", "app": [229, 48], "screen": [229, 48], "regions": {"#screen-content": [0, 3, 225, 44], "#logs-destination-header": [0, 3, 225, 5], "#logs-window": [0, 8, 225, 39], "#app-log-display": [0, 9, 225, 36], "#screen-footer-status": [0, 47, 225, 1]}}
+{"seconds": 159.328, "kind": "app_resize_event", "size": [252, 56]}
+{"seconds": 159.515, "kind": "layout", "app": [252, 56], "screen": [252, 56], "regions": {"#screen-content": [0, 3, 252, 52], "#logs-destination-header": [0, 3, 252, 5], "#logs-window": [0, 8, 252, 47], "#app-log-display": [0, 9, 252, 44], "#screen-footer-status": [0, 55, 252, 1]}}
+{"seconds": 159.546, "kind": "app_resize_event", "size": [251, 56]}
+{"seconds": 159.625, "kind": "app_resize_event", "size": [250, 56]}
+{"seconds": 159.625, "kind": "app_resize_event", "size": [249, 56]}
+{"seconds": 160.046, "kind": "windows_size", "size": [175, 22]}
+{"seconds": 160.062, "kind": "app_resize_event", "size": [247, 56]}
+{"seconds": 160.078, "kind": "layout", "app": [247, 56], "screen": [247, 56], "regions": {"#screen-content": [0, 3, 249, 52], "#logs-destination-header": [0, 3, 249, 5], "#logs-window": [0, 8, 249, 47], "#app-log-display": [0, 9, 249, 44], "#screen-footer-status": [0, 55, 249, 1]}}
+{"seconds": 160.109, "kind": "app_resize_event", "size": [175, 22]}
+{"seconds": 160.328, "kind": "windows_size", "size": [174, 22]}
+{"seconds": 160.39, "kind": "app_resize_event", "size": [174, 22]}
+{"seconds": 160.515, "kind": "layout", "app": [174, 22], "screen": [174, 22], "regions": {"#screen-content": [0, 3, 174, 18], "#logs-destination-header": [0, 3, 174, 4], "#logs-window": [0, 7, 174, 14], "#app-log-display": [0, 8, 174, 11], "#screen-footer-status": [0, 21, 174, 1]}}
+{"seconds": 160.562, "kind": "app_resize_event", "size": [173, 22]}
+{"seconds": 160.609, "kind": "windows_size", "size": [171, 26]}
+{"seconds": 160.64, "kind": "app_resize_event", "size": [171, 28]}
+{"seconds": 160.64, "kind": "app_resize_event", "size": [171, 30]}
+{"seconds": 160.906, "kind": "windows_size", "size": [174, 34]}
+{"seconds": 160.968, "kind": "app_resize_event", "size": [174, 34]}
+{"seconds": 161.046, "kind": "layout", "app": [174, 34], "screen": [174, 34], "regions": {"#screen-content": [0, 3, 174, 30], "#logs-destination-header": [0, 3, 174, 5], "#logs-window": [0, 8, 174, 25], "#app-log-display": [0, 9, 174, 22], "#screen-footer-status": [0, 33, 174, 1]}}

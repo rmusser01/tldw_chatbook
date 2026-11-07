@@ -1,7 +1,7 @@
 """Pure, bounded Speech runtime-status and navigation projections.
 
 The module does not contact a provider or persist state.  It translates an
-already accepted capability observation into ADR-039's configuration/runtime
+already accepted capability observation into ADR-304's configuration/runtime
 vocabularies and keeps local dependency facts independent from provider
 reachability.
 """

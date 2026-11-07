@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: No changes · edits save with s | Changes affect global Console fallbacks after save.                               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │  Reduce context to (%)   │ 55                                                                                              │  │  │                                         │
+│  category search             │  │  │  Summary response max    │ 1024                                                                                            │  │  │ Selected category: Console Behavior     │
+│                              │  │  │   Summary response max applies only to Text summary and Hybrid.                                                            │  │  │ No unsaved changes                      │
+│  Core                        │  │  │  If compaction fails     │ Stop and ask                ▼                                                                   │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Keep after compaction   │ Memory with recent turns    ▼                                                                   │  │  │  Save (s) — no changes                  │
+│      Providers & Models      │  │  │  Summary prompt          ▊ Edit in Internal Prompts… ▎                                                                     │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │   Text summary and Hybrid make one extra model call and store generated memory with provenance. Visual pages are           │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │   rendered on-device for one request and never persisted. Original transcript messages remain stored. Off disables         │  │  │ file.                                   │
+│  Interface                   │  │  │   optional compaction only—mandatory provider safety trimming still applies.                                               │  │  │  Top P: Use only top tokens whose       │
+│      Appearance              │  │  │                                                                                                                            │  │  │  chances sum to P.                      │
+│      Theme                   │  │  │   Global fallback defaults                                                                                                 │  │  │  Max tokens: Longest reply the model    │
+│      Splash Screen           │  │  │   Used when no provider+model profile or active Console session overrides them.                                            │  │  │  may give, in tokens.                   │
+│    > Console Behavior        │  │  │  Chat display name       │ User                                                                                            │  │  │  Paste collapse: Only pasted chunks     │
+│  Data & Privacy              │  │  │   Used for your speaker label. Character chats also use it for trusted {{user}} templates.                                 │  │  │  over the threshold become compact    ▁ │
+│      Storage                 │  │  │  Temperature             █ 0.6                            Console Behavior  Lower stays focused; higher is more varied.    │  │  │  placeholders; typed text stays         │
+│      Workspaces              │  │  │  Max tokens              │ tokens                         provider          the provider decides                           │  │  │  literal                                │
+│      Tool Profiles           │  │  │  Streaming               │ On                          ▼  built-in          used unless the provider sets its own          │  │  │  Threshold: Minimum pasted chunk size   │
+│      Privacy & Security      │  │  │   Reasoning and thinking controls are sent only to providers that support them.                                            │  │  │  before collapse                        │
+│      Network                 │  │  │  Reasoning effort        │ default                     ▼  provider          the provider decides                           │  │  │ Focused field guide                     │
+│      My Profile              │  │  │  Reasoning summary       │ default                     ▼  provider          the provider decides                           │  │  │  Focused setting: Temperature           │
+│  Troubleshooting             │  │  │  Verbosity               │ default                     ▼  provider          the provider decides                           │  │  │  Purpose: Lower stays focused; higher   │
+│      Diagnostics (view)      │  │  │  Thinking                │ default                     ▼  provider          the provider decides                           │  │  │  is more varied.                        │
+│      About (view)            │  │  │  Thinking budget         │ >= 1024                        provider          the provider decides                           │  │  │  Validation: 0.0 to 2.0                 │
+│      Agents                  │  │  │   ▶ Sampling · Top P 0.95 · Min P 0.05 · Top K 50                                                                          │  │  │  ▶ config key                           │
+│  Expert                      │  │  │                                                                                                                            │  │  │ Override rules                          │
+│      Hooks                   │  │  │   Background effects                                                                                                     ▂ │  │  │  Priority: active Console session,      │
+│      Internal Prompts        │  │  │  ▐ ▌ Enable background effects                                                                                             │  │  │  then provider+model profile, then      │
+│      Advanced Config         │  │  │  Background effect       │ None                        ▼                                                                   │  │  │  these global fallbacks                 │
+│   Domain Defaults ▸ (13)     │  │  │  Scope                   │ Transcript (recommended)    ▼                                                                   │  │  │  Scope: Global fallback defaults and    │
+│                              │  │  │  Intensity               │ Low                         ▼                                                                   │  │  │  paste collapse                         │
+│                              │  │  │  Frame rate              │ 6                                                                                               │  │  │  Save: edits save with s · r reverts    │
+│                              │  │  │                                                                                                                          ▁ │  │  │ ▲ more above — scroll the inspector     │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

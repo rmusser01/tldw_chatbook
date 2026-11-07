@@ -1,0 +1,76 @@
+---
+id: TASK-35866
+title: Keep later Results actions from cancelling an admitted review batch
+status: Done
+created_date: 2026-10-20 19:24
+labels:
+- scheduling
+- textual-patterns
+- reliability
+priority: medium
+documentation:
+- Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md
+assignee:
+- '@codex'
+updated_date: 2026-10-20 20:23
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+A Results review action must not silently discard an already admitted Mark all read batch. Overlapping review gestures need a clear outcome and truthful completion counts while preserving existing per-row review and outbox behavior.
+
+### Evidence and bounded scope
+
+results_tab.py:711-762 assigns Read, Dismiss, Mark solved and Mark all read to one exclusive schedules-results-host group. The batch awaits one service review per ID at :618-620. A private-profile real-keyboard/SQLite probe held the first get_automation_result thread, pressed a then d, and settled all workers: three initial unread rows ended unread, unread, dismissed, with the batch completion abandoned.
+
+Book basis: Chapter 7 printed p.149 / PDF p.158; thread workers printed p.326 / PDF p.335. Latest-result cancellation must be adapted to admitted mutations rather than copied blindly from read-refresh examples.
+
+### Existing ownership and decisions
+
+The Study durable-write precedent TASK-19559 is Done. TASK-33283 owns Schedules loop blocking and redraw cost; TASK-34931 covered overlay preparation; TASK-33622.15 covered quit. This task covers overlapping hosted Results mutations only.
+
+Related tasks: [TASK-19559](./task-19559%20-%20exclusive%3DTrue%20without%20group%3D%20makes%20every%20worker%20on%20a%20node%20cancel%20its%20siblings.md); [TASK-33283](./task-33283%20-%20PERF-24-Watchlists-and-Schedules---incremental-panes-DB-off-the-event-loop.md); [TASK-34931](./task-34931%20-%20Move-Schedules-results-overlay-and-mark-read-queries-off-the-UI-thread.md); [TASK-33622.15](./task-33622.15%20-%20CtrlQ-under-a-modal-in-flight-operations-and-the-video-save-picker-can-still-lose-work.md).
+
+ADR required: no new ADR expected.
+ADR paths: [018-local-server-hybrid-scheduled-tasks](../decisions/018-local-server-hybrid-scheduled-tasks.md); [116-schedules-inspector-editing](../decisions/116-schedules-inspector-editing.md).
+Reason: No new ADR is expected if the repair stays within existing UI mutation admission and target ownership. Preserve Accepted ADR-018 storage/sync semantics; Proposed ADR-116 is contextual evidence, not ratified here.
+
+[Post-merge audit and evidence](../../Docs/superpowers/qa/2026-10-20-textual-book-reanalysis.md).
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 With the first review read/write held, a later Read, Dismiss or Mark solved gesture cannot silently cancel an admitted Mark all read batch.
+- [x] #2 Overlapping gestures are explicitly refused while busy or safely serialized; accepted actions retain their intended result IDs and scope and publish truthful success/failure counts.
+- [x] #3 Per-row failures remain visible and retryable; ordinary single-row Read/Dismiss, Mark solved eligibility and global/per-definition bulk scopes keep their behavior.
+- [x] #4 Existing local/server owner checks and review-plus-outbox transaction semantics are preserved without a bulk schema primitive or new sync/conflict policy.
+- [x] #5 Deterministic actual-keyboard/private-profile SQLite tests cover a-then-d overlap, related action overlap, physical settlement and ordinary/failure controls.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/018-local-server-hybrid-scheduled-tasks.md
+Reason: bounded Results mutation admission; preserve owner checks, per-row review/outbox transactions and existing service contracts. ADR-116 remains Proposed context.
+
+1. Add real-keyboard/private-profile SQLite overlap and ordinary/failure controls, holding the first physical review read; record expected cancellation failure.
+2. Admit actions synchronously with captured IDs/scope, visibly refuse overlaps while busy, and release admission on all outcomes without a generic command queue.
+3. Run targeted Results/service/outbox and static checks; update Schedules documentation.
+4. Obtain Superpowers spec/quality review before controller completion.
+
+Detailed plan: Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md (Task 2).
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+ResultsHostScreen now admits each review/solve mutation synchronously, captures its result row/definition mapping or unread-ID scope, visibly refuses overlaps and releases admission after settlement or submission failure. Later gestures cannot cancel or retarget the admitted operation. Existing per-row service/outbox writers and truthful counts remain unchanged; no command queue or schema/sync change. Updated results_tab.py, focused private-profile regressions in test_schedules_results_tab.py, and Schedules architecture/user docs.
+
+Evidence: commit 17122d75d1. RED: all eight initial regressions failed, including a-then-d ending unread/unread/dismissed. GREEN: 14 distinct new private-profile keyboard/SQLite cases plus 29 targeted service/outbox controls passed. Scoped Ruff, format and whitespace checks passed. Superpowers independent review: spec compliant, quality Approved, no actionable findings.
+
+Verification limit: 35 unchanged legacy Results nodes fail before their bodies at existing RecoveryRequired(raw_source_selection_changed) setup; unchanged setup files and original test ASTs verified. Guard preserved; new real-UI ordinary/failure controls and service ownership/transaction/rollback/replay tests provide scoped evidence. Inherited Pydantic/asyncio warnings disclosed, no filters; no full suite run.
+
+ADR required: no; backlog/decisions/018-local-server-hybrid-scheduled-tasks.md applies; ADR-116 remains Proposed context. Integration tracked by Docs/superpowers/plans/2026-10-20-textual-book-followup-fixes.md. Existing cancellation/private-profile lessons apply, no new generalized incident.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

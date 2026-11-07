@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import ast
 import base64
-import fcntl
 import hashlib
 import importlib.util
 import json
@@ -344,6 +343,7 @@ def test_bundle_failure_paths_run_in_a_bare_interpreter(
     assert frame["operation_id"] in {"probe-op", "unknown"}
 
 
+@pytest.mark.skipif(os.name != "posix", reason="fcntl locking requires a POSIX host")
 def test_fs_write_cas_falls_back_to_fcntl_when_portalocker_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -362,6 +362,8 @@ def test_fs_write_cas_falls_back_to_fcntl_when_portalocker_absent(
     * the same CAS succeeds once contention clears (the unlock path
       released everything).
     """
+    import fcntl
+
     from tldw_chatbook.Tools.local_tool_impls import LocalToolError
     from tldw_chatbook.Tools.workspace_root_pin import pin_workspace_root
     from tldw_chatbook.Tools.workspace_tool_dispatch import execute_pinned_operation
@@ -454,10 +456,9 @@ _STUB_RAISE_ALLOWED = frozenset(
 )
 
 
-def test_stubbed_imports_are_handled_outside_the_laptop_only_allowlist() -> None:
-    """A stubbed third-party/app import inside a routine worker path (e.g. a
-    diagnostic helper) turns into a worker_failure on the remote host."""
-    tree = ast.parse(_BUNDLE_PATH.read_text(encoding="utf-8"))
+def _unhandled_stub_functions(tree: ast.AST) -> set[str]:
+    """Find unhandled import stubs reachable on the ADR-181 POSIX host."""
+    windows_only = ast.dump(ast.parse("os.name == 'nt'", mode="eval").body)
     parents = {
         child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
     }
@@ -469,9 +470,17 @@ def test_stubbed_imports_are_handled_outside_the_laptop_only_allowlist() -> None
                 return node.name
         return "<module>"
 
-    def handled(node: ast.AST) -> bool:
+    def unreachable_or_handled(node: ast.AST) -> bool:
         while node in parents:
             parent = parents[node]
+            # The Windows native backend is absent from the POSIX SSH bundle.
+            # Only the true body of this exact platform guard is unreachable.
+            if (
+                isinstance(parent, ast.If)
+                and node in parent.body
+                and ast.dump(parent.test) == windows_only
+            ):
+                return True
             if isinstance(parent, ast.Try) and node in parent.body:
                 for handler in parent.handlers:
                     if handler.type is None:
@@ -487,12 +496,68 @@ def test_stubbed_imports_are_handled_outside_the_laptop_only_allowlist() -> None
             node = parent
         return False
 
-    unhandled = {
+    return {
         enclosing_function(node)
         for node in ast.walk(tree)
         if isinstance(node, ast.Raise)
         and isinstance(node.exc, ast.Call)
         and getattr(node.exc.func, "id", "") == "ImportError"
-        and not handled(node)
+        and not unreachable_or_handled(node)
     }
+
+
+def test_stubbed_imports_are_handled_outside_the_laptop_only_allowlist() -> None:
+    """Routine POSIX worker paths must handle missing app/third-party imports."""
+    tree = ast.parse(_BUNDLE_PATH.read_text(encoding="utf-8"))
+    unhandled = _unhandled_stub_functions(tree)
     assert unhandled <= _STUB_RAISE_ALLOWED, sorted(unhandled - _STUB_RAISE_ALLOWED)
+
+
+@pytest.mark.parametrize("condition", ["True", "os.name == 'posix'", "os.name != 'nt'"])
+def test_stub_guard_rejects_posix_reachable_native_import(condition: str) -> None:
+    tree = ast.parse(_BUNDLE_PATH.read_text(encoding="utf-8"))
+    selector = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_write_file_os"
+    )
+    branch = next(node for node in selector.body if isinstance(node, ast.If))
+    branch.test = ast.parse(condition, mode="eval").body
+    assert "_write_file_os" in _unhandled_stub_functions(tree)
+
+
+def test_stub_guard_rejects_windows_guard_else_body() -> None:
+    tree = ast.parse(_BUNDLE_PATH.read_text(encoding="utf-8"))
+    selector = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_write_file_os"
+    )
+    branch = next(node for node in selector.body if isinstance(node, ast.If))
+    branch.orelse, branch.body = branch.body, [ast.Pass()]
+    assert "_write_file_os" in _unhandled_stub_functions(tree)
+
+
+@pytest.mark.parametrize("platform", ["posix", "nt"])
+def test_generated_write_backend_selector_keeps_native_import_platform_scoped(
+    platform: str,
+) -> None:
+    tree = ast.parse(_BUNDLE_PATH.read_text(encoding="utf-8"))
+    selector = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_write_file_os"
+    )
+    file_os = SimpleNamespace(name=platform)
+    namespace: dict[str, Any] = {"os": file_os}
+    exec(
+        compile(
+            ast.Module(body=[selector], type_ignores=[]), str(_BUNDLE_PATH), "exec"
+        ),
+        namespace,
+    )
+    if platform == "posix":
+        assert namespace["_write_file_os"]() is file_os
+    else:
+        with pytest.raises(ImportError, match="platform_files"):
+            namespace["_write_file_os"]()

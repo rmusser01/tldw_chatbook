@@ -1,0 +1,295 @@
+{
+  "red-focused.xml": [
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]",
+      "result": "failed",
+      "seconds": "0.791"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]",
+      "result": "failed",
+      "seconds": "1.783"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.717"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]",
+      "result": "failed",
+      "seconds": "2.374"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.936"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]",
+      "result": "failed",
+      "seconds": "1.478"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.601"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]",
+      "result": "failed",
+      "seconds": "1.796"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.867"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_initial_identity_failure_precedes_native_start_authority",
+      "result": "failed",
+      "seconds": "1.559"
+    }
+  ],
+  "green.xml": [
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]",
+      "result": "passed",
+      "seconds": "0.933"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[True]",
+      "result": "passed",
+      "seconds": "0.011"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_initial_restriction_identity_failure_refuses_automatic_authority",
+      "result": "passed",
+      "seconds": "0.208"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]",
+      "result": "passed",
+      "seconds": "1.818"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]",
+      "result": "passed",
+      "seconds": "1.643"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]",
+      "result": "passed",
+      "seconds": "2.392"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]",
+      "result": "passed",
+      "seconds": "1.912"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]",
+      "result": "passed",
+      "seconds": "1.749"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]",
+      "result": "passed",
+      "seconds": "1.697"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]",
+      "result": "passed",
+      "seconds": "1.953"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]",
+      "result": "passed",
+      "seconds": "1.889"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_initial_identity_failure_precedes_native_start_authority",
+      "result": "passed",
+      "seconds": "1.005"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[commit-first]",
+      "result": "passed",
+      "seconds": "1.698"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[commit-second]",
+      "result": "passed",
+      "seconds": "2.003"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[commit-first_uncertain]",
+      "result": "passed",
+      "seconds": "1.619"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[provider-first]",
+      "result": "passed",
+      "seconds": "2.319"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[provider-second]",
+      "result": "passed",
+      "seconds": "1.993"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[provider-first_uncertain]",
+      "result": "passed",
+      "seconds": "2.045"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_failed_review_settlement_blocks_siblings_across_ledger_handles[raise-False]",
+      "result": "passed",
+      "seconds": "1.639"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_failed_review_settlement_blocks_siblings_across_ledger_handles[raise-True]",
+      "result": "passed",
+      "seconds": "1.767"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_failed_review_settlement_blocks_siblings_across_ledger_handles[false-False]",
+      "result": "passed",
+      "seconds": "1.692"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_failed_review_settlement_blocks_siblings_across_ledger_handles[false-True]",
+      "result": "passed",
+      "seconds": "1.680"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement[False]",
+      "result": "passed",
+      "seconds": "0.533"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement[True]",
+      "result": "passed",
+      "seconds": "0.016"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_late_recovery_cleanup_preserves_new_owner_uncertainty[replacement-False]",
+      "result": "passed",
+      "seconds": "1.028"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_late_recovery_cleanup_preserves_new_owner_uncertainty[replacement-True]",
+      "result": "passed",
+      "seconds": "0.851"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_late_recovery_cleanup_preserves_new_owner_uncertainty[owner-False]",
+      "result": "passed",
+      "seconds": "0.886"
+    }
+  ],
+  "red-corrected.xml": [
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]",
+      "result": "failed",
+      "seconds": "1.583"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]",
+      "result": "failed",
+      "seconds": "2.147"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]",
+      "result": "failed",
+      "seconds": "2.006"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]",
+      "result": "failed",
+      "seconds": "3.493"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]",
+      "result": "failed",
+      "seconds": "2.350"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]",
+      "result": "failed",
+      "seconds": "1.963"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.959"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]",
+      "result": "failed",
+      "seconds": "2.434"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]",
+      "result": "failed",
+      "seconds": "2.323"
+    }
+  ],
+  "red.xml": [
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]",
+      "result": "failed",
+      "seconds": "1.026"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[True]",
+      "result": "passed",
+      "seconds": "0.014"
+    },
+    {
+      "nodeid": "Tests.DB.test_automatic_chat_starts::test_initial_restriction_identity_failure_refuses_automatic_authority",
+      "result": "failed",
+      "seconds": "0.273"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]",
+      "result": "failed",
+      "seconds": "1.421"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.253"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]",
+      "result": "failed",
+      "seconds": "1.094"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.080"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]",
+      "result": "failed",
+      "seconds": "1.041"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.077"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]",
+      "result": "failed",
+      "seconds": "1.192"
+    },
+    {
+      "nodeid": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]",
+      "result": "failed",
+      "seconds": "1.190"
+    }
+  ]
+}

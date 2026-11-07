@@ -584,9 +584,11 @@ server-backed workflows each introduce a separate trust boundary.
 
 ### Advanced profiles
 
-`TLDW_CONFIG_PATH` can select a different config file. A config override does
+`TLDW_CONFIG_PATH` can select a different config file; `tldw-cli --config PATH`
+does the same for one launch and wins when both are set. A config override does
 not automatically relocate every data path; set `[paths].data_dir` inside that
-profile when true isolation is required.
+profile when true isolation is required. For moving to another computer, see
+"Setting up another machine" in `Docs/User_Guide/First_Run_Setup.md`.
 
 ## Browser access
 
@@ -772,3 +774,5 @@ For project questions and feature requests, open a
 [GitHub issue](https://github.com/rmusser01/tldw_chatbook/issues). For security
 issues, do not publish sensitive details in a public issue; contact the
 maintainer privately at [contact@rmusser.net](mailto:contact@rmusser.net).
+
+Console: [learned response rules](backlog/docs/console-response-rules.md) with `/omfg` and `/rules`.

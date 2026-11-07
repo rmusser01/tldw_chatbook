@@ -1,0 +1,6 @@
+tldw_chatbook/Chat/console_chat_controller.py [(1, 191, 1), (1, 191, 1)] same True
+tldw_chatbook/Chat/console_agent_bridge.py [(1, 29, 1), (1, 29, 1)] same True
+tldw_chatbook/Chat/console_trace_service.py [(1, 33, 0), (1, 33, 0)] same True
+Tests/Chat/test_console_archive_recovery_followup.py [(0, 0, 0), (0, 0, 0)] same True
+Tests/Chat/test_console_trace_service.py [(1, 15, 1), (1, 15, 1)] same True
+Byte-unchanged guards: ['_validate_completed_tool_turn', '_completed_tool_turn_parent', 'prepare_current_surface_delta', 'persist_request', '_validate_replacement_projection']

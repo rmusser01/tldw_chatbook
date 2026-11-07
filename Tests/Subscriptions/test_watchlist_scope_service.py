@@ -225,9 +225,7 @@ def test_scope_service_returns_active_create_form_source_types(
         server_service=FakeServerWatchlists(),
     )
 
-    assert (
-        scope.create_form_source_types(runtime_backend=runtime_backend) == expected
-    )
+    assert scope.create_form_source_types(runtime_backend=runtime_backend) == expected
 
 
 @pytest.mark.asyncio

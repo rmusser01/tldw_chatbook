@@ -64,6 +64,10 @@ SQL_RESERVED_KEYWORDS = _identifier_core.SQL_RESERVED_KEYWORDS
 # identity function on the defect it exists to catch).
 VALID_TABLES = {
     "chachanotes": {
+        "console_prompt_mixin_preferences",
+        "console_prompt_mixin_revisions",
+        "console_prompt_mixin_attempts",
+        "console_prompt_mixin_attempt_items",
         # TASK-19057 (v44->v45): the two Actor Pack tables. Their absence here
         # is what TASK-20971 was filed for.
         "actor_pack_persona_intents",
@@ -81,6 +85,9 @@ VALID_TABLES = {
         "character_conversation_search_revision",
         "character_conversation_search_state",
         "character_expression_images",
+        "character_portrait_performances",
+        "character_portrait_performance_frames",
+        "character_portrait_regions",
         "chat_dictionaries",
         "collection_keywords",
         "conversation_dictionaries",
@@ -126,6 +133,14 @@ VALID_TABLES = {
         "flashcard_assets",
         "flashcard_templates",
         "flashcards",
+        "fleet_progress_messages",
+        "console_response_rule_revisions",
+        "console_response_rule_bindings",
+        "console_response_rule_validations",
+        "console_response_rule_drafts",
+        "console_response_rule_fixtures",
+        "console_response_rule_assessments",
+        "console_machine_followup_receipts",
         "kept_briefings",
         "kept_scripts",
         "keyword_collections",
@@ -185,32 +200,44 @@ VALID_TABLES = {
         "world_books",
     },
     "media": {
+        # task-19867: re-synced against a freshly initialized MediaDatabase
+        # (see Tests/DB/test_sql_validation.py's media live-schema guard).
+        # Removed as stale: IngestionTriggerTracking, MediaModifications,
+        # MediaVersion, and the old FTS names (Keywords_fts / Media_fts /
+        # MediaChunks_fts -- the FTS tables are now keyword_fts / media_fts
+        # and MediaChunks_fts is gone; FTS tables are trigger-written and
+        # excluded from the allowlist by design). Added as missing:
+        # MediaReadItLaterState, ReadingProgress, schema_version.
         "Media",
         "Keywords",
         "MediaKeywords",
-        "MediaVersion",
-        "MediaModifications",
         "UnvectorizedMediaChunks",
         "DocumentVersions",
-        "IngestionTriggerTracking",
         "sync_log",
-        "Media_fts",
-        "Keywords_fts",
         "MediaChunks",
-        "MediaChunks_fts",
+        "MediaReadItLaterState",
+        "ReadingProgress",
         "Transcripts",
+        "schema_version",
         # task-8 (spec §5.2.1/AC 27): without this row, any use of a
         # generic helper for the new v7 columns would raise
         # ``InputError: Invalid table name``.
         "ChunkingTemplates",
     },
     "prompts": {
+        # task-19867: re-synced against a freshly initialized PromptsDatabase
+        # (see Tests/DB/test_sql_validation.py's prompts live-schema guard).
+        # Removed as stale: Keywords, PromptKeywords and the old FTS names
+        # (Prompts_fts / Keywords_fts -- the live FTS tables are prompts_fts
+        # and prompt_keywords_fts, trigger-written and excluded by design).
+        # Added as missing: LocalPromptDrafts, PromptKeywordLinks,
+        # PromptKeywordsTable, schema_version.
         "Prompts",
-        "Keywords",
-        "PromptKeywords",
         "sync_log",
-        "Prompts_fts",
-        "Keywords_fts",
+        "LocalPromptDrafts",
+        "PromptKeywordLinks",
+        "PromptKeywordsTable",
+        "schema_version",
     },
 }
 
@@ -411,6 +438,8 @@ VALID_COLUMNS = {
         "deleted_at",
         "client_id",
     },
+    # TASK-34903: re-synced with the live Keywords DDL (the old set listed
+    # a never-existing deleted_at and lacked the sync-replica columns).
     "Keywords": {
         "id",
         "uuid",
@@ -418,8 +447,20 @@ VALID_COLUMNS = {
         "deleted",
         "last_modified",
         "version",
-        "deleted_at",
         "client_id",
+        "prev_version",
+        "merge_parent_uuid",
+    },
+    "PromptKeywordsTable": {
+        "id",
+        "uuid",
+        "keyword",
+        "deleted",
+        "last_modified",
+        "version",
+        "client_id",
+        "prev_version",
+        "merge_parent_uuid",
     },
     # TASK-864: these four are Media's soft-delete/undelete cascade child
     # tables (Client_Media_DB_v2.py, ``child_tables`` cascade loops in
@@ -551,7 +592,7 @@ LINK_TABLE_COLUMNS = {
     "collection_keywords": {"collection_id", "keyword_id", "created_at"},
     "note_keywords": {"note_id", "keyword_id", "created_at"},
     "MediaKeywords": {"media_id", "keyword_id"},
-    "PromptKeywords": {"prompt_id", "keyword_id"},
+    "PromptKeywordLinks": {"prompt_id", "keyword_id"},
 }
 
 
@@ -791,3 +832,68 @@ def escape_identifier(identifier: str) -> str:
         str: The escaped identifier
     """
     return _escape_identifier(identifier)
+
+
+def split_migration_statements(script: str, *, error_type: type[Exception]) -> list[str]:
+    """Split a migration script into complete statements.
+
+    Uses ``sqlite3.complete_statement`` over accumulated lines -- the same
+    splitter the new-style migration steps already use for their on-disk
+    ``.sql`` files -- so trigger bodies containing ``;`` stay intact.
+
+    Args:
+        script: The full migration script text.
+        error_type: The caller's schema exception class for incomplete SQL.
+
+    Returns:
+        The statements in source order, each keeping its original text
+        (leading comments included).
+
+    Raises:
+        Exception: The supplied error type if the script ends with an incomplete statement.
+    """
+
+    import sqlite3
+    statements: list[str] = []
+    pending = ""
+    for line in script.splitlines(keepends=True):
+        pending += line
+        if sqlite3.complete_statement(pending):
+            statements.append(pending)
+            pending = ""
+    if pending.strip():
+        raise error_type("Migration script contains an incomplete SQL statement")
+    return statements
+
+
+def strip_leading_sql_noise(statement: str) -> str:
+    """Return ``statement`` without its leading whitespace and comments.
+
+    The migration scripts attach a header comment to the statement that
+    follows it, so the raw chunk cannot be pattern-matched directly. Only the
+    HEAD is trimmed; the statement handed to SQLite is always the original
+    text, so ``sqlite_master.sql`` is unaffected.
+
+    Args:
+        statement: One complete statement, possibly comment-prefixed.
+
+    Returns:
+        The statement text starting at its first SQL token, or ``""`` when the
+        chunk carries no SQL at all.
+    """
+    text = statement
+    while True:
+        text = text.lstrip()
+        if text.startswith("--"):
+            newline = text.find("\n")
+            if newline == -1:
+                return ""
+            text = text[newline + 1 :]
+            continue
+        if text.startswith("/*"):
+            end = text.find("*/")
+            if end == -1:
+                return ""
+            text = text[end + 2 :]
+            continue
+        return text

@@ -20,9 +20,9 @@ import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.UI.Screens.change_review_screen import (
+from tldw_chatbook.UI.Screens.change_review_screen import ChangeRevertConfirmModal
+from tldw_chatbook.Workspaces.change_review_provider import (
     AgentRunsChangeReviewProvider,
-    ChangeRevertConfirmModal,
     ReviewTurn,
 )
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard

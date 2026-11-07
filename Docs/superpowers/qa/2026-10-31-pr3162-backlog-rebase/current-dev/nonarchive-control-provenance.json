@@ -1,0 +1,12 @@
+{
+  "source": "Tests/UI/test_console_archive_recovery_flow.py",
+  "source_sha256": "78188e64736fbe7ce509004b93ce5ac41c38c605c78e2c5d03524ec0b77bc45f",
+  "original_fixture_sha256": "4f27b5fb0a4d703555e42413e515525643a357106658f90ca6818faa3eb42ebe",
+  "changes": [
+    "gateway emits one plain response and no tools",
+    "same admission path uses plain user text",
+    "same60s observed-state helper waits for owned turn completion",
+    "same full runtime/turn/AgentRuns cleanup",
+    "assert ordinary response present; no archive result/confirmation assertions"
+  ]
+}

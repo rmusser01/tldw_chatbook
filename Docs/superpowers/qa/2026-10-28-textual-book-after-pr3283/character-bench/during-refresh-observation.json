@@ -1,0 +1,31 @@
+{
+  "case": "during-refresh",
+  "before": {
+    "text": "Saved-new",
+    "focus": true,
+    "cursor": 9,
+    "selection": [
+      9,
+      9
+    ],
+    "dirty": true
+  },
+  "after": {
+    "text": "Saved",
+    "same_input": false,
+    "focus": true,
+    "cursor": 5,
+    "selection": [
+      0,
+      5
+    ],
+    "selection_kind": "character_bench",
+    "selection_id": "f8a787af-a468-4448-a15c-1a9df4f3a1b8",
+    "mounted_probe_set": false
+  },
+  "stored_name": "Saved",
+  "stored_character_ids": [
+    2
+  ],
+  "rail_contains_saved": true
+}

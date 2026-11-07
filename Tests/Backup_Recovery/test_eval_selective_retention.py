@@ -12,8 +12,12 @@ from threading import Event
 
 import pytest
 
+from Tests.Backup_Recovery import conftest as recovery_fixtures
 from Tests.Backup_Recovery import test_eval_retained_definitions
 from Tests.Backup_Recovery.test_restore_data_groups import _document
+
+
+helper_resource_root = recovery_fixtures.helper_resource_root
 
 
 @pytest.fixture
@@ -59,7 +63,7 @@ def test_selective_generations_keep_inactive_evals_after_config_edit_and_undo(
     )
     from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-    from tldw_chatbook.Evals import _default_config_path
+    from tldw_chatbook.Evals import _override_config_path
     from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
     from tldw_chatbook.runtime_policy.server_credentials import (
         KeyringServerCredentialStore,
@@ -69,14 +73,9 @@ def test_selective_generations_keep_inactive_evals_after_config_edit_and_undo(
     selector = original_context.config_path
     control = root / "control"
     if missing_canonical:
-        import tldw_chatbook.Evals as evals
-
-        # Model a missing packaged resource privately, without removing the
-        # repository's YAML or replacing discovery/admission with a fake result.
-        package = selector.parent / "missing-eval-package"
-        package.mkdir(mode=0o700)
-        monkeypatch.setattr(evals, "__file__", str(package / "__init__.py"))
-        assert not _default_config_path().exists()
+        assert not _override_config_path(selector).exists()
+    else:
+        _override_config_path(selector).write_text("budget: {default_limit: 7}\n")
     profile = hashlib.sha256(str(selector).encode()).hexdigest()[:24]
     context = DiscoveryContext(selector, profile)
     config = tomllib.loads(selector.read_text())
@@ -133,7 +132,10 @@ def test_selective_generations_keep_inactive_evals_after_config_edit_and_undo(
     def assert_retained():
         with _preview_reads():
             rows = _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
-        assert {item.path for item in rows} == {_default_config_path(), *selected}
+        assert {item.path for item in rows} == {
+            _override_config_path(selector),
+            *selected,
+        }
         assert len({item.logical_id for item in rows}) == len(rows) == 3
         assert all(observed(path) == before for path, before in preserved.items())
         assert not activation_permission("eval.definitions", config_selector=selector)
@@ -224,10 +226,15 @@ def test_selective_generations_keep_inactive_evals_after_config_edit_and_undo(
         with _preview_reads():
             rows = _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
         assert (
-            next(item.status for item in rows if item.path == _default_config_path())
-            == "missing_required"
+            next(
+                item.status
+                for item in rows
+                if item.path == _override_config_path(selector)
+            )
+            == "unused"
         )
         return
+
     # The actual config writer atomically publishes preferences and advances
     # only this existing binding. Each child exits before native recovery runs.
     def edit_config(section, key, value):
@@ -271,9 +278,14 @@ def test_selective_generations_keep_inactive_evals_after_config_edit_and_undo(
     shutil.copy2(prompt_path, alternate)
     edit_config("database", "prompts_db_path", str(alternate))
     moved_target = discover()
-    assert next(
-        item.path for item in moved_target.items if item.owner == "db.prompts.primary"
-    ) == alternate
+    assert (
+        next(
+            item.path
+            for item in moved_target.items
+            if item.owner == "db.prompts.primary"
+        )
+        == alternate
+    )
     unchanged_stores = {path: observed(path) for path in (prompt_path, alternate)}
     unchanged_config = observed(selector)
     with pytest.raises(ValueError):

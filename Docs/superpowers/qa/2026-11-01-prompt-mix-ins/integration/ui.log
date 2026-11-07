@@ -1,0 +1,40 @@
+.............................................................F.......... [ 76%]
+......................                                                   [100%]
+=================================== FAILURES ===================================
+_____________ test_impersonate_payload_obeys_the_provider_contract _____________
+Tests/UI/test_console_composer_menu.py:588: in test_impersonate_payload_obeys_the_provider_contract
+    result = await controller.impersonate_user_reply("s1")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:3291: in admitted
+    depth = self._maintenance_calls.get(task, 0)
+            ^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ConsoleChatController' object has no attribute '_maintenance_calls'. Did you mean: 'maintenance_drain'?
+============================= slowest 25 durations =============================
+5.60s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]
+5.54s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]
+5.17s call     Tests/UI/test_console_composer_menu.py::test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip_honest
+4.89s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]
+4.77s call     Tests/UI/test_console_composer_menu.py::test_temporary_chip_survives_screen_recreation_return
+4.15s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[save_as_new]
+3.89s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_create_and_filtered_pagination_totals
+3.87s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate]
+3.73s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_conflict_export_and_dirty_escape
+3.45s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size2]
+3.39s call     Tests/UI/test_console_composer_menu.py::test_activate_console_session_for_workspace_keeps_temporary_chip_honest
+3.28s call     Tests/UI/test_library_prompt_mixins.py::test_real_console_mixin_consumer_enables_without_touching_composer_or_system
+3.12s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size1]
+3.06s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.92s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size0]
+2.63s call     Tests/UI/test_console_composer_menu.py::test_character_picker_new_chat_clears_a_stale_temporary_chip
+2.60s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+2.58s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+2.54s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+2.51s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+2.49s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+2.45s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+2.43s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+2.02s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+1.62s call     Tests/UI/test_library_prompt_mixins.py::test_editor_preserves_literal_body
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_composer_menu.py::test_impersonate_payload_obeys_the_provider_contract
+1 failed, 93 passed in 133.26s (0:02:13)

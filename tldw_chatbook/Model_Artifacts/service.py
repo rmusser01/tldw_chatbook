@@ -3314,6 +3314,49 @@ class ModelArtifactService:
         except OSError as error:
             raise ArtifactStateError("download finalization I/O failed") from error
 
+    @model_call
+    def _discard_download_stage_for(self, descriptor: ArtifactDescriptor) -> bool:
+        """Remove the download stage a cancelled acquisition left (TASK-34100.14).
+
+        The caller must hold ``ACQUISITION_SESSION_LEASE_KEY`` (a provision
+        cancelled by its user does, until this returns), so no other run can
+        be streaming into this stage. The artifact's own writer lease is
+        taken here exactly as finalization takes it.
+
+        Args:
+            descriptor: The not-yet-installed artifact whose stage to remove.
+
+        Returns:
+            True when a stage existed and was removed; False when there was
+            none to remove.
+
+        Raises:
+            ArtifactPathError: The stage failed its marker/layout checks.
+            ArtifactStateError: The writer lease or the removal failed.
+        """
+
+        if type(descriptor) is not ArtifactDescriptor:
+            raise TypeError("descriptor must be an ArtifactDescriptor")
+        stage = self._download_stage_for(descriptor, create=False)
+        if stage is None:
+            return False
+        try:
+            self._assert_managed_path(self._locks_path)
+            with ArtifactOperationLease(
+                self._locks_path,
+                descriptor.reference.lease_key(),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                self._discard_download_stage(
+                    self._validate_download_stage_handle(descriptor, stage)
+                )
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire the download stage writer lease"
+            ) from error
+        return True
+
     def _discard_download_stage(self, stage: _ManagedDownloadStage) -> None:
         """Remove one exact marked operation without touching other staging data."""
 

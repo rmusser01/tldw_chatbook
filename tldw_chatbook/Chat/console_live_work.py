@@ -146,6 +146,17 @@ def console_setup_staged_receipt(launch: "ConsoleLiveWorkLaunch | None") -> str:
     return f"{source} evidence staged — finish provider setup to use it."
 
 
+def launch_targets_chatbook_artifact(
+    pending_launch: ConsoleLiveWorkLaunch | None,
+) -> bool:
+    """Whether a pending launch hands off an Artifacts/Chatbooks chatbook."""
+    if pending_launch is None:
+        return False
+    source = str(pending_launch.source or "").strip().lower()
+    target_id = str(pending_launch.payload.get("target_id") or "").strip()
+    return source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id
+
+
 @dataclass(frozen=True)
 class ConsoleLiveWorkStatusCardRow:
     """A stable render row for Console live-work status cards."""

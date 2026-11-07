@@ -834,3 +834,64 @@ def test_repair_selection_privacy_reason_codes_contain_no_governed_text(
         "PROVIDER_EXCEPTION_SENTINEL",
     ):
         assert sentinel not in selection.reason_code
+
+
+@pytest.mark.parametrize("value", (None, 0, 1, "false"))
+def test_contract_requires_actual_boolean_marker_policy(value: object) -> None:
+    with pytest.raises(TypeError, match="require_markers must be a boolean"):
+        CitationRepairContract(
+            schema_version=1,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            allowed_ordinals=(1,),
+            evidence_context="[S1] Library source",
+            require_markers=value,
+        )
+
+
+@pytest.mark.parametrize(
+    ("answer", "decision"),
+    (
+        ("README.md describes the app.", CitationRepairDecision.VALID),
+        (
+            "README.md describes the app [S999].",
+            CitationRepairDecision.REPAIR_REQUIRED_INVALID,
+        ),
+        (
+            "README.md describes the app [S01].",
+            CitationRepairDecision.REPAIR_REQUIRED_INVALID,
+        ),
+        (
+            "README.md describes the app [S1,S2].",
+            CitationRepairDecision.REPAIR_REQUIRED_INVALID,
+        ),
+    ),
+)
+def test_optional_markers_validate_actual_labels(answer, decision) -> None:
+    contract = CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context="[S1] Unrelated Library source",
+        require_markers=False,
+    )
+
+    assert decide_citation_repair(answer, contract) is decision
+
+
+def test_optional_repair_can_delete_invalid_label_without_fabricating_replacement() -> (
+    None
+):
+    contract = CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context="[S1] Unrelated Library source",
+        require_markers=False,
+    )
+
+    selected = select_repaired_body(
+        "README.md describes the app [S999].", "README.md describes the app.", contract
+    )
+
+    assert selected.repaired is True
+    assert selected.selected_body == "README.md describes the app."

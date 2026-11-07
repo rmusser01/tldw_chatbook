@@ -1055,11 +1055,7 @@ def test_verify_trusted_directory_reports_windows_as_unverified_without_mutation
 
 
 def _symlinked_components(path: Path) -> list[Path]:
-    return [
-        candidate
-        for candidate in [path, *path.parents]
-        if candidate.is_symlink()
-    ]
+    return [candidate for candidate in [path, *path.parents] if candidate.is_symlink()]
 
 
 def _relabelled_stat(

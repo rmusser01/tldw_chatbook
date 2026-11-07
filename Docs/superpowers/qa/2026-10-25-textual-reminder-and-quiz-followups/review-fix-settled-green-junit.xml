@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="20" time="181.279" timestamp="2026-10-25T11:20:45.428858-07:00" hostname="DESKTOP-BISU2HE">
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_pending_start_delivers_dashboard_and_presents_result[shell]" time="9.290" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_pending_start_delivers_dashboard_and_presents_result[inner]" time="8.825" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_repeated_start_preserves_one_admitted_request[shell-shell]" time="9.261" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_repeated_start_preserves_one_admitted_request[inner-inner]" time="9.233" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_repeated_start_preserves_one_admitted_request[shell-inner]" time="9.113" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_repeated_start_preserves_one_admitted_request[inner-shell]" time="9.031" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_refusal_or_failure_allows_retry[request-shell]" time="9.315" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_refusal_or_failure_allows_retry[request-inner]" time="9.149" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_refusal_or_failure_allows_retry[policy-shell]" time="9.098" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_refusal_or_failure_allows_retry[policy-inner]" time="9.013" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-after-shell]" time="9.880" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-after-inner]" time="9.657" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-before-shell]" time="10.173" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-before-inner]" time="9.842" />
+    <testcase classname="Tests.UI.test_study_quiz_attempt_retry" name="test_attempt_submission_preserves_answers_grading_and_history[ordinary-one-question]" time="9.356" />
+    <testcase classname="Tests.UI.test_study_quiz_attempt_retry" name="test_attempt_submission_preserves_answers_grading_and_history[ordinary-multi-question]" time="9.240" />
+    <testcase classname="Tests.UI.test_study_quiz_attempt_retry" name="test_attempt_submission_preserves_answers_grading_and_history[retry-same-answer]" time="9.369" />
+    <testcase classname="Tests.UI.test_study_quiz_attempt_retry" name="test_attempt_submission_preserves_answers_grading_and_history[retry-edited-correct]" time="9.614" />
+    <testcase classname="Tests.UI.test_study_quiz_attempt_retry" name="test_attempt_submission_preserves_answers_grading_and_history[retry-edited-incorrect]" time="9.482" />
+    <testcase classname="Tests.UI.test_study_screen" name="test_quizzes_controller_preflights_start_attempt_before_scope_service_dispatch" time="0.227" />
+  </testsuite>
+</testsuites>

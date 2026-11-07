@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -20,12 +21,16 @@ from uuid import uuid4
 
 from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
 from tldw_chatbook.Agents.automatic_work_budget import (
+    AutomaticChatStartAttempt,
     AutomaticWakeAttempt,
     AutomaticWorkLimits,
     AutomaticWorkRefused,
     AutomaticWorkReservation,
     AutomaticWorkSnapshot,
+    GoalAttempt,
+    RuntimeRecoveryResult,
 )
+from tldw_chatbook.Agents.code_review_models import ReviewBoundaryReceipt
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -34,6 +39,11 @@ if TYPE_CHECKING:
 # A persisted monotonic reading is comparable only within this process. Store
 # its owner so separate DB handles share the original anchor without a cache.
 _CLOCK_OWNER_ID = uuid4().hex
+
+# Failed durable settlement must deny the same runtime's sibling work, including
+# through another handle. Only identities live here; recovery remains durable.
+_UNCONFIRMED_STARTS: dict[tuple[str, str, str], tuple[str | None, object]] = {}
+_UNCONFIRMED_STARTS_LOCK = threading.RLock()
 
 
 def _identity(value: str) -> str:
@@ -55,6 +65,129 @@ class AutomaticWorkLedger:
         self._db = db
         self._wall_clock = wall_clock
         self._monotonic_clock = monotonic_clock
+        self._progress_claim_lock = threading.RLock()
+        self._temporary_progress_attempts: dict[str, tuple[tuple[str, str], ...]] = {}
+        self._temporary_progress_claims: dict[str, str] = {}
+        self._review_authorities = {}
+        self._review_attempts = {}
+
+        # Establish the existing canonical key before this ledger can authorize
+        # work. Cleanup must never need a fresh filesystem observation.
+        if not db.is_memory_db:
+            self._restriction_database_id = str(db.db_path.resolve())
+        else:
+            # Independent memory stores retain private UUIDs; ledgers for the
+            # same store share the identity even if the property is rebuilt.
+            with _UNCONFIRMED_STARTS_LOCK:
+                identity = getattr(db, "_automatic_work_restriction_id", None)
+                if identity is None:
+                    identity = "memory:" + uuid4().hex
+                    db._automatic_work_restriction_id = identity
+                self._restriction_database_id = identity
+
+    def register_review_boundary_authority(
+        self, owner_id, *, validate, transition, acceptance_scope
+    ):
+        """Install the live native issuer, never a serialized authority object."""
+        _identity(owner_id)
+        with self._progress_claim_lock:
+            previous = self._review_authorities.get(owner_id)
+            if previous is not None and previous != (
+                validate,
+                transition,
+                acceptance_scope,
+            ):
+                raise ValueError("review boundary issuer conflict")
+            self._review_authorities[owner_id] = (
+                validate,
+                transition,
+                acceptance_scope,
+            )
+
+    def unregister_review_boundary_authority(self, owner_id):
+        """Release the in-memory owner only; durable claims and charges remain."""
+        with self._progress_claim_lock:
+            self._review_authorities.pop(owner_id, None)
+            self._review_attempts = {
+                key: value
+                for key, value in self._review_attempts.items()
+                if value.owner_id != owner_id
+            }
+
+    def _validate_review_boundary(
+        self, receipt, *, chain_id, owner_id, session_id, conversation_id
+    ):
+        authority = self._review_authorities.get(owner_id)
+        if (
+            type(receipt) is not ReviewBoundaryReceipt
+            or (
+                receipt.chain_id,
+                receipt.owner_id,
+                receipt.session_id,
+                receipt.conversation_id,
+            )
+            != (chain_id, owner_id, session_id, conversation_id)
+            or authority is None
+            or not authority[0](receipt)
+        ):
+            raise AutomaticWorkRefused("review_boundary_unavailable")
+
+    def _transition_review_boundary(self, attempt_id, owner_id, state):
+        receipt = self._review_attempts.get(attempt_id)
+        authority = self._review_authorities.get(owner_id)
+        if receipt is not None and authority is not None:
+            authority[1](receipt, state)
+        if state in {"released", "completed"}:
+            with self._progress_claim_lock:
+                self._review_attempts.pop(attempt_id, None)
+
+    def _restriction_database(self) -> str:
+        return self._restriction_database_id
+
+    def _restrict_chat_start(
+        self, attempt_id: str, *, owner_id: str, chain_id: str | None
+    ) -> None:
+        """Retain uncertain authority before settlement I/O, without reading DB."""
+        self._retain_chat_start_restriction(
+            attempt_id, owner_id=owner_id, chain_id=chain_id
+        )
+
+    def _retain_chat_start_restriction(
+        self, attempt_id: str, *, owner_id: str, chain_id: str | None
+    ) -> None:
+        """Insert denial using only captured identity and the existing registry."""
+        with _UNCONFIRMED_STARTS_LOCK:
+            _UNCONFIRMED_STARTS[
+                (self._restriction_database_id, owner_id, attempt_id)
+            ] = (chain_id, object())
+
+    def _clear_chat_start_restriction(self, attempt_id: str, *, owner_id: str) -> None:
+        with _UNCONFIRMED_STARTS_LOCK:
+            _UNCONFIRMED_STARTS.pop(
+                (self._restriction_database(), owner_id, attempt_id), None
+            )
+
+    def _check_unconfirmed_starts(
+        self, conn: sqlite3.Connection, chain_id: str
+    ) -> None:
+        current = conn.execute(
+            "SELECT owner_id FROM automatic_work_runtime_owner WHERE singleton=1"
+        ).fetchone()
+        with _UNCONFIRMED_STARTS_LOCK:
+            members = tuple(
+                entry[0]
+                for (database, owner, _), entry in _UNCONFIRMED_STARTS.items()
+                if database == self._restriction_database()
+                and (current is None or owner == current["owner_id"])
+            )
+        if not members:
+            return
+        root = self._allowance_chain(conn, chain_id)["id"]
+        if any(
+            member is None or self._allowance_chain(conn, member)["id"] == root
+            for member in members
+        ):
+            raise AutomaticWorkRefused("settlement_unconfirmed")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -89,7 +222,8 @@ class AutomaticWorkLedger:
             try:
                 yield conn
             except AutomaticWorkRefused as exc:
-                observed = self._chain(conn, chain_id)
+                observed = self._allowance_chain(conn, chain_id)
+                root_id = observed["id"]
                 conn.execute("ROLLBACK TO automatic_admission")
                 # Elapsed-time observations are not an admission. In particular,
                 # a refused first call in a replacement process must keep its
@@ -100,7 +234,7 @@ class AutomaticWorkLedger:
                         observed["last_observed_at"],
                         observed["clock_owner_id"],
                         observed["started_monotonic"],
-                        chain_id,
+                        root_id,
                     ),
                 )
                 refusal = exc
@@ -119,16 +253,29 @@ class AutomaticWorkLedger:
                 )
                 # A stale callback has no authority to pause its replacement's
                 # otherwise healthy chain. Its admission alone is refused.
-                if reason != "runtime_owner_replaced":
+                if reason not in {
+                    "runtime_owner_replaced",
+                    "settlement_unconfirmed",
+                    "review_boundary_already_claimed",
+                    "review_boundary_unavailable",
+                }:
                     conn.execute(
                         "UPDATE automatic_work_chains SET status=?, pause_reason=? "
                         "WHERE id=? AND status!='review_required'",
-                        (status, reason, chain_id),
+                        (status, reason, root_id),
                     )
             finally:
                 conn.execute("RELEASE automatic_admission")
         if refusal is not None:
             raise refusal
+
+    def policy_kind(self, chain_id: str) -> str:
+        """Read immutable goal origin from the canonical allowance root."""
+        with self._db.connection() as conn:
+            root = self._allowance_chain(conn, chain_id)["id"]
+            return "goal_iteration" if conn.execute(
+                "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
+            ).fetchone() else "fleet_wake"
 
     def _check_admission(
         self,
@@ -139,6 +286,7 @@ class AutomaticWorkLedger:
         amount: int = 0,
         limits: AutomaticWorkLimits | None = None,
     ) -> None:
+        self._check_unconfirmed_starts(conn, chain_id)
         snapshot = self._snapshot(conn, chain_id)
         if snapshot.status == "review_required":
             raise AutomaticWorkRefused(snapshot.pause_reason or "review_required")
@@ -156,7 +304,8 @@ class AutomaticWorkLedger:
                 }
             )
         )
-        chain = self._chain(conn, chain_id)
+        chain = self._allowance_chain(conn, chain_id)
+        chain_id = chain["id"]
         now, monotonic = self._wall_clock(), self._monotonic_clock()
         if not math.isfinite(now) or not math.isfinite(monotonic):
             raise AutomaticWorkRefused("clock_unknown")
@@ -201,7 +350,8 @@ class AutomaticWorkLedger:
         )
 
     def _start_automatic(self, conn: sqlite3.Connection, chain_id: str) -> None:
-        chain = self._chain(conn, chain_id)
+        chain = self._allowance_chain(conn, chain_id)
+        chain_id = chain["id"]
         if chain["started_at"] is None:
             limits = AutomaticWorkLimits(**json.loads(chain["limits_json"]))
             now = self._wall_clock()
@@ -232,30 +382,12 @@ class AutomaticWorkLedger:
         if not isinstance(limits, AutomaticWorkLimits):
             raise TypeError("limits must be AutomaticWorkLimits")
         with self.transaction() as conn:
-            existing = conn.execute(
-                "SELECT id, conversation_id FROM automatic_work_chains WHERE root_submission_id=?",
-                (root_submission_id,),
-            ).fetchone()
-            if existing:
-                if existing["conversation_id"] != conversation_id:
-                    raise ValueError("submission scope conflict")
-                return str(existing["id"])
-            chain_id = uuid4().hex
-            now = self._wall_clock()
-            conn.execute(
-                "INSERT INTO automatic_work_chains "
-                "(id, conversation_id, root_submission_id, limits_json, created_at, last_observed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    chain_id,
-                    conversation_id,
-                    root_submission_id,
-                    json.dumps(asdict(limits)),
-                    now,
-                    now,
-                ),
+            return self._create_chain(
+                conn,
+                conversation_id,
+                root_submission_id=root_submission_id,
+                limits=limits,
             )
-        return chain_id
 
     @staticmethod
     def _check_runtime_owner(conn: sqlite3.Connection, owner_id: str) -> None:
@@ -275,6 +407,22 @@ class AutomaticWorkLedger:
         if row is None:
             raise ValueError("unknown automatic work chain")
         return row
+
+    def _allowance_chain(self, conn: sqlite3.Connection, chain_id: str) -> sqlite3.Row:
+        """Resolve one direct canonical root without changing local scope."""
+        member = self._chain(conn, chain_id)
+        root_id = member["allowance_root_chain_id"]
+        if root_id is None:
+            return member
+        root = self._chain(conn, root_id)
+        if root["allowance_root_chain_id"] is not None:
+            raise ValueError("automatic allowance must name a direct root")
+        return root
+
+    def allowance_root(self, chain_id: str) -> str:
+        """Return the canonical allowance identity without renewing limits."""
+        with self._db.connection() as conn:
+            return str(self._allowance_chain(conn, chain_id)["id"])
 
     @staticmethod
     def _reservation(
@@ -298,13 +446,17 @@ class AutomaticWorkLedger:
     def _snapshot(
         self, conn: sqlite3.Connection, chain_id: str
     ) -> AutomaticWorkSnapshot:
-        chain = self._chain(conn, chain_id)
+        member = self._chain(conn, chain_id)
+        chain = self._allowance_chain(conn, chain_id)
         limits = AutomaticWorkLimits(**json.loads(chain["limits_json"]))
         used = dict.fromkeys(limits.resources(), 0)
         reserved = dict(used)
         uncertain = chain["status"] == "review_required"
         for row in conn.execute(
-            "SELECT * FROM automatic_work_reservations WHERE chain_id=?", (chain_id,)
+            "SELECT reservation.* FROM automatic_work_reservations AS reservation "
+            "JOIN automatic_work_chains AS member ON member.id = reservation.chain_id "
+            "WHERE member.id = ? OR member.allowance_root_chain_id = ?",
+            (chain["id"], chain["id"]),
         ):
             if row["state"] == "released":
                 continue
@@ -323,7 +475,7 @@ class AutomaticWorkLedger:
         }
         return AutomaticWorkSnapshot(
             chain_id,
-            chain["conversation_id"],
+            member["conversation_id"],
             limits,
             chain["status"],
             chain["pause_reason"],
@@ -428,11 +580,11 @@ class AutomaticWorkLedger:
         ):
             raise ValueError("pause reason must be a bounded reason code")
         with self.transaction() as conn:
-            self._chain(conn, chain_id)
+            root_id = self._allowance_chain(conn, chain_id)["id"]
             conn.execute(
                 "UPDATE automatic_work_chains SET status=?, pause_reason=? "
                 "WHERE id=? AND status!='review_required'",
-                ("review_required" if review_required else "paused", reason, chain_id),
+                ("review_required" if review_required else "paused", reason, root_id),
             )
 
     def admit_call(
@@ -570,10 +722,11 @@ class AutomaticWorkLedger:
                     reservation_id,
                 ),
             )
+            root_id = self._allowance_chain(conn, row["chain_id"])["id"]
             if actual_amount is None:
                 conn.execute(
                     "UPDATE automatic_work_chains SET status='review_required', pause_reason='usage_unknown' WHERE id=?",
-                    (row["chain_id"],),
+                    (root_id,),
                 )
             else:
                 snapshot = self._snapshot(conn, row["chain_id"])
@@ -585,7 +738,7 @@ class AutomaticWorkLedger:
                         "UPDATE automatic_work_chains SET status='paused', pause_reason='tokens_budget' "
                         "WHERE id=? AND status!='review_required' "
                         "AND (pause_reason IS NULL OR pause_reason!='wall_budget')",
-                        (row["chain_id"],),
+                        (root_id,),
                     )
         return True
 
@@ -615,8 +768,318 @@ class AutomaticWorkLedger:
             )
 
     @staticmethod
-    def _attempt(
+    def _target_active(conn: sqlite3.Connection, conversation_id: str) -> bool:
+        return (
+            conn.execute(
+                "SELECT 1 FROM automatic_wake_attempts WHERE conversation_id=? "
+                "AND state IN ('prepared', 'accepted') UNION ALL "
+                "SELECT 1 FROM automatic_chat_start_attempts WHERE conversation_id=? "
+                "AND state IN ('prepared', 'accepted') LIMIT 1",
+                (conversation_id, conversation_id),
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _chat_start_attempt(
         conn: sqlite3.Connection, attempt_id: str, owner_id: str
+    ) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM automatic_chat_start_attempts WHERE id=?", (attempt_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("unknown chat start attempt")
+        if row["owner_id"] != owner_id:
+            raise ValueError("attempt owner mismatch")
+        return row
+
+    @staticmethod
+    def _chat_start_view(row: sqlite3.Row) -> AutomaticChatStartAttempt:
+        return AutomaticChatStartAttempt(
+            **{key: row[key] for key in AutomaticChatStartAttempt.__dataclass_fields__}
+        )
+
+    def read_chat_start_attempt(
+        self, attempt_id: str, *, owner_id: str
+    ) -> AutomaticChatStartAttempt:
+        """Return exact persisted native authority for its immutable owner."""
+        with self._db.connection() as conn:
+            return self._chat_start_view(
+                self._chat_start_attempt(conn, attempt_id, owner_id)
+            )
+
+    def prepare_chat_start(
+        self,
+        *,
+        attempt_id: str,
+        source_run_id: str,
+        target_conversation_id: str,
+        target_session_id: str,
+        target_session_incarnation: str,
+        owner_id: str,
+        draft_revision: int,
+        context_epoch: int,
+        request_fingerprint: str,
+        limits: AutomaticWorkLimits | None = None,
+    ) -> AutomaticChatStartAttempt:
+        """Atomically reserve one shared generation for an exact local target.
+
+        The controller proves live source-session ownership before calling this
+        trusted interface. Persisted run lineage and runtime ownership are checked
+        here; target runs continue to have only same-conversation parents.
+        """
+        for value in (
+            attempt_id,
+            source_run_id,
+            target_conversation_id,
+            target_session_id,
+            target_session_incarnation,
+            owner_id,
+        ):
+            _identity(value)
+        submission_id = _identity(f"chat-start:{attempt_id}")
+        for value in (draft_revision, context_epoch):
+            if type(value) is not int or not 0 <= value < 2**63:
+                raise ValueError(
+                    "revision and epoch must be nonnegative SQLite integers"
+                )
+        if (
+            not isinstance(request_fingerprint, str)
+            or len(request_fingerprint) != 64
+            or any(
+                character not in "0123456789abcdef" for character in request_fingerprint
+            )
+        ):
+            raise ValueError("request fingerprint must be a SHA-256 digest")
+        with self._db.connection() as conn:
+            source = conn.execute(
+                "SELECT work_chain_id FROM agent_runs WHERE id=?", (source_run_id,)
+            ).fetchone()
+            if source is None or source["work_chain_id"] is None:
+                raise AutomaticWorkRefused("source_chain_missing")
+            source_chain_id = source["work_chain_id"]
+        with self._admission_transaction(source_chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            existing = conn.execute(
+                "SELECT * FROM automatic_chat_start_attempts WHERE id=?", (attempt_id,)
+            ).fetchone()
+            identity = (
+                source_run_id,
+                source_chain_id,
+                target_conversation_id,
+                target_session_id,
+                target_session_incarnation,
+                owner_id,
+                draft_revision,
+                context_epoch,
+                request_fingerprint,
+            )
+            if existing is not None:
+                if (
+                    tuple(
+                        existing[key]
+                        for key in (
+                            "source_run_id",
+                            "source_chain_id",
+                            "conversation_id",
+                            "session_id",
+                            "session_incarnation",
+                            "owner_id",
+                            "draft_revision",
+                            "context_epoch",
+                            "request_fingerprint",
+                        )
+                    )
+                    != identity
+                ):
+                    raise ValueError("attempt identity conflict")
+                return self._chat_start_view(existing)
+            source = conn.execute(
+                "SELECT status FROM agent_runs WHERE id=?", (source_run_id,)
+            ).fetchone()
+            if source["status"] in TERMINAL_RUN_STATUSES:
+                raise AutomaticWorkRefused("source_run_terminal")
+            self._check_admission(
+                conn, source_chain_id, kind="generation", amount=1, limits=limits
+            )
+            if self._target_active(conn, target_conversation_id):
+                raise AutomaticWorkRefused("conversation_wake_active")
+            root = self._allowance_chain(conn, source_chain_id)
+            chain_id, reservation_id = uuid4().hex, uuid4().hex
+            now = self._wall_clock()
+            conn.execute(
+                "INSERT INTO automatic_work_chains (id, conversation_id, root_submission_id, limits_json, "
+                "created_at, last_observed_at, allowance_root_chain_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    chain_id,
+                    target_conversation_id,
+                    submission_id,
+                    root["limits_json"],
+                    now,
+                    now,
+                    root["id"],
+                ),
+            )
+            conn.execute(
+                "INSERT INTO automatic_work_reservations (id, chain_id, owner_id, kind, amount, state, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'generation', 1, 'reserved', ?, ?)",
+                (reservation_id, chain_id, owner_id, now, now),
+            )
+            conn.execute(
+                "INSERT INTO automatic_chat_start_attempts (id, source_run_id, source_chain_id, chain_id, conversation_id, "
+                "session_id, session_incarnation, owner_id, draft_revision, context_epoch, request_fingerprint, "
+                "generation_reservation_id, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?)",
+                (
+                    attempt_id,
+                    source_run_id,
+                    source_chain_id,
+                    chain_id,
+                    target_conversation_id,
+                    target_session_id,
+                    target_session_incarnation,
+                    owner_id,
+                    draft_revision,
+                    context_epoch,
+                    request_fingerprint,
+                    reservation_id,
+                    now,
+                ),
+            )
+            return self._chat_start_view(
+                self._chat_start_attempt(conn, attempt_id, owner_id)
+            )
+
+    def accept_chat_start(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        limits: AutomaticWorkLimits | None = None,
+    ) -> bool:
+        """Commit the ownership cutoff once; conversation acceptance follows."""
+        with self._db.connection() as conn:
+            chain_id = self._chat_start_attempt(conn, attempt_id, owner_id)["chain_id"]
+        with self._admission_transaction(chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] != "prepared":
+                return False
+            self._check_admission(conn, chain_id, kind="generation", limits=limits)
+            reservation = self._reservation(
+                conn, attempt["generation_reservation_id"], owner_id
+            )
+            if reservation["state"] != "reserved":
+                raise ValueError("attempt generation is not reserved")
+            now = self._wall_clock()
+            conn.execute(
+                "UPDATE automatic_work_reservations SET state='committed', updated_at=? WHERE id=?",
+                (now, reservation["id"]),
+            )
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='accepted', accepted_at=? WHERE id=?",
+                (now, attempt_id),
+            )
+            self._start_automatic(conn, chain_id)
+        return True
+
+    def abort_chat_start(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Refund only this owner's still-prepared, uncommitted attempt."""
+        with self.transaction() as conn:
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] != "prepared":
+                return False
+            reservation = self._reservation(
+                conn, attempt["generation_reservation_id"], owner_id
+            )
+            if reservation["state"] != "reserved":
+                return False
+            self._check_runtime_owner(conn, owner_id)
+            now = self._wall_clock()
+            conn.execute(
+                "UPDATE automatic_work_reservations SET state='released', updated_at=? WHERE id=?",
+                (now, reservation["id"]),
+            )
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='aborted', completed_at=? WHERE id=?",
+                (now, attempt_id),
+            )
+        return True
+
+    def _confirm_chat_start_absent(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Confirm exact absence only after a successful current-owner transaction."""
+        absent = False
+        with self.transaction() as conn:
+            owner = conn.execute(
+                "SELECT owner_id FROM automatic_work_runtime_owner WHERE singleton=1"
+            ).fetchone()
+            if owner is not None and owner["owner_id"] == owner_id:
+                absent = (
+                    conn.execute(
+                        "SELECT 1 FROM automatic_chat_start_attempts WHERE id=?",
+                        (attempt_id,),
+                    ).fetchone()
+                    is None
+                )
+        # Commit and connection-policy restoration must both have succeeded.
+        return absent
+
+    def mark_chat_start_review_required(
+        self, attempt_id: str, *, owner_id: str
+    ) -> bool:
+        """Atomically settle same-owner accepted uncertainty and pause its root.
+
+        Preserve every charge and clock anchor. A stale owner cannot change its
+        replacement, and nonaccepted terminal rows cannot be rewritten.
+
+        Args:
+            attempt_id: Exact durable native-start attempt identity.
+            owner_id: Runtime owner that prepared and accepted the attempt.
+
+        Returns:
+            True after accepted or already-reviewed work is durably paused;
+            False for prepared, aborted, or completed work.
+
+        Raises:
+            AutomaticWorkRefused: The durable runtime owner was replaced.
+            ValueError: The attempt is unknown or belongs to another owner.
+            sqlite3.Error: Durable settlement could not be confirmed.
+        """
+        with self.transaction() as conn:
+            self._check_runtime_owner(conn, owner_id)
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] not in {"accepted", "review_required"}:
+                return False
+            root = self._allowance_chain(conn, attempt["chain_id"])["id"]
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='review_required', completed_at=COALESCE(completed_at, ?) WHERE id=?",
+                (self._wall_clock(), attempt_id),
+            )
+            conn.execute(
+                "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
+                (root,),
+            )
+        self._clear_chat_start_restriction(attempt_id, owner_id=owner_id)
+        return True
+
+    def complete_chat_start(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Settle accepted native work once, without survivor delivery marks."""
+        with self.transaction() as conn:
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] != "accepted":
+                return False
+            self._check_runtime_owner(conn, owner_id)
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='completed', completed_at=? WHERE id=?",
+                (self._wall_clock(), attempt_id),
+            )
+        return True
+
+    @staticmethod
+    def _attempt(
+        conn: sqlite3.Connection,
+        attempt_id: str,
+        owner_id: str,
+        kind: str = "fleet_wake",
     ) -> sqlite3.Row:
         row = conn.execute(
             "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
@@ -625,10 +1088,24 @@ class AutomaticWorkLedger:
             raise ValueError("unknown wake attempt")
         if row["owner_id"] != owner_id:
             raise ValueError("attempt owner mismatch")
-        return row
+        if row["attempt_kind"] != kind:
+            raise ValueError("attempt kind mismatch")
+        if kind == "goal_iteration":
+            link = conn.execute(
+                "SELECT g.chain_id, g.conversation_id FROM goal_iterations i JOIN goal_runs g ON g.id=i.goal_id WHERE i.attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                link is None
+                or link["chain_id"] != row["chain_id"]
+                or link["conversation_id"] != row["conversation_id"]
+                or row["session_id"] != row["conversation_id"]
+                or json.loads(row["run_ids_json"]) != []
+            ):
+                raise ValueError("goal attempt link mismatch")
 
-    @staticmethod
-    def _attempt_view(row: sqlite3.Row) -> AutomaticWakeAttempt:
+        return row
+    def _attempt_view(self, row: sqlite3.Row) -> AutomaticWakeAttempt:
         return AutomaticWakeAttempt(
             row["id"],
             row["chain_id"],
@@ -637,6 +1114,14 @@ class AutomaticWorkLedger:
             row["owner_id"],
             row["state"],
             tuple(json.loads(row["run_ids_json"])),
+            row["cause"],
+            tuple(
+                message_id
+                for message_id, _ in self._temporary_progress_attempts[row["id"]]
+            )
+            if row["id"] in self._temporary_progress_attempts
+            else tuple(json.loads(row["message_ids_json"])),
+            row["review_boundary_id"],
         )
 
     def read_attempt(self, attempt_id: str, *, owner_id: str) -> AutomaticWakeAttempt:
@@ -652,90 +1137,314 @@ class AutomaticWorkLedger:
         owner_id: str,
         session_id: str,
         run_ids: Sequence[str],
+        progress_messages: Sequence[tuple[str, str]] = (),
+        persistent_progress: bool = True,
+        review_boundary: ReviewBoundaryReceipt | None = None,
         limits: AutomaticWorkLimits | None = None,
     ) -> AutomaticWakeAttempt:
         """Claim one immutable survivor batch and its generation in one commit."""
         for value in (attempt_id, owner_id, session_id):
             _identity(value)
-        if isinstance(run_ids, str) or not 1 <= len(run_ids) <= 256:
-            raise ValueError("wake batch must contain 1 to 256 run IDs")
+        if isinstance(run_ids, str) or not 0 <= len(run_ids) <= 256:
+            raise ValueError("wake batch must contain at most 256 run IDs")
+        if isinstance(progress_messages, str) or len(progress_messages) > 256:
+            raise ValueError("progress batch must contain at most 256 messages")
+        progress = tuple(
+            sorted(
+                (_identity(message_id), _identity(source_id))
+                for message_id, source_id in progress_messages
+            )
+        )
+        if len({message_id for message_id, _ in progress}) != len(progress):
+            raise ValueError("wake batch contains duplicate message IDs")
+        if not run_ids and not progress and review_boundary is None:
+            raise ValueError("wake batch must not be empty")
+        cause = (
+            "mixed"
+            if run_ids and progress
+            else "progress"
+            if progress
+            else "completion"
+        )
         selected = tuple(sorted(_identity(run_id) for run_id in run_ids))
         if len(set(selected)) != len(selected):
             raise ValueError("wake batch contains duplicate run IDs")
-        with self._admission_transaction(chain_id) as conn:
-            self._check_runtime_owner(conn, owner_id)
-            existing = conn.execute(
-                "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
+        with self._progress_claim_lock:
+            with self._admission_transaction(chain_id) as conn:
+                self._check_runtime_owner(conn, owner_id)
+                existing = conn.execute(
+                    "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
+                ).fetchone()
+                if existing:
+                    if existing["attempt_kind"] != "fleet_wake":
+                        raise ValueError("attempt kind conflict")
+                    if (
+                        existing["chain_id"],
+                        existing["owner_id"],
+                        existing["session_id"],
+                        tuple(json.loads(existing["run_ids_json"])),
+                        existing["cause"],
+                        existing["review_boundary_id"],
+                        self._temporary_progress_attempts.get(attempt_id)
+                        if attempt_id in self._temporary_progress_attempts
+                        else tuple(
+                            (row["message_id"], row["source_run_id"])
+                            for row in conn.execute(
+                                "SELECT message_id, source_run_id FROM automatic_progress_wake_claims WHERE attempt_id=? ORDER BY message_id",
+                                (attempt_id,),
+                            )
+                        ),
+                    ) != (
+                        chain_id,
+                        owner_id,
+                        session_id,
+                        selected,
+                        cause,
+                        getattr(review_boundary, "boundary_id", None),
+                        progress,
+                    ):
+                        raise ValueError("attempt identity conflict")
+                    if existing["state"] == "prepared" and review_boundary is not None:
+                        self._validate_review_boundary(
+                            review_boundary,
+                            chain_id=chain_id,
+                            owner_id=owner_id,
+                            session_id=session_id,
+                            conversation_id=existing["conversation_id"],
+                        )
+                    return self._attempt_view(existing)
+                snapshot = self._snapshot(conn, chain_id)
+                if review_boundary is not None:
+                    self._validate_review_boundary(
+                        review_boundary,
+                        chain_id=chain_id,
+                        owner_id=owner_id,
+                        session_id=session_id,
+                        conversation_id=snapshot.conversation_id,
+                    )
+                    if conn.execute(
+                        "SELECT 1 FROM automatic_review_boundary_claims WHERE boundary_id=? OR (owner_id=? AND chain_id=? AND review_id=? AND slot_id=? AND slot_attempt_id=?)",
+                        (
+                            review_boundary.boundary_id,
+                            owner_id,
+                            chain_id,
+                            review_boundary.review_id,
+                            review_boundary.slot_id,
+                            review_boundary.slot_attempt_id,
+                        ),
+                    ).fetchone():
+                        raise AutomaticWorkRefused("review_boundary_already_claimed")
+                    if not review_boundary.predecessor_run_ids or len(
+                        review_boundary.predecessor_run_ids
+                    ) != len(review_boundary.predecessor_settlement_ids):
+                        raise ValueError("review_boundary predecessors missing")
+                    for run_id, settlement in zip(
+                        review_boundary.predecessor_run_ids,
+                        review_boundary.predecessor_settlement_ids,
+                    ):
+                        row = conn.execute(
+                            "SELECT status, conversation_id, work_chain_id, agent_kind FROM agent_runs WHERE id=?",
+                            (run_id,),
+                        ).fetchone()
+                        if (
+                            row is None
+                            or row["status"] not in TERMINAL_RUN_STATUSES
+                            or row["agent_kind"] != "subagent"
+                            or row["conversation_id"] != snapshot.conversation_id
+                            or row["work_chain_id"] != chain_id
+                        ):
+                            raise ValueError(
+                                "review_boundary predecessor scope mismatch"
+                            )
+                        # The id names its step index (= seq): decode that one
+                        # row, not the whole run, inside the write transaction.
+                        # CAST keeps a malformed suffix a miss, never an error.
+                        item = conn.execute(
+                            "SELECT payload FROM agent_run_steps WHERE run_id=? AND seq=CAST(? AS INTEGER)",
+                            (run_id, settlement.rpartition(":")[2]),
+                        ).fetchone()
+                        step = json.loads(item[0]) if item is not None else {}
+                        if (
+                            settlement != f"agent-step:{run_id}:{step.get('index')}"
+                            or step.get("status") != row["status"]
+                        ):
+                            raise ValueError(
+                                "review_boundary predecessor settlement missing"
+                            )
+                self._check_admission(
+                    conn, chain_id, kind="generation", amount=1, limits=limits
+                )
+                if self._target_active(conn, snapshot.conversation_id):
+                    raise AutomaticWorkRefused("conversation_wake_active")
+                for run_id in selected:
+                    row = conn.execute(
+                        "SELECT child.*, parent.status AS parent_status, parent.updated_at AS parent_updated_at "
+                        "FROM agent_runs child LEFT JOIN agent_runs parent ON parent.id=child.parent_run_id WHERE child.id=?",
+                        (run_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or row["work_chain_id"] != chain_id
+                        or row["conversation_id"] != snapshot.conversation_id
+                    ):
+                        raise ValueError("wake result scope mismatch")
+                    if (
+                        row["agent_kind"] == "primary"
+                        or row["status"] not in {"done", "error", "cancelled"}
+                        or row["parent_status"] not in TERMINAL_RUN_STATUSES
+                        or row["updated_at"] < row["parent_updated_at"]
+                    ):
+                        raise ValueError("wake result must be a terminal survivor")
+                    if (
+                        row["wake_delivered_at"] is not None
+                        or conn.execute(
+                            "SELECT 1 FROM automatic_wake_claims WHERE run_id=?",
+                            (run_id,),
+                        ).fetchone()
+                    ):
+                        raise AutomaticWorkRefused("result_already_claimed")
+                for message_id, source_id in progress:
+                    source = conn.execute(
+                        "SELECT agent_kind, conversation_id, work_chain_id, parent_run_id FROM agent_runs WHERE id=?",
+                        (source_id,),
+                    ).fetchone()
+                    if (
+                        source is None
+                        or source["agent_kind"] == "primary"
+                        or source["parent_run_id"] is None
+                        or source["work_chain_id"] != chain_id
+                        or source["conversation_id"] != snapshot.conversation_id
+                    ):
+                        raise ValueError("wake progress scope mismatch")
+                    if (
+                        message_id in self._temporary_progress_claims
+                        or conn.execute(
+                            "SELECT 1 FROM automatic_progress_wake_claims WHERE message_id=?",
+                            (message_id,),
+                        ).fetchone()
+                    ):
+                        raise AutomaticWorkRefused("progress_already_claimed")
+                now = self._wall_clock()
+                reservation_id = uuid4().hex
+                conn.execute(
+                    "INSERT INTO automatic_work_reservations (id, chain_id, owner_id, kind, amount, state, created_at, updated_at) VALUES (?, ?, ?, 'generation', 1, 'reserved', ?, ?)",
+                    (reservation_id, chain_id, owner_id, now, now),
+                )
+                conn.execute(
+                    "INSERT INTO automatic_wake_attempts (id, chain_id, conversation_id, session_id, owner_id, generation_reservation_id, run_ids_json, cause, message_ids_json, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?)",
+                    (
+                        attempt_id,
+                        chain_id,
+                        snapshot.conversation_id,
+                        session_id,
+                        owner_id,
+                        reservation_id,
+                        json.dumps(selected),
+                        cause,
+                        json.dumps(tuple(message_id for message_id, _ in progress))
+                        if persistent_progress
+                        else "[]",
+                        now,
+                    ),
+                )
+                conn.executemany(
+                    "INSERT INTO automatic_wake_claims (run_id, attempt_id) VALUES (?, ?)",
+                    [(run_id, attempt_id) for run_id in selected],
+                )
+                if review_boundary is not None:
+                    receipt = review_boundary
+                    conn.execute(
+                        "UPDATE automatic_wake_attempts SET review_boundary_id=? WHERE id=?",
+                        (receipt.boundary_id, attempt_id),
+                    )
+                    conn.execute(
+                        "INSERT INTO automatic_review_boundary_claims (boundary_id, attempt_id, owner_id, chain_id, review_id, slot_id, slot_attempt_id, source_epoch, context_revision, grant_id, target_fingerprint, team_fingerprint, override_fingerprint, predecessor_run_ids_json, predecessor_settlement_ids_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            receipt.boundary_id,
+                            attempt_id,
+                            owner_id,
+                            chain_id,
+                            receipt.review_id,
+                            receipt.slot_id,
+                            receipt.slot_attempt_id,
+                            receipt.source_epoch,
+                            receipt.revision,
+                            receipt.grant_id,
+                            receipt.target_fingerprint,
+                            receipt.team_fingerprint,
+                            receipt.override_fingerprint,
+                            json.dumps(receipt.predecessor_run_ids),
+                            json.dumps(receipt.predecessor_settlement_ids),
+                        ),
+                    )
+                if persistent_progress:
+                    conn.executemany(
+                        "INSERT INTO automatic_progress_wake_claims (message_id, source_run_id, attempt_id) VALUES (?, ?, ?)",
+                        [
+                            (message_id, source_id, attempt_id)
+                            for message_id, source_id in progress
+                        ],
+                    )
+            if review_boundary is not None:
+                self._review_attempts[attempt_id] = review_boundary
+            # Populate process-local authority only after the transaction commits.
+            if progress and not persistent_progress:
+                self._temporary_progress_attempts[attempt_id] = progress
+                self._temporary_progress_claims.update(
+                    (message_id, attempt_id) for message_id, _ in progress
+                )
+            return self.read_attempt(attempt_id, owner_id=owner_id)
+
+    def progress_source_conversation(
+        self, source_run_id: str, *, parent_run_id: str, chain_id: str
+    ) -> str | None:
+        """Read the immutable causal conversation for an exact child source.
+
+        Args:
+            source_run_id: Child named by the committed report metadata.
+            parent_run_id: Immutable parent from that same report identity.
+            chain_id: Immutable chain from that same report identity.
+
+        Returns:
+            Source conversation, or None if its exact lineage does not match.
+        """
+        for value in (source_run_id, parent_run_id, chain_id):
+            _identity(value)
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT chain.conversation_id FROM agent_runs source "
+                "JOIN automatic_work_chains chain ON chain.id=source.work_chain_id "
+                "AND chain.conversation_id=source.conversation_id "
+                "WHERE source.id=? AND source.parent_run_id=? "
+                "AND source.work_chain_id=? AND source.agent_kind!='primary'",
+                (source_run_id, parent_run_id, chain_id),
             ).fetchone()
-            if existing:
-                if (
-                    existing["chain_id"],
-                    existing["owner_id"],
-                    existing["session_id"],
-                    tuple(json.loads(existing["run_ids_json"])),
-                ) != (chain_id, owner_id, session_id, selected):
-                    raise ValueError("attempt identity conflict")
-                return self._attempt_view(existing)
-            snapshot = self._snapshot(conn, chain_id)
-            self._check_admission(
-                conn, chain_id, kind="generation", amount=1, limits=limits
-            )
-            active = conn.execute(
-                "SELECT 1 FROM automatic_wake_attempts WHERE conversation_id=? AND state IN ('prepared', 'accepted')",
-                (snapshot.conversation_id,),
-            ).fetchone()
-            if active:
-                raise AutomaticWorkRefused("conversation_wake_active")
-            for run_id in selected:
+            return row["conversation_id"] if row is not None else None
+
+    def pending_progress_sources(
+        self, conversation_id: str, progress_messages: Sequence[tuple[str, str]]
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Filter source/claim metadata without reading or collecting any body."""
+        values = []
+        with self._progress_claim_lock, self._db.connection() as conn:
+            for message_id, source_id in progress_messages:
+                _identity(message_id)
+                _identity(source_id)
+                if message_id in self._temporary_progress_claims:
+                    continue
                 row = conn.execute(
-                    "SELECT child.*, parent.status AS parent_status, parent.updated_at AS parent_updated_at "
-                    "FROM agent_runs child LEFT JOIN agent_runs parent ON parent.id=child.parent_run_id WHERE child.id=?",
-                    (run_id,),
+                    "SELECT work_chain_id FROM agent_runs WHERE id=? AND conversation_id=? AND agent_kind!='primary' AND parent_run_id IS NOT NULL AND work_chain_id IS NOT NULL",
+                    (source_id, conversation_id),
                 ).fetchone()
                 if (
-                    row is None
-                    or row["work_chain_id"] != chain_id
-                    or row["conversation_id"] != snapshot.conversation_id
-                ):
-                    raise ValueError("wake result scope mismatch")
-                if (
-                    row["agent_kind"] == "primary"
-                    or row["status"] not in {"done", "error", "cancelled"}
-                    or row["parent_status"] not in TERMINAL_RUN_STATUSES
-                    or row["updated_at"] < row["parent_updated_at"]
-                ):
-                    raise ValueError("wake result must be a terminal survivor")
-                if (
-                    row["wake_delivered_at"] is not None
-                    or conn.execute(
-                        "SELECT 1 FROM automatic_wake_claims WHERE run_id=?", (run_id,)
+                    row is not None
+                    and not conn.execute(
+                        "SELECT 1 FROM automatic_progress_wake_claims WHERE message_id=?",
+                        (message_id,),
                     ).fetchone()
                 ):
-                    raise AutomaticWorkRefused("result_already_claimed")
-            now = self._wall_clock()
-            reservation_id = uuid4().hex
-            conn.execute(
-                "INSERT INTO automatic_work_reservations (id, chain_id, owner_id, kind, amount, state, created_at, updated_at) VALUES (?, ?, ?, 'generation', 1, 'reserved', ?, ?)",
-                (reservation_id, chain_id, owner_id, now, now),
-            )
-            conn.execute(
-                "INSERT INTO automatic_wake_attempts (id, chain_id, conversation_id, session_id, owner_id, generation_reservation_id, run_ids_json, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'prepared', ?)",
-                (
-                    attempt_id,
-                    chain_id,
-                    snapshot.conversation_id,
-                    session_id,
-                    owner_id,
-                    reservation_id,
-                    json.dumps(selected),
-                    now,
-                ),
-            )
-            conn.executemany(
-                "INSERT INTO automatic_wake_claims (run_id, attempt_id) VALUES (?, ?)",
-                [(run_id, attempt_id) for run_id in selected],
-            )
-            return self._attempt_view(self._attempt(conn, attempt_id, owner_id))
+                    values.append((message_id, source_id, row["work_chain_id"]))
+        return tuple(values)
 
     def accept_wake(
         self,
@@ -744,36 +1453,20 @@ class AutomaticWorkLedger:
         owner_id: str,
         limits: AutomaticWorkLimits | None = None,
     ) -> bool:
-        """Durably consume a prepared attempt; only the first True may dispatch."""
-        with self._db.connection() as conn:
-            chain_id = self._attempt(conn, attempt_id, owner_id)["chain_id"]
-        with self._admission_transaction(chain_id) as conn:
-            self._check_runtime_owner(conn, owner_id)
-            attempt = self._attempt(conn, attempt_id, owner_id)
-            if attempt["state"] != "prepared":
-                return False
-            self._check_admission(conn, chain_id, kind="generation", limits=limits)
-            reservation = self._reservation(
-                conn, attempt["generation_reservation_id"], owner_id
-            )
-            if reservation["state"] != "reserved":
-                raise ValueError("attempt generation is not reserved")
-            now = self._wall_clock()
-            conn.execute(
-                "UPDATE automatic_work_reservations SET state='committed', updated_at=? WHERE id=?",
-                (now, reservation["id"]),
-            )
-            conn.execute(
-                "UPDATE automatic_wake_attempts SET state='accepted', accepted_at=? WHERE id=?",
-                (now, attempt_id),
-            )
-            self._start_automatic(conn, chain_id)
-        return True
+        """Durably consume a prepared fleet attempt."""
+        return self._accept_attempt(
+            attempt_id, owner_id=owner_id, limits=limits, kind="fleet_wake"
+        )
 
     def abort_wake(self, attempt_id: str, *, owner_id: str) -> bool:
         """Release a proven pre-acceptance refusal; accepted work never refunds."""
+        return self._abort_attempt(attempt_id, owner_id=owner_id, kind="fleet_wake")
+
+
+    def _abort_attempt(self, attempt_id: str, *, owner_id: str, kind: str) -> bool:
+        """Release a proven pre-acceptance refusal; accepted work never refunds."""
         with self.transaction() as conn:
-            attempt = self._attempt(conn, attempt_id, owner_id)
+            attempt = self._attempt(conn, attempt_id, owner_id, kind)
             if attempt["state"] != "prepared":
                 return False
             conn.execute(
@@ -784,9 +1477,24 @@ class AutomaticWorkLedger:
                 "DELETE FROM automatic_wake_claims WHERE attempt_id=?", (attempt_id,)
             )
             conn.execute(
+                "DELETE FROM automatic_progress_wake_claims WHERE attempt_id=?",
+                (attempt_id,),
+            )
+            conn.execute(
+                "DELETE FROM automatic_review_boundary_claims WHERE attempt_id=?",
+                (attempt_id,),
+            )
+            conn.execute(
                 "UPDATE automatic_wake_attempts SET state='aborted', completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
+            if kind == "goal_iteration":
+                conn.execute("DELETE FROM goal_payload_reservations WHERE attempt_id=?", (attempt_id,))
+                conn.execute("UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?", (attempt_id,))
+        with self._progress_claim_lock:
+            for message_id, _ in self._temporary_progress_attempts.get(attempt_id, ()):
+                self._temporary_progress_claims.pop(message_id, None)
+        self._transition_review_boundary(attempt_id, owner_id, "released")
         return True
 
     def complete_wake(self, attempt_id: str, *, owner_id: str) -> bool:
@@ -805,6 +1513,7 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_wake_attempts SET state='completed', completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
+        self._transition_review_boundary(attempt_id, owner_id, "completed")
         return True
 
     def recover(self, *, current_owner_id: str) -> int:
@@ -815,6 +1524,7 @@ class AutomaticWorkLedger:
         but cannot grant the old owner new execution authority.
         """
         _identity(current_owner_id)
+        database = self._restriction_database()
         with self.transaction() as conn:
             # Revoke even completed owners: their surviving child callbacks
             # may otherwise look fully accounted and escape the unfinished scan.
@@ -827,10 +1537,31 @@ class AutomaticWorkLedger:
                 row[0]
                 for row in conn.execute(
                     "SELECT chain_id FROM automatic_wake_attempts WHERE owner_id!=? AND state IN ('prepared', 'accepted') "
+                    "UNION SELECT chain_id FROM automatic_chat_start_attempts WHERE owner_id!=? AND state IN ('prepared', 'accepted') "
                     "UNION SELECT chain_id FROM automatic_work_reservations WHERE owner_id!=? AND (state='reserved' OR (kind='tokens' AND state='committed'))",
-                    (current_owner_id, current_owner_id),
+                    (current_owner_id, current_owner_id, current_owner_id),
                 )
             }
+            # Temporary progress IDs are deliberately process-local. After
+            # restart a completed attempt's empty ID list cannot prove which
+            # saved reports it already woke; retain a review fence on its chain.
+            chains.update(
+                row["chain_id"]
+                for row in conn.execute(
+                    "SELECT id, chain_id FROM automatic_wake_attempts "
+                    "WHERE owner_id!=? AND state='completed' "
+                    "AND cause IN ('progress', 'mixed') AND message_ids_json='[]'",
+                    (current_owner_id,),
+                )
+                if row["id"] not in self._temporary_progress_attempts
+            )
+            chains = {
+                self._allowance_chain(conn, chain_id)["id"] for chain_id in chains
+            }
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')",
+                (current_owner_id,),
+            )
             conn.execute(
                 "UPDATE automatic_wake_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')",
                 (current_owner_id,),
@@ -843,4 +1574,305 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
                 [(chain_id,) for chain_id in chains],
             )
+            goals = tuple(
+                (row["id"], row["revision"],
+                 "recovery_required" if row["chain_id"] in chains or row["status"] == "recovery_required" else "paused")
+                for row in conn.execute(
+                    "SELECT g.* FROM goal_runs g WHERE g.status NOT IN ('completed','removed','closed','stopped','awaiting_result_review') "
+                    "AND EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=g.id AND a.state!='aborted')"
+                )
+            )
+            audit = RuntimeRecoveryResult(current_owner_id, tuple(sorted(chains)), goals)
+            # Snapshot only the entries covered while this transaction owns
+            # recovery. Later recoveries/setters may run before our return.
+            with _UNCONFIRMED_STARTS_LOCK:
+                recovered_restrictions = tuple(
+                    (key, entry)
+                    for key, entry in _UNCONFIRMED_STARTS.items()
+                    if key[0] == database and key[1] != current_owner_id
+                )
+        with _UNCONFIRMED_STARTS_LOCK:
+            for key, entry in recovered_restrictions:
+                # A fresh write to even the same key is new uncertainty.
+                if _UNCONFIRMED_STARTS.get(key) is entry:
+                    _UNCONFIRMED_STARTS.pop(key)
+        self.recovery_result = audit
         return len(chains)
+
+
+    def _create_chain(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        *,
+        root_submission_id: str,
+        limits: AutomaticWorkLimits,
+    ) -> str:
+        """Allocate inside the caller's transaction; never commit independently."""
+        existing = conn.execute(
+            "SELECT id, conversation_id FROM automatic_work_chains WHERE root_submission_id=?",
+            (root_submission_id,),
+        ).fetchone()
+        if existing:
+            if existing["conversation_id"] != conversation_id:
+                raise ValueError("submission scope conflict")
+            return str(existing["id"])
+        chain_id = uuid4().hex
+        now = self._wall_clock()
+        conn.execute(
+            "INSERT INTO automatic_work_chains "
+            "(id, conversation_id, root_submission_id, limits_json, created_at, last_observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                chain_id,
+                conversation_id,
+                root_submission_id,
+                json.dumps(asdict(limits)),
+                now,
+                now,
+            ),
+        )
+        return chain_id
+
+
+
+    def read_goal_attempt(self, attempt_id: str, *, owner_id: str) -> GoalAttempt:
+        """Read goal authority only when its immutable iteration link agrees."""
+        with self._db.connection() as conn:
+            row = self._attempt(conn, attempt_id, owner_id, "goal_iteration")
+            link = conn.execute(
+                "SELECT goal_id, ordinal FROM goal_iterations WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            return GoalAttempt(
+                row["id"],
+                link["goal_id"],
+                link["ordinal"],
+                row["chain_id"],
+                row["conversation_id"],
+                row["session_id"],
+                row["owner_id"],
+                row["state"],
+            )
+
+
+
+    def prepare_goal_iteration(self, goal_id: str, *, owner_id: str) -> GoalAttempt:
+        """Reserve one generation and link it to real goal intent in FULL commit."""
+        _identity(goal_id)
+        goal = self._db.goal_runs.get(goal_id)
+        with self._admission_transaction(goal.chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            row = conn.execute(
+                "SELECT * FROM goal_runs WHERE id=?", (goal_id,)
+            ).fetchone()
+            if row["status"] != "ready":
+                raise AutomaticWorkRefused("goal_not_ready")
+            try:
+                goal.request.validate_verifier_invocations()
+            except ValueError:
+                raise AutomaticWorkRefused("ambiguous_verifier_invocation") from None
+            existing = conn.execute(
+                "SELECT a.id, a.owner_id FROM automatic_wake_attempts a JOIN goal_iterations i ON i.attempt_id=a.id WHERE i.goal_id=? AND a.state IN ('prepared','accepted')",
+                (goal_id,),
+            ).fetchone()
+            if existing:
+                self._attempt(conn, existing["id"], owner_id, "goal_iteration")
+                attempt_id = existing["id"]
+                if not conn.execute(
+                    "SELECT 1 FROM goal_payload_reservations WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone():
+                    self._db.goal_runs.reserve_result(conn, goal, attempt_id)
+            else:
+                self._check_admission(
+                    conn,
+                    goal.chain_id,
+                    kind="generation",
+                    amount=1,
+                    limits=AutomaticWorkLimits.from_settings("goal_iteration"),
+                )
+                if self._target_active(conn, goal.conversation_id):
+                    raise AutomaticWorkRefused("conversation_wake_active")
+                ordinal = conn.execute(
+                    "SELECT COALESCE(MAX(ordinal),0)+1 FROM goal_iterations WHERE goal_id=?",
+                    (goal_id,),
+                ).fetchone()[0]
+                attempt_id, reservation_id = uuid4().hex, uuid4().hex
+                now = self._wall_clock()
+                conn.execute(
+                    "INSERT INTO automatic_work_reservations (id,chain_id,owner_id,kind,amount,state,created_at,updated_at) VALUES (?,?,?,'generation',1,'reserved',?,?)",
+                    (reservation_id, goal.chain_id, owner_id, now, now),
+                )
+                conn.execute(
+                    "INSERT INTO automatic_wake_attempts (id,chain_id,conversation_id,session_id,owner_id,generation_reservation_id,run_ids_json,state,created_at,attempt_kind) VALUES (?,?,?,?,?,?,'[]','prepared',?,'goal_iteration')",
+                    (
+                        attempt_id,
+                        goal.chain_id,
+                        goal.conversation_id,
+                        goal.conversation_id,
+                        owner_id,
+                        reservation_id,
+                        now,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO goal_iterations (id,goal_id,ordinal,launch_id,attempt_id,status) VALUES (?,?,?,?,?,'prepared')",
+                    (uuid4().hex, goal_id, ordinal, uuid4().hex, attempt_id),
+                )
+                self._db.goal_runs.reserve_result(conn, goal, attempt_id)
+        return self.read_goal_attempt(attempt_id, owner_id=owner_id)
+
+
+
+    def accept_goal_iteration(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        admission_guard: Callable[[], None] | None = None,
+    ) -> bool:
+        """Accept once; an optional runtime guard may only refuse admission.
+
+        The guard runs synchronously inside the existing acceptance transaction;
+        it must not access the database or perform asynchronous work.
+        """
+        return self._accept_attempt(
+            attempt_id,
+            owner_id=owner_id,
+            limits=AutomaticWorkLimits.from_settings("goal_iteration"),
+            kind="goal_iteration",
+            admission_guard=admission_guard,
+        )
+
+
+
+    def abort_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Refund only an unaccepted goal generation reservation."""
+        return self._abort_attempt(attempt_id, owner_id=owner_id, kind="goal_iteration")
+
+
+
+    def _accept_attempt(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        limits: AutomaticWorkLimits | None,
+        kind: str,
+        admission_guard: Callable[[], None] | None = None,
+    ) -> bool:
+        with self._db.connection() as conn:
+            attempt = self._attempt(conn, attempt_id, owner_id, kind)
+            chain_id = attempt["chain_id"]
+            review_boundary_id = attempt["review_boundary_id"]
+            needs_review_scope = (
+                review_boundary_id is not None and attempt["state"] == "prepared"
+            )
+        scope = nullcontext()
+        has_review_scope = False
+        if needs_review_scope:
+            with self._progress_claim_lock:
+                authority = self._review_authorities.get(owner_id)
+                receipt = self._review_attempts.get(attempt_id)
+            if authority is not None:
+                scope = authority[2](receipt)
+                has_review_scope = True
+            # A concurrent abort may already have retired the receipt/issuer.
+            # The original transaction checks owner and terminal state first;
+            # a still-prepared attempt with missing authority fails validation.
+        # Acquire native admission before SQLite, and keep it through the
+        # post-commit native transition. Claim-time validation never takes this
+        # scope, avoiding DB -> admission / admission -> DB lock inversion.
+        with scope:
+            return self._accept_attempt_transaction(
+                chain_id,
+                attempt_id,
+                owner_id=owner_id,
+                limits=limits,
+                kind=kind,
+                admission_guard=admission_guard,
+                has_review_scope=has_review_scope,
+            )
+
+    def _accept_attempt_transaction(
+        self,
+        chain_id,
+        attempt_id,
+        *,
+        owner_id,
+        limits,
+        kind,
+        admission_guard,
+        has_review_scope,
+    ):
+        with self._admission_transaction(chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            attempt = self._attempt(conn, attempt_id, owner_id, kind)
+            if attempt["state"] != "prepared":
+                return False
+            if attempt["review_boundary_id"] is not None:
+                if not has_review_scope:
+                    raise AutomaticWorkRefused("review_boundary_unavailable")
+                receipt = self._review_attempts.get(attempt_id)
+                self._validate_review_boundary(
+                    receipt,
+                    chain_id=chain_id,
+                    owner_id=owner_id,
+                    session_id=attempt["session_id"],
+                    conversation_id=attempt["conversation_id"],
+                )
+                link = conn.execute(
+                    "SELECT boundary_id FROM automatic_review_boundary_claims WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+                if link is None or link[0] != receipt.boundary_id:
+                    raise AutomaticWorkRefused("review_boundary_unavailable")
+            if kind == "goal_iteration":
+                goal = conn.execute(
+                    "SELECT g.status, g.request_json FROM goal_runs g JOIN goal_iterations i ON i.goal_id=g.id WHERE i.attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+                if goal is None or goal["status"] != "ready":
+                    raise AutomaticWorkRefused("goal_not_ready")
+                from tldw_chatbook.Agents.goal_models import GoalRequest
+
+                request = GoalRequest.model_validate_json(goal["request_json"])
+                try:
+                    request.validate_verifier_invocations()
+                except ValueError:
+                    raise AutomaticWorkRefused(
+                        "ambiguous_verifier_invocation"
+                    ) from None
+                from tldw_chatbook.Agents.run_log import _setting
+                from tldw_chatbook.config import coerce_bool_setting
+
+                # Resolution/recovery may have awaited since the early gate.
+                # Refuse inside the durable fence before consuming a generation.
+                if not coerce_bool_setting(_setting("goal_runs_enabled", False), False):
+                    raise AutomaticWorkRefused("goal_runs_disabled")
+            self._check_admission(conn, chain_id, kind="generation", limits=limits)
+            reservation = self._reservation(
+                conn, attempt["generation_reservation_id"], owner_id
+            )
+            if reservation["state"] != "reserved":
+                raise ValueError("attempt generation is not reserved")
+            if admission_guard is not None:
+                admission_guard()
+            now = self._wall_clock()
+            conn.execute(
+                "UPDATE automatic_work_reservations SET state='committed', updated_at=? WHERE id=?",
+                (now, reservation["id"]),
+            )
+            conn.execute(
+                "UPDATE automatic_wake_attempts SET state='accepted', accepted_at=? WHERE id=?",
+                (now, attempt_id),
+            )
+            if kind == "goal_iteration":
+                conn.execute(
+                    "UPDATE goal_iterations SET status='accepted', revision=revision+1 WHERE attempt_id=?",
+                    (attempt_id,),
+                )
+            self._start_automatic(conn, chain_id)
+        self._transition_review_boundary(attempt_id, owner_id, "accepted")
+        return True

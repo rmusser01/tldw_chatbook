@@ -1,0 +1,5 @@
+verifier changed since A: True
+openai api_key unchanged since A: True
+api_key is enc: True
+A: verifier accepts=False; key decrypts OK
+B: verifier accepts=True; key CANNOT decrypt (ValueError)

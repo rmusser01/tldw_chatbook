@@ -37,11 +37,27 @@ from ..Utils.input_validation import validate_bounded_integer
 # One catalogue of local providers, shared with the Console's resolver. Import
 # free of heavy dependencies by design (`find_spec` only), so this costs
 # nothing here and cannot drift from what the resolver picks.
-from ..Utils.local_stt_providers import (
-    LOCAL_STT_PROVIDERS,
-    installed_local_providers,
-    provider_is_local,
-)
+def __getattr__(name):  # noqa: ANN001
+    """PEP 562: module-attribute lazy access for the provider catalogue.
+
+    Keeps import-time light (PR #3089 pass ratchet) while preserving the
+    module-attribute contract tests rely on (``LOCAL_STT_PROVIDERS``,
+    ``installed_local_providers``, ``provider_is_local``).
+    """
+    if name in {"LOCAL_STT_PROVIDERS", "installed_local_providers", "provider_is_local"}:
+        import importlib
+
+        module = importlib.import_module(
+            "tldw_chatbook.Utils.local_stt_providers"
+        )
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# TASK-22504 follow-up (PR #3089): the provider catalogue is deferred to
+# its two interaction-time methods so this lazy-service module does not
+# pull local_stt_providers into the stts pre-import route (pass ratchet
+# 558); the "stay dependency-light" note above still holds.
 from .duplex_contracts import AudioFrame
 
 
@@ -281,6 +297,7 @@ class LazyLiveDictationService:
         self._transcription_service_factory = transcription_service_factory
         self._recorder_factory = recorder_factory
         self.transcript_engine = transcript_engine
+        self._capture_cancellation: Optional[Callable[[], bool]] = None
 
         # Lazy-loaded services
         self._audio_service = None
@@ -735,6 +752,14 @@ class LazyLiveDictationService:
         self._notify_segment_transcribing(done=True)
         self._finalize_current_segment()
 
+    def set_capture_cancellation(self, cancelled: Callable[[], bool]) -> None:
+        """Install an owner's nonblocking retirement predicate before startup."""
+        self._capture_cancellation = cancelled
+
+    def _capture_was_cancelled(self) -> bool:
+        predicate = getattr(self, "_capture_cancellation", None)
+        return predicate is not None and predicate()
+
     def start_dictation(
         self,
         on_partial_transcript: Optional[Callable[[str], None]] = None,
@@ -794,6 +819,8 @@ class LazyLiveDictationService:
                 armed and incorrectly swallow the NEXT real segment's
                 final. Carries no payload.
         """
+        if self._capture_was_cancelled():
+            return False
         with self.state_lock:
             if self.state != DictationState.IDLE:
                 logger.warning(f"Cannot start dictation in state: {self.state}")
@@ -825,6 +852,8 @@ class LazyLiveDictationService:
                 self._notify_state_change()
                 return False
 
+            if self._capture_was_cancelled():
+                return False
             with self.state_lock:
                 self.state = DictationState.STARTING
             self._notify_state_change()
@@ -844,6 +873,8 @@ class LazyLiveDictationService:
 
             # Initialize streaming transcriber
             self._initialize_streaming_transcriber()
+            if self._capture_was_cancelled():
+                return False
 
             # Start processing thread (simplified)
             self.stop_processing.clear()
@@ -860,6 +891,9 @@ class LazyLiveDictationService:
                 raise
 
             # Start audio recording
+            if self._capture_was_cancelled():
+                self.stop_processing.set()
+                return False
             success = audio_svc.start_recording(callback=self._audio_callback)
 
             if success:
@@ -896,8 +930,16 @@ class LazyLiveDictationService:
             none is installed (nothing will work either way; this at least
             keeps the reported provider inside the local catalogue).
         """
-        installed = installed_local_providers()
-        return installed[0] if installed else LOCAL_STT_PROVIDERS[0]
+        installed = getattr(
+            __import__(__name__, fromlist=["_"]), "installed_local_providers"
+        )()
+        if not installed:
+            installed = (
+                getattr(__import__(__name__, fromlist=["_"]), "LOCAL_STT_PROVIDERS")
+                or ()
+            )
+
+        return installed[0]
 
     def _initialize_streaming_transcriber(self):
         """Initialize streaming transcriber if available."""
@@ -910,6 +952,10 @@ class LazyLiveDictationService:
             # providers while the resolver grew to seven, which made the Console
             # download and announce one model and then transcribe with another.
             # Do not reintroduce a literal list here.
+            provider_is_local = getattr(
+                __import__(__name__, fromlist=["_"]), "provider_is_local"
+            )
+
             if not provider_is_local(self.transcription_provider):
                 fallback = self._preferred_local_provider()
                 logger.info(

@@ -1,0 +1,20 @@
+{
+  "control": {
+    "completed_cycles": 0,
+    "excluded": "incomplete run; see native log and diagnostic report",
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "verified": {
+    "completed_cycles": 0,
+    "excluded": "incomplete run; see native log and diagnostic report",
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "final": {
+    "completed_cycles": 0,
+    "excluded": "incomplete run; see native log and diagnostic report",
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  }
+}

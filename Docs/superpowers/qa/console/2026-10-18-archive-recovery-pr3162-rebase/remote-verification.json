@@ -1,0 +1,17 @@
+{
+  "source_commit": "5660e9cb51c168575ca629d16a16986ac94a4481",
+  "exact_previous_remote_head": "fa86ea508a4c7e607dc954c0d76077bd24d50437",
+  "github_after_source_push": {
+    "autoMergeRequest": null,
+    "baseRefName": "dev",
+    "baseRefOid": "9af0c59263dce00fa44be4a74d5d7e78712346bf",
+    "headRefName": "codex/agent-archive-recovery-pr",
+    "headRefOid": "5660e9cb51c168575ca629d16a16986ac94a4481",
+    "isDraft": true,
+    "mergeStateStatus": "BLOCKED",
+    "mergeable": "MERGEABLE",
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/3162"
+  },
+  "tested_source_blobs_verified": 72,
+  "closeout_commit_scope": "documentation_only"
+}

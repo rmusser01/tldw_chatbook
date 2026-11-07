@@ -245,7 +245,7 @@ first release tranche:
 - [tldw-pydle first-release implementation plan](../../Docs/superpowers/plans/2026-08-23-tldw-pydle-first-release.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
 - [ADR-029: Local Private Data Boundary](029-local-private-data-boundary.md)
-- [ADR-031: TUI keybinding and footer-hint conventions](031-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-299: TUI keybinding and footer-hint conventions](299-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-032: Immutable installed distribution assets](032-immutable-installed-distribution-assets.md)
 - [ADR-033: Application session state ownership](033-application-session-state-ownership.md)
 - [ADR-036: Application service composition lifecycle](036-application-service-composition-lifecycle.md)

@@ -1,0 +1,16 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size0] _
+Tests/UI/test_console_character_activation_presentation.py:415: in test_character_open_under_quit_question_explains_only_owned_interruption
+    assert host.screen is chat, (
+E   AssertionError: (<ConsoleActivationResultKind.FAILED: 'failed'>, 'Could not open chat')
+E   assert ConsoleSessionSwitcherModal() is ChatScreen(classes='shell-header-normal')
+E    +  where ConsoleSessionSwitcherModal() = ConsoleHarness(title='ConsoleHarness', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'}).screen
+============================= slowest 25 durations =============================
+6.77s call     Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size0]
+1.84s setup    Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size0]
+
+(1 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size0]
+1 failed, 18 deselected in 11.81s

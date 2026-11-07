@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsBlockerCode,
     ConsoleSettingsReadiness,
     build_console_settings_readiness,
+    model_readiness_words,
     readiness_words,
     verdict_readiness_words,
 )
@@ -170,6 +171,99 @@ def test_a_cloud_key_accepted_by_its_listing_reads_verified():
     assert readiness.credential == "listing_accepted"
     assert readiness.generation == "not_tested"
     assert readiness_words(readiness) == "Ready · verified 09:07"
+
+
+def _accepted_listing_owner(*model_ids: str) -> ProviderConnectionEvidence:
+    owner = ProviderConnectionEvidence()
+    owner.publish(
+        ProviderTestEvidence(
+            OPENAI,
+            "reachable",
+            model_ids,
+            credential="listing_accepted",
+            observed_at=SEEN,
+        ),
+        order=1,
+    )
+    return owner
+
+
+def _openai_readiness(model: str | None, owner) -> ConsoleSettingsReadiness:
+    return build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model=model),
+        app_config=OPENAI_CONFIG,
+        environ={},
+        connection_evidence=owner,
+    )
+
+
+def test_a_key_check_verifies_only_the_models_its_listing_returned():
+    """TASK-33005.11 AC#1/#4: one accepted key check listed gpt-4o and
+    gpt-4o-mini. The listed model reads verified (the control); a model the
+    listing did not return keeps a weaker word, still timed, since the key
+    was accepted and the server answered at 09:07 -- never 'verified', which
+    claimed that this model will answer."""
+    owner = _accepted_listing_owner("gpt-4o", "gpt-4o-mini")
+
+    listed = _openai_readiness("gpt-4o", owner)
+    unlisted = _openai_readiness("gpt-5.6-terra", owner)
+
+    assert (listed.model, unlisted.model) == ("confirmed", "unconfirmed")
+    assert readiness_words(listed) == "Ready · verified 09:07"
+    assert readiness_words(unlisted) == "Ready · reachable 09:07"
+    # The setup verdict reads its Model facet the same way.
+    for facet, word in (("confirmed", "verified"), ("unconfirmed", "reachable")):
+        assert verdict_readiness_words(
+            _snapshot(endpoint="reachable", model=facet),
+            owner.evidence_for(OPENAI),
+        ) == f"Ready · {word} 09:07"
+
+
+def test_one_provider_readiness_words_each_listed_model_by_its_own_listing():
+    """TASK-33005.11 AC#2: Switch model resolves one readiness per provider
+    (for its representative model) and words every row from it, so a row
+    reads its own model against the listing, whichever model the readiness
+    was built for. A paid test still verifies only the model it sent
+    (Qodo #2958), and a blocked provider reads its blocker on every row."""
+    owner = _accepted_listing_owner("gpt-4o")
+    for representative in ("gpt-4o", "gpt-5.6-terra"):
+        provider_readiness = _openai_readiness(representative, owner)
+        assert model_readiness_words(provider_readiness, "gpt-4o") == (
+            "Ready · verified 09:07"
+        )
+        assert model_readiness_words(provider_readiness, "gpt-5.6-terra") == (
+            "Ready · reachable 09:07"
+        )
+
+    paid = ProviderConnectionEvidence()
+    paid.publish(
+        ProviderTestEvidence(
+            LLAMA,
+            "reachable",
+            ("model-a", "model-b"),
+            generation="succeeded",
+            generation_model="model-a",
+            observed_at=SEEN,
+            generation_observed_at=SEEN.replace(minute=30),
+        ),
+        order=1,
+    )
+    local = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=LLAMA_CONFIG,
+        environ={},
+        connection_evidence=paid,
+    )
+    assert model_readiness_words(local, "model-a") == "Ready · verified 09:30"
+    assert model_readiness_words(local, "model-b") == "Ready · reachable 09:07"
+
+    no_key = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model="gpt-4o"),
+        app_config={"api_settings": {"openai": {}}},
+        environ={},
+        connection_evidence=owner,
+    )
+    assert model_readiness_words(no_key, "gpt-5.6-terra") == "Not ready · no key"
 
 
 def test_a_public_cloud_listing_without_key_acceptance_stays_not_tested():

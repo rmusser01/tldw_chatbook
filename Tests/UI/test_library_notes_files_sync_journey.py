@@ -374,10 +374,9 @@ async def test_real_runtime_resume_after_pause_returns_the_root_to_service(
                 "Review changes",
             )
         else:
-            assert (resumed.status_label, resumed.next_action_label) == (
-                "✓ Up to date",
-                "Check changes",
-            )
+            # TASK-32633 slice (N-03): the healthy label is dated.
+            assert resumed.status_label.startswith("✓ Up to date as of ")
+            assert resumed.next_action_label == "Check changes"
 
         await controller.check_root("root-1")
 
@@ -429,10 +428,11 @@ async def test_real_runtime_resumes_a_root_the_old_resume_left_paused_on_disk(
         await controller.resume_root("root-1")
 
         resumed = controller.snapshot.roots[0]
-        assert (resumed.status_label, resumed.next_action_label) == (
-            "✓ Up to date",
-            "Check changes",
-        ), controller.snapshot.status_line
+        # TASK-32633 slice (N-03): the healthy label is dated.
+        assert resumed.status_label.startswith("✓ Up to date as of "), (
+            controller.snapshot.status_line
+        )
+        assert resumed.next_action_label == "Check changes"
         assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
         assert {binding.state for binding in store.list_bindings("root-1")} == {
             NotesSyncBindingState.ACTIVE
@@ -541,6 +541,8 @@ async def test_activating_a_lasting_root_refreshes_a_seeded_notes_list(
             await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
             assert "3 applied · listed under Receipts" in _painted_text(host)
             assert database.count_notes() == 5
+            # TASK-34000.17 AC#4: the receipt's bar routes onward.
+            assert screen.query_one("#notes-sync-manage-roots", Button)
 
             screen.query_one("#notes-sync-back", Button).press()
             await _wait_for_condition(
@@ -1505,7 +1507,7 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
         )
         await _wait_for_condition(
             pilot,
-            lambda: "Recovery reviewed" in _painted_text(restarted),
+            lambda: "Recovery finished" in _painted_text(restarted),
             message="recovery status did not reach the compositor",
         )
         assert runtime.roots[0].status == "up_to_date"
@@ -1729,7 +1731,11 @@ async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review(
 ):
     """A fresh remount keeps projected attention and its next action."""
     root = NotesSyncRootRuntimeSnapshot(
-        "root.attention:opaque", "needs_attention", "review_changes", "op-1"
+        "root.attention:opaque",
+        "needs_attention",
+        "review_changes",
+        "op-1",
+        display_name="Vault sync",
     )
     for visit in range(2):
         app = _build_test_app()
@@ -1751,7 +1757,10 @@ async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review(
 
             assert review.has_class("console-action-primary"), visit
             assert "Needs attention · Next: Review changes" in _painted_text(host)
-            assert "name unavailable before cutover" in _painted_text(host)
+            # task-32451: the row is titled with the runtime's name for the
+            # root, not a placeholder.
+            assert "Vault sync" in _painted_text(host)
+            assert "name unavailable" not in _painted_text(host)
             assert screen.query_one("#notes-sync-root-retarget-0", Button).disabled
             retarget = screen.query_one("#notes-sync-root-retarget-0", Button)
             assert retarget.disabled

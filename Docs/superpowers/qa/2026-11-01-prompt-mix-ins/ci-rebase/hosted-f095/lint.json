@@ -1,0 +1,20 @@
+[
+  {
+    "path": "Packaging/speculative_voice_history_gate.py",
+    "before": 2,
+    "after": 2,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_console_tab_sync_source_ownership.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_speculative_voice_latency.py",
+    "before": 1,
+    "after": 1,
+    "added": []
+  }
+]

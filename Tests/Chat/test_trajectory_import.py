@@ -2,7 +2,7 @@
 
 Round-trip tests build a REAL export file (real ``CharactersRAGDB`` temp
 DB via the task-16813 test fixtures, real writer) and feed it to the
-import seam, proving the ADR-067 consumer contract: the shared validator
+import seam, proving the ADR-313 consumer contract: the shared validator
 is the only validation, mapping covers compaction + variants + usage +
 redaction, and the pure module never references the app DB.
 """
@@ -139,12 +139,9 @@ def test_import_legacy_conversation_without_sidecar(db, tmp_path) -> None:
 def test_imported_library_activity_remains_inert_sidecar_data(db) -> None:
     conversation_id = _seed_conversation(db)
     _seed_library_activity(db, conversation_id)
-    document = build_trajectory_export(
-        db, conversation_id, include_payloads=True
-    )
+    document = build_trajectory_export(db, conversation_id, include_payloads=True)
     assert any(
-        row["event_kind"] == "library_activity"
-        for row in document["trajectory_rows"]
+        row["event_kind"] == "library_activity" for row in document["trajectory_rows"]
     )
 
     snapshot = load_trajectory_snapshot(document)
@@ -176,7 +173,7 @@ def test_wrong_format_marker_is_rejected_via_shared_validator(db) -> None:
     payload["format"] = "something-else"
     with pytest.raises(TrajectoryImportError, match="'format'"):
         load_trajectory_snapshot(payload)
-    # The shared-validator lineage is preserved (ADR-067 seam).
+    # The shared-validator lineage is preserved (ADR-313 seam).
     with pytest.raises(TrajectoryExportError):
         load_trajectory_snapshot(payload)
 

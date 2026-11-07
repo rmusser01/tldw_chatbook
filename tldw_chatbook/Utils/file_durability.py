@@ -11,7 +11,7 @@ the seven recovery modules that import from it are unchanged.
 Kept stdlib-only on purpose: ``native_platform`` sits on the recovery
 bootstrap import path, which must not pull in loguru/tempfile/shutil.
 
-Cost note (measured, qa/tier2-code-review-2026-09-21/validation/S25): the
+Cost note (measured, Docs/QA/tier2-code-review-2026-09-21/validation/S25): the
 Darwin ``F_FULLFSYNC`` barrier in ``flush_file`` is ~300x a plain
 ``os.fsync``. That is the price of actually reaching the platter; a write
 that skips it is atomic but not durable.

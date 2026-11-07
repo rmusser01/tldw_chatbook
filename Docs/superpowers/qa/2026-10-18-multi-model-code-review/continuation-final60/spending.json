@@ -1,0 +1,43 @@
+{
+  "source_head": "a1b4b8dac95eed4d38186423ee06b71b3c555346",
+  "outcome": "failed",
+  "exit_code": 2,
+  "reason": "live_report_incomplete_V1",
+  "first_completion_blocker": "disposition_conflict: changed new-ID resubmission of already accepted units",
+  "actual_new_generation_requests": 48,
+  "actual_new_children": 3,
+  "cumulative_generation_requests": 386,
+  "cumulative_children": 26,
+  "unused_new_requests": 12,
+  "unlaunched_new_children": 0,
+  "single_invocation_consumed": true,
+  "retry_authorized": false,
+  "metadata_requests": 6,
+  "models": {
+    "unsloth/Qwen3.8-27B-GGUF:Q8_0": 21,
+    "gpt-6-luna": 6,
+    "deepseek-flash": 9,
+    "claude-haiku-5-5": 12
+  },
+  "physical_http_statuses": {
+    "200": 48
+  },
+  "manifest_sha256": "97a65c44262ba9a44b0a92c050ab8b88aa683568bff9c280c5670e9402ce47b1",
+  "native_accounting_chains": [
+    {
+      "status": "active",
+      "pause_reason": null
+    }
+  ],
+  "native_token_reservation_count": 21,
+  "native_settled_tokens": 263654,
+  "cleanup": {
+    "native_shutdown_completed": true,
+    "remaining_running_run_ids": [],
+    "owned_fleet_threads_after_shutdown": [],
+    "retirement_uncertain": false,
+    "workspace_connections_after_shutdown": 0,
+    "workspace_leases_after_shutdown": 0,
+    "chat_registered_connections_after_shutdown": 0
+  }
+}

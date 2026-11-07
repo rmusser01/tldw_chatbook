@@ -54,8 +54,10 @@ async def test_refused_first_conversation_does_not_starve_a_ready_second(tmp_pat
     )
     second = store.create_session(title="ready second")
     submit = controller.submit_draft
+    submitted = []
 
     async def routed(*args, session_id=None, **kwargs):
+        submitted.append(session_id)
         gateway.ready = session_id == second.id
         return await submit(*args, session_id=session_id, **kwargs)
 
@@ -69,8 +71,16 @@ async def test_refused_first_conversation_does_not_starve_a_ready_second(tmp_pat
             wake.on_fleet_drained(
                 _drain(session.id, _survivor(run_id, session_id=session.id))
             )
-        assert await _settle(lambda: gateway.payloads, seconds=0.5)
+        # Fairness by order, not by a 0.5 s window: the durable pre-submit
+        # hops (7212692c8b, b5251e9a6e) put the first payload about 1 s
+        # after the drain under load. The second never waits out a retry of
+        # the refused first (TASK-39044).
+        assert await _settle(lambda: gateway.payloads)
         assert "ready second" in gateway.payloads[0][-1]["content"]
+        assert second.id in submitted, submitted
+        assert submitted[: submitted.index(second.id)].count(first.id) <= 1, (
+            f"the ready second waited behind the refused first's retries: {submitted}"
+        )
         assert wake.has_pending(first.id)
         assert await _settle(lambda: not wake.has_pending(second.id))
     finally:

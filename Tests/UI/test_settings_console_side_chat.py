@@ -11,6 +11,7 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
+    _console_config_key_saved_as,
     _visible_text,
 )
 from Tests.UI.test_settings_configuration_hub import (
@@ -19,7 +20,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _wait_for_settings_search_focus,
     _wait_for_settings_text,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 SIDECAT_MODEL_INPUT = "#settings-console-sidechat-model"
 SIDECAT_TEMPLATE_INPUT = "#settings-console-sidechat-prompt-template"
@@ -101,8 +102,12 @@ async def test_console_side_chat_settings_are_searchable_and_have_focused_guidan
         )
         visible = _visible_text(screen)
         assert "Purpose: Model used by the ephemeral selection side chat." in visible
-        assert "Saved as: console.sidechat_model" in visible
-        assert "Save: staged - press s to save, r to revert" in visible
+        # TASK-33007.7: the key sits in the Inspector's closed config key
+        # disclosure, not in the guide's own rows.
+        assert _console_config_key_saved_as(screen) == (
+            "Saved as: console.sidechat_model"
+        )
+        assert "Save: edits save with s · r reverts" in visible
 
 
 @pytest.mark.asyncio

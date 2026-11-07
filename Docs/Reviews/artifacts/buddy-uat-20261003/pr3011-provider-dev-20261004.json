@@ -1,0 +1,50 @@
+{
+  "merge_head": "ebe2b201bf3259e597d39133493824af71b6b2a9",
+  "integrated_dev": "49206beea90d35ea9e6842ffa44e4b274db29d8a",
+  "buddy_product_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "be8d9daa47ba8fe5d6d7e025841f1eb953fa48f66809e007eb448f59d5f1034d",
+    "tldw_chatbook/UI/Screens/home_screen.py": "2ae1c5962527c6229d4e06868f11bf42dde57c9675982faf7aa799674f1755e0",
+    "tldw_chatbook/config.py": "8a156b9d3ee76953c76f1b2a79abc84281fd14611cdebf6ab27df64c6bf248c1",
+    "tldw_chatbook/app_service_wiring.py": "702f3d34193aeced083900874e7532f09c17da6afcc5d9f4ef0170e340a14daa",
+    "tldw_chatbook/app_lifecycle.py": "b1e79f198c67e84c1eaf5d020b196e586f44ca86d5b18003823251d8c89bb510",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba",
+    "tldw_chatbook/app_destinations.py": "8ab50e78e651150e8f65fa25aef82b2921c251cd6ec81ac9d32bbca2d76645cc",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py": "929d00cc570fc9fbfa2747ac6fcaad2de68b0c3e615acf523b883634ab007d81"
+  },
+  "unchanged_owned_tests": [
+    "Tests/LLM_Calls/test_openai_realtime_session.py",
+    "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py",
+    "Tests/Persona_Buddy/test_buddy_management_coordinator.py",
+    "Tests/Persona_Buddy/test_persona_buddy_preferences.py",
+    "Tests/UI/test_buddy_conversation_layout.py",
+    "Tests/UI/test_buddy_conversation_modal.py",
+    "Tests/UI/test_buddy_management_journey.py",
+    "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+    "Tests/UI/test_console_dictation_buddy.py",
+    "Tests/UI/test_console_realtime_controller.py",
+    "Tests/UI/test_console_realtime_wiring.py",
+    "Tests/UI/test_console_roleplay_resume_navigation.py",
+    "Tests/UI/test_console_shutdown_recompose.py",
+    "Tests/UI/test_home_console_resume.py",
+    "Tests/UI/test_persona_buddy_app_mount.py"
+  ],
+  "incoming_sources_match_dev": true,
+  "changed_provider_records": [
+    "TOGETHER"
+  ],
+  "human_UAT_repeated": false,
+  "receipt_parser_correction": "Compare every exact PR-owned test path from the NUL-delimited diff, including the earlier qualification changes.",
+  "targeted_tests": {
+    "passed": 2,
+    "duration_seconds": 72.827,
+    "xml_sha256": "97f5709faeba2eb414175e40e34f57643a27cc3e574720f259b54711c279b355",
+    "log_sha256": "d5f0da1effa6743e626311f5e7dc089233d690048844fbeb8603c01ffdf95fea"
+  },
+  "guard_results": {
+    "backlog_ids_and_readability": 4995,
+    "profile_paths": "54/22/51",
+    "diagnostics": "649/1431/56/7614/16"
+  },
+  "independent_review": "No actionable compatibility or lifecycle findings.",
+  "prior_evidence": "Earlier49 focused cases and334 historical unique cases retain original attribution. These2 integration repeats do not increase either total. Both1535-pass hosted UI runs retain their respective tested heads."
+}

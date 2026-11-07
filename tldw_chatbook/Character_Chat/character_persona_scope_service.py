@@ -652,9 +652,7 @@ class CharacterPersonaScopeService:
             offset=offset,
         )
 
-    async def get_persona_profile(
-        self, persona_id: str, mode: str = "local"
-    ) -> Any:
+    async def get_persona_profile(self, persona_id: str, mode: str = "local") -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)

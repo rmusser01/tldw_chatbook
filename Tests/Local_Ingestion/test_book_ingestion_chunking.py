@@ -386,9 +386,7 @@ def test_direct_epub_reader_rejects_unsafe_path_before_ebooklib(
     monkeypatch.setattr(
         Book_Ingestion_Lib,
         "epub",
-        SimpleNamespace(
-            read_epub=lambda file_path: ebooklib_calls.append(file_path)
-        ),
+        SimpleNamespace(read_epub=lambda file_path: ebooklib_calls.append(file_path)),
     )
     unsafe_path = tmp_path / ".." / ".." / "untrusted.epub"
 

@@ -1,0 +1,217 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____________ test_impersonate_payload_obeys_the_provider_contract _____________
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_impersonate_payload_obeys_the_provider_contract():
+        """cubic PR #1160: the request must be user-first and user-final.
+    
+        A seeded character greeting is an assistant-first row, which strict
+        providers reject (task-427); a completed turn leaves the transcript
+        ending on an assistant row, which user-final providers reject.
+        """
+        from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    
+        captured: dict[str, list] = {}
+    
+        controller = _fake_controller_with(
+            [
+                ("assistant", "Greetings, traveller.", "ok"),  # seeded greeting
+                ("user", "hello", "ok"),
+                ("assistant", "broken reply", "failed"),  # failed row
+                ("assistant", "a real reply", "ok"),  # ends assistant
+            ]
+        )
+    
+        class _Resolution:
+            ready = True
+    
+        async def _resolve(_selection):
+            return _Resolution()
+    
+        async def _capture(_session_id, _configuration):
+            return _Resolution(), object()
+    
+        async def _collect(_resolution, messages, **_kwargs):
+            captured["messages"] = messages
+            return "drafted reply"
+    
+        controller.provider_gateway = type(
+            "_G", (), {"resolve_for_send": staticmethod(_resolve)}
+        )()
+        controller._capture_and_resolve_turn_execution_context = _capture
+        controller._collect_summary_completion = _collect
+        # `_seeded_greeting_text` used to be a @staticmethod(session_messages),
+        # which is why it was re-bound onto the instance here; commit c2038dfe3
+        # (roleplay identity) made it an ordinary method taking (session_id,
+        # session_messages), so the re-bind dropped `self` and the real method on
+        # the class is now the right -- and only correct -- way to reach it.
+    
+>       result = await controller.impersonate_user_reply("s1")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_composer_menu.py:585: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x111d97a40>
+args = ('s1',), kwargs = {}
+task = <Task finished name='Task-2' coro=<test_impersonate_payload_obeys_the_provider_contract() done, defined at /private/tm...composer_menu.py:539> exception=AttributeError("'ConsoleChatController' object has no attribute '_maintenance_calls'")>
+
+    @functools.wraps(function)
+    async def admitted(self, *args, **kwargs):
+        task = asyncio.current_task()
+>       depth = self._maintenance_calls.get(task, 0)
+                ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_maintenance_calls'. Did you mean: 'maintenance_drain'?
+
+tldw_chatbook/Chat/console_chat_controller.py:3335: AttributeError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 17:04:49.542 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 17:04:49.612 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 17:04:49.654 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 17:04:49.655 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-11-01 17:04:49.816 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-11-01 17:04:50.300 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+___ test_activate_console_session_for_workspace_keeps_temporary_chip_honest ____
+
+    @pytest.mark.asyncio
+    async def test_activate_console_session_for_workspace_keeps_temporary_chip_honest():
+        """task-7 review: three callers reach ``_activate_console_session_for_
+        workspace`` and none of them refresh the temporary chip afterward --
+        they only await ``_sync_native_console_chat_ui()``, which never touches
+        it (same reason it never touches the scope chip). Tests the
+        CONSEQUENCE (chip visibility after the real switch/create branches
+        run), in both directions, so a push that hardcoded either answer would
+        fail this.
+        """
+        from Tests.UI.app_factory import _build_test_app
+        from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+            ConsoleHarness,
+        )
+        from tldw_chatbook.Widgets.Console.console_status_chips import (
+            ConsoleTemporaryChip,
+        )
+    
+        app = _build_test_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 44)) as pilot:
+            await pilot.pause(0.2)
+            console = host.screen_stack[-1]
+            store = console._ensure_console_chat_store()
+    
+            normal = store.create_session(title="Normal", workspace_id="workspace-b")
+            temp = store.create_session(
+                title="Temp", workspace_id="workspace-a", ephemeral=True
+            )
+            # `temp` is active now (`create_session` activates inline). Establish
+            # a verified-correct baseline via the real sync path rather than
+            # trusting the chip's compose-time default.
+            assert store.active_session_id == temp.id
+            console._sync_console_temporary_chip()
+            assert _temporary_segment_visible(console) is True
+    
+            # "switch to an existing session in the workspace" branch.
+            console._workspace._activate_console_session_for_workspace("workspace-b")
+            await pilot.pause()
+>           assert store.active_session_id == normal.id
+E           AssertionError: assert '32bc2526-96d...-5a74cdd05bd5' == 'f467827e-102...-0935c787d388'
+E             
+E             - f467827e-1024-4503-ad3a-0935c787d388
+E             + 32bc2526-96dc-4668-863a-5a74cdd05bd5
+
+Tests/UI/test_console_composer_menu.py:811: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 17:04:51.016 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:648 - ⚠️ pydub dependency not found. Feature 'pydub' will be disabled. Reason: No module named 'pydub'
+2026-11-01 17:04:51.017 | WARNING  | tldw_chatbook.TTS.audio_stitch:<module>:83 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-11-01 17:04:52.770 | INFO     | tldw_chatbook.app:__init__:1281 - Loaded app_config - strip_thinking_tags: True
+2026-11-01 17:04:52.782 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'providers_models' completed in 0.000s
+2026-11-01 17:04:52.782 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'prompts_service' completed in 0.000s
+2026-11-01 17:04:52.782 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'notes_service' completed in 0.000s
+2026-11-01 17:04:52.782 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'media_db' completed in 0.000s
+2026-11-01 17:04:52.832 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jszcoi1i/library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+2026-11-01 17:04:52.878 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jszcoi1i/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-11-01 17:04:52.935 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jszcoi1i/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-11-01 17:04:52.938 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-11-01 17:04:52.939 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jszcoi1i/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-01 17:04:52.939 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jszcoi1i/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-01 17:04:53.077 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-11-01 17:04:53.117 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-11-01 17:04:53.160 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-11-01 17:04:53.201 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-11-01 17:04:53.242 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-11-01 17:04:53.283 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-11-01 17:04:53.283 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jszcoi1i/scheduled_tasks.sqlite [Client: default]
+2026-11-01 17:04:53.308 | DEBUG    | tldw_chatbook.app:__init__:1460 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-11-01 17:04:53.308 | DEBUG    | tldw_chatbook.app:__init__:1463 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-11-01 17:04:53.313 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_q3n3mmkt/config/eval_overrides.yaml
+2026-11-01 17:04:53.359 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:614 - Created EvalsDB schema version 7
+2026-11-01 17:04:53.359 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_q3n3mmkt/home/.local/share/tldw_cli/default_user/evals.db
+2026-11-01 17:04:53.359 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-11-01 17:04:53.379 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:_init_worker_handlers:2211 - Worker handler registry initialized with all handlers
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1653 - === STARTUP TIMING SUMMARY ===
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1654 - Total initialization time: 0.637 seconds
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1660 -   basic_init: 0.036s (5.7%)
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1660 -   attribute_init: 0.000s (0.0%)
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1660 -   parallel_init: 0.000s (0.1%)
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1673 -     - media_db: 0.000s (0.3% of parallel_init)
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1673 -     - notes_service: 0.000s (0.3% of parallel_init)
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1673 -     - providers_models: 0.000s (0.2% of parallel_init)
+2026-11-01 17:04:53.379 | INFO     | tldw_chatbook.app:__init__:1673 -     - prompts_service: 0.000s (0.2% of parallel_init)
+2026-11-01 17:04:53.380 | INFO     | tldw_chatbook.app:__init__:1677 - ==============================
+2026-11-01 17:04:53.666 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+2026-11-01 17:04:53.669 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ textual_serve dependency found. Feature 'textual_serve' is enabled.
+2026-11-01 17:04:53.669 | INFO     | tldw_chatbook.Utils.optional_deps:check_web_server_deps:1396 - ✅ Web server dependencies found. Textual-serve is available.
+2026-11-01 17:04:53.743 | DEBUG    | tldw_chatbook.Chat.console_runtime:ensure_chat_controller:4744 - ensure_chat_controller: ignoring runtime-owned kwargs supplied by caller: ['default_session_settings', 'global_user_display_name', 'library_provider_factory', 'provider_config', 'rag_capture_provider', 'turn_context_provider']
+2026-11-01 17:04:53.870 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3931 - Local persisted conversation service is unavailable
+2026-11-01 17:04:53.870 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12920 - No Console workspace context tray available for sync
+2026-11-01 17:04:53.870 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12920 - No Console workspace context tray available for sync
+2026-11-01 17:04:53.870 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1322 - wake recovery failed (exception_type=AttributeError)
+2026-11-01 17:04:53.870 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9638 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+2026-11-01 17:04:54.351 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8943 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+2026-11-01 17:04:54.364 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8998 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_q3n3mmkt/config/config.toml
+2026-11-01 17:04:54.366 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: /private/tmp/task8-base/tldw_chatbook
+2026-11-01 17:04:54.366 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: /private/tmp/task8-base/tldw_chatbook
+2026-11-01 17:04:54.367 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-01 17:04:54.367 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-01 17:04:54.396 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_q3n3mmkt/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-01 17:04:54.396 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+2026-11-01 17:04:54.397 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:9028 - Global configuration caches invalidated and reloaded.
+2026-11-01 17:04:54.408 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:714 - Compiled 10 pricing patterns for provider anthropic
+2026-11-01 17:04:54.409 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:714 - Compiled 18 pricing patterns for provider openai
+2026-11-01 17:04:54.409 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:714 - Compiled 5 pricing patterns for provider cohere
+2026-11-01 17:04:54.409 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:714 - Compiled 5 pricing patterns for provider google
+2026-11-01 17:04:54.409 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:714 - Compiled 4 pricing patterns for provider mistral
+2026-11-01 17:04:54.409 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:714 - Compiled 4 pricing patterns for provider mistralai
+2026-11-01 17:04:54.409 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:714 - Compiled 2 pricing patterns for provider deepseek
+2026-11-01 17:04:54.409 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:687 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+2026-11-01 17:04:54.450 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:910 - Sidebar temperature input not found for sync
+2026-11-01 17:04:54.470 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:682 - Screen chat mounted
+2026-11-01 17:04:54.471 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22783 - Chat screen resuming
+2026-11-01 17:04:55.405 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22783 - Chat screen resuming
+2026-11-01 17:04:55.534 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:24234 - No collapsible states to restore
+2026-11-01 17:04:55.790 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:713 - Screen chat unmounted
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:1415 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1522 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1543 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-01 17:04:55.811 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:6323 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+=============================== warnings summary ===============================
+Tests/UI/test_console_composer_menu.py::test_activate_console_session_for_workspace_keeps_temporary_chip_honest
+  /private/tmp/task8-base/Tests/conftest.py:664: RuntimeWarning: coroutine 'ChatScreen._sync_native_console_chat_ui' was never awaited
+    gc.collect()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+4.93s call     Tests/UI/test_console_composer_menu.py::test_activate_console_session_for_workspace_keeps_temporary_chip_honest
+1.26s setup    Tests/UI/test_console_composer_menu.py::test_impersonate_payload_obeys_the_provider_contract
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_composer_menu.py::test_impersonate_payload_obeys_the_provider_contract
+FAILED Tests/UI/test_console_composer_menu.py::test_activate_console_session_for_workspace_keeps_temporary_chip_honest
+2 failed, 1 warning in 7.89s

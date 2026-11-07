@@ -1,0 +1,1068 @@
+{
+  "head": "3c4c522b40091901514959061c29c092033bb874",
+  "report_sha256": "0508179f71a8f2da1cefa831371d24c2ea9c6497a0b662610879ad5927fc8e12",
+  "verified_receipt_log_pairs": [
+    {
+      "receipt": "finalfix-amended-complete-owners.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_console_chat_start.py",
+        "Tests/UI/test_console_runtime_ownership.py",
+        "Tests/UI/test_console_session_controller.py",
+        "--basetemp=/private/tmp/console-finalfix-amended-owners-01a0fa6c"
+      ],
+      "receipt_sha256": "d3ab06ff629717cf51e7c5f1e9d8afb65825e95e5099c994ebb53ea712aba97c",
+      "log_bytes": 19606,
+      "log_sha256": "2ab5166e7f9a9c8fbb50acf1941d284cab793f68be71271f617d92fa4ef4c0ad"
+    },
+    {
+      "receipt": "finalfix-base-product-equality.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "diff",
+        "--exit-code",
+        "78ff106faca1626faf74bb86029764475568df92",
+        "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+        "--",
+        "tldw_chatbook",
+        "Tests",
+        "scripts"
+      ],
+      "receipt_sha256": "6c19ea48f39c52ff019b2c1d561f078e6a71046fe216a4c9fdf786aa96b94e18",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-baseline21.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_console_prompt_queue_coordinator.py::test_close_tombstones_before_cancel_and_never_starts_next_prompt",
+        "Tests/UI/test_console_runtime_ownership.py::test_runtime_owned_custody_tracks_only_lifetime_handles",
+        "Tests/UI/test_console_runtime_ownership.py::test_runtime_tombstones_before_shutdown_and_disposes_via_to_thread",
+        "Tests/UI/test_console_runtime_ownership.py::test_persistent_attach_sync_failure_has_bounded_backoff_and_resume_retry",
+        "Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[wake]",
+        "Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll",
+        "Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab",
+        "Tests/UI/test_console_launch_wake.py::test_a_launch_with_no_marks_constructs_nothing_and_reads_once",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership[bad_role]",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership[cross_conversation]",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_considers_only_checkpoint_owners_on_the_selected_active_lineage",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_malformed_or_mismatched_checkpoint_identity[assistant_message_id]",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_state_cas_requires_every_expected_owner_predicate[assistant_state]",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[terminal_content]",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[sync_intent]",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[checkpoint_delete]",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_is_atomic_and_returns_committed_proof",
+        "Tests/Chat/test_console_agent_project_instructions.py::test_child_chain_uses_its_own_exact_first_request_budget",
+        "Tests/Chat/test_console_agent_project_instructions.py::test_primary_token_omission_is_delivery_local_when_child_admits",
+        "Tests/Chat/test_console_chat_fork.py::test_configuration_and_leaf_writers_block_fork_through_live_publication[active_leaf]",
+        "Tests/Agents/test_agent_chat_create_tools.py::test_new_chat_schema_shape",
+        "--basetemp=/private/tmp/console-finalfix-baseline21-01a0fa6c"
+      ],
+      "receipt_sha256": "471cfc001dcff5d5d88657b391675af4e18df6c770f67f089e3350299e322e8a",
+      "log_bytes": 1984,
+      "log_sha256": "7a8c467fd8aefec58fd01b8bce9f7a28a796ba844a97d56165d8f8f50d2ca29d"
+    },
+    {
+      "receipt": "finalfix-committed-fixture-format.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-fixture-baseline.json"
+      ],
+      "receipt_sha256": "48cd7075ce0ddebfafd73a09f026313037060fb5c343df47a73c6fde17cab6a2",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-committed-main-format.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "051c5eef8fa439c0bdb160ea57d95ed41a88858306039e84e57e6c5a440a3af6",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-committed-session-format.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-session-baseline.json"
+      ],
+      "receipt_sha256": "84c50149905b076b956ad5c5943d4359d6d4334dd60139bab4d3b52010372d2b",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-committed-static.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_source_static.py",
+        "3c4c522b40091901514959061c29c092033bb874"
+      ],
+      "receipt_sha256": "e17158c8ffca15e24197681d4f67c85f6c056033adb951f0911993a87202b15a",
+      "log_bytes": 235,
+      "log_sha256": "12b4cc748da89ef320466e68e9028426f9bf707461c5e7fae22de254e4400fcf"
+    },
+    {
+      "receipt": "finalfix-committed-whitespace.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+        "3c4c522b40091901514959061c29c092033bb874",
+        "--",
+        "tldw_chatbook",
+        "Tests"
+      ],
+      "receipt_sha256": "64379b17a8ba8fb4ade3eb9e27c79f74186061169130a19adec511194dbee102",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-complete-owners.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_console_chat_create_confirm.py",
+        "Tests/Chat/test_console_chat_create_integration.py",
+        "Tests/Chat/test_console_chat_start.py",
+        "Tests/UI/test_console_runtime_ownership.py",
+        "Tests/UI/test_console_session_controller.py",
+        "Tests/UI/test_console_cost_chip_screen.py",
+        "--basetemp=/private/tmp/console-finalfix-owners-01a0fa6c"
+      ],
+      "receipt_sha256": "4778df0bad93e375139be02d3a77b7b4bc671c7e8e7d04f18c05b5f7f3d2943e",
+      "log_bytes": 296947,
+      "log_sha256": "0416dde468387a21abde0d8b210c64016c96a391ca3da0234fdff698a0336162"
+    },
+    {
+      "receipt": "finalfix-exclusion-source-proof.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_contract_proof.py"
+      ],
+      "receipt_sha256": "9d8a39d3396c9141bbfe1a9cef5c799a87c9fd70d22f5f85a74f063687ade47f",
+      "log_bytes": 117,
+      "log_sha256": "b9bd2e9913f0d6e8f0072124ab46fbd09877c4521560a42647c25c78f63e69ff"
+    },
+    {
+      "receipt": "finalfix-final-byte-exclusion-proof.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_contract_proof.py"
+      ],
+      "receipt_sha256": "28e157e59b335b134d91e6e5a9cff539463568dce486d22da37a2b4ad87eb0d4",
+      "log_bytes": 117,
+      "log_sha256": "b9bd2e9913f0d6e8f0072124ab46fbd09877c4521560a42647c25c78f63e69ff"
+    },
+    {
+      "receipt": "finalfix-final-byte-fixture-format.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-fixture-baseline.json"
+      ],
+      "receipt_sha256": "252c3a82da8d54b274e874ff93e5cfaf4c7dd071c94fae0522710435693ec973",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-final-byte-working-static.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_source_static.py",
+        "WORKTREE"
+      ],
+      "receipt_sha256": "53ac3b98ec26b153a15048b105337afe9cbb25af05d273936a7135178c4a11ad",
+      "log_bytes": 203,
+      "log_sha256": "8568a97d5c8431694656a315809f1876f46385804303c0ca0a5fd43b49eab690"
+    },
+    {
+      "receipt": "finalfix-final-complete-ui-owners.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py",
+        "Tests/UI/test_console_session_controller.py",
+        "--basetemp=/private/tmp/console-finalfix-final-ui-01a0fa6c"
+      ],
+      "receipt_sha256": "9f6080e42d783c86b8d6127088820002cfd0a948b6ac61dae720ce214cbb979a",
+      "log_bytes": 16200,
+      "log_sha256": "97518a8510065e82481d8dbeb0d194be571e48bef4366cd5bdb37bcf534f110c"
+    },
+    {
+      "receipt": "finalfix-final-fixture-format.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-fixture-baseline.json"
+      ],
+      "receipt_sha256": "defe5031b1c62a2eb4485984c8215ea4485fb7855d89c153db4b7aa4417a984a",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-final-main-format.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "8ae6fcf2b68aa5faca561153c58c1c2c004772491c645e4b6205f722320e0287",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-final-session-format.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-session-baseline.json"
+      ],
+      "receipt_sha256": "82e3c460a16d1ada3387af4c48cd436d85e4b3249493bd7f4807867418265540",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-final-shared-closure.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request",
+        "--basetemp=/private/tmp/console-finalfix-shared-closure-01a0fa6c"
+      ],
+      "receipt_sha256": "d65d1e641d057ed80d9776363f3f7215a1632204d5ae369c28c25005888c5357",
+      "log_bytes": 339,
+      "log_sha256": "98364164522924633ee9eec937504ce69e00f3be5c7f656c47060ade71c1c778"
+    },
+    {
+      "receipt": "finalfix-final-working-static.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_source_static.py",
+        "WORKTREE"
+      ],
+      "receipt_sha256": "4f9b66dad1c8125018c2fdfa692378eb0680bad0a23f1e7b8fac3d8f073fe8cd",
+      "log_bytes": 203,
+      "log_sha256": "8568a97d5c8431694656a315809f1876f46385804303c0ca0a5fd43b49eab690"
+    },
+    {
+      "receipt": "finalfix-fixture-focused-green.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_console_chat_start.py::test_visible_pending_handoff_persists_every_composer_edit",
+        "Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+        "Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "--basetemp=/private/tmp/console-finalfix-fixtures-01a0fa6c"
+      ],
+      "receipt_sha256": "d65f1922c5c25cefa2fa9a06e23c9607a0d8696f6c743990fd1da69f2b8034c1",
+      "log_bytes": 259080,
+      "log_sha256": "b31272eb16d2c2d52b0441091a2192b55ad02e4fd207e492ed4d63c306332061"
+    },
+    {
+      "receipt": "finalfix-fixture-format-green.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-fixture-baseline.json"
+      ],
+      "receipt_sha256": "52e8522ce615050198d1586e678f1ff665c90f0ff19edb940e22960b0a39c942",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-fixture-format-snapshot.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "snapshot",
+        "--base",
+        "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+        "--output",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-fixture-baseline.json",
+        "--path",
+        "Tests/UI/test_console_session_controller.py"
+      ],
+      "receipt_sha256": "ff35315ca5593f1aee427f89fa67ac56c16e6f215e07215ef7c733f840924713",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-focused-final-green.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "--basetemp=/private/tmp/console-finalfix-final-green-01a0fa6c"
+      ],
+      "receipt_sha256": "51b2802744b4886aed7296188355b1c0570042167bab64ec9d3b6515cd8de037",
+      "log_bytes": 729,
+      "log_sha256": "667fe1a73fa58338acf8d0e82a3f64dcc9f6176ded10b0f89cdd052bc913bcbf"
+    },
+    {
+      "receipt": "finalfix-focused-green.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "--basetemp=/private/tmp/console-finalfix-green-01a0fa6c"
+      ],
+      "receipt_sha256": "824d741c6c430ddd6dbf553adeefe1472f07563e26248184f4fe385b849876be",
+      "log_bytes": 628756,
+      "log_sha256": "7e3fa079fa4299988614aee20cc21e4cc8a6461288398cde4ccc048173410e97"
+    },
+    {
+      "receipt": "finalfix-focused-red.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "--basetemp=/private/tmp/console-finalfix-red-01a0fa6c"
+      ],
+      "receipt_sha256": "16e653232d2a3de2ef45623b1c932371648df46c7d7abad94cf7211f496c3baa",
+      "log_bytes": 375905,
+      "log_sha256": "6ffe9608e7d1ebcc6dae65b03b452bc8a5601a190f8edfd4a8a9ac40035bfb98"
+    },
+    {
+      "receipt": "finalfix-format-correction.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_format_correction.py"
+      ],
+      "receipt_sha256": "be65d32e061971c7522a8c99c812b2af9618445e6dfd0326526d1bab3f90a9b1",
+      "log_bytes": 89,
+      "log_sha256": "42e93ec157aaf16b4378252b4a22eedb6248ca2d06ccc0baa52bb649d0e027d7"
+    },
+    {
+      "receipt": "finalfix-format-hunks.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_format_hunks.py"
+      ],
+      "receipt_sha256": "fd619fc607632803eb2c79fb66393f7abff9f063bdc1e0bb6eccfe75d1196b59",
+      "log_bytes": 72,
+      "log_sha256": "9423ea68e9c3a4361fded19c67ad27786b8f81c4193521957d52d89f571b81dd"
+    },
+    {
+      "receipt": "finalfix-main-format-fixtures-green.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "3ad4271c6d66b9d089bb427e163b42898c00c7f68a2bf604629f5fd56537a19d",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-main-format-green.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "ae04b8bf5a7b3a1db7d2bd8e110267f8c32d28259978c68eb81d3566ea92a73e",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-main-format.json",
+      "returncode": 2,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "808b58fdd7981dde00257cc8d1290b804d44e7ad6954746a3573d2f0ea6a3df4",
+      "log_bytes": 375,
+      "log_sha256": "937bbaf380d4acd78907c0f135e748d3183e5940d29b3eb064ddc10ca2632129"
+    },
+    {
+      "receipt": "finalfix-manual-currentness-focused.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send",
+        "--basetemp=/private/tmp/console-finalfix-manual-currentness-01a0fa6c"
+      ],
+      "receipt_sha256": "d1bfc7fc6d95040ad9bcefa22877b5470136c8c1960211853f67ad17ff4b78eb",
+      "log_bytes": 494,
+      "log_sha256": "378fa466dee2a69a6d1351880c39e3c6d6d81b39ef39b3e6b730a2b83f31c0f4"
+    },
+    {
+      "receipt": "finalfix-manual-format-correction.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_manual_format.py"
+      ],
+      "receipt_sha256": "72880eb9203372958d937a4508ef83ac5db0b084ed6a499aa8a13527f16af370",
+      "log_bytes": 84,
+      "log_sha256": "6bbb0aba2ba36ea9a9c7b37b8263f5a5eec1af4c1ba5cf915b92f282691d39e7"
+    },
+    {
+      "receipt": "finalfix-manual-format-green.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "f2a8fa9faaf948c56333886f0bf1a02913e66610fd2d5a1ed2c056931df1f522",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-mounted-contract-red.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]",
+        "--basetemp=/private/tmp/console-finalfix-contract-red-01a0fa6c"
+      ],
+      "receipt_sha256": "ff829df2b298e2072a360389bb922bdab633df8e39d609b83b4d97590a1312a8",
+      "log_bytes": 163681,
+      "log_sha256": "bd4178414576c9076cd0383566b66a3a36c88b9afed64548a1869b4235a02718"
+    },
+    {
+      "receipt": "finalfix-mounted-currentness-detail.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]",
+        "--basetemp=/private/tmp/console-finalfix-currentness-detail-01a0fa6c"
+      ],
+      "receipt_sha256": "cdff4f18fc8d79159846a1d3faf4ab7f39f4f38961826d7ff22e379a0bf71da1",
+      "log_bytes": 160492,
+      "log_sha256": "bb637a5ec289995563d1dd996b41e78ec8355efb125b22445ac1d798c2c10ee5"
+    },
+    {
+      "receipt": "finalfix-mounted-currentness-full.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]",
+        "--basetemp=/private/tmp/console-finalfix-currentness-full-01a0fa6c"
+      ],
+      "receipt_sha256": "243013ec23ccc83ae1e67d809cca18d3650956c82b5b404b53e6c362efd2dd1d",
+      "log_bytes": 254395,
+      "log_sha256": "e8cd3292d710864da3244b0ac8f20f54d393c8ad4475deb02f80ca45930c8a23"
+    },
+    {
+      "receipt": "finalfix-mounted-real-red.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "--basetemp=/private/tmp/console-finalfix-real-red-01a0fa6c"
+      ],
+      "receipt_sha256": "0a892f9b9c2faa577bdf41c7327a26d6ecff7c0f788c9d8287c6b08618748a72",
+      "log_bytes": 600502,
+      "log_sha256": "dbf542dfa04b68223eb561bc48d054e71ea006296f4f0b0e6275f1f595baea47"
+    },
+    {
+      "receipt": "finalfix-mounted-reattach-green.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "Tests/UI/test_console_session_controller.py::test_character_handoff_uses_current_canonical_defaults_not_stale_session",
+        "--basetemp=/private/tmp/console-finalfix-reattach-01a0fa6c"
+      ],
+      "receipt_sha256": "0bf3f5c0e7d7795832066f9777f0e2ca17d7bad17590206a16cc8f70c7101ba9",
+      "log_bytes": 872,
+      "log_sha256": "f84487b9e015e540b0936500288072f87922965047f44165824f25bdd0f4a1a1"
+    },
+    {
+      "receipt": "finalfix-mounted-red.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "--basetemp=/private/tmp/console-finalfix-mounted-red-01a0fa6c"
+      ],
+      "receipt_sha256": "d6bbc0e4c128bcd8f3e854a1c0135f8a51c75fbddd9c9b0be0a2192bd2b16520",
+      "log_bytes": 396400,
+      "log_sha256": "3b53ca5ccc866de0ef1dc0b0964c1e460add38e7195dac9b1fdfb642f1ad1298"
+    },
+    {
+      "receipt": "finalfix-mounted-refusal-detail.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]",
+        "--basetemp=/private/tmp/console-finalfix-refusal-detail-01a0fa6c"
+      ],
+      "receipt_sha256": "7efa5665af4d06894c3abf77b50ca8ff1e724bee279e23ab2f6c83c7565b1f75",
+      "log_bytes": 170255,
+      "log_sha256": "2a6e5a0b1b036fbe9b4268a01e2d7595e87cf4fb5ee1f00ebb008bc545654500"
+    },
+    {
+      "receipt": "finalfix-owned-add.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "-c",
+        "gc.auto=0",
+        "add",
+        "--",
+        "Tests/Chat/test_console_chat_start.py",
+        "Tests/UI/test_console_session_controller.py",
+        "Tests/Chat/test_console_chat_create_integration.py",
+        "Tests/UI/test_console_runtime_ownership.py",
+        "tldw_chatbook/Chat/console_agent_bridge.py",
+        "tldw_chatbook/Chat/console_chat_controller.py",
+        "tldw_chatbook/Chat/console_chat_store.py",
+        "tldw_chatbook/UI/Console_Modules/session.py"
+      ],
+      "receipt_sha256": "fb352d873ebdc0ac828b7c771f8d6c5de6faf68207df5bf81946ac36a8e8cf1d",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-owned-commit-head.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "receipt_sha256": "215dad9bbdd194b8683fe0ad906c2b17139d26d39bcf920f3ee5a10f42f69ba7",
+      "log_bytes": 41,
+      "log_sha256": "a3fa94ef1ac18224b405a42d6613bb93b4a863913a4edab2c3bbe7665989e07d"
+    },
+    {
+      "receipt": "finalfix-owned-commit.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "-c",
+        "gc.auto=0",
+        "commit",
+        "-m",
+        "fix(console): preserve child approval and consume mounted handoffs"
+      ],
+      "receipt_sha256": "fe93ece7c0d9062a0b06fd09c996b0054e025abe1239d1caede23e5e13cbc881",
+      "log_bytes": 163,
+      "log_sha256": "3ea5fef73fbf11184a83aa8248b3ef1d9e15b729d4171af7b8750e4880e44a03"
+    },
+    {
+      "receipt": "finalfix-owned-final-tracked-status.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "status",
+        "--short",
+        "--untracked-files=no"
+      ],
+      "receipt_sha256": "151ba3d221cf94a82fbad3df94e1b242471363257caee3482ee25f73ef581883",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-owned-stage-proof.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--name-only"
+      ],
+      "receipt_sha256": "6ff344c4bfab8b7842597e5763d345e88dc3a475587e32258ecd0e83d9a05b8b",
+      "log_bytes": 350,
+      "log_sha256": "e05e2d9c9e3822cda88711e2b53419578df4c88b6d596f6113f00f42190a891d"
+    },
+    {
+      "receipt": "finalfix-owned-stage-whitespace.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--check",
+        "--",
+        "Tests/Chat/test_console_chat_start.py",
+        "Tests/UI/test_console_session_controller.py",
+        "Tests/Chat/test_console_chat_create_integration.py",
+        "Tests/UI/test_console_runtime_ownership.py",
+        "tldw_chatbook/Chat/console_agent_bridge.py",
+        "tldw_chatbook/Chat/console_chat_controller.py",
+        "tldw_chatbook/Chat/console_chat_store.py",
+        "tldw_chatbook/UI/Console_Modules/session.py"
+      ],
+      "receipt_sha256": "1ab981797e259c5aa96487eed83a396aa91a692681ea9ef3feb81c2ac6bb51cf",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-precommit-head.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "receipt_sha256": "00a7c484c3d4ec9acc6cc006695cb13e8333d8cd33083bb60f42c9b5caca1cd1",
+      "log_bytes": 41,
+      "log_sha256": "aac7f5ceefb3780d5eb94a2657bba4309d940e89ec610fa9d9d2d4e876efa02f"
+    },
+    {
+      "receipt": "finalfix-precommit-index.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--name-only"
+      ],
+      "receipt_sha256": "6c4e27f05cee7044e15457016ca1e960707f227d21ade079cc1eee2142c9ae38",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-precommit-owned-diff.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "diff",
+        "--name-only"
+      ],
+      "receipt_sha256": "3080aa7830c395a286d456f8f9f21efed6ae749c431f6094b9c7a0fc6accff50",
+      "log_bytes": 350,
+      "log_sha256": "e05e2d9c9e3822cda88711e2b53419578df4c88b6d596f6113f00f42190a891d"
+    },
+    {
+      "receipt": "finalfix-processes-exited.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_process_check.py"
+      ],
+      "receipt_sha256": "8ae08f3b76690771edadcfbbfe3870c9aac511e4c095b02b1551583cf3500c62",
+      "log_bytes": 106,
+      "log_sha256": "7fa465bb828dd69a61a8b1d373b5bf0017137d282d776fcb2bf6c2143c264013"
+    },
+    {
+      "receipt": "finalfix-published-startup-focused.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit",
+        "Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+        "Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "--basetemp=/private/tmp/console-finalfix-startup-01a0fa6c"
+      ],
+      "receipt_sha256": "faaeffb232a265c504fa5aaeff80e4d5993d54e76017b8bb16872293d57b3d27",
+      "log_bytes": 11533,
+      "log_sha256": "cc5d5dd8ca905bce61774eb6dc7daa72c180eb8e7fae620021b4c8353ac12a0c"
+    },
+    {
+      "receipt": "finalfix-published-startup-format.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "df8aace1d707f05eb3d68f276ddb66c03a5672d8e80d8fc5c5ae88c7eb8b11f9",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-real-attach-focused.json",
+      "returncode": 1,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+        "Tests/UI/test_console_session_controller.py::test_character_handoff_uses_current_canonical_defaults_not_stale_session",
+        "--basetemp=/private/tmp/console-finalfix-attach-01a0fa6c"
+      ],
+      "receipt_sha256": "e9e03262eb5fb6fb24f05114a73cf0de3b68b2b1908667d9b419d133499886f8",
+      "log_bytes": 271113,
+      "log_sha256": "f3de2d58310bd5451e450b9c1219656c067daa26648b8ed4bf97d61032fb4e44"
+    },
+    {
+      "receipt": "finalfix-reattach-format-correction.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_reattach_format.py"
+      ],
+      "receipt_sha256": "c5961912f21aa2b90d9b69558cb644f10859fdd56aca999f7cc3dcc690db8ccb",
+      "log_bytes": 77,
+      "log_sha256": "952051bde008f9c79eea95912c79223c1019c6204d34b42b3d4a9a62acef9f5c"
+    },
+    {
+      "receipt": "finalfix-reattach-format-green.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "2d7d4bb05508629b67f1ee8eb0f48c4f67c28c3ad2b8102c17eb2dbf19597e95",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-reattach-format.json",
+      "returncode": 2,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+      ],
+      "receipt_sha256": "c4ad6a0cbe23753321cf751491a1b55c619ab577f72740d92cdfecf43dbed0bf",
+      "log_bytes": 180,
+      "log_sha256": "a63bc26e6c10d7e80d7bcf467c3222ea93147f348298dac51c15217fd873e8aa"
+    },
+    {
+      "receipt": "finalfix-report-final.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_report.py"
+      ],
+      "receipt_sha256": "5c851a53f57ca58b4317419b6bf02a21d58cc21f1ff31116f6c115b1e6f7869c",
+      "log_bytes": 184,
+      "log_sha256": "6ccc277369273784011d34ec4597cc693e9466c88b369b1c3a614524c65c4439"
+    },
+    {
+      "receipt": "finalfix-report.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_report.py"
+      ],
+      "receipt_sha256": "45265c0b6d280ac8063eed9a29ac93ee5c5329505d2ab859e28a040f6a843485",
+      "log_bytes": 183,
+      "log_sha256": "c6ea73bc78cb8ea32b2b554e3def2ce0b316cd5d91350c1ad558495f4125b68f"
+    },
+    {
+      "receipt": "finalfix-runtime-owner-current.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py",
+        "--basetemp=/private/tmp/console-finalfix-runtime-current-01a0fa6c"
+      ],
+      "receipt_sha256": "b541251b7508f1bad1c90d5c7411f7d6079e31d92d866c879672a6e540906e25",
+      "log_bytes": 6418,
+      "log_sha256": "6ab8085fc2e431d28fa2b45b220d21cbf9da268ebaad1dc0cc0ad0364685a6ab"
+    },
+    {
+      "receipt": "finalfix-session-format-green.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-session-baseline.json"
+      ],
+      "receipt_sha256": "2d42b454989a8098c522c0c998702800d53d078f1bc9e55b1515f6854006c6ec",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-session-format-snapshot.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "snapshot",
+        "--base",
+        "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+        "--output",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-session-baseline.json",
+        "--path",
+        "tldw_chatbook/UI/Console_Modules/session.py"
+      ],
+      "receipt_sha256": "a89cab8881ba4ac65cc2edaed9cefeb732e42892cc79d5706da9de807cbcb3e6",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "receipt": "finalfix-session-format.json",
+      "returncode": 2,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "scripts/terminal_qualification/format_ratchet.py",
+        "verify",
+        "--baseline",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-finalfix-session-baseline.json"
+      ],
+      "receipt_sha256": "920bb421e9504d8e3cbf46e9c8d81596089094091742ad688e408c4db300985b",
+      "log_bytes": 182,
+      "log_sha256": "dda382db94317b21ed13e5fc9fef193a3fde36f60ec95b63379208e7e294f40f"
+    },
+    {
+      "receipt": "finalfix-stop-button-detail.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+        "--basetemp=/private/tmp/console-finalfix-stop-detail-01a0fa6c"
+      ],
+      "receipt_sha256": "939ac2dd2a267c2621db27417bf21409be5dac708ba5e93e119ed399553aec8d",
+      "log_bytes": 333,
+      "log_sha256": "8d2b3548c2f675a406ad5840927d077b4d4c89404fb4f641be9c1bda6125fc25"
+    },
+    {
+      "receipt": "finalfix-working-final-manifest.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_contract_proof.py"
+      ],
+      "receipt_sha256": "e57055dabe62d847b8a14cdd154fb1c8eb7e993d66e421f78518d1c7cf581b85",
+      "log_bytes": 117,
+      "log_sha256": "b9bd2e9913f0d6e8f0072124ab46fbd09877c4521560a42647c25c78f63e69ff"
+    },
+    {
+      "receipt": "finalfix-working-final-source.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_source_static.py",
+        "WORKTREE"
+      ],
+      "receipt_sha256": "47927bf9dae5991bd9ebb559000d6571e0878208071d4518fcc5afb8ceaa5e23",
+      "log_bytes": 203,
+      "log_sha256": "8568a97d5c8431694656a315809f1876f46385804303c0ca0a5fd43b49eab690"
+    },
+    {
+      "receipt": "finalfix-working-source-static.json",
+      "returncode": 0,
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-B",
+        ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_source_static.py",
+        "WORKTREE"
+      ],
+      "receipt_sha256": "578402e483a2103b06fa9c8440ba08e8636f0299f727c0b7a50718a2f6fbf144",
+      "log_bytes": 165,
+      "log_sha256": "859c75ec7243d8ea6ef5e66e09dfafbad31bd37d58a01160a9d14e447ba49beb"
+    },
+    {
+      "receipt": "finalfix-working-whitespace.json",
+      "returncode": 0,
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "--",
+        "tldw_chatbook",
+        "Tests"
+      ],
+      "receipt_sha256": "ca98ccb395137649474de860e4f76d1b992968a779731e0f5e0249c77f229a5a",
+      "log_bytes": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "auxiliary_records": [
+    "finalfix-baseline21-argv-proof.json",
+    "finalfix-committed-source-detail.json",
+    "finalfix-format-correction-detail.json",
+    "finalfix-format-hunks-detail.json",
+    {
+      "receipt": "finalfix-manual-format-detail.json",
+      "kind": "formatter subcommand detail",
+      "ast_equal": true,
+      "returncode": 0
+    },
+    "finalfix-owned-source-manifest-before-reattach.json",
+    "finalfix-owned-source-manifest-before-startup.json",
+    "finalfix-owned-source-manifest.json",
+    {
+      "receipt": "finalfix-reattach-format-detail.json",
+      "kind": "formatter subcommand detail",
+      "ast_equal": true,
+      "returncode": 0
+    },
+    "finalfix-working-source-detail-before-reattach.json",
+    "finalfix-working-source-detail-before-startup.json",
+    "finalfix-working-source-detail.json"
+  ],
+  "mismatches": [],
+  "qualification": "Complete byte agreement, not a claim that diagnostic RED command receipts passed."
+}

@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_backlog_task_files.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {},
+  "started_at": 1791067488.474157,
+  "elapsed_seconds": 1.2795310020446777,
+  "returncode": 0,
+  "stdout": "All 4911 task files in backlog/tasks, backlog/archive/tasks are readable (frontmatter + owned-section markers).\n",
+  "head": "3c4c522b40091901514959061c29c092033bb874"
+}

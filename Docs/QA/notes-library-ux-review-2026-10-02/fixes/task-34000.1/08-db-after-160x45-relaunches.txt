@@ -1,0 +1,9 @@
+# read-only query of runs/w1-t1-1 ChaChaNotes DB after the 160x45 relaunches
+## Ideas inbox (tail edit + Ctrl+Q)
+2|- Build a [[Someday project]] dashboard | - Try spaced repetition for the Japanese vocab | - See [[Advisor meeting 2026-09-24#Action items]] for thesis TODOs |  VERIFYTAILN01
+## Riley new ctrlq (new note + Ctrl+Q)
+2|Riley new ctrlq|body typed right before quitting
+## live notes / live empty 'Untitled' rows
+123|0
+## soft-deleted 'Untitled' rows (the untouched new note discarded on quit)
+1

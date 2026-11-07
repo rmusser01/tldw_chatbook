@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+13.40s call     Tests/UI/test_console_mcp_approval.py::test_finishing_card_is_not_counted_and_keyboard_focuses_the_card
+
+(2 durations < 1s hidden.)
+1 passed in 16.12s

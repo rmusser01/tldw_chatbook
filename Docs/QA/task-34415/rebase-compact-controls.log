@@ -1,0 +1,43 @@
+Existing bootstrap_profile fixture mode: Tests/UI/test_console_internals_decomposition.py::test_console_native_control_bar_uses_existing_compact_model_sync_seam
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+10.43s call     Tests/UI/test_console_internals_decomposition.py::test_console_native_control_bar_uses_existing_compact_model_sync_seam
+1.01s setup    Tests/UI/test_console_internals_decomposition.py::test_console_native_control_bar_uses_existing_compact_model_sync_seam
+
+(1 durations < 1s hidden.)
+1 passed in 19.64s
+Existing bootstrap_profile fixture mode: Tests/UI/test_console_internals_decomposition.py::test_console_control_labels_refresh_after_compact_control_sync
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+5.50s call     Tests/UI/test_console_internals_decomposition.py::test_console_control_labels_refresh_after_compact_control_sync
+
+(2 durations < 1s hidden.)
+1 passed in 12.31s
+Existing bootstrap_profile fixture mode: Tests/UI/test_console_internals_decomposition.py::test_console_mounts_only_one_compact_model_bar
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+4.65s call     Tests/UI/test_console_internals_decomposition.py::test_console_mounts_only_one_compact_model_bar
+
+(2 durations < 1s hidden.)
+1 passed in 8.96s
+Existing bootstrap_profile fixture mode: Tests/UI/test_console_session_settings.py::test_console_model_switch_inherits_selected_model_default_profile
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+4.63s call     Tests/UI/test_console_session_settings.py::test_console_model_switch_inherits_selected_model_default_profile
+
+(2 durations < 1s hidden.)
+1 passed in 7.65s
+Existing bootstrap_profile fixture mode: Tests/UI/test_console_session_settings.py::test_console_model_switch_preserves_explicit_session_overrides
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+4.42s call     Tests/UI/test_console_session_settings.py::test_console_model_switch_preserves_explicit_session_overrides
+
+(2 durations < 1s hidden.)
+1 passed in 7.85s
+Existing bootstrap_profile fixture mode: Tests/UI/test_console_provider_persistence_regressions.py::test_compact_provider_mirror_untouched_by_mount_population
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+4.54s call     Tests/UI/test_console_provider_persistence_regressions.py::test_compact_provider_mirror_untouched_by_mount_population
+
+(2 durations < 1s hidden.)
+1 passed in 8.14s

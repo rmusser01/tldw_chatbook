@@ -1,0 +1,27 @@
+diff --cc backlog/docs/lessons-backlog-hygiene.md
+index 9ebc5b6327,70a15c4bd5..0000000000
+--- a/backlog/docs/lessons-backlog-hygiene.md
++++ b/backlog/docs/lessons-backlog-hygiene.md
+@@@ -1227,14 -1227,8 +1227,22 @@@ merge, force-push):*
+    ignored or empty server-side filter still selects nothing.
+  - Dry-run first: print the run ids and their `headBranch` values, read them, and only
+    then cancel.
+++<<<<<<< HEAD
+ +
+ +## `backlog task edit --notes` replaces the notes; `--append-notes` adds (TASK-33640, 2026-10-04)
+ +
+ +**Incident.** Adding a one-paragraph update to TASK-33640 with `--notes` silently
+ +deleted its existing Implementation Notes: the harness write-up, the six no-key probe
+ +findings and the nine-item Qodo round (12 lines). Only `git diff --stat` on the task file
+ +showed it (`2 insertions(+), 12 deletions(-)`); the CLI printed nothing unusual.
+ +
+ +**What to do.** Use `--notes` only on a task with no notes yet. To add to a task that
+ +has history, use `--append-notes`. After any task edit, check `git diff --stat` on the
+ +file: deletions you did not intend mean the edit replaced something.
+++=======
++ ## Verify QA artifacts in Git before removing scratch
++ 
++ **TASK-33805, Console chat starts, 2026-10-02.** The QA closure commit 31bdd52356 included exact compressed verification logs and their hash manifest. The repository log ignore rule excluded all 45 readable `.log` copies, although filesystem hash and link checks passed. The reports would therefore have broken links in a fresh checkout. Explicitly staging only the manifest-listed readable copies corrected the record; all 141 manifest artifact paths were then compared with their staged Git blobs.
++ 
++ **What to do.** Before deleting plan scratch, verify every preserved or linked artifact against the Git index or HEAD. A filesystem check alone cannot establish that an ignored artifact will survive checkout. Use an explicit file list when force-adding QA logs so unrelated ignored files stay outside the commit.
+++>>>>>>> bbea2bae4d (Integrate Console bounded chat starts with current dev owners)

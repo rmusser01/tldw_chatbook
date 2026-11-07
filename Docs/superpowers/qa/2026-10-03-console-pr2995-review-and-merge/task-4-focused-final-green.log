@@ -1,0 +1,29 @@
+........................................................................ [ 34%]
+........................................................................ [ 68%]
+.................................................................        [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-focused-final-green.xml -
+============================= slowest 25 durations =============================
+2.86s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[deadline]
+2.55s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[generation]
+2.20s call     Tests/Chat/test_console_chat_start.py::test_saved_launch_status_projects_to_native_and_persisted_rows
+2.09s call     Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits
+1.65s call     Tests/Chat/test_console_chat_start.py::test_native_configured_v2_initialization_and_stop_proposal[True]
+1.54s call     Tests/Chat/test_console_chat_start.py::test_manual_recovery_clears_handoff_attention_but_retains_launch_history[review_required-Review required-settlement_unconfirmed-1]
+1.39s call     Tests/Chat/test_console_chat_start.py::test_manual_recovery_clears_handoff_attention_but_retains_launch_history[not_started-Not started-runtime_disabled-0]
+1.35s call     Tests/Chat/test_console_chat_start.py::test_created_start_keeps_approved_destination_during_library_capture[False]
+1.35s call     Tests/Chat/test_console_chat_start.py::test_native_uncontended_acceptance_restores_full_policy_and_retires_owned_handle
+1.34s call     Tests/Chat/test_console_chat_start.py::test_destination_availability_is_rechecked_before_native_acceptance[before_start-unchanged]
+1.34s call     Tests/Chat/test_console_chat_start.py::test_destination_availability_is_rechecked_before_native_acceptance[readiness-unchanged]
+1.32s call     Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits
+1.29s call     Tests/Chat/test_console_chat_start.py::test_manual_send_withdraws_prepared_start_before_busy_gate
+1.29s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[hello]
+1.25s call     Tests/Chat/test_console_chat_start.py::test_native_start_never_enrolls_queue_stop_parent
+1.18s call     Tests/Chat/test_console_chat_start.py::test_runtime_update_during_readiness_rechecks_native_acceptance[True]
+1.15s call     Tests/Chat/test_console_chat_start.py::test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[source_stop]
+1.11s call     Tests/Chat/test_console_chat_start.py::test_native_configured_v2_initialization_and_stop_proposal[False]
+1.10s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[@file]
+1.10s call     Tests/Chat/test_console_chat_start.py::test_live_machine_retry_starts_manual_work_without_reassigning_old_allowance
+1.07s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[/help]
+
+(4 durations < 1s hidden.)
+209 passed in 100.57s (0:01:40)

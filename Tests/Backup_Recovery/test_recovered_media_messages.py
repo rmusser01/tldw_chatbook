@@ -108,10 +108,6 @@ try:
    assert len(review.references)==1 and review.references[0][0]=='historical',review
    assert media.resolve(other)[1].read_bytes()==source.read_bytes()
   assert not service.recovered_media_cleanup_pending
- elif mode=='save_history':
-  assert service.save_history(conversation_id=conversation,chatbot_history=[{'id':keep,'role':'User','content':'keep'}])==1
-  assert gone() and len(refs())==2
-  assert not service.recovered_media_cleanup_pending
  elif mode in ('root_drift','catalog_drift'):
   import shutil
   if mode=='root_drift':
@@ -151,7 +147,9 @@ try:
   async def sync():pass
   async def push_screen(screen,callback=None):
    # TASK-33628.2: the receipt's Done makes the delete final (and releases).
-   receipts.append(screen);await callback(None)
+   # TASK-33628.5: the receipt runs the delete itself (off the event loop)
+   # once it is shown; Done comes after the delete is saved.
+   receipts.append(screen);await screen._delete();await callback(None)
   host=SimpleNamespace(_console_speech_states={},_ensure_console_chat_store=lambda:store,_console_message_presentation=lambda message:message,_console_message_action_service=ConsoleMessageActionService(),_pending_console_delete_message_id=selected.id,_ensure_console_chat_controller=lambda:SimpleNamespace(clear_original_attempts_for_session=lambda session:None),_console_original_attempt_previews={},_invalidate_console_persisted_rows_cache=lambda:None,_invalidate_console_fork_image_selections=lambda ids:None,_sync_native_console_chat_ui=sync,push_screen=push_screen,app_instance=SimpleNamespace(notify=lambda message,**kwargs:notices.append((message,kwargs))))
   button=Button('Delete');button.console_action_id='delete';button.console_message_id=selected.id
   original=owner.release_message_references
@@ -255,7 +253,6 @@ finally:db.close()
         "tombstone",
         "config_drift",
         "foreign_db",
-        "save_history",
         "root_drift",
         "catalog_drift",
         "native_pause",

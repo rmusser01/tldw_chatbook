@@ -6,10 +6,10 @@ Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Task: [TASK-33151](../tasks/task-33151%20-%20Design-Console-hook-settings-and-persistent-review.md)
 Spec: [Console hook settings and review](../../Docs/superpowers/specs/2026-09-27-console-hook-settings-and-review-design.md)
 Implementation: [TASK-33163](../tasks/task-33163%20-%20Add-Console-hook-settings-and-consent-review.md), [plan](../../Docs/superpowers/plans/2026-09-27-console-hook-settings-and-review.md)
-Extends: [ADR-148](148-console-run-hooks.md)
-Follows: [ADR-033](033-settings-commit-models-three-honestly-labeled.md),
+Extends: [ADR-345](345-console-run-hooks.md)
+Follows: [ADR-303](303-settings-commit-models-three-honestly-labeled.md),
 [ADR-029](029-local-private-data-boundary.md),
-[ADR-069](069-console-project-instruction-local-state-and-preflight.md), and
+[ADR-317](317-console-project-instruction-local-state-and-preflight.md), and
 [ADR-150](150-design-token-system-and-design-language.md)
 
 ## Context
@@ -59,7 +59,7 @@ An editor-only or screen-only gate would leave shared/background execution open.
    existing bounded queues. Already launched processes retain timeout/shutdown
    ownership. Cancelled modal generations cannot resume a Send or overwrite a
    newer revocation.
-6. Preserve ADR-148's six-event, argv-only, user-scope, deny-only protocol and its
+6. Preserve ADR-345's six-event, argv-only, user-scope, deny-only protocol and its
    execution-error semantics. Consent is an earlier admission requirement, not a
    tool permission grant or executable-content signature. Project instructions
    cannot approve hooks. Managed plugins and v2 effects remain governed by
@@ -101,7 +101,7 @@ enforcement boundary; this store follows the existing local permission-store mod
 The linked spec defines modal actions, legacy identity migration, draft custody,
 revocation limits, concurrency, and verification. The user reviewed the written spec
 positively on 2026-09-27 and requested an audit before continuing; the resulting
-clarifications preserve the approved layout and feature scope. ADR-148 remains
+clarifications preserve the approved layout and feature scope. ADR-345 remains
 authoritative
 for hook execution after consent; its accepted text is not rewritten.
 
@@ -123,3 +123,14 @@ permission owner serializes actual subprocess creation against config/consent
 changes; revocation and changed definitions fence staged effects and queued work.
 Host-injected engines retain their explicit authority resolver and never become
 standalone config grants. Lifecycle session replacement remains idle-only.
+
+The [TASK-33648 bounded disposal policy](163-expanded-console-hook-runtime.md#task-33648-saved-standalone-sessionend-during-host-disposal)
+retains only an authentic host-issued, effect-free SessionEnd command notification
+after ordinary admission closes. Its original grant is re-read and serialized
+with actual process creation by this same permission owner; changed or revoked
+authority still refuses, and no ordinary target or model authority reopens.
+
+
+### Current PR3023 integration: initial-review runtime lifetime
+
+Under accepted ADR230, the initial waiting-for-Send review uses the existing runtime InterruptRoundHost decision registry and FIFO. Disposable views hold only exact presentation tokens; detaching or cancelling the waiter grants no dispatch and does not discard a physically issued consent operation. Ready requires the original fresh HookPermissions verification, and launch still performs its existing live configuration/consent checks. Explicit Settings/manual review and custom three-argument callbacks retain their prior contracts. No worker waits for human input; exact native operation outcomes retire before creator Close/dispose. This changes coordination only, not consent authority or event error policy.

@@ -1,0 +1,29 @@
+{
+  "base": "e3d07afa65927b9d477fe9f13af619550da9e005",
+  "prior_head": "47527f7830a3a1c4125e7a048d35b1ff55be0588",
+  "upstream": "7884e11a496a677c8180cc5d67234a57b7d659b9",
+  "head": "4920332acf8ad54f2e7495407c6f2ebbcc3daaa4",
+  "overlap_paths": [
+    "Docs/Architecture/console.md",
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "backlog/docs/lessons-testing-evidence.md"
+  ],
+  "actual_conflict_paths": [
+    "backlog/docs/lessons-testing-evidence.md",
+    "Tests/Architecture/test_module_size_ratchet.py"
+  ],
+  "unchanged_feature_files": 202,
+  "unchanged_upstream_files": 182,
+  "all_stricter_budgets_retained": true,
+  "both_doc_additions_retained": [
+    "Docs/Architecture/console.md",
+    "backlog/docs/lessons-testing-evidence.md"
+  ],
+  "new_provider_requests": 0,
+  "new_product_children": 0,
+  "conflict_tests": {
+    "passed": 4,
+    "seconds": 0.48,
+    "scope": "ceiling and no-slack cases for schedules_workbench.py and LLM_API_Calls.py; observed in exec session9426"
+  }
+}

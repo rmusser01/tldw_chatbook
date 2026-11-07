@@ -1,0 +1,53 @@
+{
+  "baseline_revision": "d6dffdf7270bcc9e31f8b048e86581e576cd9ae7",
+  "files": {
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": {
+      "baseline": {
+        "findings": {
+          "('E721', 'Do not compare types, use `isinstance()`')": 1
+        },
+        "formatter_diff_lines": 146
+      },
+      "current": {
+        "findings": {
+          "('E721', 'Do not compare types, use `isinstance()`')": 1
+        },
+        "formatter_diff_lines": 146
+      }
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "baseline": {
+        "findings": {
+          "('F401', '`...Chat.console_command_grammar.STREAM_VIDEO_COMMAND_NAME` imported but unused')": 1,
+          "('F401', '`...Chat.console_command_grammar.SYSTEM_COMMAND_HANDLER_ID` imported but unused')": 1,
+          "('F401', '`...Chat.console_command_grammar.SYSTEM_COMMAND_NAME` imported but unused')": 1,
+          "('F401', '`...Chat.console_token_rate.TokenRateReading` imported but unused')": 1,
+          "('F401', '`...Chat.console_chat_models.MessageAttachment` imported but unused')": 1,
+          "('E721', 'Do not compare types, use `isinstance()`')": 17
+        },
+        "formatter_diff_lines": 486
+      },
+      "current": {
+        "findings": {
+          "('F401', '`...Chat.console_command_grammar.STREAM_VIDEO_COMMAND_NAME` imported but unused')": 1,
+          "('F401', '`...Chat.console_command_grammar.SYSTEM_COMMAND_HANDLER_ID` imported but unused')": 1,
+          "('F401', '`...Chat.console_command_grammar.SYSTEM_COMMAND_NAME` imported but unused')": 1,
+          "('F401', '`...Chat.console_token_rate.TokenRateReading` imported but unused')": 1,
+          "('F401', '`...Chat.console_chat_models.MessageAttachment` imported but unused')": 1,
+          "('E721', 'Do not compare types, use `isinstance()`')": 17
+        },
+        "formatter_diff_lines": 486
+      }
+    },
+    "Tests/UI/test_console_native_transcript.py": {
+      "baseline": {
+        "findings": {},
+        "formatter_diff_lines": 48
+      },
+      "current": {
+        "findings": {},
+        "formatter_diff_lines": 48
+      }
+    }
+  }
+}

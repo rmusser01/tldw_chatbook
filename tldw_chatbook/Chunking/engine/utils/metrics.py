@@ -14,6 +14,7 @@ from loguru import logger
 # Try to import prometheus_client
 try:
     from prometheus_client import Counter, Gauge, Histogram, Summary
+
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False
@@ -26,20 +27,26 @@ except ImportError:
     class DummyMetric:
         def labels(self, **kwargs):
             return self
+
         def inc(self, amount=1):
             pass
+
         def dec(self, amount=1):
             pass
+
         def set(self, value):
             pass
+
         def observe(self, value):
             pass
+
         def time(self):
             return DummyTimer()
 
     class DummyTimer:
         def __enter__(self):
             return self
+
         def __exit__(self, *args):
             pass
 
@@ -57,87 +64,83 @@ class ChunkingMetrics:
 
         # Request metrics
         self.chunking_requests = Counter(
-            'chunking_requests_total',
-            'Total number of chunking requests',
-            ['method', 'status']
+            "chunking_requests_total",
+            "Total number of chunking requests",
+            ["method", "status"],
         )
 
         # Performance metrics
         self.chunking_duration = Histogram(
-            'chunking_duration_seconds',
-            'Time spent chunking text',
-            ['method'],
-            buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0)
+            "chunking_duration_seconds",
+            "Time spent chunking text",
+            ["method"],
+            buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
         )
 
         self.chunk_size_histogram = Histogram(
-            'chunk_size_characters',
-            'Size of generated chunks in characters',
-            ['method'],
-            buckets=(10, 50, 100, 500, 1000, 5000, 10000, 50000)
+            "chunk_size_characters",
+            "Size of generated chunks in characters",
+            ["method"],
+            buckets=(10, 50, 100, 500, 1000, 5000, 10000, 50000),
         )
 
         self.chunks_per_request = Histogram(
-            'chunks_per_request',
-            'Number of chunks generated per request',
-            ['method'],
-            buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000)
+            "chunks_per_request",
+            "Number of chunks generated per request",
+            ["method"],
+            buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000),
         )
 
         # Input metrics
         self.input_size = Histogram(
-            'chunking_input_size_bytes',
-            'Size of input text in bytes',
-            ['method'],
-            buckets=(100, 1000, 10000, 100000, 1000000, 10000000)
+            "chunking_input_size_bytes",
+            "Size of input text in bytes",
+            ["method"],
+            buckets=(100, 1000, 10000, 100000, 1000000, 10000000),
         )
 
         # Cache metrics
         self.cache_hits = Counter(
-            'chunking_cache_hits_total',
-            'Total number of cache hits',
-            ['method']
+            "chunking_cache_hits_total", "Total number of cache hits", ["method"]
         )
 
         self.cache_misses = Counter(
-            'chunking_cache_misses_total',
-            'Total number of cache misses',
-            ['method']
+            "chunking_cache_misses_total", "Total number of cache misses", ["method"]
         )
 
         self.cache_size = Gauge(
-            'chunking_cache_size',
-            'Current size of the chunking cache'
+            "chunking_cache_size", "Current size of the chunking cache"
         )
 
         # Error metrics
         self.chunking_errors = Counter(
-            'chunking_errors_total',
-            'Total number of chunking errors',
-            ['method', 'error_type']
+            "chunking_errors_total",
+            "Total number of chunking errors",
+            ["method", "error_type"],
         )
 
         # Strategy-specific metrics
         self.tokenizer_calls = Counter(
-            'tokenizer_calls_total',
-            'Total number of tokenizer calls',
-            ['tokenizer_type']
+            "tokenizer_calls_total",
+            "Total number of tokenizer calls",
+            ["tokenizer_type"],
         )
 
         self.semantic_similarity_computations = Counter(
-            'semantic_similarity_computations_total',
-            'Total number of semantic similarity computations'
+            "semantic_similarity_computations_total",
+            "Total number of semantic similarity computations",
         )
 
         # Memory metrics
         self.memory_usage = Gauge(
-            'chunking_memory_usage_bytes',
-            'Current memory usage of chunking system'
+            "chunking_memory_usage_bytes", "Current memory usage of chunking system"
         )
 
-        logger.info(f"ChunkingMetrics initialized (Prometheus available: {PROMETHEUS_AVAILABLE})")
+        logger.info(
+            f"ChunkingMetrics initialized (Prometheus available: {PROMETHEUS_AVAILABLE})"
+        )
 
-    def record_request(self, method: str, status: str = 'success'):
+    def record_request(self, method: str, status: str = "success"):
         """
         Record a chunking request.
 
@@ -172,8 +175,10 @@ class ChunkingMetrics:
         for chunk in chunks:
             if isinstance(chunk, str):
                 self.chunk_size_histogram.labels(method=method).observe(len(chunk))
-            elif isinstance(chunk, dict) and 'text' in chunk:
-                self.chunk_size_histogram.labels(method=method).observe(len(chunk['text']))
+            elif isinstance(chunk, dict) and "text" in chunk:
+                self.chunk_size_histogram.labels(method=method).observe(
+                    len(chunk["text"])
+                )
 
     def record_input_size(self, method: str, text: str):
         """
@@ -183,7 +188,7 @@ class ChunkingMetrics:
             method: Chunking method used
             text: Input text
         """
-        self.input_size.labels(method=method).observe(len(text.encode('utf-8')))
+        self.input_size.labels(method=method).observe(len(text.encode("utf-8")))
 
     def record_cache_hit(self, method: str):
         """Record a cache hit."""
@@ -265,18 +270,19 @@ def metrics_decorator(method_name: Optional[str] = None):
     Returns:
         Decorated function
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             # Extract method from kwargs or use override
-            method = method_name or kwargs.get('method', 'unknown')
+            method = method_name or kwargs.get("method", "unknown")
             metrics = get_metrics()
 
             # Record input size if text is provided
             if args and isinstance(args[0], str):
                 metrics.record_input_size(method, args[0])
-            elif 'text' in kwargs:
-                metrics.record_input_size(method, kwargs['text'])
+            elif "text" in kwargs:
+                metrics.record_input_size(method, kwargs["text"])
 
             # Time the operation
             start_time = time.time()
@@ -285,7 +291,7 @@ def metrics_decorator(method_name: Optional[str] = None):
                 result = func(*args, **kwargs)
 
                 # Record success
-                metrics.record_request(method, 'success')
+                metrics.record_request(method, "success")
 
                 # Record chunks if result is a list
                 if isinstance(result, list):
@@ -296,7 +302,7 @@ def metrics_decorator(method_name: Optional[str] = None):
             except Exception as e:
                 # Record error
                 error_type = type(e).__name__
-                metrics.record_request(method, 'error')
+                metrics.record_request(method, "error")
                 metrics.record_error(method, error_type)
                 raise
 
@@ -306,6 +312,7 @@ def metrics_decorator(method_name: Optional[str] = None):
                 metrics.record_duration(method, duration)
 
         return wrapper
+
     return decorator
 
 
@@ -338,9 +345,9 @@ class MetricsContext:
         duration = time.time() - self.start_time
 
         if exc_type is None:
-            self.metrics.record_request(self.method, 'success')
+            self.metrics.record_request(self.method, "success")
         else:
-            self.metrics.record_request(self.method, 'error')
+            self.metrics.record_request(self.method, "error")
             self.metrics.record_error(self.method, exc_type.__name__)
 
         self.metrics.record_duration(self.method, duration)

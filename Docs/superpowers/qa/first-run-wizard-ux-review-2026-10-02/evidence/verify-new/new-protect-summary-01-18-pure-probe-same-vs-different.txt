@@ -1,0 +1,5 @@
+Pure probe (isolated HOME copies of vn1-b's config.toml as it stood after password A; in-process password set to A, as in the wizard):
+second password = same: enable returned True; file changed True; next config write ok=True
+second password = diff: enable returned False; file changed True; next config write ok=False
+=> Only a DIFFERENT second password triggers the failure; config.toml is rewritten (new verifier) even though enable returns False,
+   and every later save_settings_to_cli_config call fails (strict decrypt in _atomic_config_values_from_raw, config.py:7630-7639).

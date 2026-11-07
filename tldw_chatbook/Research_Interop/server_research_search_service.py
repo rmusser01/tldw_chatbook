@@ -139,15 +139,7 @@ class ServerResearchSearchService:
         self._enforce("research.search.providers.launch.server")
         request = PaperSearchRequest(endpoint=endpoint, params=self._params(**params))
         client = self._require_client()
-        method = getattr(client, "run_paper_search", None)
-        if callable(method):
-            return self._dump(await method(request))
-        response = await client._request(
-            "GET",
-            f"/api/v1/paper-search/{request.endpoint}",
-            params=request.params,
-        )
-        return self._dump(response)
+        return self._dump(await client.paper_search(request))
 
     async def paper_detail(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
@@ -158,15 +150,7 @@ class ServerResearchSearchService:
             endpoint=endpoint, params=self._params(**params)
         )
         client = self._require_client()
-        method = getattr(client, "get_paper_search_detail", None)
-        if callable(method):
-            return self._dump(await method(request))
-        response = await client._request(
-            "GET",
-            f"/api/v1/paper-search/{request.endpoint}",
-            params=request.params,
-        )
-        return self._dump(response)
+        return self._dump(await client.paper_search_detail(request))
 
     async def paper_ingest(
         self,
@@ -183,16 +167,7 @@ class ServerResearchSearchService:
             endpoint=endpoint, params=self._params(**params), payload=payload
         )
         client = self._require_client()
-        method = getattr(client, "run_paper_search_ingest", None)
-        if callable(method):
-            return self._dump(await method(request))
-        response = await client._request(
-            "POST",
-            f"/api/v1/paper-search/{request.endpoint}",
-            params=request.params,
-            json_data=request.payload,
-        )
-        return self._dump(response)
+        return self._dump(await client.paper_search_ingest(request))
 
     async def search_arxiv(
         self,

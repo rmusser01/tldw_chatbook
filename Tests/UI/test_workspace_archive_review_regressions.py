@@ -36,7 +36,9 @@ async def test_settings_restore_clears_only_matching_archive_receipt(matching_re
 async def test_console_restore_invalidates_cached_rows_before_sync():
     events = []
     registry = SimpleNamespace(
-        get_workspace=lambda _: SimpleNamespace(archived=True),
+        get_workspace=lambda _: SimpleNamespace(
+            archived=True, name="Workspace", archive_revision=1
+        ),
         unarchive_workspace=lambda *a, **k: SimpleNamespace(name="Restored"),
     )
     controller, tasks = _recovery_host(registry)
@@ -58,9 +60,9 @@ async def test_console_restore_invalidates_cached_rows_before_sync():
 async def test_console_archive_invalidates_cached_rows_before_sync():
     events = []
     dialogs = []
-    record = SimpleNamespace(active=False, name="Archive")
+    record = SimpleNamespace(active=False, name="Archive", archive_revision=0)
     registry = SimpleNamespace(
-        get_workspace=lambda _: record, archive_workspace=lambda _: record
+        get_workspace=lambda _: record, archive_workspace=lambda _, **kwargs: record
     )
     controller, tasks = _recovery_host(registry)
     controller._screen._console_composer_or_none = lambda: None
@@ -161,7 +163,11 @@ async def test_console_restore_reports_storage_failure(failure_stage):
     from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
     registry = SimpleNamespace(
-        get_workspace=Mock(return_value=SimpleNamespace(archived=True)),
+        get_workspace=Mock(
+            return_value=SimpleNamespace(
+                archived=True, name="Workspace", archive_revision=1
+            )
+        ),
         unarchive_workspace=Mock(),
     )
     getattr(registry, failure_stage).side_effect = WorkspaceRegistryServiceError(
@@ -198,7 +204,7 @@ async def test_console_restore_storage_does_not_block_ui_loop():
 
     def read(_):
         block_storage(0)
-        return SimpleNamespace(archived=True, name="Workspace")
+        return SimpleNamespace(archived=True, name="Workspace", archive_revision=1)
 
     def restore(*_, **__):
         block_storage(1)
@@ -240,7 +246,7 @@ async def test_settings_undo_storage_runs_offloop_and_keeps_receipt_on_failure(f
 
     ui_thread = threading.get_ident()
     threads = []
-    receipt = SimpleNamespace(workspace_id="w", name="Workspace")
+    receipt = SimpleNamespace(workspace_id="w", name="Workspace", archive_revision=1)
 
     def read(_):
         threads.append(threading.get_ident())
@@ -248,7 +254,7 @@ async def test_settings_undo_storage_runs_offloop_and_keeps_receipt_on_failure(f
             raise WorkspaceRegistryServiceError("storage unavailable")
         return receipt
 
-    def restore(_):
+    def restore(_, **kwargs):
         threads.append(threading.get_ident())
         if failure == "write":
             raise WorkspaceRegistryServiceError("storage unavailable")
@@ -292,7 +298,7 @@ async def test_console_restore_fences_publication_after_navigation(blocked_opera
     def read(_):
         if blocked_operation == "read":
             block()
-        return SimpleNamespace(archived=True)
+        return SimpleNamespace(archived=True, name="Workspace", archive_revision=1)
 
     def write(*_, **__):
         if blocked_operation == "write":
@@ -327,10 +333,10 @@ async def test_settings_undo_does_not_replace_newer_receipt_after_delayed_write(
     import threading
 
     entered, release = threading.Event(), threading.Event()
-    receipt = SimpleNamespace(workspace_id="w", name="Old")
+    receipt = SimpleNamespace(workspace_id="w", name="Old", archive_revision=1)
     newer = SimpleNamespace(workspace_id="new", name="New")
 
-    def restore(_):
+    def restore(_, **kwargs):
         entered.set()
         assert release.wait(2)
         return receipt
@@ -371,7 +377,9 @@ async def test_cancelled_recovery_worker_completes_started_storage_write(surface
         threading.Event(),
         threading.Event(),
     )
-    receipt = SimpleNamespace(workspace_id="w", name="Restored", archived=True)
+    receipt = SimpleNamespace(
+        workspace_id="w", name="Restored", archived=True, archive_revision=1
+    )
 
     def restore(*_, **__):
         entered.set()
@@ -434,10 +442,18 @@ async def test_console_receipt_undo_read_failure_has_async_recovery():
     from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
     record = SimpleNamespace(
-        workspace_id="w", active=False, archived=False, name="Workspace"
+        workspace_id="w",
+        active=False,
+        archived=False,
+        name="Workspace",
+        archive_revision=0,
     )
     receipt = SimpleNamespace(
-        workspace_id="w", active=False, archived=True, name="Workspace"
+        workspace_id="w",
+        active=False,
+        archived=True,
+        name="Workspace",
+        archive_revision=1,
     )
     registry = SimpleNamespace(
         get_workspace=Mock(return_value=record),
@@ -475,3 +491,134 @@ async def test_console_receipt_undo_read_failure_has_async_recovery():
         show_archived=True
     )
     registry.unarchive_workspace.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["console", "settings-undo", "console-restore-as"])
+async def test_workspace_restore_rejects_new_episode_after_read_before_write(
+    tmp_path, surface
+):
+    """A real SQLite cycle at the write barrier cannot consume an earlier selection."""
+    import asyncio
+    import threading
+
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    registry = LocalWorkspaceRegistryService(
+        db, now_factory=lambda: "2026-09-20T12:00:00+00:00"
+    )
+    registry.create_workspace(workspace_id="w", name="Workspace")
+    receipt = registry.archive_workspace("w")
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+
+    def write(*args, **kwargs):
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(10)
+        return registry.unarchive_workspace(*args, **kwargs)
+
+    controller, tasks = _recovery_host(
+        SimpleNamespace(get_workspace=registry.get_workspace, unarchive_workspace=write)
+    )
+    dialogs = []
+
+    async def sync():
+        pass
+
+    controller._sync_native_console_chat_ui = sync
+    controller.push_screen = lambda modal, **kwargs: dialogs.append(kwargs["callback"])
+    try:
+        if surface == "settings-undo":
+            settings = controller._screen
+            settings.app_instance = controller.app_instance
+            settings._settings_workspace_archive_receipt = receipt
+            settings._settings_selected_workspace_id = "w"
+            settings._set_settings_workspaces_result = Mock()
+            settings._refresh_settings_workspaces_pane = Mock()
+            SettingsScreen.handle_workspace_archive_undo(
+                settings, SimpleNamespace(stop=Mock())
+            )
+        else:
+            ConsoleWorkspaceController._restore_console_workspace(
+                controller,
+                "w",
+                expected_record=receipt,
+                rename=surface == "console-restore-as",
+            )
+            if surface == "console-restore-as":
+                await tasks[0]
+                dialogs[0]("Replacement")
+        await asyncio.wait_for(started.wait(), 10)
+        await asyncio.to_thread(registry.unarchive_workspace, "w")
+        second = await asyncio.to_thread(registry.archive_workspace, "w")
+        release.set()
+        for task in tasks:
+            await task
+        assert registry.get_workspace("w") == second
+        if surface == "settings-undo":
+            assert settings._settings_workspace_archive_receipt is receipt
+            assert (
+                "Could not restore"
+                in settings._set_settings_workspaces_result.call_args.args[0]
+            )
+        else:
+            controller._invalidate_console_persisted_rows_cache.assert_not_called()
+            assert (
+                "Could not restore" in controller.app_instance.notify.call_args.args[0]
+            )
+    finally:
+        release.set()
+        for task in tasks:
+            await task
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["console", "settings"])
+async def test_workspace_archive_confirmation_rejects_changed_revision(
+    tmp_path, surface
+):
+    import asyncio
+
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    registry = LocalWorkspaceRegistryService(
+        db, now_factory=lambda: "2026-09-20T12:00:00+00:00"
+    )
+    registry.create_workspace(workspace_id="w", name="Workspace")
+    controller, tasks = _recovery_host(registry)
+    dialogs = []
+    controller._screen._console_composer_or_none = lambda: None
+    controller._screen._console_visible_draft_session_id = None
+    controller.push_screen = lambda modal, **kwargs: dialogs.append(modal)
+    controller.app_instance.push_screen = controller.push_screen
+    controller._sync_console_chat_core_state = Mock()
+    try:
+        if surface == "settings":
+            settings = controller._screen
+            settings.app_instance = controller.app_instance
+            settings._settings_workspace_archive_receipt = None
+            settings._settings_selected_workspace_id = "w"
+            settings._set_settings_workspaces_result = Mock()
+            settings._refresh_settings_workspaces_pane = Mock()
+            SettingsScreen.handle_workspace_archive(
+                settings, SimpleNamespace(stop=Mock())
+            )
+        else:
+            ConsoleWorkspaceController._confirm_console_workspace_archive(
+                controller, "w"
+            )
+        await tasks[0]
+        await asyncio.to_thread(registry.archive_workspace, "w")
+        current = await asyncio.to_thread(registry.unarchive_workspace, "w")
+        await dialogs[0].confirm_callback()
+        assert registry.get_workspace("w") == current
+    finally:
+        for task in tasks:
+            await task
+        db.close()

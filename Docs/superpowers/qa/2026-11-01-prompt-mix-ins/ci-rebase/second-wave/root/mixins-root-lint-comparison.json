@@ -1,0 +1,13 @@
+{
+  "before": 1166,
+  "after": 1165,
+  "added": [],
+  "removed": [
+    {
+      "code": "UP006",
+      "message": "Use `list` instead of `List` for type annotation",
+      "count": 1
+    }
+  ],
+  "qualification": "Aggregate code/message multiset over 18 explicit root extraction owners and destinations, preserving moved inherited diagnostics."
+}

@@ -217,20 +217,33 @@ class TTSBackendManager:
         # see. They are config-sourced, same trust level as the accessor's
         # own sources, so they cannot invert the rule. The env var is not
         # lost -- `get_api_key` still reads it, as the fallback.
+        #
+        # TASK-34100.4 AC #10: each source goes through `without_ciphertext`,
+        # so a value still `enc:` (a stranded key, or a locked session) reads
+        # as absent and the next source is tried -- ciphertext is never
+        # handed to a backend as its key.
+        from tldw_chatbook.config import without_ciphertext
+
         if backend_id.startswith("openai_official"):
             openai_key = None
 
             # Check api_settings.openai section
             if "api_settings.openai" in self.app_config:
-                openai_key = self.app_config["api_settings.openai"].get("api_key")
+                openai_key = without_ciphertext(
+                    self.app_config["api_settings.openai"].get("api_key")
+                )
 
             # Check openai_api section (legacy)
             if not openai_key and "openai_api" in self.app_config:
-                openai_key = self.app_config["openai_api"].get("api_key")
+                openai_key = without_ciphertext(
+                    self.app_config["openai_api"].get("api_key")
+                )
 
             # Check API section
             if not openai_key and "API" in self.app_config:
-                openai_key = self.app_config["API"].get("openai_api_key")
+                openai_key = without_ciphertext(
+                    self.app_config["API"].get("openai_api_key")
+                )
 
             if openai_key:
                 config["OPENAI_API_KEY"] = openai_key
@@ -239,11 +252,15 @@ class TTSBackendManager:
             elevenlabs_key = None
             api_settings = self.app_config.get("API", {})
             if isinstance(api_settings, dict):
-                elevenlabs_key = api_settings.get("elevenlabs_api_key")
+                elevenlabs_key = without_ciphertext(
+                    api_settings.get("elevenlabs_api_key")
+                )
             if not elevenlabs_key:
                 normalized_settings = self.app_config.get("elevenlabs_api", {})
                 if isinstance(normalized_settings, dict):
-                    elevenlabs_key = normalized_settings.get("api_key")
+                    elevenlabs_key = without_ciphertext(
+                        normalized_settings.get("api_key")
+                    )
             if elevenlabs_key:
                 config["ELEVENLABS_API_KEY"] = elevenlabs_key
 

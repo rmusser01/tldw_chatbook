@@ -1,0 +1,82 @@
+{
+  "scenario": "overlap",
+  "module_identity": {
+    "SchedulesWorkbench": {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\UI\\Screens\\scheduling\\schedules_workbench.py",
+      "sha256": "62dd91e1a1ca7ddf76845f07182d57a5fbef7c3ea18cadb7414bbecb4170efb0"
+    },
+    "ReminderForm": {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\UI\\Screens\\scheduling\\forms\\reminder_form.py",
+      "sha256": "ffca1af4a79f7077677bcde4d63f60e30c4c12b069e38b29053b865fd90f8c37"
+    },
+    "SchedulingService": {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Scheduling\\services\\scheduling_service.py",
+      "sha256": "b8b9c3dff1aeb6c47cf5d9eccc8d042732cd4f91424573e59a4b8d08431a331c"
+    },
+    "ScheduledTasksDB": {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Scheduling\\db\\scheduled_tasks_db.py",
+      "sha256": "f2c3fa6ce547b525e3fcfdfbde4fcbade6d29ed3b7c23388f68221d3fdc2233e"
+    }
+  },
+  "calls": [
+    [
+      "server-a",
+      {
+        "title": "EditedA",
+        "body": "",
+        "schedule_kind": "recurring",
+        "run_at": null,
+        "cron": "0 9 * * *",
+        "timezone": "UTC",
+        "enabled": true
+      }
+    ],
+    [
+      "server-b",
+      {
+        "title": "EditedB",
+        "body": "",
+        "schedule_kind": "recurring",
+        "run_at": null,
+        "cron": "0 9 * * *",
+        "timezone": "UTC",
+        "enabled": true
+      }
+    ]
+  ],
+  "controlled_external_effects": {
+    "server-a": {
+      "title": "EditedA",
+      "body": "",
+      "schedule_kind": "recurring",
+      "run_at": null,
+      "cron": "0 9 * * *",
+      "timezone": "UTC",
+      "enabled": true
+    },
+    "server-b": {
+      "title": "EditedB",
+      "body": "",
+      "schedule_kind": "recurring",
+      "run_at": null,
+      "cron": "0 9 * * *",
+      "timezone": "UTC",
+      "enabled": true
+    }
+  },
+  "cancelled": [
+    "server-a"
+  ],
+  "local_titles": [
+    "A",
+    "EditedB"
+  ],
+  "queue_titles": [
+    "A",
+    "EditedB"
+  ],
+  "notifications": [
+    "Scheduled task updated."
+  ],
+  "exception": "None"
+}

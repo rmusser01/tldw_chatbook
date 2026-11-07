@@ -1,0 +1,42 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_agent_factory_thinking_alias_keeps_only_exact_saved_owner",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes",
+    "Tests/Chat/test_console_trace_service.py::test_thinking_tool_call_reference_identity_and_legacy_refusal",
+    "Tests/Chat/test_console_trace_service.py::test_compound_rejects_oversized_range_with_valid_completed_run",
+    "Tests/Chat/test_console_trace_service.py::test_compound_rejects_noncontiguous_range_with_valid_completed_run",
+    "Tests/Chat/test_console_trace_runtime.py::test_completed_tool_turn_compound_admission_checks_durable_proof[valid]",
+    "Tests/Chat/test_console_trace_runtime.py::test_completed_tool_turn_compound_admission_checks_durable_proof[cold]",
+    "Tests/Chat/test_console_trace_runtime.py::test_completed_tool_turn_compound_admission_checks_durable_proof[non_tool_artifact]",
+    "Tests/Chat/test_console_trace_runtime.py::test_agent_multimodal_trace_matches_json_values_and_keeps_saved_turn",
+    "Tests/Chat/test_console_agent_call_thinking.py::test_aggregate_tool_thinking_cannot_become_final_answer_thinking",
+    "Tests/Chat/test_console_agent_call_thinking.py::test_active_local_call_thinking_keeps_trace_owner_through_real_admission",
+    "Tests/Chat/test_console_trace_sidecar_redaction.py::test_unsaved_continuation_owner_cannot_gain_masked_prefix_authority",
+    "-q",
+    "--tb=short",
+    "--basetemp=/private/tmp/archive-capture-task3-final-stores"
+  ],
+  "exit": 0,
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13",
+    "tldw_chatbook/Chat/console_runtime.py": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+    "tldw_chatbook/Chat/console_agent_bridge.py": "6496825e63066a05541d900a01e1dd4f790bcd04dfee5af17e630a1ce71bb912",
+    "Tests/Chat/test_console_archive_recovery_followup.py": "524e58a1a77fea5846d8f8a9cbe65bfa134805b1a4dacd75063d6c3a7de23a5c",
+    "tldw_chatbook/Chat/console_trace_service.py": "ac28f7b3676ba55fd0a71adccc3a38e0958b16f949a5f94d7281809748a49efd",
+    "Tests/Chat/test_console_trace_service.py": "624a73f62a88b7585d0211944e39f549b6fe4dcdfe85e81225dde923b6a30f20"
+  }
+}

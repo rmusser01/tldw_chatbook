@@ -1,0 +1,52 @@
+{
+  "scope": "Strict current-dev integration after the49-case review qualification",
+  "tested_head": "6c2e08116e32a351d5e9017ac36092e8d3162664",
+  "integrated_dev": "8f83422dde2a5b95da648882b8f7e09da5b41f08",
+  "production_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "be8d9daa47ba8fe5d6d7e025841f1eb953fa48f66809e007eb448f59d5f1034d",
+    "tldw_chatbook/UI/Screens/home_screen.py": "2ae1c5962527c6229d4e06868f11bf42dde57c9675982faf7aa799674f1755e0",
+    "tldw_chatbook/config.py": "8a156b9d3ee76953c76f1b2a79abc84281fd14611cdebf6ab27df64c6bf248c1",
+    "tldw_chatbook/app_service_wiring.py": "702f3d34193aeced083900874e7532f09c17da6afcc5d9f4ef0170e340a14daa",
+    "tldw_chatbook/app_lifecycle.py": "b1e79f198c67e84c1eaf5d020b196e586f44ca86d5b18003823251d8c89bb510",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba",
+    "tldw_chatbook/app_destinations.py": "8ab50e78e651150e8f65fa25aef82b2921c251cd6ec81ac9d32bbca2d76645cc",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py": "929d00cc570fc9fbfa2747ac6fcaad2de68b0c3e615acf523b883634ab007d81"
+  },
+  "tests": {
+    "passed": 9,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_seconds": 192.36,
+    "identities": [
+      "Tests.UI.test_home_console_resume::test_home_resume_keeps_saved_identity_and_independent_buddy_draft[cold]",
+      "Tests.UI.test_home_console_resume::test_home_resume_keeps_saved_identity_and_independent_buddy_draft[reused]",
+      "Tests.UI.test_home_console_resume::test_shutdown_settles_resume_presentation_before_runtime_disposal",
+      "Tests.UI.test_chat_screen_resume_handoff_registration::test_resume_timer_list_registers_every_expected_consumer",
+      "Tests.UI.test_chat_screen_resume_handoff_registration::test_resume_timers_use_the_shared_settle_hedge_constant",
+      "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_global_resume_outranks_registry_active_workspace",
+      "Tests.UI.test_buddy_conversation_modal::test_deferred_transcript_scroll_after_close_keeps_draft",
+      "Tests.UI.test_buddy_conversation_modal::test_real_console_buddy_send_preserves_both_durable_console_drafts[False]",
+      "Tests.UI.test_buddy_conversation_modal::test_real_console_buddy_send_preserves_both_durable_console_drafts[True]"
+    ],
+    "junit_sha256": "59cd0ca6ca4c3e4612f6589b78ed09ca5095ec8d6d3b2e12f0504e8e95e5543c",
+    "log_sha256": "d963b48671b8f836c19ffd79177ca494a27ea0b927376a4ed6751024ea7a119b"
+  },
+  "static": {
+    "baseline_dev": "8f83422dde2a5b95da648882b8f7e09da5b41f08",
+    "compile": "eight product modules passed",
+    "ruff": {
+      "base_count": 516,
+      "current_count": 516,
+      "introduced": []
+    },
+    "bandit": {
+      "base_count": 24,
+      "current_count": 24,
+      "introduced": []
+    },
+    "comparison": "relative filename/code/message diagnostic multiplicity; shifted source locations and embedded line references excluded"
+  },
+  "integration": "Clean merge of dev8f83422dde. All nine repaired Screen methods AST-identical before/after merge. Incoming blocked-send presentation/runtime changes are covered by cold/reused saved identity, shutdown, ordered resume and both controlled exact-owner send cases. No live provider or UAT repeated.",
+  "prior_evidence": "49 review cases and334 historical unique cases retain original-source attribution; these9 targeted integration repeats are not added to either unique total."
+}

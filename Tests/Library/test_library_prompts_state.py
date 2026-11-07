@@ -706,9 +706,7 @@ def _direct_prompt_browse_result(items=None, **overrides):
     values = {
         "scope": scope,
         "items": (
-            [{"id": "local:prompt:8", "local_id": 8}]
-            if items is None
-            else items
+            [{"id": "local:prompt:8", "local_id": 8}] if items is None else items
         ),
         "total_items": 1,
         "total_pages": 1,
@@ -1068,9 +1066,7 @@ def test_browse_prompt_result_rejects_bool_response_integers(field):
 
 def test_browse_prompt_request_token_rejects_bool():
     scope = prompts_state_module.PromptBrowseScope()
-    result = _direct_prompt_browse_result(
-        [{"id": "local:prompt:8", "local_id": 8}]
-    )
+    result = _direct_prompt_browse_result([{"id": "local:prompt:8", "local_id": 8}])
 
     with pytest.raises(ValueError, match="request_token"):
         prompts_state_module.begin_prompt_browse(scope, request_token=True)
@@ -3094,3 +3090,54 @@ def test_prompt_basic_accepts_legacy_and_one_block_per_lane_without_mutation():
 )
 def test_prompt_basic_rejects_structure_and_safety_states(state, kwargs, expected):
     assert prompt_basic_unavailable_reason(state, **kwargs) == expected
+
+
+def test_literal_mixin_save_has_exact_projection_and_shared_source_limits():
+    from tldw_chatbook.Library.library_prompts_state import (
+        prepare_mixin_artifact_save,
+        require_artifact_save_supported,
+    )
+    from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
+        LiteralMixinDefinition,
+    )
+    from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+        local_prompt_capabilities,
+    )
+
+    definition = LiteralMixinDefinition("  {literal}\n## User\n", "after")
+    draft, payload = prepare_mixin_artifact_save(
+        definition, request_fields={"name": "Scene", "expected_version": 2}
+    )
+    require_artifact_save_supported(
+        draft, local_prompt_capabilities(), update_original=True, expected_version=2
+    )
+    assert payload["user_prompt"] == definition.body
+    assert payload["system_prompt"] == ""
+    assert payload["expected_version"] == 2
+    assert payload["prompt_definition"] == {
+        "kind": "text_mixin",
+        "schema_version": 3,
+        "body": definition.body,
+        "placement": "after",
+    }
+
+
+def test_mixin_type_filter_empty_result_is_no_matches_and_scope_restore_keeps_type():
+    from tldw_chatbook.Library.library_prompts_state import (
+        PromptBrowseScope,
+        build_prompt_browse_result,
+    )
+
+    scope = PromptBrowseScope(artifact_type="mixin")
+    result = build_prompt_browse_result(
+        scope,
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 1,
+            "page": 1,
+            "per_page": 20,
+        },
+    )
+    assert result.status == "no_matches"

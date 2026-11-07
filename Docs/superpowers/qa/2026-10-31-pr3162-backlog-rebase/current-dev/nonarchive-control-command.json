@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-c",
+    "import pytest,sys\nfrom pathlib import Path\nclass Control:\n def pytest_collection_modifyitems(self,items):\n  import Tests.UI.test_console_archive_recovery_flow as flow\n  path=Path(\"Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase/current-dev/nonarchive-control-source.py\")\n  exec(compile(path.read_text(encoding=\"utf-8\"),str(path),\"exec\"),vars(flow))\n  assert len(items)==1\n  items[0].obj=flow.nonarchive_native_control\n  items[0].name=\"nonarchive_native_control[agent-size1]\"\n  items[0]._nodeid=\"Tests/UI/test_console_archive_recovery_flow.py::nonarchive_native_control[agent-size1]\"\nraise SystemExit(pytest.main(sys.argv[1:],plugins=[Control()]))\n",
+    "-q",
+    "--tb=short",
+    "--maxfail=1",
+    "-o",
+    "faulthandler_timeout=60",
+    "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\current-dev-ordinary-c1f1df451d\\control.xml",
+    "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft[agent-size1]"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\current-dev-ordinary-c1f1df451d",
+  "outer_timeout_seconds": 180,
+  "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\current-dev-ordinary-c1f1df451d\\control.log",
+  "xml": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\current-dev-ordinary-c1f1df451d\\control.xml"
+}

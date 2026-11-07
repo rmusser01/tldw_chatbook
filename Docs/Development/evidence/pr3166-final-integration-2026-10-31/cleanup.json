@@ -1,0 +1,44 @@
+[
+  {
+    "path": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-9c5e2249541e",
+    "existed": true,
+    "removed": true,
+    "test_exit_code": 0
+  },
+  {
+    "path": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-c35cd5ddedb7",
+    "existed": true,
+    "removed": true,
+    "test_exit_code": 1
+  },
+  {
+    "path": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-d357c74881eb",
+    "existed": true,
+    "removed": true,
+    "test_exit_code": 1
+  },
+  {
+    "path": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-30c87263d482",
+    "existed": true,
+    "removed": true,
+    "test_exit_code": 0
+  },
+  {
+    "path": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-28d3ff0e4671",
+    "existed": true,
+    "removed": true,
+    "test_exit_code": 1
+  },
+  {
+    "path": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-1b72b9141533",
+    "existed": true,
+    "removed": true,
+    "test_exit_code": 0
+  },
+  {
+    "path": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e299d932a89d",
+    "existed": true,
+    "removed": true,
+    "test_exit_code": 1
+  }
+]

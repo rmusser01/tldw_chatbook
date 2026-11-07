@@ -156,3 +156,82 @@ Foreign namespace, remapped owner, changed required authority/data or malformed 
 refuses exact managed resume while preserving historical text. Sync retains whole-record
 ownership/conflict rules and does not transfer permission. See ADR-162 and its specification
 for the exact envelope and fleet-retention contract.
+
+
+### Selected destination continuity amendment (TASK-35582, 2026-10-27)
+
+Continuation `provider` remains the canonical execution-family identifier. Console separately binds the exact raw selected provider from the host-resolved request. Before durable acceptance, the existing resolved destination freezes canonical continuation provider, protocol and full API base alongside its raw selection and model. Its disclosure endpoint remains an origin and is not replay authority. Nested destination JSON V2 carries these additional facts; legacy four-key destinations remain readable but cannot authorize a new native handoff without them.
+
+The host adapter binds neutral provider candidates before the agent loop retains them. The existing store validates that binding against captured run authority and the durable assistant owner before managed sealing. Both dispatch-to-continuation handoff and complete terminal settlement independently compare the same frozen mapping under their existing owner/version transaction. Successful handoff transfers the raw pin into assistant-owned continuation JSON V3 before deleting dispatch ownership. Provider data, current endpoint configuration, execution-family aliases and message bodies cannot mint or replace that mapping.
+
+V3 adds an exact selected-provider field to the existing canonical execution tuple and admits either no managed envelope or the existing envelope. Managed V3 authentication covers the selected identity; legacy V2 keeps its existing V1 digest projection and bytes. A managed envelope's presence, rather than equality to format version 2, requires managed authority validation. Failed binding, sealing or persistence never downgrades or permits side effects.
+
+Host history/recovery checks require the selected identity as well as the existing canonical provider/protocol/model/base contract. Two virtual endpoint selections sharing a model and API base are distinct; explicit built-in routing remains distinct from a custom parent. Lower provider replay validates only canonical execution identity after host admission and remains configuration-neutral. Legacy direct-provider V1/V2 continuation remains supported; pinless virtual continuation fails closed because its original raw owner cannot be proved. Old accepted dispatch rows are not upgraded from mutable configuration. Visible history and explicit discard/new-work remain available.
+
+These changes version JSON inside the existing columns and require no SQL migration or second durable owner. Session-only endpoints remain omitted from durable authority and cannot acquire durable native continuation through this amendment. Existing permissions, explicit Resume/takeover, ambiguous executing-call handling, message CAS/hash/sync ownership, private-data projections and durability barriers remain unchanged.
+
+
+## Ordered SYSTEM carrier clarification (TASK-35582, 2026-10-27)
+
+For engine-backed prepared requests with non-leading semantic SYSTEM rows, use the
+existing distinct_roles representation: system_message=None and the full ordered
+message payload. Preserve automatic notice role/origin/order and every provenance
+reference. Leading-only requests retain their existing wire style. The strict
+engine mixed-carrier ownership rejection stays unchanged; do not relabel SYSTEM
+notices USER, move them to an earlier prompt, drop rows or patch kwargs after final
+shadow validation. Safe/Full capture follows the same chosen prepared carrier and
+existing policy projections. See ADR281/230 accepted review-wake preflight amendment.
+No provider/current continuation format, authority or schema change is introduced.
+
+
+### Source correction to accepted-wake carrier diagnosis (Ruling63)
+
+Exact BASE7952422 controller source deliberately projects automatic SYSTEM
+transcript notices as payload-only trailing USER while preserving AGENT_WAKE
+authority and order. The prior reconstructed SYSTEM-carrier diagnosis was not
+the actual wire path. Its carrier conversion/Safe-capture clauses are superseded;
+ordinary serialization and the strict engine stay unchanged. Accepted-review-only
+pinned capacity/revalidation and normal schema reachability requirements remain.
+The full handler-backed fixture instead exposes completed checkpoint forwarding
+without native replay rows. A focused replay contract is pending before source
+changes at that extra boundary. Original diagnostic evidence is retained with
+QA/ac24/review-wake-repair-design/diagnosis-controller-correction.md. No authority,
+schema or additional live allowance follows from this correction.
+
+
+### Canonical completed-history replay amendment (Ruling64, before code)
+
+Adopt QA/ac24/review-wake-repair-design/completed-replay-correction.md and
+completed-replay-controller-assessment.md. Preserve the corrected existing
+transcript SYSTEM/payload USER policy; carrier-only work is removed. The real
+accepted-wake failure is retained complete checkpoint forwarding without its
+canonical native owner rows, alongside the independently proved capacity/tool loss.
+
+After existing host owner/target admission, derive canonical recorded assistant/
+tool history at final preparation from the exact complete persisted checkpoint.
+Reuse the existing translator; keep one collapsed semantic owner plus attachment
+as the atomic budget/eviction unit. Preserve exact IDs/args/results and one final
+content, private reasoning sidecar, all retained complete groups alongside current
+active groups, child isolation and explicit active Resume gates. No re-execution,
+fuzzy owner match, missing group tolerance or engine relaxation. Count the same
+projection before fit and avoid duplicate completed-expanded body charge.
+
+A narrowly deterministic one-to-many trace derivation may reuse existing completed
+owner/revision, private attachment and terminal lineage/range machinery. Recompute
+all output rows under frozen policy; derived rows are not fabricated saved ordinary
+revisions. Preserve count/span/source/actor/turn/CAS and final shadow gates. No
+arbitrary tool span acceptance, active-custody resurrection, growing per-call
+history arrays, codec/GC change, registry or new schema. Any needed durable shape
+requires concrete assessment before adding it. Existing provider/checkpointV3 and
+legacy readers remain. Actual handler-backed [2,1] plus CaptureOff/On, replay/live
+coexistence, counting/eviction and strict negatives are required before closure.
+
+
+Engine schema clarification (Ruling65): exact provider_continuation._parse_value
+lines633–645 allows a call-free final reasoning round only for the specified
+Moonshot case, not engine/custom-hosted checkpoints. Their completed checkpoint
+contains tool rounds; final visible content belongs to the admitted saved owner.
+Project recorded canonical assistant/tool rows then that exact saved final row
+once. The earlier design's canonical-terminal-row equality assumption is superseded
+for engine history. No invented round, codec/JSON/schema change or final loss.
+Owner/revision/target and derived provenance/counting gates remain unchanged.

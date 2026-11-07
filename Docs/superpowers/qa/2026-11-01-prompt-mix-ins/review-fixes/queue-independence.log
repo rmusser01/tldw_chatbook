@@ -1,0 +1,19 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices[unsupported] _
+Tests/Chat/test_console_prompt_mixin_retry.py:1595: in test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices
+    assert h.entries[-1][-1]["content"] == "body A\n\nqueued"
+           ^^^^^^^^^^^^^
+E   IndexError: list index out of range
+_ test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices[removed] _
+Tests/Chat/test_console_prompt_mixin_retry.py:1595: in test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices
+    assert h.entries[-1][-1]["content"] == "body A\n\nqueued"
+           ^^^^^^^^^^^^^
+E   IndexError: list index out of range
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices[unsupported]
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices[removed]
+2 failed in 2.01s

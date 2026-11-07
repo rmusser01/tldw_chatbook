@@ -22,7 +22,9 @@ pytestmark = pytest.mark.unit
 
 
 def test_snapshot_header_humanizes_created_at():
-    header = _snapshot_header("https://example.test/page", "2026-08-04T18:15:22.123456+00:00")
+    header = _snapshot_header(
+        "https://example.test/page", "2026-08-04T18:15:22.123456+00:00"
+    )
     plain = header.plain
     assert "2026-08-04T18:15:22.123456+00:00" not in plain, (
         "the raw ISO timestamp must not reach the header verbatim"
@@ -66,7 +68,7 @@ def test_snapshot_body_converts_raw_html_to_readable_prose():
     `extraction_method` is "full"/"auto"; a raw-extraction source stores
     literal HTML in this column.
     """
-    body = _snapshot_body("<p>Hello <a href=\"https://example.test/x\">world</a></p>")
+    body = _snapshot_body('<p>Hello <a href="https://example.test/x">world</a></p>')
     assert "<p>" not in body.plain and "<a href=" not in body.plain
     assert "Hello" in body.plain and "world" in body.plain
     assert "https://example.test/x" in body.plain
@@ -76,7 +78,9 @@ def test_snapshot_body_keeps_markup_shaped_text_literal():
     """Unchanged from before N2 -- pinning the property the module docstring
     states, now routed through `readable_body_text` instead of a bare
     `str()`."""
-    body = _snapshot_body("before [bold red]INJECTED[/] and [link=evil]click[/link] after")
+    body = _snapshot_body(
+        "before [bold red]INJECTED[/] and [link=evil]click[/link] after"
+    )
     assert "[bold red]INJECTED[/]" in body.plain
     assert "[link=evil]click[/link]" in body.plain
 
@@ -99,11 +103,18 @@ def test_snapshot_body_hostile_payload_is_inert_through_a_real_console():
     from rich.console import Console
 
     console = Console(
-        width=120, record=True, color_system="standard", force_terminal=True,
+        width=120,
+        record=True,
+        color_system="standard",
+        force_terminal=True,
         file=io.StringIO(),
     )
-    console.print(_snapshot_body("before \x1b]8;;http://evil.test\x07label\x1b]8;;\x07 after"))
+    console.print(
+        _snapshot_body("before \x1b]8;;http://evil.test\x07label\x1b]8;;\x07 after")
+    )
     plain = console.export_text(clear=False)
     ansi = console.export_text(styles=True)
-    assert "\x1b]8;;" not in ansi, "no OSC-8 hyperlink may be manufactured from raw bytes"
+    assert "\x1b]8;;" not in ansi, (
+        "no OSC-8 hyperlink may be manufactured from raw bytes"
+    )
     assert "before" in plain and "label" in plain and "after" in plain

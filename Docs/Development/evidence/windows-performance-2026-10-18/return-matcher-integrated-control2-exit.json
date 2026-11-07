@@ -1,0 +1,12 @@
+{
+  "tag": "integrated-control2",
+  "original": true,
+  "checkout_revision": "5c47d092739b5800e1c79cd7e35b1960b14567d8",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "17fabad938cb43559f2ad9eb9bee1b551238239fbafa2190bac1801614bb2fc1",
+    "tldw_chatbook/Utils/textual_css_fastpath.py": "945b9a897bf9a22c467fa9b6cbd8da6e8e986a6f0a224a8036f47288e132bd15",
+    "tldw_chatbook/UI/Console_Modules/session.py": "98971da6d61b4e766fc41c5a9b629d3fd768760556f364d921e35c28ee50570b"
+  },
+  "exit_code": 0,
+  "seconds": 51.42200000002049
+}

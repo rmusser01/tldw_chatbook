@@ -1,0 +1,44 @@
+# one key every 1.2 s into 'Reading list' (160x45); DB sampled read-only after each key
+# t(s)  key  db_version  db_content_tail
+# NOTE: the golden profile has TWO notes titled 'Reading list'; the indented
+# '1  Make It Stick (ch. 2) |' line after each sample is the OTHER one (never
+# opened, never changes). The edited note goes v1 -> v3 at ~10 s and -> v4 at
+# ~21 s while a key still lands every 1.2 s (the 2 s debounce never fires).
+# 'r' was typed after the last max-wait save and is lost to the hard kill.
+1  a  1  | 4. The Dispossessed | 
+1  Make It Stick (ch. 2) | 
+3  b  1  | 4. The Dispossessed | 
+1  Make It Stick (ch. 2) | 
+4  c  1  | 4. The Dispossessed | 
+1  Make It Stick (ch. 2) | 
+5  d  1  | 4. The Dispossessed | 
+1  Make It Stick (ch. 2) | 
+6  e  1  | 4. The Dispossessed | 
+1  Make It Stick (ch. 2) | 
+8  f  1  | 4. The Dispossessed | 
+1  Make It Stick (ch. 2) | 
+9  g  1  | 4. The Dispossessed | 
+1  Make It Stick (ch. 2) | 
+10  h  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+11  i  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+13  j  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+14  k  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+15  l  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+16  m  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+18  n  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+19  o  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+20  p  3  spossessed |  | abcdefgh
+1  Make It Stick (ch. 2) | 
+21  q  4  d |  | abcdefghijklmnopq
+1  Make It Stick (ch. 2) | 
+23  r  4  d |  | abcdefghijklmnopq
+1  Make It Stick (ch. 2) | 
+killed (no Ctrl+Q) at 23s

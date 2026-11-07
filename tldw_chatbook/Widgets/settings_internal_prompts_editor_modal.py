@@ -66,7 +66,9 @@ class InternalPromptEditorModal(ModalScreen[Optional[dict]]):
         spec = self._spec
         with Vertical(id="internal-prompt-editor-modal"):
             yield Static(spec.title, classes="console-modal-header")
-            yield Static(spec.description, classes="internal-prompt-editor-desc", markup=False)
+            yield Static(
+                spec.description, classes="internal-prompt-editor-desc", markup=False
+            )
             if spec.contract_note:
                 yield Static(
                     "⚠ " + spec.contract_note,
@@ -98,12 +100,18 @@ class InternalPromptEditorModal(ModalScreen[Optional[dict]]):
                 )
             with Collapsible(title="Shipped default", collapsed=True):
                 yield Static(spec.default, markup=False)
-            yield Static("", id="internal-prompt-editor-error",
-                         classes="internal-prompt-editor-error", markup=False)
+            yield Static(
+                "",
+                id="internal-prompt-editor-error",
+                classes="internal-prompt-editor-error",
+                markup=False,
+            )
             with Horizontal(classes="internal-prompt-editor-actions"):
                 yield Button("Reset to default", id="internal-prompt-editor-reset")
                 yield Button("Cancel", id="internal-prompt-editor-cancel")
-                yield Button("Save", id="internal-prompt-editor-save", variant="primary")
+                yield Button(
+                    "Save", id="internal-prompt-editor-save", variant="primary"
+                )
 
     def on_mount(self) -> None:
         try:

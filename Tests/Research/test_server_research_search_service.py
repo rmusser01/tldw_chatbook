@@ -1,4 +1,6 @@
 import inspect
+import pathlib
+import re
 from unittest.mock import Mock
 
 import pytest
@@ -285,3 +287,61 @@ async def test_server_research_search_service_routes_paper_detail_and_medrxiv_al
         "research.search.providers.launch.server",
         "research.search.providers.launch.server",
     ]
+
+
+class PublicOnlyPaperClient:
+    """Exposes only the public paper-search methods; `_request` is absent."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def paper_search(self, request):
+        self.calls.append(("paper_search", request.endpoint, request.params))
+        return {"items": [{"title": "t"}], "total_results": 1}
+
+    async def paper_search_detail(self, request):
+        self.calls.append(("paper_search_detail", request.endpoint, request.params))
+        return {"id": "2401.00001", "title": "t"}
+
+    async def paper_search_ingest(self, request):
+        self.calls.append(
+            ("paper_search_ingest", request.endpoint, request.params, request.payload)
+        )
+        return {"data": {"ok": True}}
+
+
+@pytest.mark.asyncio
+async def test_paper_search_detail_and_ingest_use_public_client_methods():
+    client = PublicOnlyPaperClient()
+    service = ServerResearchSearchService(client=client)
+
+    found = await service.paper_search(endpoint="arxiv", query="agents")
+    detail = await service.paper_detail(endpoint="arxiv/by-id", id="2401.00001")
+    ingested = await service.paper_ingest(
+        endpoint="arxiv/ingest", payload={"id": "2401.00001"}, extra=None
+    )
+
+    assert found["items"][0]["title"] == "t"
+    assert detail["id"] == "2401.00001"
+    assert ingested["data"]["ok"] is True
+    assert client.calls == [
+        ("paper_search", "arxiv", {"query": "agents"}),
+        ("paper_search_detail", "arxiv/by-id", {"id": "2401.00001"}),
+        ("paper_search_ingest", "arxiv/ingest", {}, {"id": "2401.00001"}),
+    ]
+
+
+def test_no_interop_module_calls_private_client_request():
+    root = pathlib.Path(research_search_module.__file__).parents[1]
+    private = re.compile(r"\._request\(|getattr\([^)]*[\"']_request[\"']")
+    # getattr(<client-ish>, <non-literal>): a variable name can hide "_request".
+    # Covers client-named receivers only: ~50 legitimate dynamic getattr lookups
+    # under *_Interop (e.g. getattr(service, method_name), lazy __init__
+    # re-exports) make a blanket ban infeasible; a static check cannot close dynamic dispatch.
+    dynamic = re.compile(r"getattr\(\s*[\w.]*client\w*\s*,\s*[^\"'\s]")
+    offenders = [
+        str(p.relative_to(root))
+        for p in root.glob("*_Interop/**/*.py")
+        if private.search(p.read_text()) or dynamic.search(p.read_text())
+    ]
+    assert offenders == []

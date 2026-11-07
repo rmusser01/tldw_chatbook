@@ -1,0 +1,44 @@
+                                                                             ╭──────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules │ ⌃8 Workflows │ ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Workflows · Local authoring
+ No workflow selected
+  Save revision  Validate  Run  Import  Export  More…
+
+ Run a saved revision · session only · keyless llama.cpp to Local Note.
+ Workflow library          │ Step navigator           │ No workflows yet · New workflow opens a named draft
+ ┌───────────────────────┐ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  ▶ Advanced · canonical JSON
+ │  Search workflows     │ │ ▊                      ▎ │
+ └───────────────────────┘ │ ▊                      ▎ │
+ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊                       ▎ │ ▊                      ▎ │
+ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ ▊                      ▎ │
+  Previous  Next           │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+  New workflow             │  Add step                │ Scroll form for more
+  Open in Console No existing Console handoff
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

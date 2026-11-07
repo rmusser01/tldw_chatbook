@@ -2,6 +2,7 @@
 (idle/thinking/speaking/error). No Textual and no DB-module imports -- takes a
 db object as a parameter where needed. Reused by P3d-3's .vpack extractor.
 """
+
 from __future__ import annotations
 
 import io
@@ -14,8 +15,8 @@ from typing import Protocol
 from PIL import Image
 
 from tldw_chatbook.Chat.console_expression_state import (
-    EXPRESSION_STATES,       # ("idle","thinking","speaking","error")
-    EXPRESSION_IMAGE_STATES, # ("thinking","speaking","error")
+    EXPRESSION_STATES,  # ("idle","thinking","speaking","error")
+    EXPRESSION_IMAGE_STATES,  # ("thinking","speaking","error")
 )
 
 MAX_ZIP_MEMBERS = 64
@@ -43,7 +44,7 @@ class ExpressionSetResolution:
     """
 
     images: dict[str, bytes] = field(default_factory=dict)
-    skipped: list[tuple[str, str]] = field(default_factory=list)   # (name, reason)
+    skipped: list[tuple[str, str]] = field(default_factory=list)  # (name, reason)
     notes: list[str] = field(default_factory=list)
 
 
@@ -80,7 +81,11 @@ def _detect_vpack(zf: zipfile.ZipFile) -> str | None:
     member reads.
     """
     names = set(zf.namelist())
-    if "manifest.json" in names and "metadata/assets.json" in names and "metadata/pack.json" in names:
+    if (
+        "manifest.json" in names
+        and "metadata/assets.json" in names
+        and "metadata/pack.json" in names
+    ):
         return ""
     roots = {n.split("/", 1)[0] for n in names if n and not n.startswith("/")}
     if len(roots) == 1:
@@ -132,7 +137,10 @@ def _resolve_native_expression_set(
     assets = {asset.metadata.asset_key: asset for asset in snapshot.assets}
     manifest = validate_persona_visual_manifest(
         snapshot.manifest_json,
-        {key: (asset.metadata.width, asset.metadata.height) for key, asset in assets.items()},
+        {
+            key: (asset.metadata.width, asset.metadata.height)
+            for key, asset in assets.items()
+        },
     )
     images: dict[str, bytes] = {}
     notes = [
@@ -145,12 +153,19 @@ def _resolve_native_expression_set(
         frame = selection.static.frame
         asset = assets[frame.asset_id]
         with Image.open(io.BytesIO(asset.data)) as source:
-            source.seek(0)  # Native frames select a raster; never expand nested animation.
+            source.seek(
+                0
+            )  # Native frames select a raster; never expand nested animation.
             image = source.convert("RGBA")
             if frame.region is not None:
                 region = frame.region
                 cropped = image.crop(
-                    (region.x, region.y, region.x + region.width, region.y + region.height)
+                    (
+                        region.x,
+                        region.y,
+                        region.x + region.width,
+                        region.y + region.height,
+                    )
                 )
                 image.close()
                 image = cropped
@@ -196,7 +211,9 @@ def _candidate_pairs(
                         skipped.append((child.name, "file too large"))
                         continue
                     if total + size > MAX_TOTAL_BYTES:
-                        notes.append("Total size cap exceeded; remaining files were skipped.")
+                        notes.append(
+                            "Total size cap exceeded; remaining files were skipped."
+                        )
                         break
                     total += size
                     pairs.append((child.name, child.read_bytes()))
@@ -204,7 +221,9 @@ def _candidate_pairs(
                 with zipfile.ZipFile(path) as zf:
                     infos = [i for i in zf.infolist() if not i.is_dir()]
                     if len(infos) > MAX_ZIP_MEMBERS:
-                        notes.append(f"Archive has {len(infos)} members; only the first {MAX_ZIP_MEMBERS} were read.")
+                        notes.append(
+                            f"Archive has {len(infos)} members; only the first {MAX_ZIP_MEMBERS} were read."
+                        )
                         infos = infos[:MAX_ZIP_MEMBERS]
                     for info in infos:
                         # Normalize Windows-style separators: a member written
@@ -216,7 +235,9 @@ def _candidate_pairs(
                             skipped.append((member, "file too large"))
                             continue
                         if total + info.file_size > MAX_TOTAL_BYTES:
-                            notes.append("Archive exceeds the total size cap; remaining members skipped.")
+                            notes.append(
+                                "Archive exceeds the total size cap; remaining members skipped."
+                            )
                             break
                         total += info.file_size
                         pairs.append((member, zf.read(info)))
@@ -225,13 +246,15 @@ def _candidate_pairs(
                 if size > MAX_MEMBER_BYTES:
                     skipped.append((path.name, "file too large"))
                 elif total + size > MAX_TOTAL_BYTES:
-                    notes.append("Total size cap exceeded; remaining files were skipped.")
+                    notes.append(
+                        "Total size cap exceeded; remaining files were skipped."
+                    )
                 else:
                     total += size
                     pairs.append((path.name, path.read_bytes()))
             else:
                 skipped.append((str(path), "not found"))
-        except Exception as exc:   # broken/encrypted zip, unreadable dir, etc.
+        except Exception as exc:  # broken/encrypted zip, unreadable dir, etc.
             skipped.append((str(path), f"could not read: {exc}"))
     return pairs, skipped, notes, total
 
@@ -266,10 +289,9 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
             if path.is_file() and zipfile.is_zipfile(path):
                 with zipfile.ZipFile(path) as zf:
                     vprefix = _detect_vpack(zf)
-                    native = (
-                        path.name.lower().endswith(".tldw-persona-vpack")
-                        or _has_native_contract(zf, vprefix or "")
-                    )
+                    native = path.name.lower().endswith(
+                        ".tldw-persona-vpack"
+                    ) or _has_native_contract(zf, vprefix or "")
                     if native or vprefix is not None:
                         if native:
                             # Native validation owns its larger pack budgets. A
@@ -282,7 +304,7 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
                                 zf, prefix=vprefix, start_total=total
                             )
                         for state, data in res.images.items():
-                            images.setdefault(state, data)   # first-writer-wins
+                            images.setdefault(state, data)  # first-writer-wins
                         skipped.extend(res.skipped)
                         notes.extend(res.notes)
                         handled = True
@@ -295,7 +317,7 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
         pairs, g_skipped, g_notes, total = _candidate_pairs(generic, start_total=total)
         skipped.extend(g_skipped)
         notes.extend(g_notes)
-        chosen: dict[str, tuple[str, bytes]] = {}   # state -> (name, bytes)
+        chosen: dict[str, tuple[str, bytes]] = {}  # state -> (name, bytes)
         for name, data in pairs:
             state = Path(name).stem.lower()
             if state not in _STATE_SET:
@@ -314,7 +336,7 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
                 continue
             chosen[state] = (name, data)
         for state, (_, data) in chosen.items():
-            images.setdefault(state, data)   # vpack states win over generic
+            images.setdefault(state, data)  # vpack states win over generic
     return ExpressionSetResolution(images=images, skipped=skipped, notes=notes)
 
 
@@ -396,8 +418,9 @@ def apply_expression_images_to_db(
 class ExpressionSetApplyResult:
     """Outcome of applying a resolved expression set to a character:
     idle staged in the editor, the reactive states written to the DB."""
+
     applied: list[str] = field(default_factory=list)
-    skipped: list[tuple[str, str]] = field(default_factory=list)   # (state, reason)
+    skipped: list[tuple[str, str]] = field(default_factory=list)  # (state, reason)
 
 
 # ---------- P3d-3: .tldw-persona-vpack extraction ----------
@@ -493,10 +516,16 @@ def _resolve_vpack_expression_set(
     bytes_cache: dict[str, bytes] = {}
     image_cache: dict[str, Image.Image] = {}
 
-    manifest, total = _read_vpack_json(zf, f"{prefix}manifest.json", bytes_cache, total, skipped)
-    assets_doc, total = _read_vpack_json(zf, f"{prefix}metadata/assets.json", bytes_cache, total, skipped)
+    manifest, total = _read_vpack_json(
+        zf, f"{prefix}manifest.json", bytes_cache, total, skipped
+    )
+    assets_doc, total = _read_vpack_json(
+        zf, f"{prefix}metadata/assets.json", bytes_cache, total, skipped
+    )
     if manifest is None or assets_doc is None:
-        notes.append("Archive looks like a persona visual pack, but its manifest could not be read.")
+        notes.append(
+            "Archive looks like a persona visual pack, but its manifest could not be read."
+        )
         return ExpressionSetResolution(images={}, skipped=skipped, notes=notes), total
 
     states = manifest.get("states")
@@ -516,7 +545,9 @@ def _resolve_vpack_expression_set(
             if not animation_id:
                 skipped.append((state, "state not in pack"))
                 continue
-            animation = animations.get(animation_id) if isinstance(animation_id, str) else None
+            animation = (
+                animations.get(animation_id) if isinstance(animation_id, str) else None
+            )
             if not isinstance(animation, dict):
                 skipped.append((state, "unknown animation"))
                 continue
@@ -532,7 +563,11 @@ def _resolve_vpack_expression_set(
                 skipped.append((state, "animation has no frames"))
                 continue
             idx = animation.get("preview_frame")
-            frame = frames[idx] if type(idx) is int and 0 <= idx < len(frames) else frames[0]
+            frame = (
+                frames[idx]
+                if type(idx) is int and 0 <= idx < len(frames)
+                else frames[0]
+            )
             if not isinstance(frame, dict):
                 skipped.append((state, "invalid frame"))
                 continue
@@ -567,23 +602,32 @@ def _resolve_vpack_expression_set(
                     image_cache[member] = img
                 if not (
                     isinstance(region, dict)
-                    and all(type(region.get(k)) is int for k in ("x", "y", "width", "height"))
-                    and region["x"] >= 0 and region["y"] >= 0
-                    and region["width"] > 0 and region["height"] > 0
+                    and all(
+                        type(region.get(k)) is int
+                        for k in ("x", "y", "width", "height")
+                    )
+                    and region["x"] >= 0
+                    and region["y"] >= 0
+                    and region["width"] > 0
+                    and region["height"] > 0
                     and region["x"] + region["width"] <= img.width
                     and region["y"] + region["height"] <= img.height
                 ):
                     skipped.append((state, "invalid region"))
                     continue
-                crop = img.crop((
-                    region["x"], region["y"],
-                    region["x"] + region["width"], region["y"] + region["height"],
-                ))
+                crop = img.crop(
+                    (
+                        region["x"],
+                        region["y"],
+                        region["x"] + region["width"],
+                        region["y"] + region["height"],
+                    )
+                )
                 buf = io.BytesIO()
-                crop.save(buf, format="PNG")   # a crop must be standalone bytes
+                crop.save(buf, format="PNG")  # a crop must be standalone bytes
                 out = buf.getvalue()
             else:
-                out = data   # whole-asset bytes pass through verbatim
+                out = data  # whole-asset bytes pass through verbatim
             if not _valid_image(out):
                 skipped.append((state, "not a valid image"))
                 continue
