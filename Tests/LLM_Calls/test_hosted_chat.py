@@ -27,6 +27,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     HostedChatProtocolError,
     HostedChatStream,
+    HostedChatStreamIncompleteError,
     HostedChatTurn,
     hosted_chat_request,
     normalize_hosted_chat_base_url,
@@ -34,6 +35,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     owned_json_post,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import (
+    HostedSSEIncompleteError,
     HostedSSEReadError,
     OwnedSSEStream,
     SSERecord,
@@ -663,6 +665,90 @@ def test_hosted_chat_stream_accepts_usage_only_after_terminal_choice() -> None:
 
     assert len(list(stream)) == 2
     assert stream.terminal_turn.usage == {"total_tokens": 3}
+
+
+def _records_then(records: list[SSERecord], failure: Exception | None):
+    yield from records
+    if failure is not None:
+        raise failure
+
+
+@pytest.mark.parametrize(
+    ("records", "failure", "incomplete"),
+    [
+        pytest.param([], None, True, id="empty-body"),
+        pytest.param(
+            [],
+            HostedSSEIncompleteError("Hosted SSE response was incomplete."),
+            True,
+            id="not-sse-whole-json",
+        ),
+        pytest.param(
+            [SSERecord(event=None, data="[DONE]")], None, True, id="done-only"
+        ),
+        pytest.param(
+            [], HostedSSEReadError("Hosted SSE response read failed."), False,
+            id="read-failure",
+        ),
+        pytest.param([], OSError("connection reset"), False, id="transport-error"),
+        pytest.param(
+            [SSERecord(event=None, data='{"choices": [')], None, False,
+            id="malformed-record",
+        ),
+    ],
+)
+def test_hosted_chat_stream_names_only_an_unusable_ending_incomplete(
+    records: list[SSERecord], failure: Exception | None, incomplete: bool
+) -> None:
+    """TASK-37762 review: Console asks a retried server again for an
+    incomplete stream only, so the type must not cover a broken one.
+
+    A stream that ends with nothing usable (no records, a body that is not
+    SSE, or ``[DONE]`` before any finish reason) raises
+    ``HostedChatStreamIncompleteError``; a failed read or a malformed record
+    stays a plain ``HostedChatProtocolError``.
+    """
+    stream = HostedChatStream(_records_then(records, failure), finish_policy=_POLICY)
+
+    with pytest.raises(HostedChatProtocolError) as raised:
+        list(stream)
+
+    assert isinstance(raised.value, HostedChatStreamIncompleteError) is incomplete
+
+
+class _BodyResponse:
+    def __init__(self, chunks: list[bytes], failure: Exception | None) -> None:
+        self._chunks = chunks
+        self._failure = failure
+
+    def iter_content(self, chunk_size: int):
+        yield from self._chunks
+        if self._failure is not None:
+            raise self._failure
+
+    def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("chunks", "failure", "incomplete"),
+    [
+        pytest.param([b'{"id": "chatcmpl-1"}'], None, True, id="json-no-final-newline"),
+        pytest.param([b"data: {\"choi"], None, True, id="record-cut-at-clean-end"),
+        pytest.param([b"data: {\"choi"], OSError("reset"), False, id="read-failure"),
+    ],
+)
+def test_owned_sse_stream_tells_an_unfinished_body_from_a_failed_read(
+    chunks: list[bytes], failure: Exception | None, incomplete: bool
+) -> None:
+    """TASK-37762 review: a body read to its end that stops inside a line is
+    incomplete (``HostedSSEIncompleteError``); a read that fails is not."""
+    stream = OwnedSSEStream(response=_BodyResponse(chunks, failure))
+
+    with pytest.raises(HostedSSEReadError) as raised:
+        list(stream)
+
+    assert isinstance(raised.value, HostedSSEIncompleteError) is incomplete
 
 
 def test_hosted_chat_stream_accepts_terminal_choice_usage() -> None:

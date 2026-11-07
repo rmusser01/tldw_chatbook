@@ -852,7 +852,10 @@ _BUDGETS: dict[str, int] = {
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8487,
+    # TASK-37762, 2026-11-06 (owner decision: a fix over a size ratchet raises
+    # the row with a dated comment): 8487 -> 8495 (+8). A named custom
+    # endpoint's empty or unreadable stream is retried without streaming.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8495,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
