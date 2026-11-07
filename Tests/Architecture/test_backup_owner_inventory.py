@@ -315,6 +315,58 @@ def test_sqlite_registry_members_have_explicit_census_rows():
     } == {}
 
 
+def test_personal_context_stores_preview_under_their_installed_owners(tmp_path):
+    """TASK-39110: both Personal Context databases previewed as owner
+    ``unknown``. The interview drafts (and sidecars) are intentionally
+    excluded and refuse capture; the repository stays an explicit
+    ``unsupported`` row until its capture lands (owner decision 2026-11-06)."""
+    from threading import Event
+
+    import pytest
+
+    from tldw_chatbook.Backup_Recovery.inventory import discover
+    from tldw_chatbook.Backup_Recovery.owner_registry import (
+        install_adapters,
+        registered,
+    )
+
+    config = tmp_path / "selected.toml"
+    config.write_text(
+        f'[general]\nusers_name = "Ada"\n[paths]\ndata_dir = "{tmp_path / "data"}"\n'
+    )
+    root = tmp_path / "data" / "Ada"
+    root.mkdir(parents=True)
+    suffixes = ("", "-wal", "-shm", "-journal")
+    drafts = root / "tldw_chatbook_personal_context_interviews.db"
+    repository = root / "tldw_chatbook_personal_context.db"
+    for database in (drafts, repository):
+        for suffix in suffixes:
+            Path(str(database) + suffix).write_bytes(b"private")
+    install_adapters()
+    items = {
+        item.path: item for item in discover((config,)).items if item.path is not None
+    }
+
+    def rows(database):
+        return [
+            (items[path].owner, items[path].status)
+            for path in (Path(str(database) + suffix) for suffix in suffixes)
+        ]
+
+    assert (rows(drafts), rows(repository)) == (
+        [("personal_context.interview_drafts", "intentionally_excluded")] * 4,
+        [("personal_context.repository", "unsupported")] * 4,
+    )
+    owners = {adapter.owner_id: adapter for adapter in registered()}
+    for owner, database in (
+        ("personal_context.interview_drafts", drafts),
+        ("personal_context.repository", repository),
+    ):
+        with pytest.raises(ValueError, match="personal_context"):
+            owners[owner].capture(items[database], tmp_path / "archive", Event())
+    assert not (tmp_path / "archive").exists()
+
+
 def test_census_detects_module_qualified_and_aliased_writable_opens():
     examples = (
         'open("store.bin", "wb").close()',

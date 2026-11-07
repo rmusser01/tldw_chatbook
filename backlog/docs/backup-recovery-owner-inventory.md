@@ -135,6 +135,26 @@ Existing backup archives, active staging and rollback stores must be excluded
 through qualified owner declarations; an unfamiliar suffix/root is currently unknown,
 not a heuristic exclusion. No directory called cache is automatically disposable.
 
+### Installed SQLite exclusions (TASK-39110)
+
+Three installed owners declare exact SQLite stores that a preview lists under
+their own owner and that capture refuses. None is a heuristic match:
+
+| Owner | Exact paths | Installed declaration | Preview status | Capture |
+| --- | --- | --- | --- | --- |
+| db.workspace_project_index | `<user data>/project_index/` tree | `Workspaces/project_index/recovery.py` `ProjectIndexCacheDeclaration` | intentionally excluded | refused (`project_index_payload_excluded`) |
+| notes.sync_state | `<user data>/tldw_chatbook_notes_sync_state.db` and its `-wal`, `-shm`, `-journal` | `Backup_Recovery/config_adapter.py` `_LocalSQLite`, installed by `Notes/recovery.py` | intentionally excluded | refused (`notes_device_state_excluded`) |
+| personal_context.interview_drafts | `<user data>/tldw_chatbook_personal_context_interviews.db` and its `-wal`, `-shm`, `-journal` | `_LocalSQLite`, installed by `Backup_Recovery/config_adapter.py` | intentionally excluded | refused (`personal_context_interview_drafts_excluded`) |
+
+`personal_context.repository` (`<user data>/tldw_chatbook_personal_context.db` and its
+sidecars) is not an exclusion. Owner decision (2026-11-06): capture it, with key custody
+designed so a restore can read it, in its own design task. Until that lands the same
+class declares it with `excluded=False`: present files are explicit `unsupported` rows
+under that owner (they block a complete preview, but no longer as owner `unknown`),
+absent files are `unused`, and capture is refused
+(`personal_context_repository_capture_unsupported`). Neither Personal Context owner has
+a selectable backup group.
+
 ## SQLite owner registry cross-check
 
 All installed policy IDs, including readers, backup destinations, memory forms and
@@ -168,7 +188,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:kanban.local | tldw_chatbook/Kanban_Interop/local_kanban_db | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:notes.file_notes_replica | tldw_chatbook/Notes/file_notes_replica | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:notes.library_parent | tldw_chatbook/Notes/Notes_Library | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:notes.sync_state | tldw_chatbook/Notes/notes_device_state_store | _PRIVATE_AND_READ_ONLY | sqlite/unsupported |
+| sqlite:notes.sync_state | tldw_chatbook/Notes/notes_device_state_store | _PRIVATE_AND_READ_ONLY | sqlite/installed exclusion (`_LocalSQLite`) |
 | sqlite:notifications.client | tldw_chatbook/Notifications/client_notifications_db | _MEMORY | sqlite/unsupported |
 | sqlite:notifications.event_state | tldw_chatbook/Notifications/event_state_repository | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:rag.chachanotes_keyword_leg | tldw_chatbook/RAG_Search/simplified/rag_service | _READ_ONLY_URI | sqlite/unsupported |
@@ -2963,10 +2983,10 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | sqlite:chat.launch_wake | tldw_chatbook/Chat/console_launch_wake | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:chat.trace_maintenance | tldw_chatbook/Chat/console_trace_maintenance | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chunking_lab | tldw_chatbook/DB/Chunking_Lab_DB | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:db.workspace_project_index | tldw_chatbook/DB/Workspace_Project_Index_DB | _PRIVATE_FILE | sqlite/unsupported |
+| sqlite:db.workspace_project_index | tldw_chatbook/DB/Workspace_Project_Index_DB | _PRIVATE_FILE | sqlite/installed exclusion (`ProjectIndexCacheDeclaration`) |
 | sqlite:library.legacy_recovery | tldw_chatbook/Library/collections_legacy_recovery | _READ_ONLY_URI | sqlite/unsupported |
-| sqlite:personal_context.interview_drafts | tldw_chatbook/Personal_Context/interview_draft_repository | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:personal_context.repository | tldw_chatbook/Personal_Context/repository | _PRIVATE_AND_READ_ONLY | sqlite/unsupported |
+| sqlite:personal_context.interview_drafts | tldw_chatbook/Personal_Context/interview_draft_repository | _PRIVATE_FILE | sqlite/installed exclusion (`_LocalSQLite`) |
+| sqlite:personal_context.repository | tldw_chatbook/Personal_Context/repository | _PRIVATE_AND_READ_ONLY | sqlite/explicit unsupported declaration (`_LocalSQLite`, `excluded=False`) |
 | sqlite:plugins.registry | tldw_chatbook/Plugins/registry | _PRIVATE_MEMORY_AND_READ_ONLY | sqlite/unsupported |
 | sqlite:recovery.operations.dreams | tldw_chatbook/DB/recovery_dreams_guardian | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.guardian | tldw_chatbook/DB/recovery_dreams_guardian | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |

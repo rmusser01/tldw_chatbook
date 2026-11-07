@@ -1,8 +1,10 @@
 ---
 id: TASK-39110
 title: "Personal Context's databases have no backup owner, so a profile that has used them previews as incomplete with an unknown owner, although the interview-drafts policy says that store is excluded from backup"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-07 02:03
+updated_date: 2026-11-07 06:25
 labels:
 - follow-up
 - backup
@@ -54,3 +56,11 @@ So any profile that has used Personal Context gets an incomplete backup preview 
 - [ ] #3 The inventory doc names the installed exclusions for `db.workspace_project_index`, `notes.sync_state` and the Personal Context owners
 - [ ] #4 The new tests run on a PR lane (never the fast PR contract), with three timings of that step recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Record the owner decision (2026-11-06) for `personal_context.repository`: capture it, in its own design task; nothing is captured this round.
+2. Red first: a real `discover()` after `install_adapters()` of a profile holding the interview-drafts database and its `-wal`/`-shm`/`-journal`, and the repository database, shows them as owner `unknown` today.
+3. Generalize the `notes.sync_state` exclusion (`Notes/recovery.py` `_DeviceStateExclusion`) into one Backup_Recovery-local declaration of an exact SQLite store plus sidecars under the user data dir, and install it for `notes.sync_state` (unchanged behaviour) and `personal_context.interview_drafts` (intentionally excluded, capture/validate/relocate refused). Declare `personal_context.repository` with the same class as an explicit `unsupported` row (present files block, absent files are unused). The declarations live in `Backup_Recovery/config_adapter.py`'s factory, so installing them imports nothing from the Personal Context package.
+4. Name the installed exclusions (`db.workspace_project_index`, `notes.sync_state`, the Personal Context owners) in the inventory doc.
+5. Put the tests in `Tests/Architecture/test_backup_owner_inventory.py` (already on two lanes) and time its lane step three times.
