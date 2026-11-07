@@ -581,7 +581,10 @@ statistics tools.
   turn streaming off for that model or provider to skip it. Every Custom
   endpoint counts as self-hosted here, even one pointed at a paid hosted
   service: that service gets the second request too, and after a stream
-  that arrived empty both requests may be billed. A cloud provider is not
+  that arrived empty both requests may be billed. A named endpoint whose
+  server ignores streaming and sends a streamed request's whole answer at
+  once is asked again as well, so that answer is generated twice and both
+  may be billed. A cloud provider is not
   asked again: when it refuses a streamed request before any text, the
   System row quotes the provider's own error message where it sent one and
   adds how to turn streaming off. OpenAI does
