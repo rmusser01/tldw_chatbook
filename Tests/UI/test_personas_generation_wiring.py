@@ -232,6 +232,41 @@ async def test_whole_character_button_reveals_a_concept_input(
         assert controller.whole_calls == []
 
 
+async def test_blank_after_generate_whole_character_closes_the_concept_row(
+    mock_app_instance, scaled_db, monkeypatch
+):
+    """TASK-33910.50 on dev's own path: "Generate whole character…", then Blank.
+
+    On origin/dev 29592ecc9b New › Character · Blank leaves the row this
+    button opened showing, with its text; this PR fixes it.
+    """
+    controller = _FakeController(result={})
+    async with _editor(mock_app_instance, scaled_db, monkeypatch, controller) as (
+        pilot,
+        screen,
+        editor,
+    ):
+        row = editor.query_one("#personas-char-editor-concept-row")
+        concept = editor.query_one("#personas-char-editor-concept", Input)
+        _press(screen, "#personas-char-editor-generate-whole")
+        await pilot.pause()
+        concept.value = "a map trader"
+        await pilot.pause()
+        assert row.display is True
+
+        # Already in create mode: wait for the chooser's worker to end.
+        await start_new(
+            pilot, "character:blank", until=lambda: not screen._new_chooser_open
+        )
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen._edit_mode == "create"
+        assert row.display is False
+        assert concept.value == ""
+        assert controller.whole_calls == []
+
+
 async def test_whole_character_fills_empty_fields(
     mock_app_instance, scaled_db, monkeypatch
 ):
