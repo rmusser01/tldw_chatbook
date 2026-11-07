@@ -51,6 +51,15 @@ KERNEL = frozenset(
 PRESENTATION = frozenset(
     {"UI", "Widgets", "Event_Handlers", "css", "app(shell)", "cli.py", "Web_Server"}
 )
+# Root modules ranked with DB despite the app_*.py name, the one place this test
+# departs from the review's layers.py. app_services.py is a composition module
+# (ADR-250 sections 1 and 6, TASK-36947.7): its module level imports only the
+# standard library, and at run time its shared factory's openers import only DB
+# classes and config. DB is the lowest layer those imports allow, so the
+# standalone MCP server and the RAG backfill (domain) may call the factory.
+# test_app_services_imports_only_the_standard_library_at_module_level and this
+# test (every run-time import it makes is checked from rank 1) keep it honest.
+DB_RANKED_ROOT_MODULES = frozenset({"app_services.py"})
 
 
 def _area(module: str, parents: frozenset[str]) -> str:
@@ -60,6 +69,8 @@ def _area(module: str, parents: frozenset[str]) -> str:
         return "<root>"
     if len(parts) == 2 and module not in parents:
         name = parts[1]
+        if name + ".py" in DB_RANKED_ROOT_MODULES:
+            return name + ".py"
         return (
             "app(shell)" if name == "app" or name.startswith("app_") else name + ".py"
         )
@@ -69,7 +80,7 @@ def _area(module: str, parents: frozenset[str]) -> str:
 def _rank(area: str) -> int:
     if area in PRESENTATION:
         return 3
-    if area == "DB":
+    if area == "DB" or area in DB_RANKED_ROOT_MODULES:
         return 1
     if area in KERNEL:
         return 0
@@ -156,7 +167,8 @@ def _upward_imports() -> dict[tuple[str, str, str], str]:
 
     edges: dict[tuple[str, str, str], str] = {}
     for src, path in modules.items():
-        src_rank = _rank(_area(src, parents))
+        src_area = _area(src, parents)
+        src_rank = _rank(src_area)
         if src_rank == 3:  # nothing sits above presentation
             continue
         with warnings.catch_warnings():
@@ -212,7 +224,7 @@ def _upward_imports() -> dict[tuple[str, str, str], str]:
                 dst_rank = _rank(_area(dst, parents))
                 if dst_rank <= src_rank:
                     continue
-                if src_rank == 1 and dst_rank == 2 and _is_model_module(dst):
+                if src_area == "DB" and dst_rank == 2 and _is_model_module(dst):
                     continue  # DB may import domain model modules
                 edges.setdefault(
                     (src, dst, kind),

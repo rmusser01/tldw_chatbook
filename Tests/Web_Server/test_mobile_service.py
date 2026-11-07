@@ -1514,6 +1514,28 @@ async def test_shutdown_closes_every_database_after_quiescing_the_chat_db(
     assert not any(_holds_connection(db) for db in databases)
 
 
+async def test_shutdown_leaves_a_chat_db_that_did_not_quiesce_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-36947.7: as before the factory, a failed quiesce skips closing the
+    chat DB; the workspaces and runs DBs still close."""
+
+    def refuse(self, **_kwargs):
+        raise TimeoutError("still in use")
+
+    monkeypatch.setattr(CharactersRAGDB, "quiesce_connections", refuse)
+    service = _reading_service(tmp_path)
+    assert service.workspace_registry is not None  # builds the engine
+    engine = service._engine.storage
+
+    await asyncio.wait_for(service.shutdown(), timeout=15)
+
+    assert _holds_connection(engine.chachanotes)
+    assert not _holds_connection(engine.workspaces)
+    assert not _holds_connection(engine.agent_runs)
+    engine.chachanotes.close_connection()
+
+
 # ========================================================================= #
 # Desktop approval relay (Phase 2c, ADR-236): parent-side subscription      #
 # ========================================================================= #

@@ -17,9 +17,11 @@ Each top-level package under `tldw_chatbook/`, and each module at the package ro
 | Rank | Layer | Members |
 | --- | --- | --- |
 | 0 | kernel | `Utils/`, `Third_Party/`, `Metrics/`, `state/`, `runtime_policy/`, and the root modules `__init__.py`, `config.py`, `Constants.py`, `Logging_Config.py` |
-| 1 | DB | `DB/` |
+| 1 | DB | `DB/`, and the root module `app_services.py` (see below) |
 | 2 | domain | Every other package (`Chat/`, `Agents/`, `LLM_Calls/`, `Library/`, `Notes/`, `Backup_Recovery/` and the rest) and every other root module (`model_capabilities.py`, `provider_registry.py`, `emergency_stop.py`, `chunking_engine_version.py`, `__main__.py`) |
-| 3 | presentation | `UI/`, `Widgets/`, `Event_Handlers/`, `css/`, `Web_Server/`, and the root modules `app.py`, `app_*.py`, `cli.py` |
+| 3 | presentation | `UI/`, `Widgets/`, `Event_Handlers/`, `css/`, `Web_Server/`, and the root modules `app.py`, `app_*.py` (except `app_services.py`), `cli.py` |
+
+`app_services.py` is a composition module, not part of the app shell, so it ranks with DB despite the `app_*.py` filename rule (TASK-36947.7). ADR-250 sections 1 and 6 make its module level import only the standard library, with service types under `TYPE_CHECKING`; at run time only its shared profile-storage factory imports anything, and only DB classes and `config.py`. DB is the lowest layer those imports allow. The standalone MCP server and the RAG backfill CLI, both domain modules, open their databases through that factory. The test keeps the ranking honest: every run-time import `app_services.py` makes is checked from DB's rank, the DB-to-domain model-module exception applies to `DB/` only, and `Tests/Architecture/test_application_services_bundle.py` pins its stdlib-only module level. This is the one place the test's ranks differ from the review's `layers.py`.
 
 ## The rule
 
@@ -41,7 +43,6 @@ Each top-level package under `tldw_chatbook/`, and each module at the package ro
 
 - **A new upward (source, target, kind) fails** `test_no_new_upward_import`. The failure names the file and line. Fix the direction: move the code that needs the higher layer up into that layer, or have the higher layer pass it in (a parameter, a callback or a Protocol). If you think an import belongs, explain why in the PR and get the reviewer's agreement before adding its row. Never just append a row to make the test pass. A move that leaves a re-export shim at the old path may add that shim's row only if the same change deletes at least as many rows; the shim's row is deleted together with the shim, once its importers are retargeted.
   - Dated exception 2026-10-31 (TASK-36953.2): `Utils.Splash_Screens` -> `UI.Splash_Screens` (top) is kept without a deleted row because old import paths must keep working for user custom splash cards; the row goes when the shim is retired. The same shim (`Utils/Splash_Screens/__init__.py`) also aliases old submodule paths dynamically through a meta-path finder that builds the UI target name at runtime, which the AST guard cannot see; that finder goes with the shim too.
-  - Dated exception 2026-11-07 (TASK-36947.7): `MCP.server` -> `app_services` and `RAG_Search.backfill` -> `app_services` (both lazy) are added without a deleted row. ADR-250 section 6 (accepted) puts the shared profile-storage factory in `app_services.py` and makes these two composition roots open their databases through it. `app_services.py` imports only the standard library at module level; it ranks as presentation only because root `app_*.py` modules do. The rows go if `app_services.py` is re-ranked or the roots move out of domain packages.
 - **A row with no matching import fails** `test_allowlist_has_no_stale_rows`. Delete the row. The allowlist only shrinks, so every structural fix that removes an upward import also removes its row.
 - Rows are per module pair and kind, not per statement. Another import of a listed (source, target, kind) passes, whether it brings in another name or imports the same target in another function. A row goes stale only when the last such import is gone.
 - A row whose target is a package `__init__` covers every name that package re-exports. Two rows target `Widgets.Console`, which re-exports about 40 widgets, and one targets `tldw_api`.
