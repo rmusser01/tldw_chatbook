@@ -25,6 +25,8 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleSubmissionOrigin,
@@ -188,22 +190,30 @@ async def pause_wake_at_ask_trigger(
         notice: The wake notice the request would end with.
 
     Returns:
-        The blocked result to return, or None to go on.
+        The blocked result to return, or None to go on (below the trigger,
+        a probe that could not run, or an authority that lapsed meanwhile,
+        which acceptance then refuses as it refuses any lapsed wake).
     """
 
-    if (
-        not isinstance(resolution, ConsoleProviderResolution)
-        or controller._compaction_mode_for(session) is not ContextCompactionMode.ASK
-    ):
+    if not isinstance(resolution, ConsoleProviderResolution):
         return None
-    # The request a wake sends: the chat's history, then its notice as a
-    # trailing user-role entry (see the wake branch of the submit path).
-    messages = [
-        *controller._provider_messages_for_session(
-            session.id, annotate_ids=True, turn_context=turn_context
-        ),
-        {"role": ConsoleMessageRole.USER.value, "content": notice},
-    ]
+    try:
+        if controller._compaction_mode_for(session) is not ContextCompactionMode.ASK:
+            return None
+        # The request a wake sends: the chat's history, then its notice as a
+        # trailing user-role entry (see the wake branch of the submit path).
+        messages = [
+            *controller._provider_messages_for_session(
+                session.id, annotate_ids=True, turn_context=turn_context
+            ),
+            {"role": ConsoleMessageRole.USER.value, "content": notice},
+        ]
+    except Exception as exc:  # noqa: BLE001 - fail open, as the composer probe does
+        logger.warning(
+            "Wake compaction hold probe unavailable; exception_type={}",
+            type(exc).__name__,
+        )
+        return None
     hold, _alert = await controller._assess_context_compaction(
         session_id=session.id,
         resolution=resolution,
@@ -212,7 +222,8 @@ async def pause_wake_at_ask_trigger(
     )
     if hold is None:
         return None
-    await controller._fleet_wake.pause_at_ask_trigger(authorization)
+    if not await controller._fleet_wake.pause_at_ask_trigger(authorization):
+        return None
     return controller._block(
         session.id,
         wake_ask_pause_copy(
