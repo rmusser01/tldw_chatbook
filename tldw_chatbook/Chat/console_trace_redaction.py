@@ -11,9 +11,18 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 from tldw_chatbook.Utils.log_sanitizer import (
     REDACTION_MARKER,
     sanitize_trace_credentials_v1,
+    sanitize_trace_credentials_v2,
 )
 
-CREDENTIAL_FILTER_VERSION = "credentials-v1"
+#: TASK-39123: new traces are stored under v2. Stored v1 policies keep their
+#: tag and still read; every read, export and share re-applies the v2 masks.
+CREDENTIAL_FILTER_VERSION = "credentials-v2"
+_CREDENTIAL_PROJECTIONS = {
+    "credentials-v1": sanitize_trace_credentials_v1,
+    CREDENTIAL_FILTER_VERSION: sanitize_trace_credentials_v2,
+}
+#: Every credential filter version a stored trace policy can be read under.
+READABLE_CREDENTIAL_FILTER_VERSIONS = frozenset(_CREDENTIAL_PROJECTIONS)
 CREDENTIAL_SANITIZER_UNAVAILABLE = "credential_sanitizer_unavailable"
 DEFAULT_CREDENTIAL_MAX_NODES = 100_000
 DEFAULT_CREDENTIAL_MAX_DEPTH = 64
@@ -520,6 +529,7 @@ class CredentialSanitizer:
         "_max_depth",
         "_max_nodes",
         "_max_text_codepoints",
+        "_version",
     )
 
     def __init__(
@@ -529,6 +539,7 @@ class CredentialSanitizer:
         max_nodes: int = DEFAULT_CREDENTIAL_MAX_NODES,
         max_depth: int = DEFAULT_CREDENTIAL_MAX_DEPTH,
         max_text_codepoints: int = DEFAULT_CREDENTIAL_MAX_TEXT_CODEPOINTS,
+        version: str = CREDENTIAL_FILTER_VERSION,
     ) -> None:
         """Create a bounded credential sanitizer.
 
@@ -537,11 +548,16 @@ class CredentialSanitizer:
             max_nodes: Maximum aggregate container, key, and scalar nodes inspected.
             max_depth: Maximum recursive JSON-like value depth inspected.
             max_text_codepoints: Maximum code points inspected in any one string.
+            version: Credential projection to apply. Only the reader of a stored
+                v1 policy's frozen PII spans asks for ``credentials-v1``, and
+                it re-applies the current masks afterwards (TASK-39123).
 
         Raises:
-            ValueError: If a work limit is invalid or known values exceed the
-                bounded detector budget.
+            ValueError: If a work limit or version is invalid, or known values
+                exceed the bounded detector budget.
         """
+        if version not in _CREDENTIAL_PROJECTIONS:
+            raise ValueError("version")
 
         for limit, name in (
             (max_nodes, "max_nodes"),
@@ -561,6 +577,7 @@ class CredentialSanitizer:
         self._max_nodes = max_nodes
         self._max_depth = max_depth
         self._max_text_codepoints = max_text_codepoints
+        self._version = version
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -580,12 +597,14 @@ class CredentialSanitizer:
                 available=False,
                 value=None,
                 omission_reason_code=CREDENTIAL_SANITIZER_UNAVAILABLE,
+                detector_version=self._version,
             )
         return CredentialSanitizationResult(
             available=True,
             value=sanitized,
             omission_reason_code=None,
             redacted=redacted,
+            detector_version=self._version,
         )
 
     def _sanitize(
@@ -705,7 +724,7 @@ class CredentialSanitizer:
                 value = value.replace(credential, _OMITTED_TEXT)
         if _SECRET_TEXT.search(value):
             value = _SECRET_TEXT.sub(_OMITTED_TEXT, value)
-        return sanitize_trace_credentials_v1(value).replace(
+        return _CREDENTIAL_PROJECTIONS[self._version](value).replace(
             REDACTION_MARKER, _OMITTED_TEXT
         )
 

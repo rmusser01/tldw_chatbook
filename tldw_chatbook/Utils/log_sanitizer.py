@@ -393,14 +393,33 @@ def sanitize_trace_credentials_v1(text: str) -> str:
     return result
 
 
-#: Key shapes masked in diagnostics only (TASK-39061): `sk_`/`rk_` secret and
-#: restricted keys, live or test. They are not in ``_STANDALONE_CREDENTIALS``
-#: because ``sanitize_trace_credentials_v1`` reads that tuple, and its stored
+#: `sk_`/`rk_` secret and restricted keys, live or test (TASK-39061), masked
+#: by diagnostics and by the credentials-v2 trace projection (TASK-39123).
+#: They are not in ``_STANDALONE_CREDENTIALS`` because
+#: ``sanitize_trace_credentials_v1`` reads that tuple, and its stored
 #: projection must not change. The 24-character floor and the body's lack of
 #: `_` keep identifiers such as ``sk_live_mode_enabled`` readable.
-_DIAGNOSTIC_ONLY_CREDENTIALS = (
+_UNDERSCORE_KEY_CREDENTIALS = (
     re.compile(r"(?<![A-Za-z0-9_-])[rs]k_(?:live|test)_[A-Za-z0-9]{24,}(?![A-Za-z0-9_-])"),
 )
+
+
+def sanitize_trace_credentials_v2(text: str) -> str:
+    """The credentials-v2 trace projection: v1 plus bare `sk_`/`rk_` keys.
+
+    New traces are stored under it, and every read, export and share of a
+    stored trace re-applies it whatever the trace's version (TASK-39123).
+
+    Args:
+        text: The string to sanitize.
+
+    Returns:
+        ``sanitize_trace_credentials_v1(text)`` with underscore keys masked.
+    """
+    result = sanitize_trace_credentials_v1(text)
+    for pattern in _UNDERSCORE_KEY_CREDENTIALS:
+        result = pattern.sub(REDACTION_MARKER, result)
+    return result
 _DIAGNOSTIC_PII_PATTERNS = (
     re.compile(r"(?i)(?<![\w.%+-])[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+"),
     re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
@@ -451,7 +470,7 @@ def _sanitize_diagnostic_text(text: str) -> str:
     result = _BEARER.sub(r"\1" + REDACTION_MARKER, result)
     for pattern in (
         *_STANDALONE_CREDENTIALS,
-        *_DIAGNOSTIC_ONLY_CREDENTIALS,
+        *_UNDERSCORE_KEY_CREDENTIALS,
         *_DIAGNOSTIC_PII_PATTERNS,
     ):
         result = pattern.sub(REDACTION_MARKER, result)
