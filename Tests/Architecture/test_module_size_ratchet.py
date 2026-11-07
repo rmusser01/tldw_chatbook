@@ -608,9 +608,9 @@ _BUDGETS: dict[str, int] = {
     # (UI/Settings_Modules/category_panels.py); 2026-11-07 rebase onto dev: 35,728 -> 35,597.
     # (UI/Settings_Modules/category_panels.py); 2026-11-07 rebase onto dev: 35,728 -> 35,586.
     # 2026-11-07, TASK-1378.2: Providers & Models moved onto its registered panel;
-    # measured after the rebase onto dev: 34,891.
+    # measured after the rebase onto dev: 34,831.
     # 2026-11-10: re-measured after rebasing over #3487 (TASK-1378.2).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35074,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35015,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -1243,8 +1243,10 @@ def test_every_module_of_the_guard_size_has_a_row() -> None:
 #: lower this when one moves, never raise it -- new category behaviour goes in
 #: a registered panel. Base (dev 5ca7ec6a03): 245; Network 240; Speech's
 #: save, revert, render and scope arms through its adapter 236; TASK-1378.2,
-#: Providers & Models' save, revert, unsaved, render and scope arms 230.
-_SETTINGS_CATEGORY_COMPARISON_CEILING = 230
+#: Providers & Models' save, revert, unsaved, render and scope arms 230, then
+#: its every other arm through the panels' optional members (plus Speech's
+#: unsaved count and Overview's share of the subscription poll) 202.
+_SETTINGS_CATEGORY_COMPARISON_CEILING = 202
 
 
 @lru_cache(maxsize=1)
@@ -1267,12 +1269,20 @@ def _settings_category_ids() -> frozenset[str]:
     )
 
 
-def _count_category_comparisons(tree: ast.AST) -> int:
-    ids = _settings_category_ids()
+def _count_category_comparisons(
+    tree: ast.AST, *, member: str | None = None, value: str | None = None
+) -> int:
+    """Count category references in comparisons; ``member``/``value`` narrow
+    it to one category (its enum member name and its string id)."""
+    ids = _settings_category_ids() if value is None else {value}
 
     def names_a_category(node: ast.AST) -> bool:
         if isinstance(node, ast.Attribute):
-            return isinstance(node.value, ast.Name) and node.value.id == "SettingsCategoryId"
+            return (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "SettingsCategoryId"
+                and (member is None or node.attr == member)
+            )
         return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in ids
 
     return sum(
@@ -1302,6 +1312,25 @@ def test_category_comparison_count_sees_every_arm_shape() -> None:
         "if mode == 'off': pass\n"
     )
     assert _count_category_comparisons(ast.parse(source)) == 7
+
+
+@pytest.mark.parametrize(
+    ("member", "value"),
+    [("NETWORK", "network"), ("PROVIDERS_MODELS", "providers-models")],
+)
+def test_categories_served_by_their_panels_have_no_comparison_left(
+    member: str, value: str
+) -> None:
+    """Network (TASK-1378.1) and Providers & Models (TASK-1378.2) are served
+    wholly by their registered panels: no comparison in settings_screen.py
+    names either, as an enum member or as its string id."""
+    assert value in _settings_category_ids()
+    tree = ast.parse((_REPO_ROOT / "tldw_chatbook/UI/Screens/settings_screen.py").read_text())
+    count = _count_category_comparisons(tree, member=member, value=value)
+    assert count == 0, (
+        f"settings_screen.py compares SettingsCategoryId.{member} {count} times; "
+        "ask its panel in UI/Settings_Modules/category_panels.py instead."
+    )
 
 
 def test_settings_screen_category_comparisons_do_not_rise() -> None:

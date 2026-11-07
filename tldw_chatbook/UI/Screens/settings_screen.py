@@ -5153,8 +5153,8 @@ class SettingsScreen(BaseAppScreen):
                 notes.append(f"{prefix}{value}")
         if not self._category_footer_shortcuts(category):
             notes.append("No shortcut keys are specific to this category.")
-        if category is SettingsCategoryId.PROVIDERS_MODELS:
-            notes.append(f"Test provider (t): {PROVIDER_TEST_GUIDANCE}")
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            notes.extend(registered.help_notes(self))
         if category is SettingsCategoryId.THEME:
             notes.append(
                 "The keys below act on the highlighted theme while the theme list has focus."
@@ -5251,18 +5251,42 @@ class SettingsScreen(BaseAppScreen):
         category = self._active_category_id()
         if category is SettingsCategoryId.TOOL_PROFILES:
             self._sync_tool_profile_operations()
-        if category not in {
-            SettingsCategoryId.OVERVIEW,
-            SettingsCategoryId.PROVIDERS_MODELS,
-        }:
+        if category is SettingsCategoryId.OVERVIEW:
+            provider = str(  # the saved pair (33005.15)
+                resolve_effective_provider_model(self._chat_defaults()).provider or ""
+            )
+            if self._subscription_readiness_changed(
+                category, provider, self._provider_readiness_app_config
+            ):
+                presentation = self._settings_overview_presentation()
+                for row in presentation.primary_rows:  # the test row with the Status
+                    self._set_static_text(
+                        f"#settings-overview-{row.key.replace('_', '-')}",
+                        f"{row.label}: {_fold_long_tokens(row.value)}",
+                    )
+            return
+        registered = CATEGORY_PANELS.get(category)
+        if registered is None or not registered.poll(self):
             self._subscription_readiness_observation = None
             self._subscription_readiness_gate = None
-            return
-        provider = (
-            str(resolve_effective_provider_model(self._chat_defaults()).provider or "")
-            if category is SettingsCategoryId.OVERVIEW  # the saved pair (33005.15)
-            else self._provider_widget_value()
-        )
+
+    def _subscription_readiness_changed(
+        self,
+        category: SettingsCategoryId,
+        provider: str,
+        readiness_config: Callable[[], Mapping[str, object]],
+    ) -> bool:
+        """Whether ``provider``'s subscription readiness changed since the last poll.
+
+        Args:
+            category: The category polling (part of the memo's key).
+            provider: The provider whose readiness the category shows.
+            readiness_config: Builds the config readiness resolves against;
+                called only when the cheap gate below has moved.
+
+        Returns:
+            True when the observation changed and the category should repaint.
+        """
         # Cheap gate BEFORE the expensive resolution: readiness can only
         # change when the provider/panel choice changes, the background
         # credential snapshot goes stale or completes (cached status /
@@ -5285,38 +5309,16 @@ class SettingsScreen(BaseAppScreen):
             getattr(shared_connection_evidence(lambda: self.app), "version", 0),
         )
         if gate == self._subscription_readiness_gate:
-            return
+            return False
         readiness = get_provider_readiness(
-            provider,
-            self._provider_readiness_app_config()
-            if category is SettingsCategoryId.OVERVIEW
-            else self._provider_auth_readiness_config(provider),
-            background_credentials=True,
+            provider, readiness_config(), background_credentials=True
         )
         observation = (*gate[:2], readiness.subscription_status, gate[-1])
         self._subscription_readiness_gate = gate
         if observation == self._subscription_readiness_observation:
-            return
+            return False
         self._subscription_readiness_observation = observation
-        if category is SettingsCategoryId.OVERVIEW:
-            presentation = self._settings_overview_presentation()
-            for row in presentation.primary_rows:  # the test row with the Status
-                self._set_static_text(
-                    f"#settings-overview-{row.key.replace('_', '-')}",
-                    f"{row.label}: {_fold_long_tokens(row.value)}",
-                )
-            return
-        from ..Settings_Modules.providers_models_card import refresh_key_rows
-
-        refresh_key_rows(self, provider)
-        tested_draft = self._provider_subscription_test
-        if tested_draft is None:
-            return
-        if tested_draft != (provider, self._provider_draft_generation):
-            self._provider_subscription_test = None
-            return
-        self._provider_test_result = self._run_provider_readiness_test()
-        self._update_provider_test_result()
+        return True
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width < SETTINGS_INSPECTOR_ENTRY_MIN_WIDTH
@@ -5454,7 +5456,7 @@ class SettingsScreen(BaseAppScreen):
     def _refresh_provider_defaults_on_resume(self) -> None:
         """Refresh a clean retained provider form when its saved selection moved."""
         if (
-            self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS
+            not PROVIDERS_MODELS_PANEL.showing(self)
             or self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
             or self._navigation_provider
         ):
@@ -9478,11 +9480,8 @@ class SettingsScreen(BaseAppScreen):
         reset flag are one field, as are Advanced Config's raw TOML draft and an
         Image/Video Gen field's edit or Clear. Only read while dirty, so >= 1.
         """
-        snapshot = self._speech_tts_draft_snapshot
-        if category is SettingsCategoryId.PROVIDERS_MODELS:
-            count = len(self._provider_unsaved_field_names())
-        elif category is SettingsCategoryId.SPEECH_TTS and snapshot is not None:
-            count = snapshot.unsaved_field_count()
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            count = registered.unsaved_count(self)
         else:
             draft = self._settings_drafts.get(category)
             count = unsaved_field_count(draft.dirty_keys) if draft is not None else 0
@@ -9571,10 +9570,7 @@ class SettingsScreen(BaseAppScreen):
             if provider_dirty:
                 message = "Snapshot preferences saved separately. Provider changes have their own Save result."
             self._set_static_text("#settings-snapshot-result", message)
-            if (
-                provider_dirty
-                and self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS
-            ):
+            if provider_dirty and PROVIDERS_MODELS_PANEL.showing(self):
                 # Resume the existing provider workflow only when this pair settled.
                 self._snapshot_preferences_saving = False
                 if unchanged:
@@ -10213,13 +10209,6 @@ class SettingsScreen(BaseAppScreen):
                 continue
             button.disabled = not actions_enabled
             button.label = self._guided_action_label(base, dirty=dirty)
-            if (
-                selector == "#settings-revert-category"
-                and category is SettingsCategoryId.PROVIDERS_MODELS
-                and self._snapshot_preferences_unavailable
-            ):
-                button.disabled = False
-                button.label = "Revert (r) — reload preferences"
 
     def _category_status(self, summary: SettingsCategorySummary) -> str:
         if self._category_has_unsaved_changes(summary.category):
@@ -10275,30 +10264,8 @@ class SettingsScreen(BaseAppScreen):
                 pass
             self._update_category_state_banner(category)
             self._update_guided_action_widgets()
-        if category is SettingsCategoryId.PROVIDERS_MODELS:
-            self._update_provider_return_widgets()
-            # TASK-33007.4 (AC#3): the next new chat reads saved config, so a
-            # dirty form says its edits wait for s, and (#3057) which ones.
-            from ..Settings_Modules.providers_models_card import unsaved_edits_note
-
-            for note in self.query("#settings-provider-next-chat-note").results(Static):
-                note.display = has_unsaved_changes
-                note.update(unsaved_edits_note(self))
-            if has_unsaved_changes and self._provider_save_result in (
-                PROVIDER_SAVED_COPY,
-                PROVIDER_NO_CHANGES_COPY,
-            ):
-                self._provider_save_result = ""
-                self._set_static_text("#settings-provider-save-result", "")
-            # TASK-33007.6: the context window and snapshot drafts re-say
-            # their Advanced titles here.
-            self._refresh_advanced()
-            if self.focused is not None and str(self.focused.id or "").startswith(
-                "settings-model-profile-"
-            ):
-                # Dirty/readiness copy above the disclosure can grow while
-                # typing and push the active field past the compact fold.
-                self._reveal_settings_focus_after_refresh()
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            registered.after_change(self, has_unsaved_changes)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             # TASK-33007.7: the global fallbacks' Source words follow the
             # draft ("edited *") and a save or revert ("Console Behavior").
@@ -10808,10 +10775,10 @@ class SettingsScreen(BaseAppScreen):
         if self._category_has_unsaved_changes(category):
             # TASK-33002.4: the badge stays (ADR-303) and the line counts the
             # unsaved fields. "revert with r" rides along where r is the
-            # category's key and the 120-cell row at 211x44 has room: not on
-            # Providers & Models (its scope fills the row) or Speech & TTS
-            # (its leave wording does), nor Image/Video Gen (the badge names
-            # their own Save/Revert).
+            # category's key and the 120-cell row at 211x44 has room: not where
+            # a panel's ScopeText says its scope fills the row (Providers &
+            # Models), nor on Speech & TTS (its leave wording does), nor Image/
+            # Video Gen (the badge names their own Save/Revert).
             unsaved = (
                 f"{self._persistence_badge(category)} · "
                 f"{self._category_unsaved_count(category)} unsaved"
@@ -10834,8 +10801,9 @@ class SettingsScreen(BaseAppScreen):
                     f"State: {unsaved} | Leaving Speech & TTS resolves this "
                     "draft: save or discard first."
                 )
+            registered = CATEGORY_PANELS.get(category)
             if self._category_action_supported(category, "revert") and (
-                category is not SettingsCategoryId.PROVIDERS_MODELS
+                registered is None or registered.scope_text(self).banner_revert_hint
             ):
                 unsaved += " · revert with r"
             return f"State: {unsaved} | {self._category_state_scope_text(category)}"
@@ -14517,6 +14485,7 @@ class SettingsScreen(BaseAppScreen):
                 pass
         if not fenced:
             self._update_guided_action_widgets()
+            PROVIDERS_MODELS_PANEL.relabel_revert(self)
 
     def _vllm_default_recovery(self):
         """Return app-owned failed-release state, if this app exposes the store."""
@@ -14710,10 +14679,7 @@ class SettingsScreen(BaseAppScreen):
                 raise TypeError("verified provider Settings handoff was not exact")
             if not current_intent(owner, intent):
                 raise ValueError("verified provider Settings handoff is stale")
-            if (
-                not self.is_mounted
-                or self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS
-            ):
+            if not self.is_mounted or not PROVIDERS_MODELS_PANEL.showing(self):
                 raise RuntimeError("Providers Settings is not mounted")
             self._vllm_default_before_presentation = (
                 self._snapshot_vllm_default_presentation()
@@ -18376,7 +18342,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _refresh_provider_field_guidance(self) -> None:
-        if self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS:
+        if not PROVIDERS_MODELS_PANEL.showing(self):
             return
         shown, config_key = self._split_config_key_row(
             self._provider_field_guidance_rows()
@@ -23699,13 +23665,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-save-category",
                 tooltip="Save changes for the selected Settings category.",
             )
-            save_button.disabled = not self._guided_actions_enabled(
-                summary.category
-            ) or (
-                summary.category is SettingsCategoryId.PROVIDERS_MODELS
-                and self._vllm_default_recovery() is not None
-            )
-            yield save_button
+            save_button.disabled = not self._guided_actions_enabled(summary.category)
             revert_button = Button(
                 self._guided_action_label("Revert (r)", dirty=dirty),
                 id="settings-revert-category",
@@ -23713,38 +23673,16 @@ class SettingsScreen(BaseAppScreen):
             )
             revert_button.disabled = not self._guided_actions_enabled(
                 summary.category
-            ) or (
-                summary.category is SettingsCategoryId.PROVIDERS_MODELS
-                and self._vllm_default_recovery() is not None
             )
-            if (
-                summary.category is SettingsCategoryId.PROVIDERS_MODELS
-                and self._snapshot_preferences_unavailable
-                and self._vllm_default_recovery() is None
-            ):
-                revert_button.disabled = False
-                revert_button.label = "Revert (r) — reload preferences"
+            registered = CATEGORY_PANELS.get(summary.category)
+            following = (
+                registered.inspector_actions(self, save_button, revert_button)
+                if registered is not None
+                else ()
+            )
+            yield save_button
             yield revert_button
-            if summary.category is SettingsCategoryId.PROVIDERS_MODELS:
-                recovery = self._vllm_default_recovery()
-                recovery_status = Static(
-                    self._vllm_default_recovery_copy(recovery),
-                    id="settings-vllm-handoff-recovery-status",
-                    classes="settings-status-row",
-                )
-                recovery_status.display = recovery is not None
-                yield recovery_status
-                recovery_button = Button(
-                    "Retry provider handoff cleanup",
-                    id="settings-vllm-handoff-recovery",
-                    variant="warning",
-                    tooltip=(
-                        "Retry the application-owned release without saving any "
-                        "provider settings."
-                    ),
-                )
-                recovery_button.display = recovery is not None
-                yield recovery_button
+            yield from following
         elif summary.category is SettingsCategoryId.OVERVIEW:
             # task-1714 (critique r4 P1): this was a bare "Theme" noun-chip
             # whose verb lived in a mouse-only tooltip; the label now names
@@ -23777,6 +23715,8 @@ class SettingsScreen(BaseAppScreen):
         """Scrollable inspector remainder: guides, ownership, boundaries."""
         summary = self._active_summary()
         ownership = self._ownership_record(summary.category)
+        registered = CATEGORY_PANELS.get(summary.category)
+        own_body = registered.inspector(self) if registered is not None else None
         if summary.category is SettingsCategoryId.HOOKS:
             yield Static("Hook permissions", classes="destination-section")
             yield Static(
@@ -23846,14 +23786,8 @@ class SettingsScreen(BaseAppScreen):
             yield self._detail_row("Scope", "Global fallback defaults and paste collapse")
             yield self._detail_row("Save", STAGED_SAVE_BEHAVIOR_COPY)
             return
-        elif summary.category is SettingsCategoryId.PROVIDERS_MODELS:
-            # TASK-33007.4: Applies to, Next new chat, the focused field and
-            # Key, composed beside the card (spec mock (c)).
-            from ..Settings_Modules.providers_models_card import (
-                compose_providers_models_inspector,
-            )
-
-            yield from compose_providers_models_inspector(self)
+        elif own_body is not None:
+            yield from own_body
         elif summary.category is SettingsCategoryId.LIBRARY_RAG:
             # UX review item 9 (Scope Inspector clipping): a blank spacer
             # ahead of the RAG-specific guidance, separating it from the
@@ -24008,11 +23942,9 @@ class SettingsScreen(BaseAppScreen):
             "Writes allowed",
             "Yes" if ownership.writes_allowed else "No",
         )
-        # Capture finding 18: Providers & Models keeps raw keys out of its
+        # Capture finding 18: a panel's own body keeps raw keys out of its
         # open rows; each field's key is its config key disclosure's.
-        if ownership.owns_config_sections and (
-            summary.category is not SettingsCategoryId.PROVIDERS_MODELS
-        ):
+        if ownership.owns_config_sections and own_body is None:
             yield self._detail_row(
                 "Owns",
                 "\n".join(ownership.owns_config_sections),
@@ -24406,10 +24338,20 @@ class SettingsScreen(BaseAppScreen):
             if (pane := self._tools_hub_pane()) is not None:
                 pane.set_initial_view_state(self._tools_hub_initial_view_state)
             return
-        if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
-            self._clear_navigation_provider_context()
-            self._select_category(category_value, restore_focus=True)
+        registered = CATEGORY_PANELS.get(category_value)
+        if registered is not None and registered.navigate(self, context):
             return
+        self._clear_navigation_provider_context()
+        self._select_category(category_value, restore_focus=True)
+
+    def _route_to_provider_settings(self, context: Mapping[str, object]) -> None:
+        """Providers & Models' share of ``apply_navigation_context``.
+
+        Its panel's ``navigate`` calls this: a provider deep link or a
+        Console return target preselects the provider form when no unsaved
+        provider edit would be replaced.
+        """
+        category_value = SettingsCategoryId.PROVIDERS_MODELS.value
         return_target: ProviderSettingsNavigationTarget | None = None
         if "return_revision" in context:
             return_target = ProviderSettingsNavigationTarget.from_context(context)
@@ -24493,9 +24435,8 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         """Focus a credential target without replacing its provider's draft."""
 
-        if (
-            self._provider_return_target != target
-            or self.active_category != SettingsCategoryId.PROVIDERS_MODELS.value
+        if self._provider_return_target != target or not (
+            PROVIDERS_MODELS_PANEL.showing(self)
         ):
             return
         current_provider = str(
@@ -24571,7 +24512,7 @@ class SettingsScreen(BaseAppScreen):
             None. This method updates mounted widgets only and does not create a
             SettingsDraft.
         """
-        if self.active_category != SettingsCategoryId.PROVIDERS_MODELS.value:
+        if not PROVIDERS_MODELS_PANEL.showing(self):
             return
         provider_value = str(provider or "").strip()
         if not provider_value:
@@ -25878,7 +25819,8 @@ class SettingsScreen(BaseAppScreen):
                 return
         self._discard_openai_reconnect_review()
         self._discard_local_model_review()
-        if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
+        target = CATEGORY_PANELS.get(category_value)
+        if target is None or not target.keeps_field_focus:
             self._active_settings_field_id = None
             self._clear_provider_suppression_queues()
         # Task 3 (541 v2 UX AC3): the remembered "last-expanded RAG group"
@@ -26053,8 +25995,8 @@ class SettingsScreen(BaseAppScreen):
         """
         self._clear_provider_suppression_queues()
         await super().recompose()
-        if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
-            self._refresh_provider_picker()
+        # As at mount: a no-op unless the provider picker is in the new tree.
+        self._refresh_provider_picker()
         category_value = self._pending_category_focus_value
         if category_value is None:
             return
@@ -26137,14 +26079,9 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_console_behavior_field_guidance()
             self._scroll_impact_pane_to_field_guide(active_category)
             return
-        if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
+        registered = CATEGORY_PANELS.get(active_category)
+        if registered is None or not registered.focus(self, widget_id):
             self._active_settings_field_id = None
-            return
-        self._active_settings_field_id = self._guided_field_id(
-            active_category, widget_id
-        )
-        self._refresh_provider_field_guidance()
-        self._scroll_impact_pane_to_field_guide(active_category)
 
     def _guided_field_id(
         self, category: SettingsCategoryId, widget_id: str
@@ -29973,7 +29910,7 @@ class SettingsScreen(BaseAppScreen):
         if (
             not self.is_mounted
             or token is not self._openai_reconnect_token
-            or self._active_category_id() != SettingsCategoryId.PROVIDERS_MODELS
+            or not PROVIDERS_MODELS_PANEL.showing(self)
             or self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
         ):
             return False
@@ -33617,6 +33554,71 @@ class SettingsScreen(BaseAppScreen):
             self._scroll_impact_pane_to_field_guide(category)  # rows above it went
         self.app.notify("Settings category changes reverted.", severity="information")
 
+    def _test_provider_settings(self) -> None:
+        """Providers & Models' ``t``: test the draft's readiness, probing when it can."""
+        live_probe_url = self._provider_live_probe_base_url()
+        detail, summary, passed = self._provider_readiness_test_report()
+        provider = self._provider_widget_value()
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_test_staged_config(provider),
+            background_credentials=True,
+        )
+        key_check = not live_probe_url and self._provider_key_check_applies(
+            provider
+        )
+        unavailable = (
+            self._provider_key_check_unavailable(provider, readiness)
+            if key_check and readiness.ready
+            else None
+        )
+        if unavailable is not None:
+            self._show_provider_key_check_unavailable(unavailable)
+            return
+        if key_check:
+            # TASK-33005.4 (ADR-012 amendment 2026-09-26): the endpoint a
+            # send would use for this draft ("" lets the provider's own
+            # resolver name it, e.g. an engine preset's default).
+            live_probe_url = (
+                effective_provider_endpoint(
+                    provider_config_key(provider),
+                    str(
+                        self._provider_current_draft_values().get("endpoint") or ""
+                    ).strip(),
+                    self._provider_config(provider),
+                )
+                or ""
+            )
+        # task-191 / TASK-33005.4 (AC#11): a configured provider is
+        # listed even before a model is chosen -- that is how a first
+        # run finds one.
+        if readiness.ready and (live_probe_url or key_check):
+            identity = self._provider_current_draft_identity()
+            token = None
+            if identity is not None:
+                try:
+                    token = self._provider_evidence_store().begin(identity)
+                except ValueError:
+                    identity = None
+            self._provider_test_result = self._provider_readiness_test_report(
+                checking=True
+            )[0]
+            self._update_provider_test_result()
+            self._provider_endpoint_probe_worker(
+                live_probe_url,
+                provider_config_key(self._provider_widget_value()),
+                identity,
+                token,
+                getattr(self, "_provider_test_draft_generation", 0),
+                key_check=key_check,
+            )
+            return
+        self._provider_test_result = detail
+        self._update_provider_test_result()
+        self.app.notify(
+            summary, severity="information" if passed else "warning", markup=False
+        )
+
     def action_settings_test_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
@@ -33638,69 +33640,8 @@ class SettingsScreen(BaseAppScreen):
                 severity="warning",
             )
             return
-        if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
-            live_probe_url = self._provider_live_probe_base_url()
-            detail, summary, passed = self._provider_readiness_test_report()
-            provider = self._provider_widget_value()
-            readiness = get_provider_readiness(
-                provider,
-                self._provider_test_staged_config(provider),
-                background_credentials=True,
-            )
-            key_check = not live_probe_url and self._provider_key_check_applies(
-                provider
-            )
-            unavailable = (
-                self._provider_key_check_unavailable(provider, readiness)
-                if key_check and readiness.ready
-                else None
-            )
-            if unavailable is not None:
-                self._show_provider_key_check_unavailable(unavailable)
-                return
-            if key_check:
-                # TASK-33005.4 (ADR-012 amendment 2026-09-26): the endpoint a
-                # send would use for this draft ("" lets the provider's own
-                # resolver name it, e.g. an engine preset's default).
-                live_probe_url = (
-                    effective_provider_endpoint(
-                        provider_config_key(provider),
-                        str(
-                            self._provider_current_draft_values().get("endpoint") or ""
-                        ).strip(),
-                        self._provider_config(provider),
-                    )
-                    or ""
-                )
-            # task-191 / TASK-33005.4 (AC#11): a configured provider is
-            # listed even before a model is chosen -- that is how a first
-            # run finds one.
-            if readiness.ready and (live_probe_url or key_check):
-                identity = self._provider_current_draft_identity()
-                token = None
-                if identity is not None:
-                    try:
-                        token = self._provider_evidence_store().begin(identity)
-                    except ValueError:
-                        identity = None
-                self._provider_test_result = self._provider_readiness_test_report(
-                    checking=True
-                )[0]
-                self._update_provider_test_result()
-                self._provider_endpoint_probe_worker(
-                    live_probe_url,
-                    provider_config_key(self._provider_widget_value()),
-                    identity,
-                    token,
-                    getattr(self, "_provider_test_draft_generation", 0),
-                    key_check=key_check,
-                )
-                return
-            self._provider_test_result = detail
-            self._update_provider_test_result()
-            self.app.notify(
-                summary, severity="information" if passed else "warning", markup=False
-            )
+        registered = CATEGORY_PANELS.get(self._active_category_id())
+        if registered is not None and registered.test(self):
             return
         if self._active_category_id() is SettingsCategoryId.DIAGNOSTICS:
             self._diagnostics_validation_result = "Config validation: running"
