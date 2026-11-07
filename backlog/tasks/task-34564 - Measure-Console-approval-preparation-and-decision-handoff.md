@@ -3,15 +3,16 @@ id: TASK-34564
 title: Measure Console approval preparation and decision handoff
 status: In Progress
 assignee:
-- '@codex'
-created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 21:37
+  - '@codex'
+created_date: '2026-10-06 06:41'
+updated_date: '2026-11-07 00:31'
 labels: []
 dependencies: []
 documentation:
-- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-- backlog/decisions/235-console-approval-interaction-and-feedback.md
-- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+  - >-
+    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+  - backlog/decisions/235-console-approval-interaction-and-feedback.md
+  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -75,8 +76,10 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 2026-10-13 current planning preparation only: actual Rules mergea7bde4e5; queue-armed font6ad961cf (not merged),47 source-bound tests; docs-only approval preparation78e5aff9. Follow appended current preparation in Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. Preserve152paths/134owners/six task histories/ADR235/current open AC. Actual post3023 merged source binding and pre-edit supported launch/original-control/input-clock contract remain prerequisites before functional release. Preserve config-free Rules Stop/chip/custody/provider seams, existing shared CLI/URL redaction, unchanged caps/census190/P0 selection20/fourprocess/sixlanes. BrowserCDP does not qualify native physical input/paint. ADR required:no new for metadata; existing decisions and required behavior amendments retained. No newID/Done/current acceptance/private-code exception/paid/key/native/publication waiver.
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented the bounded content-free timing recorder and warm nearest-rank summary contract. The contract retains the 100/200 ms budgets, 40-warm-sample minimum, separate first-use cases, and explicit refusal of missing-paint, uncalibrated-clock, mixed-transport and compositor-as-native claims.
 
@@ -92,3 +95,6 @@ Current1c72 integration: supported private control/recorder release accepted by 
 ## Renumbering provenance
 
 Originally TASK-34411 in the reviewed approval checkout. Renumbered to TASK-34564 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.
+
+2026-11-06 resync: recorder16 and refused-startup1 contracts pass. No qualified native/browser presented-frame timing samples or40-warm distributions exist. Guarded alternative capability probes prepared but unexecuted pending user method approval; user expressly requires timing before auto-merge. Actual Windows execution is separately proven and is not a timing substitute. Existing ADR235/236 applies; no new authority. Evidence Docs/superpowers/qa/2026-11-06-console-approval-resync/README.md. Status remains In Progress.
+<!-- SECTION:NOTES:END -->

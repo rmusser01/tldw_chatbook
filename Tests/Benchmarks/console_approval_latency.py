@@ -65,7 +65,7 @@ class ApprovalTimingRecorder:
         ):
             raise ValueError("unsupported_timing_marker")
         if (
-            type(timestamp_ns) is not int or timestamp_ns < 0
+            type(timestamp_ns) is not int or timestamp_ns < 0  # noqa: E721 - Strict int only.
         ):  # Reject bool as a timestamp.
             raise ValueError("invalid_timestamp")
         if len(self._records) >= MAX_RECORDS:

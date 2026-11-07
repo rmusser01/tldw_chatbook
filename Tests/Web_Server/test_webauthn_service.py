@@ -1,5 +1,5 @@
 # Tests/Web_Server/test_webauthn_service.py
-"""In-process WebAuthn ceremonies for the served passkey service (ADR-235).
+"""In-process WebAuthn ceremonies for the served passkey service (ADR-354).
 
 Both halves of the ceremony -- relying party and a minimal software
 authenticator -- are built in-process.  The fake authenticator produces
@@ -113,7 +113,7 @@ def _register(
 ):
     """Drive register_begin -> register_complete with a fresh P-256 key."""
     begin = service.register_begin(label=label)
-    # Discoverable credentials are mandated (ADR-235): roaming authenticators
+    # Discoverable credentials are mandated (ADR-354): roaming authenticators
     # otherwise create server-side credentials that login (allowCredentials [])
     # can never offer.
     assert begin["publicKey"]["authenticatorSelection"] == {

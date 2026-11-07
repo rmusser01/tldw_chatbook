@@ -3,17 +3,18 @@ id: TASK-34568
 title: Acknowledge Console decisions and grant outcomes honestly
 status: In Progress
 assignee:
-- '@codex'
-created_date: 2026-10-06 06:42
-updated_date: 2026-10-15 21:48
+  - '@codex'
+created_date: '2026-10-06 06:42'
+updated_date: '2026-11-07 00:31'
 labels: []
 dependencies:
-- TASK-34565
-- TASK-34566
+  - TASK-34565
+  - TASK-34566
 documentation:
-- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-- backlog/decisions/235-console-approval-interaction-and-feedback.md
-- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+  - >-
+    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+  - backlog/decisions/235-console-approval-interaction-and-feedback.md
+  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -32,6 +33,7 @@ Show that an answer registered and distinguish it from grant application, final 
 - [ ] #4 Stale or reordered observations affect only the owning chat and call, cannot overwrite newer states, and never authorize execution or enter durable capture.
 - [ ] #5 Later owner-confirmed grouped grant success corrects prior failure copy without changing actual permission effects.
 - [ ] #6 Completed individual tool rows cannot retain shared Starting feedback; grant facts remain visible.
+- [x] #7 Phone and desktop decisions settle through the same host arbitration; only one verdict wins, stale gestures cannot authorize replacement work, and feedback reflects actual settlement rather than transport delivery.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -67,9 +69,13 @@ PR3036 review remediation: reproduce the concrete source/CI findings, implement 
 
 Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
+
+2026-11-06 resync: cover externally originated decision settlement and competing desktop gestures through the actual relay/controller/host seam; retain FIFO, cancellation, deadlines, and display-only observations. Existing approval ADR235 and relay ADR236; no new authority. Plan Docs/superpowers/plans/2026-11-06-console-approval-resync.md.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Task5 adds optional owner observations, a monotonic session-only feedback store, and retained tool feedback after cards clear. Controller receipt follows Event release; final settlement uses the existing interrupt-host arbitration seam. Actual service writes report their own applied scope; missing writers, failed writes and raw Disarm remain honest. No permission returns, stamp keys, None presence, refusal precedence or trace counts were changed. Legacy name groups project only to observed invocation members; group completion/exact-input save success remains unknown when not proven.
 
@@ -86,3 +92,6 @@ Final current-owner compatibility check reproduced an AttributeError when an exi
 ## Renumbering provenance
 
 Originally TASK-34415 in the reviewed approval checkout. Renumbered to TASK-34568 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.
+
+2026-11-06 relay integration6 andpublisher21 pass: eitherorigin canwin existing host settlement; delivery acknowledgement is not acceptance; later cancellation prevents grant/dispatch; staleids/FIFO and staged-card retirement covered. No arbitration/grant lifetime change. Providers522pass1existingWindowsskip; realWindows deny0workers/once1nativeworker withmatchingrootpin andcleanup proved. Physicalfeedbacktiming remains open. Existing ADR235/236 applies; no new authority. Evidence Docs/superpowers/qa/2026-11-06-console-approval-resync/README.md. Status remains In Progress.
+<!-- SECTION:NOTES:END -->

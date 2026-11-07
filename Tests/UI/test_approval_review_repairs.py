@@ -1,6 +1,7 @@
 """Real mount, teardown and navigation regressions from the approval review."""
 
 import asyncio
+import os
 import threading
 from dataclasses import replace
 from typing import ClassVar
@@ -122,9 +123,9 @@ async def test_actual_unmount_cancels_held_details_and_rejects_queued_page(monke
         identity = card._details_identity
         try:
             await card.remove()
-            assert cancel.is_set(), (
-                "Textual worker cancellation leaves preparation alive"
-            )
+            assert (
+                cancel.is_set()
+            ), "Textual worker cancellation leaves preparation alive"
             assert card._current_details_identity() is None
             assert not card._details._arguments and not card._details._targets
             assert not card._details._pages and card._details_opener is None
@@ -415,13 +416,18 @@ async def test_rapid_replacement_does_not_orphan_layout_coroutines():
             if state != inspect.CORO_CLOSED:
                 unclosed.append(state)
                 work.close()
-    assert not unclosed, (
-        f"Retired layout workers retained unclosed coroutines: {unclosed}"
-    )
+    assert (
+        not unclosed
+    ), f"Retired layout workers retained unclosed coroutines: {unclosed}"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("control", ["\n", "\u202e"])
+# Windows rejects newline and colon in native directory names. Exercise legal
+# line-separator/formatting names everywhere, plus admitted newline on POSIX;
+# pure raw-metadata and real MCP tests retain newline coverage on Windows.
+@pytest.mark.parametrize(
+    "control", ["\u2028", "\u202e"] + (["\n"] if os.name != "nt" else [])
+)
 async def test_admitted_raw_directory_metadata_is_literal_but_command_multiline(
     tmp_path, control
 ):
@@ -432,7 +438,7 @@ async def test_admitted_raw_directory_metadata_is_literal_but_command_multiline(
     from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
     from tldw_chatbook.Chat.approval_presentation import _build_approval_payload
 
-    directory = tmp_path / ("directory" + control + "Timeout: FORGED")
+    directory = tmp_path / ("directory" + control + "Timeout FORGED")
     directory.mkdir()
     provider = _provider(tmp_path)
     command = "printf first\nprintf second"
@@ -597,9 +603,9 @@ async def test_queued_details_scroll_stays_with_exact_live_page(
         assert before == (0 if transition == "settled" else 1)
         scroll_attempts.clear()
         callback_args[0](*callback_args[1:], **callback_kwargs)
-        assert area.scroll_y == (5 if transition == "current" else before), (
-            "queued restore crossed its Details page lifetime"
-        )
+        assert area.scroll_y == (
+            5 if transition == "current" else before
+        ), "queued restore crossed its Details page lifetime"
         if transition == "settled":
             assert app.decided and not area.text
             assert not scroll_attempts, "settled disclosure received a stale scroll"

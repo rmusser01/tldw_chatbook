@@ -491,7 +491,109 @@ def test_dead_defines_test_is_gone():
     assert not hasattr(module, "defines_test")
 
 
+#: Census files listed by function (or, for a one-test file, by parametrize
+#: case) instead of whole, so no UI Fast Lane shard takes one whole
+#: (TASK-35834, TASK-36512). A test function or case added to one of them
+#: runs in no lane until it is listed too, which the test below catches. It
+#: counts top-level functions only, so it refuses a test class in a split file
+#: rather than let the class's methods go unlisted.
+SPLIT_CENSUS_FILES = (
+    "Tests/UI/test_evals_character_bench_save_publication.py",
+    "Tests/UI/test_research_run_refresh_publication.py",
+    "Tests/UI/test_library_note_export_responsiveness.py",
+    "Tests/UI/test_schedules_reminder_edit_identity.py",
+    "Tests/UI/test_study_quiz_start_responsiveness.py",
+    "Tests/UI/test_image_gen_demo_request_lifetime.py",
+    "Tests/UI/test_mcp_import_validation_recovery.py",
+    "Tests/UI/test_mcp_import_pending_file_drafts.py",
+    "Tests/UI/test_chunking_lab_sample_import_drafts.py",
+    "Tests/UI/test_dictation_button_delivery.py",
+    "Tests/UI/test_dictation_view_retirement.py",
+    "Tests/UI/test_settings_model_defaults_rows.py",
+    "Tests/UI/test_settings_connect_rows.py",
+    "Tests/UI/test_settings_connect_tab_budget.py",
+    "Tests/UI/test_settings_default_model_picker.py",
+    "Tests/UI/test_mcp_permissions_handoff.py",
+)
 
+
+def _case_count(function: ast.AST) -> int:
+    """How many cases pytest makes of a test's literal parametrize lists."""
+    count = 1
+    for decorator in function.decorator_list:
+        if (
+            isinstance(decorator, ast.Call)
+            and getattr(decorator.func, "attr", "") == "parametrize"
+        ):
+            values = decorator.args[1]
+            assert isinstance(
+                values, (ast.List, ast.Tuple)
+            ), f"{function.name}: list it by function, its cases are not a literal list"
+            count *= len(values.elts)
+    return count
+
+
+@pytest.mark.parametrize("path", SPLIT_CENSUS_FILES)
+def test_a_split_census_file_keeps_every_test_gated_once(path):
+    root = SCRIPT.parents[1]
+    spec = importlib.util.spec_from_file_location("cen_split", SCRIPT)
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    tree = ast.parse((root / path).read_text(encoding="utf-8"))
+    classes = [
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Test")
+    ]
+    assert not classes, f"{path} defines test classes {classes}: rename it or write its tests as functions"
+    functions = {  # pytest's default python_functions: the "test" prefix
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test")
+        # pytest never collects a fixture, so listing one would refuse the shard
+        and not any(checker._fixture_call(d) for d in node.decorator_list)
+    }
+    entries = [
+        line.strip()
+        for line in (root / "scripts/ui_pr_gate_census.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    selected = [entry for entry in entries if entry.split("::", 1)[0] == path]
+    assert path not in selected, f"{path} is listed whole again"
+    twice = sorted({entry for entry in selected if selected.count(entry) > 1})
+    assert not twice, f"listed twice: {twice}"
+    listed = 0
+    for name, function in functions.items():
+        selector = f"{path}::{name}"
+        cases = [entry for entry in selected if entry.startswith(selector + "[")]
+        if selector in selected:
+            listed += 1  # a function selector runs every parameter case
+            assert not cases, f"{selector} is listed beside its own cases"
+            continue
+        # Listed by case: each id must be one pytest makes, and all of them listed.
+        assert cases, f"{selector} is not in the census, so no lane runs it"
+        for case in cases:
+            assert (
+                checker.resolve_node(root / path, case.split("::", 1)[1]) is None
+            ), case
+        assert len(set(cases)) == _case_count(function), f"{selector} misses a case"
+        listed += len(set(cases))
+    assert listed == len(selected), "a selector names no test this file defines"
+    # Reading the actual matrix prevents a split that still deals every
+    # selector back into one job, even though the census has no duplicates.
+    import yaml
+
+    jobs = yaml.safe_load(
+        (root / ".github/workflows/derived-artifacts.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    total = len(jobs["ui-fast-lane"]["strategy"]["matrix"]["shard"])
+    assert (
+        len({index % total for index, entry in enumerate(entries) if entry in selected})
+        > 1
+    )
 
 
 def test_removing_an_older_noncritical_member_fails_current_floor(monkeypatch, capsys):

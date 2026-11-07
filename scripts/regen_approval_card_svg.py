@@ -24,7 +24,6 @@ from tldw_chatbook.Chat.approval_presentation import (
     capture_approval_view,
     profile_authority,
 )
-from tldw_chatbook.css.Themes.themes import ThemeVariableDefaultsMixin
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 
@@ -44,7 +43,7 @@ CALL = {
 }
 
 
-class _CardApp(ThemeVariableDefaultsMixin, ConsolidatedCSSApp):
+class _CardApp(ConsolidatedCSSApp):
     TITLE = "tldw chatbook"
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 

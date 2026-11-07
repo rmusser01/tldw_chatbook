@@ -776,7 +776,7 @@ class ChatbookWebServerMixin:
                 (:func:`_build_production_mobile_provider_gateway`), so
                 production sends resolve providers without an override.
             webauthn_service: Injected WebAuthn ceremony service
-                (``Web_Server.webauthn_service.WebAuthnService``, ADR-235).
+                (``Web_Server.webauthn_service.WebAuthnService``, ADR-354).
                 ``None`` (the default) means passkeys are unavailable:
                 every passkey route answers ``503`` and the login/devices
                 pages omit their passkey controls. Tests inject a service
@@ -1027,7 +1027,7 @@ class ChatbookWebServerMixin:
             {
                 "/auth/login",
                 "/auth/bootstrap",
-                # Public origin-checked passkey login ceremonies (ADR-235);
+                # Public origin-checked passkey login ceremonies (ADR-354);
                 # registration stays behind the session + CSRF middleware.
                 "/auth/passkeys/login/begin",
                 "/auth/passkeys/login/complete",
@@ -1296,7 +1296,7 @@ class ChatbookWebServerMixin:
                 '<button type="button" class="device-rename">Rename</button> '
                 f"{action}</section>"
             )
-        # Passkeys (ADR-235): with a ceremony service, the page offers
+        # Passkeys (ADR-354): with a ceremony service, the page offers
         # registration ("Add a passkey", revealed by passkeys.js only in
         # WebAuthn-capable browsers) and lists every stored credential with a
         # Remove control keyed by its full public credential id; without one
@@ -1459,7 +1459,7 @@ class ChatbookWebServerMixin:
         nonce = self._web_auth.issue_bootstrap()
         return f"{self.public_url.rstrip('/')}/auth/bootstrap?nonce={quote(nonce)}"
 
-    # --- Passkey routes (ADR-235) ------------------------------------------
+    # --- Passkey routes (ADR-354) ------------------------------------------
     #
     # Availability is SERVICE PRESENCE, not a property on it: a service
     # exists only when RP derivation succeeded (domain public_url), so
@@ -1537,7 +1537,7 @@ class ChatbookWebServerMixin:
         )
 
     async def handle_passkeys_login_complete(self, request):
-        """Verify an assertion and mint a persistent device session (ADR-235).
+        """Verify an assertion and mint a persistent device session (ADR-354).
 
         The middleware has already origin-checked this public POST; the
         handler re-validates for the effective client IP exactly like the
@@ -2409,7 +2409,7 @@ def create_server(
             "INSECURE DEVELOPMENT MODE: remote Chatbook content is using plaintext HTTP"
         )
 
-    # Passkeys (ADR-235): the ceremony service exists only when the finalized
+    # Passkeys (ADR-354): the ceremony service exists only when the finalized
     # public_url anchors a registrable-domain RP. An IP literal, localhost, or
     # a missing public_url cannot, so the server degrades to token-only login
     # (service None -> 503 routes, no UI controls) instead of failing to boot.

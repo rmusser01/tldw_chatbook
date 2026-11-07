@@ -3,16 +3,17 @@ id: TASK-34565
 title: Capture truthful Console approval scope and request presentation
 status: In Progress
 assignee:
-- '@codex'
-created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 22:38
+  - '@codex'
+created_date: '2026-10-06 06:41'
+updated_date: '2026-11-07 00:31'
 labels: []
 dependencies:
-- TASK-34564
+  - TASK-34564
 documentation:
-- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-- backlog/decisions/235-console-approval-interaction-and-feedback.md
-- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+  - >-
+    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+  - backlog/decisions/235-console-approval-interaction-and-feedback.md
+  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -32,6 +33,7 @@ Give approval cards accurate action, target, authority and supported scope infor
 - [ ] #5 Large grouped target previews stay bounded with explicit omissions, while complete captured redacted targets remain available through Details.
 - [ ] #6 Complete URL/URI display values redact query credentials, preserving original matching inputs.
 - [ ] #7 Direct MCP fallback approvals capture truthful profile/server ownership and retain supported scopes.
+- [x] #8 Served phone approval publication exposes only the captured supported scope choices and preserves the existing four-field relay contract and original invocation arguments.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,9 +68,13 @@ PR3036 review remediation: reproduce the concrete source/CI findings, implement 
 Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 Review repair on rebased c91c1f2/public devb8c602: RED admitted MCP targets/action/profile/location/scope with newline/CR/ESC/format controls while original args/profile ID/options stay exact. Repair only existing captured display projection with the house visible unicode-escape pattern; raw command viewport remains complete/multiline. Correct scope-specific MCP Tools Remove/Revoke versus MCP Permissions copy and shared Agent stated reason label, preserving Default/raw-chat semantics. ADR required:no new; existing ADR235/security literal-display contract.
+
+2026-11-06 resync: preserve modern provider/runtime security owners during rebase, verify captured scopes in both desktop and phone relay publication with actual captured producer rows, retain original matching inputs and wire schema. Existing approval ADR235 and relay ADR236; no new policy or authority. Plan Docs/superpowers/plans/2026-11-06-console-approval-resync.md.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented frozen owner-captured approval authority, row and batch presentation, provider-specific scope copy, and the semantic revision payload interface. Counts preserve addressable calls; independent same-tool MCP remembered-input choices are withheld without changing stamps. Captured permission-profile IDs identify the actual gate profile. Raw grants remain limited to this Console chat and clear on Disarm or exit; Default persistent inheritance is explained.
 
@@ -91,3 +97,6 @@ Review repair on released c91c1f2/public b8c602: actual admitted MCP controls an
 ## Renumbering provenance
 
 Originally TASK-34412 in the reviewed approval checkout. Renumbered to TASK-34565 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.
+
+2026-11-06 resync preserves current provider security/history/checkpoint/project-index ownership. Phone publication narrows to captured supported choices with unchanged4safe fields/originalarguments. Whole-branch target finding repaired for shipping file_path/directory_path, verified through actual builtin review producer. Settings Tools&MCP revocation copy matches current destination. Final display18/capture19/Details24/privacy10 pass; native actualread witness89bytes/rootpin/cleanup passes. Native frame qualification remains open. Existing ADR235/236 applies; no new authority. Evidence Docs/superpowers/qa/2026-11-06-console-approval-resync/README.md. Status remains In Progress.
+<!-- SECTION:NOTES:END -->

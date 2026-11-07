@@ -11,7 +11,7 @@ repo = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(repo))
 assert Path(importlib.util.find_spec("Tests").origin).is_relative_to(repo)
 assert Path(importlib.util.find_spec("tldw_chatbook").origin).is_relative_to(repo)
-from Tests import real_profile_guard  # Assert origins first.
+from Tests import real_profile_guard  # noqa: E402 - Verify origins first.
 
 real_profile_guard.install()
 original_home = real_profile_guard._real_home()
@@ -51,7 +51,7 @@ print(
     ),
     flush=True,
 )
-from tldw_chatbook.Backup_Recovery import bootstrap  # Isolate first.
+from tldw_chatbook.Backup_Recovery import bootstrap  # noqa: E402 - Isolate first.
 
 assert bootstrap.effective_config_path().is_relative_to(root)
 assert bootstrap.default_bootstrap_root().is_relative_to(root)
@@ -61,12 +61,23 @@ admission = bootstrap.startup_permission(
 print(json.dumps({"startup_permission": admission}), flush=True)
 if not admission[0]:
     raise SystemExit(1)
-import pytest  # Isolate before collection.
+import pytest  # noqa: E402 - Isolate before collection.
 
 target = (
     sys.argv[1] if len(sys.argv) > 1 else "Tests/UI/test_approval_action_ownership.py"
 )
 assert target in {
+    "Tests/UI/test_approval_details_privacy.py",
+    "Tests/Chat/test_approval_display_controls.py",
+    "Tests/UI/test_approval_review_repairs.py",
+    "Tests/Web_Server/test_served_relay_publisher.py",
+    "Tests/Chat/test_console_relay_approval_integration.py",
+    "Tests/CI/test_console_approval_critical_gate.py",
+    "Tests/CI/test_ui_pr_gate_census_checker.py",
+    "Tests/CI/test_ci_queue_pressure_contract.py",
+    "Tests/CI/test_derived_artifacts_workflow.py",
+    "Tests/CI/test_console_p0_regression_gate.py",
+    "Tests/UI/test_console_response_rules.py",
     "Tests/MCP/test_redaction_value_shapes.py",
     "Tests/MCP/test_redaction.py",
     "Tests/Chat/test_console_interrupt_host_wiring.py",

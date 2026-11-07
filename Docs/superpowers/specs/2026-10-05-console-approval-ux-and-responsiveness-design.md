@@ -2,7 +2,7 @@
 
 Date: 2026-10-05
 
-Status: Approved for implementation planning after owner review and source review corrections. Implementation has not started.
+Status: Owner-approved design, implemented and integrated with current Console owners. Final native/browser presented-frame timing qualification remains mandatory before auto-merge.
 
 ADR: [ADR-235](../../../backlog/decisions/235-console-approval-interaction-and-feedback.md) (Accepted).
 
@@ -191,3 +191,9 @@ Permission explanations should state how access serves the current task in brief
 Action buttons should directly answer the request rather than rely on generic confirmation labels. [Microsoft dialog guidance](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/dialogs-and-flyouts/dialogs) supports concise, specific responses. [VS Code approval documentation](https://code.visualstudio.com/docs/agents/run/approvals) provides a relevant example of separately named grant scopes; Chatbook retains its own existing scope semantics.
 
 Synchronous work must stay outside the UI loop, and threaded workers marshal UI changes safely. [Textual worker guidance](https://textual.textualize.io/guide/workers/) supports this implementation constraint. These sources guide the design; they do not supply Chatbook latency measurements.
+
+## Current served relay integration (2026-11-06)
+
+Desktop and phone submit to the same current controller/interrupt host for the exact round; only host settlement can establish acceptance after cancellation and deadline arbitration. A phone delivery acknowledgement is not a saved grant or proof of execution. Settlement retires staged desktop choices and queued callbacks, preventing a resolved card from committing into its replacement. The relay retains its four safe call fields and intersects producer options with captured legal choices, so presentation can narrow choices but cannot grant new authority. Original arguments, grant domains, stamp ownership and wire contracts remain unchanged (ADR235/236).
+
+The owner explicitly requires actual Windows dispatch and native timing qualification before auto-merge. Functional, headless, compositor and server-frame results remain distinct from physical presentation/clock evidence; the proposed100/200ms/40-warm-sample budgets are not qualified by those substitutes.

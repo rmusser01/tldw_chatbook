@@ -19,7 +19,7 @@ def authority(kind="mcp", profile="default", stamp="tool_name"):
         "Captured binding",
         "profile",
         stamp,
-        "Settings: tool permissions",
+        "Settings ▸ Tools & MCP ▸ Permissions",
         profile == "default",
     )
 

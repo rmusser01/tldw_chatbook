@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from threading import Event
 from typing import TYPE_CHECKING
+from unicodedata import category
 
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 
@@ -69,6 +70,14 @@ def iter_redacted_details(
     index = 0
     try:
         for chunk in chunks():
+            # Keep JSON whitespace and ordinary Unicode literal; prevent TextArea
+            # line splitting, bidi controls and unencodable surrogates in data.
+            chunk = "".join(
+                json.dumps(char, ensure_ascii=True)[1:-1]
+                if category(char) in {"Cf", "Zl", "Zp", "Cs"}
+                else char
+                for char in chunk
+            )
             offset = 0
             while offset < len(chunk):
                 count = min(page_chars + 1 - len(buffer), len(chunk) - offset)

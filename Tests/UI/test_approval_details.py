@@ -1,9 +1,11 @@
 """Complete redacted pages and stale delivery must not change another request."""
 
 import asyncio
+from copy import deepcopy
 import json
 from dataclasses import replace
 from typing import ClassVar
+from unicodedata import category
 
 import pytest
 
@@ -536,3 +538,91 @@ def test_complete_details_pages_redact_captured_nested_urls_and_preserve_origina
     assert call.arguments["url"] == row.argument_sets[0]["url"] == url
     assert row.argument_sets[0]["nested"] == arguments["nested"]
     assert arguments["nested"]["items"][0] == uri
+
+
+@pytest.mark.parametrize("page_chars", [1, 7, 73])
+def test_paged_details_escape_unicode_controls_in_keys_and_values(page_chars):
+    path = "資料/😀/target\u202e\u2028\u2029\ud800.md"
+    key = "field\u202e\u2028\u2029\ud800"
+    arguments = [{"file_path": path, "nested": {key: [path]}, "password": "secret"}]
+    original = deepcopy(arguments)
+    pages = list(
+        details.iter_redacted_details(arguments, page_chars=page_chars, targets=(path,))
+    )
+    text = "".join(page.text for page in pages)
+    assert not any(category(char) in {"Cf", "Zl", "Zp", "Cs"} for char in text)
+    assert all(len(page.text) <= page_chars for page in pages)
+    assert [page.index for page in pages] == list(range(len(pages)))
+    assert all(page.has_more for page in pages[:-1]) and not pages[-1].has_more
+    assert "資料/😀" in text and "\\u8cc7" not in text
+    assert "\n" in text  # Structural pretty-print newlines remain JSON whitespace.
+    for escaped in ("\\u202e", "\\u2028", "\\u2029", "\\ud800"):
+        assert escaped in text
+    text.encode("utf-8")
+    assert json.loads(text) == [
+        {"captured_targets": [path]},
+        {"file_path": path, "nested": {key: [path]}, "password": "***"},
+    ]
+    assert arguments == original and "secret" not in text
+
+
+@pytest.mark.asyncio
+async def test_mounted_details_keep_unicode_separators_literal_across_pages():
+    from textual.widgets import Button, TextArea
+
+    from Tests.UI.test_console_mcp_approval import _sample_calls
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+    path = "資料/😀/target\u202e\u2028\u2029.md"
+    key = "field\u202e\u2028\u2029"
+    arguments = {
+        "file_path": path,
+        "nested": {key: path},
+        "content": "資料😀" * 2000,
+        "password": "secret",
+    }
+    original = deepcopy(arguments)
+    call = _sample_calls()[0]
+    row = replace(
+        view().rows[0],
+        verdict_key=call["llm_name"],
+        call_count=1,
+        argument_sets=(arguments,),
+    )
+    captured = replace(view(), rows=(row,), call_count=1)
+    app = _DetailsCardHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [call],
+            timeout_seconds=0,
+            round_id="round",
+            view=captured,
+            presentation_revision=1,
+        )
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
+        await pilot.pause()
+        assert await pilot.click(card.query_one(".approval-details-open", Button))
+        await pilot.pause()
+        area = card.query_one("#approval-details-page", TextArea)
+        texts = []
+        for index in range(6):
+            await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
+            await pilot.pause()
+            page = card._details._pages[index]
+            assert area.text == page.text
+            assert not any(
+                category(char) in {"Cf", "Zl", "Zp", "Cs"} for char in area.text
+            )
+            texts.append(area.text)
+            if not page.has_more:
+                break
+            assert await pilot.click(card.query_one("#approval-details-next", Button))
+            await pilot.pause()
+        else:
+            pytest.fail(
+                "Unicode argument pages did not finish within the bounded fixture"
+            )
+        assert len(texts) > 1
+        assert json.loads("".join(texts)) == [dict(arguments, password="***")]
+        assert arguments == original and not app.decided
