@@ -20996,8 +20996,8 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Push control/Workbench state into the widgets only when it moved.
 
-        The one place `_last_console_control_state` /
-        `_last_console_workbench_state` are read and written (task-15452).
+        The one place `_last_console_control_state` / `_last_console_workbench_state`
+        are compared and recorded (task-15452); a send's release forgets the latter.
         Every caller that pushes must go through here: the control bar
         consumes `workbench_state.actions` as well as `control_state`, so a
         caller that pushed only the Workbench widgets and then recorded the
