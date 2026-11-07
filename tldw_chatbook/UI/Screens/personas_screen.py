@@ -512,6 +512,10 @@ _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it he
 #: The items list's recovery copy when a character read fails (spec 1.5.4,
 #: with Retry; frame slice B2b). Dev showed "No characters yet" there.
 _CHARACTERS_LOAD_FAILED = "Characters could not be loaded."
+#: The centre over that failure (TASK-33910.46): dev said "No characters yet".
+_CHARACTERS_LOAD_FAILED_GUIDANCE = (
+    "Characters could not be loaded — use [b]Retry[/b] to read the list again."
+)
 #: F-037: reason shown on local-only actions (card Edit, inspector
 #: export/delete) while browsing server-owned characters.
 _SERVER_READ_ONLY_TOOLTIP = frame_state.SERVER_CHARACTERS_READ_ONLY
@@ -1053,6 +1057,9 @@ class PersonasScreen(BaseAppScreen):
         # The unfiltered COUNT, the title's "of M" while a search or tag
         # narrows the list; None until known (spec 1.5.1).
         self._character_unfiltered_total: int | None = None
+        # The server's last unfiltered (server id, total, known): a server
+        # search's "of M" (TASK-33910.37). Dev showed a bare count.
+        self._server_unfiltered_total: tuple[str | None, int, bool] | None = None
         # The last character reload failed: the title reads "(?)" (spec 1.4.2).
         self._character_list_failed: bool = False
         # The items list's window state, shared with the list (TASK-33910.34):
@@ -1928,6 +1935,7 @@ class PersonasScreen(BaseAppScreen):
         self._set_persona_editor_runtime_source(normalized)
         self._count_cache_key = None
         self._character_unfiltered_total = None
+        self._server_unfiltered_total = None
         self._characters = []
         self._character_total = 0
         self._update_purpose_line()
@@ -2207,6 +2215,26 @@ class PersonasScreen(BaseAppScreen):
         if self._character_list_failed:
             return frame_state.items_border_title("character", total=0, failed=True)
         if self.state.runtime_source == "server":
+            unfiltered = self._server_unfiltered_total
+            if self.state.search_query and unfiltered is not None:
+                server, total, known = unfiltered
+                matched, exact = self._character_total, self._character_total_known
+                # Owner decision 2026-11-05: "12 of 340", or "12 of 100+" when
+                # that page was full with no total; no server call. An M the
+                # search outgrew, a full page at or past a known M, and
+                # "100+ of 100+" say nothing true: the bare count instead.
+                if server == self._active_server_target() and (
+                    (matched < total or (exact and matched == total))
+                    if known
+                    else exact
+                ):
+                    return frame_state.items_border_title(
+                        "character",
+                        total=total,
+                        total_known=known,
+                        matched=matched,
+                        matched_known=exact,
+                    )
             return frame_state.items_border_title(
                 "character",
                 total=self._character_total,
@@ -3494,7 +3522,8 @@ class PersonasScreen(BaseAppScreen):
         """How many of ``kind`` the query matches, with that kind's own search.
 
         Characters count with the list's FTS prefix expression (the database
-        method, not the wrapper that answers 0 on an error); the server
+        method; on dev the wrapper answered 0 on an error, and it raises since
+        TASK-38228); the server
         source asks its search once, as its list does. Personas page the
         service as their list does; lore books and chat dictionaries filter
         names as theirs do. Raises when a kind cannot be read.
@@ -3639,14 +3668,18 @@ class PersonasScreen(BaseAppScreen):
         except Exception as exc:
             if not self._list_fence_is_current(fence):
                 return
-            logger.opt(exception=True).warning("Character window load failed.")
+            # The category only: a database error carries SQL or the file's
+            # path. Dev logged and toasted the text; fixed here (TASK-38228).
+            logger.warning(
+                "Character window load failed (category={}).", type(exc).__name__
+            )
             self._window_read_failed(fence)
             if request.replace:
                 # A failed reload shows no rows of an older sort, tag or source.
                 await self._apply_character_window(
                     request, [], total=0, more=False, failed=True
                 )
-            self._notify(f"Could not load characters: {exc}", "error")
+            self._notify("Could not load characters.", "error")
             return
         if request.replace and not (search or fence.tag):
             self._character_unfiltered_total = total
@@ -3791,6 +3824,14 @@ class PersonasScreen(BaseAppScreen):
                 # "100+" until a short window arrives (spec 1.5.6 "Server").
                 self._character_total = max(total, len(self._characters))
                 self._character_total_known = total_known
+            if fence.runtime_source == "server" and not (
+                fence.query or failed or blank
+            ):
+                self._server_unfiltered_total = (
+                    fence.server_id,
+                    self._character_total,
+                    self._character_total_known,
+                )
             self._update_purpose_line()
             try:
                 library = self.query_one(PersonasLibraryPane)
@@ -4126,8 +4167,9 @@ class PersonasScreen(BaseAppScreen):
                 return
             await self._apply_tag_filter(picked)  # None clears the filter
         except Exception as exc:
-            logger.opt(exception=True).warning("Tag filter failed.")
-            self._notify(f"Tag filter failed: {exc}", "error")
+            # The category only, as the window read (TASK-38228).
+            logger.warning("Tag filter failed (category={}).", type(exc).__name__)
+            self._notify("Could not read character tags.", "error")
         finally:
             self._io_dialog_active = False
 
@@ -16241,6 +16283,8 @@ class PersonasScreen(BaseAppScreen):
         Returns:
             Guidance copy for the current library state.
         """
+        if self._character_list_failed:
+            return _CHARACTERS_LOAD_FAILED_GUIDANCE
         if (self.state.search_query or self.state.tag_filter) and not (
             self._character_total
         ):
