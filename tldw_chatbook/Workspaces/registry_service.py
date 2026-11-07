@@ -894,9 +894,9 @@ class LocalWorkspaceRegistryService:
         try:
             defaults = hook(created)
         except Exception as exc:
-            logger.warning(
-                "Workspace agent provisioning hook failed; error_type={}",
-                type(exc).__name__,
+            # TASK-39060: constant message; the forwarder appends the class.
+            logger.bind(exception_type=type(exc).__name__).warning(
+                "Workspace agent provisioning hook failed"
             )
             return created
         if defaults is None:
@@ -907,9 +907,8 @@ class LocalWorkspaceRegistryService:
                 created.workspace_id, defaults, confirm_read_write=True
             )
         except Exception as exc:
-            logger.warning(
-                "Workspace agent defaults could not be persisted; error_type={}",
-                type(exc).__name__,
+            logger.bind(exception_type=type(exc).__name__).warning(
+                "Workspace agent defaults could not be persisted"
             )
             return created
 
@@ -3973,9 +3972,9 @@ def _assistant_defaults_from_json(value: Any) -> WorkspaceAssistantDefaults | No
             tool_policy_profile_id=payload.get("tool_policy_profile_id"),
         )
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        logger.warning(
-            "Ignoring malformed workspace assistant_defaults; error_type={}",
-            type(exc).__name__,
+        # TASK-39060: constant message; the forwarder appends the class.
+        logger.bind(exception_type=type(exc).__name__).warning(
+            "Ignoring malformed workspace assistant_defaults"
         )
         return None
 

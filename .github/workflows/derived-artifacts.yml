@@ -1191,10 +1191,10 @@ jobs:
     needs: [preflight]
     # TASK-38989: Architecture guards that were red on dev in no PR lane. Its
     # own job, as dreams-tracking: no existing job had the minutes (review
-    # r10a-rev1). Serial; the four files that `git show` frozen revisions stay
-    # off (this checkout is shallow). The profile inventory's CLI test is left
-    # out: preflight's census step runs the same CLI (but not its
-    # `--print-occurrences` check, which is unlaned).
+    # r10a-rev1). Serial. This checkout is shallow, so no target may read
+    # git history (TASK-39055 retired those nodes). The profile inventory's
+    # CLI test is left out: preflight's census step runs the same CLI (but
+    # not its `--print-occurrences` check, which is unlaned).
     name: Architecture guard contracts
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -1243,8 +1243,13 @@ jobs:
             Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py \
             Tests/Architecture/test_worker_exclusive_group_inventory.py \
             Tests/Persona_Buddy/test_controller_failure_logging.py \
-            Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type \
             Tests/Architecture/test_backup_owner_inventory.py \
+            Tests/test_persistent_diagnostic_boundary.py \
+            Tests/Utils/test_log_sanitizer.py \
+            Tests/Architecture/test_no_undefined_module_globals.py \
+            Tests/Architecture/test_console_realtime_controller_boundary.py \
+            Tests/Architecture/test_console_review_selection_controller_boundary.py \
+            Tests/Architecture/test_console_wave6_inventory.py \
             --timeout=180 \
             --tb=short
 

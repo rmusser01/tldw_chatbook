@@ -261,6 +261,8 @@ async def test_console_persona_expression_resolves_and_paints_active_asset() -> 
         console_image_default_mode=lambda: "pixels",
         is_mounted=lambda: True,
         render_character_avatar=render,
+        speech_presentation=lambda: None,
+        render_radio=lambda *_args, **_kwargs: None,
     )
 
     await controller._refresh_active_character_avatar_if_scope_changed(force=True)
@@ -322,6 +324,8 @@ async def test_persona_source_revision_binding_or_asset_change_drops_stale_decod
         console_image_default_mode=lambda: "pixels",
         is_mounted=lambda: True,
         render_character_avatar=render,
+        speech_presentation=lambda: None,
+        render_radio=lambda *_args, **_kwargs: None,
     )
 
     await controller._refresh_active_character_avatar_if_scope_changed(force=True)

@@ -427,13 +427,21 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_recovery_entrypoints.py",
     "Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py",
     "Tests/Architecture/test_worker_exclusive_group_inventory.py",
-    # TASK-38989 review r10a-rev4: the forwarder's exception_type pins. The
-    # boundary file runs one chosen node, not "all but" a list, so it needs no
-    # completeness pin: its other tests stay off while one is red on dev.
+    # TASK-38989 review r10a-rev4: the forwarder's exception_type pins.
     "Tests/Persona_Buddy/test_controller_failure_logging.py",
-    "Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type",
     # TASK-39053: the backup owner inventory, red since it landed, now matches.
     "Tests/Architecture/test_backup_owner_inventory.py",
+    # TASK-39060: whole, now that its persona/workspace boundary is green.
+    "Tests/test_persistent_diagnostic_boundary.py",
+    # TASK-39061: the shared log sanitizer.
+    "Tests/Utils/test_log_sanitizer.py",
+    # TASK-39054: the undefined-private-helper guard, now one node.
+    "Tests/Architecture/test_no_undefined_module_globals.py",
+    # TASK-39055: the ChatScreen files; their frozen-revision and origin/dev
+    # nodes were retired (owner decision, 2026-11-06), so none needs git history.
+    "Tests/Architecture/test_console_realtime_controller_boundary.py",
+    "Tests/Architecture/test_console_review_selection_controller_boundary.py",
+    "Tests/Architecture/test_console_wave6_inventory.py",
 )
 
 # The 2026-10-25 architecture-review program's tests, in their own job

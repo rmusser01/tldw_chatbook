@@ -60,10 +60,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Local tool approval callback failed": (),
     },
     "tldw_chatbook/Agents/mcp_tool_provider.py": {
-        "MCPToolProvider: persona_policy_provider failed": (
-            "tool.name",
-            "type(exc).__name__",
-        ),
+        # TASK-39060: the class is bound, not formatted; the tool name is gone.
+        "MCPToolProvider: persona_policy_provider failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/Agents/persona_policy.py": {
         "Dropping non-mapping persona policy rule": ("type(entry).__name__",),
@@ -326,10 +324,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Could not attach the world book": (),
         "Could not show the dictionary attach picker": (),
         "Could not show the world-book attach picker": (),
-        "Error saving persona policy rules": (
-            "len(rules)",
-            "type(exc).__name__",
-        ),
+        # TASK-39060: the count is dropped (owner decision, 2026-11-06).
+        "Error saving persona policy rules": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard commit rejected non-owned sections": (),

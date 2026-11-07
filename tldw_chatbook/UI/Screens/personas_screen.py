@@ -15999,11 +15999,9 @@ class PersonasScreen(BaseAppScreen):
                 mode="local",
             )
         except Exception as exc:
-            logger.error(
-                "Error saving persona policy rules; mode=local; rule_count={}; "
-                "error_type={}",
-                len(rules),
-                type(exc).__name__,
+            # TASK-39060: constant message; the forwarder appends the class.
+            logger.bind(exception_type=type(exc).__name__).error(
+                "Error saving persona policy rules; mode=local"
             )
             self._notify(f"Policy rules save failed: {exc}", "error")
             return

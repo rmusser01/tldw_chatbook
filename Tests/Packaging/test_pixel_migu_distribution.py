@@ -28,29 +28,21 @@ RESOURCE_ROOTS = (
 )
 
 INSTALLED_PROBE = r"""
-import json, os
+import os
 from pathlib import Path
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve().is_relative_to(Path(os.environ["EXPECTED_TARGET"]))
 from tldw_chatbook.config import seed_builtin_content
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Character_Chat.builtin_pixel_migu import find_builtin_pixel_migu_character
 from tldw_chatbook.Character_Chat.visual_identity import resolve_visual_identity
-from tldw_chatbook.Character_Chat.local_character_persona_service import LocalCharacterPersonaService
-from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
-from tldw_chatbook.Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
-from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
-from tldw_chatbook.Persona_Visual.runtime import resolve_active_persona_visual
-from tldw_chatbook.Persona_Visual.builtin_pixel_migu import ensure_builtin_pixel_migu_buddy
+from tldw_chatbook.Persona_Buddy.library import BuddyLibrary
 root = Path(os.environ["PIXEL_MIGU_PROFILE"]).resolve()
 root.mkdir(mode=0o700)
 db = CharactersRAGDB(root / "actors.db", client_id="installed-pixel-migu")
 seed_builtin_content(db)
-service = LocalCharacterPersonaService(db, persona_store_path=root / "personas.json")
-coordinator = PersonaActorPackCoordinator(ActorPackRepository(db), service)
-persona = ensure_builtin_pixel_migu_buddy(service, coordinator, profile_root=root)
-assert persona["name"] == "pixel-migu"
-card_id = persona["character_card_id"]
+card_id = find_builtin_pixel_migu_character(db)["id"]
 assert db.get_character_card_by_id(card_id)["name"] == "pixel-migu"
 character = VisualIdentityRepository(db).get_active_actor_pack("character", card_id)
 assert len(character["assets"]) == 18
@@ -58,22 +50,23 @@ for asset in character["assets"]:
     key = asset["expression_key"]
     result = resolve_visual_identity(db, actor_kind="character", actor_id=card_id, requested_state="idle", manual_expression_key=key)
     assert result.resolved_expression_key == key and result.image_bytes
-repo = PersonaVisualRepository(db)
-graph = repo.get_active_persona_pack(persona["id"])
+# TASK-39057: the seeding production runs (app_service_wiring's readiness pass).
+library = BuddyLibrary(db, root)
+buddy = library.ensure_builtin()
+assert buddy.name == "pixel-migu" and buddy.source_key == "builtin:pixel-migu"
+graph = library.get_graph(buddy.id)
+assert graph.identity.persona_id is None
 assert len(graph.assets) == 64
 for state in ("idle", "wake_armed", "listening", "thinking", "speaking", "tool_running", "approval_needed", "error", "offline"):
     for reduced in (False, True):
-        result = resolve_active_persona_visual(repo, persona["id"], root, state, reduced_motion=reduced)
+        result = library.resolve_preview(buddy.id, state=state, reduced_motion=reduced)
         assert result.frames, (state, result)
         assert result.resolved_state == state, (state, result)
-before = (root / "personas.json").read_bytes()
 seed_builtin_content(db)
-service = LocalCharacterPersonaService(db, persona_store_path=root / "personas.json")
-coordinator = PersonaActorPackCoordinator(ActorPackRepository(db), service)
-ensure_builtin_pixel_migu_buddy(service, coordinator, profile_root=root)
-assert before == (root / "personas.json").read_bytes()
-assert len(service.list_persona_profiles()) == 1
-assert repo.get_active_persona_pack(persona["id"]).identity == graph.identity
+library = BuddyLibrary(db, root)
+assert library.ensure_builtin() == buddy
+assert library.list_buddies() == (buddy,)
+assert library.get_graph(buddy.id).identity == graph.identity
 db.close_connection()
 print("pixel-migu-installed-ok: 18 expressions, 9 Buddy states, restart preserved")
 """

@@ -95,8 +95,8 @@ class ConsoleCharacterController:
         console_image_default_mode: Callable[[], str | None],
         is_mounted: Callable[[], bool],
         render_character_avatar: Callable[..., Awaitable[None]],
-        speech_presentation: Callable[[], Any | None] = lambda: None,
-        render_radio: Callable[..., None] = lambda *args, **kwargs: None,
+        speech_presentation: Callable[[], Any | None],
+        render_radio: Callable[..., None],
     ) -> None:
         self._app_config_accessor = app_config_accessor
         self._chat_store_accessor = chat_store_accessor

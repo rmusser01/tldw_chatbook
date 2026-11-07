@@ -1,8 +1,11 @@
 ---
 id: TASK-39061
 title: "redact_log_line does not mask bare sk_live_, sk_test_, rk_live_ or rk_test_ secrets, including one the log forwarder renders as '<message>: sk_live_…'"
-status: To Do
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-06 12:31
+updated_date: 2026-11-07 01:14
 labels:
 - follow-up
 - logging
@@ -46,7 +49,64 @@ Found in round 10 of the 2026-10-23 burn-down, by the TASK-38989 review; checked
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `redact_log_line` masks bare `sk_live_`, `sk_test_`, `rk_live_` and `rk_test_` secrets of realistic length, including the forwarder's `<message>: sk_live_…` line and an `exception_type=sk_live_…` line; a test is red before the change on the six unmasked probe lines
-- [ ] #2 Short identifiers that only share a prefix (for example `sk_live_mode`) stay readable, and the existing sanitizer tests stay green, with counts recorded
-- [ ] #3 The new test runs on a PR lane (never the fast PR contract), with three timings of that lane's command recorded
+- [x] #1 `redact_log_line` masks bare `sk_live_`, `sk_test_`, `rk_live_` and `rk_test_` secrets of realistic length, including the forwarder's `<message>: sk_live_…` line and an `exception_type=sk_live_…` line; a test is red before the change on the six unmasked probe lines
+- [x] #2 Short identifiers that only share a prefix (for example `sk_live_mode`) stay readable, and the existing sanitizer tests stay green, with counts recorded
+- [x] #3 The new test runs on a PR lane (never the fast PR contract), with three timings of that lane's command recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Add a test in `Tests/Utils/test_log_sanitizer.py` for the six unmasked probe lines (through `redact_log_line` and `sanitize_string`), plus negative cases for short or underscore-joined identifiers that only share the prefix. Show it red at base.
+2. Add the `sk_`/`rk_` `live`/`test` pattern to the diagnostic path that `sanitize_string` and `redact_log_line` share. Leave `_STANDALONE_CREDENTIALS` alone: `sanitize_trace_credentials_v1` uses it too, and that versioned trace projection must not change.
+3. Run the whole sanitizer file and the other sanitizer suites, and record the counts.
+4. Lane `Tests/Utils/test_log_sanitizer.py` on the Architecture guards job (append to the step and to `ARCHITECTURE_GUARD_TARGETS`), then time the job command three times.
+
+## Implementation Notes
+
+**Status: Done.**
+
+- `Utils/log_sanitizer.py` has a new `_DIAGNOSTIC_ONLY_CREDENTIALS` tuple, holding `(?<![A-Za-z0-9_-])[rs]k_(?:live|test)_[A-Za-z0-9]{24,}(?![A-Za-z0-9_-])`. `_sanitize_diagnostic_text`, the step both `sanitize_string` and `redact_log_line` run, applies it. So every log caller benefits, including the forwarder's file sink and the Logs view.
+- It is not in `_STANDALONE_CREDENTIALS`, because `sanitize_trace_credentials_v1` reads that tuple. That projection is versioned: stored trace artifacts compare against it, and `test_logging_change_preserves_legacy_trace_credential_projection` pins it. Credentials-v1 traces therefore still do not mask these keys (Proposed follow-ups in the report).
+- The 24-character floor (Stripe's shortest key body) and a body without `_` keep short or underscore-joined identifiers readable.
+
+**Evidence.**
+- AC#1, red before the fix: `test_bare_underscore_live_and_test_keys_are_masked` covers 4 prefixes and 3 line shapes. The shapes are the prose line, the forwarder's `persona_buddy_preferences_save_failed: <key>` and `... exception_type=<key>`, so the six unmasked probe lines are all included. Before the fix 12 failed. Each case checks both `redact_log_line` and `sanitize_string`.
+- AC#2: `test_identifiers_that_only_share_the_key_prefix_stay_readable` covers `sk_live_mode`, a bare `rk_test_`, `sk_test_mode=true`, `sk_live_mode_enabled_for_every_customer_account`, a prefix inside a word (`desk_live_…`) and the uppercase form. All 6 pass before and after.
+- Whole file: 168 passed (base: 150 passed, plus 18 new), `-n 4`.
+- Other sanitizer suites, together with that file (12 files, `-n 4`): 450 passed and 2 failed. Neither failure comes from this change:
+  - `test_rag_diagnostic_privacy.py::test_reranker_parse_failure_reports_shape_not_model_reply` fails at base with RecoveryRequired;
+  - the persona boundary test is TASK-39060.
+- AC#3: the file is laned on the Architecture guards job, which was never the fast PR contract. It is appended to the step and to `ARCHITECTURE_GUARD_TARGETS`. Timings are below. In the job the file costs 40.6 s, 31.8 s of which is the conftest's periodic GC.
+
+Files: `tldw_chatbook/Utils/log_sanitizer.py`, `Tests/Utils/test_log_sanitizer.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+
+**Architecture guards job timings (shared by TASK-39054, TASK-39055, TASK-39060 and TASK-39061; corrected per review r11a-rev1).**
+
+- **CI before this branch:** the step took 402 s (job 7 m 38 s) on #3436's run 42218508176, 2026-11-06.
+- **The step at each commit:**
+
+| Commit | Targets | Nodes | Why |
+|---|---|---|---|
+| Base | 29 | 160 | |
+| 77c5a7a085 | 36 | 383 | Two boundary nodes listed separately. |
+| d29bb13b6a | 35 | 387 | The boundary file runs whole (6 nodes). |
+| This fix | 34 | 383 | The wave-6 closeout file folded into the realtime test: 1 target and 5 nodes fewer. The guard's new unparseable-module control adds 1 node. |
+
+- **Current figure (review r11a-rev1's run at d29bb13b6a):** 386 passed plus 1 pre-existing timeout, in 1,073.5 s at load 84-91. The timeout is `test_profile_owned_path_inventory::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners`, which also hits 180 s at base under load. Of that time, this branch's additions cost 149.2 s.
+- **Earlier runs:** my own runs of the step's command, through `jobstep.sh`, serial, pytest-reported time. The load swung from 24 to 57, so the totals mostly measure the load.
+
+| Command | Targets | Nodes | Result | pytest time | Load |
+|---|---|---|---|---|---|
+| Base 2684e5453f | 29 | 160 | 160 passed | 153.9 s | 7-11 |
+| Base 2684e5453f | 29 | 160 | 160 passed | 457.0 s | 27-45 |
+| Base 2684e5453f | 29 | 160 | 160 passed | 283.9 s | 32-38 |
+| 77c5a7a085, run 1 | 36 | 383 | 383 passed | 563.4 s | 25-48 |
+| 77c5a7a085, run 2 | 36 | 383 | 383 passed | 451.2 s | 24-48 |
+| 77c5a7a085, run 3 | 36 | 383 | 383 passed | 440.6 s | 24-57 |
+| 77c5a7a085, right after the 283.9 s base run | 36 | 383 | 383 passed | 413.8 s | 32-48 |
+
+- **Where the time goes:** a `--durations=0` run at 77c5a7a085 (load 50-85) attributes the additions as follows:
+  - `test_no_undefined_module_globals.py`: 72.5 s, with no periodic-GC teardown;
+  - `test_log_sanitizer.py`: 40.6 s, of which 31.8 s is the conftest's every-25th-test `gc.collect()`;
+  - the ChatScreen files: 33.5 s;
+  - the boundary nodes: 0.3 s.

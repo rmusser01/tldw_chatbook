@@ -47,6 +47,8 @@ def _controller(**overrides: Any) -> ConsoleCharacterController:
         "console_image_default_mode": lambda: "pixels",
         "is_mounted": lambda: False,
         "render_character_avatar": _noop_async,
+        "speech_presentation": lambda: None,
+        "render_radio": lambda *_args, **_kwargs: None,
     }
     dependencies.update(overrides)
     return ConsoleCharacterController(**dependencies)

@@ -3019,7 +3019,6 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Character_Chat/buddy_conversion.py | publish_buddy_character | secure_private_directory | 1 | unsupported | assets |
 | tldw_chatbook/Character_Chat/builtin_pixel_migu.py | _load_bundle.read_resource | open | 1 | unsupported | assets |
 | tldw_chatbook/Persona_Buddy/library.py | BuddyLibrary.publish_review | write_bytes | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/builtin_pixel_migu.py | ensure_builtin_pixel_migu_buddy | secure_private_directory | 1 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/export.py | build_native_buddy_archive | ZipFile | 2 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/snapshot.py | read_buddy_archive | ZipFile | 1 | unsupported | assets |
 | tldw_chatbook/Backup_Recovery/qualification.py | _load_evidence | open | 1 | generic_boundary | backup qualification reader; installed metadata only |

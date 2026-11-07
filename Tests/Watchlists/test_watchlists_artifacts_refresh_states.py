@@ -17,12 +17,14 @@ from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
+    BriefingSelected,
     ExportBriefingRequested,
     ExportFeedRequested,
     InspectArtifactRecoveryRequested,
     KeepBriefingRequested,
     KeptBriefingsRequested,
     RefreshBriefingsRequested,
+    ScriptSelected,
     ServeFeedRequested,
     StopFeedServerRequested,
 )
@@ -131,6 +133,68 @@ async def _settle_briefings_load(host, pilot) -> None:
         except WorkerCancelled:
             pass
     await pilot.pause()
+
+
+#: Pane messages whose screen handler stops them and queues an Artifacts load.
+_LOAD_REQUESTS = (RefreshBriefingsRequested, BriefingSelected, ScriptSelected)
+
+
+def _track_load_requests(pane) -> list:
+    """Record each load-requesting message the pane posts (TASK-39058)."""
+    posted: list = []
+    post = pane.post_message
+
+    def record(message):
+        if isinstance(message, _LOAD_REQUESTS):
+            posted.append(message)
+        return post(message)
+
+    pane.post_message = record
+    return posted
+
+
+def _track_every_pane_load_request(monkeypatch) -> list:
+    """Record load-requesting messages from every ArtifactsPane, from mount on.
+
+    For tests whose setup moves the selection itself: the load that setup
+    queues must be recorded too, and the pane does not exist before the run.
+    """
+    posted: list = []
+    post = ArtifactsPane.post_message
+
+    def record(self, message):
+        if isinstance(message, _LOAD_REQUESTS):
+            posted.append(message)
+        return post(self, message)
+
+    monkeypatch.setattr(ArtifactsPane, "post_message", record)
+    return posted
+
+
+async def _drain_briefings_loads(host, pilot, posted, *, after=None) -> None:
+    """Wait for every Artifacts load the tracked messages queued (TASK-39058).
+
+    A load that moves the selection posts ``BriefingSelected``, and the
+    screen's handler stops it and queues one more load. So this waits until
+    each tracked message was handled (``stop()`` is the handler's first line)
+    and no loader worker is left. ``after`` names a message that must have
+    been posted first, such as the one a button press sends.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 30  # a backstop for a hang, not a settle
+    while True:
+        await _settle_briefings_load(host, pilot)
+        loading = any(
+            worker.group == "wl-briefings-load" and not worker.is_finished
+            for worker in host.workers
+        )
+        if (
+            not loading
+            and (after is None or any(isinstance(m, after) for m in posted))
+            and all(message._stop_propagation for message in posted)
+        ):
+            return
+        assert loop.time() < deadline, "Artifacts loads did not settle"
 
 
 def _seed_complete_briefing(app) -> tuple[int, int]:
@@ -320,6 +384,7 @@ async def test_refresh_failure_preserves_screen_owned_last_good_content(monkeypa
     app_instance = _build_test_app()
     watchlist_id, briefing_id = _seed_complete_briefing(app_instance)
     host = ArtifactsScreenHarness(app_instance, "watchlists_collections")
+    posted = _track_every_pane_load_request(monkeypatch)
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = host.screen_stack[-1]
@@ -336,7 +401,8 @@ async def test_refresh_failure_preserves_screen_owned_last_good_content(monkeypa
             {"item_id": 7, "label": Text("[item 7] Source"), "available": True}
         ]
         screen._apply_briefing_state_to_pane()
-        await pilot.pause()
+        # TASK-39058: the selection move queues a load; let it finish first.
+        await _drain_briefings_loads(host, pilot, posted)
         table = pane.query_one("#artifacts-table", DataTable)
 
         def fail_refresh(_watchlist_id):
@@ -348,7 +414,7 @@ async def test_refresh_failure_preserves_screen_owned_last_good_content(monkeypa
             fail_refresh,
         )
         await screen._load_briefings()
-        await pilot.pause()
+        await _drain_briefings_loads(host, pilot, posted)
 
         assert pane.query_one("#artifacts-table", DataTable) is table
         assert table.row_count == 1
@@ -368,6 +434,7 @@ async def test_generation_failure_preserves_last_good_content_and_has_own_state(
     app_instance = _build_test_app()
     watchlist_id, briefing_id = _seed_complete_briefing(app_instance)
     host = ArtifactsScreenHarness(app_instance, "watchlists_collections")
+    posted = _track_every_pane_load_request(monkeypatch)
 
     async with host.run_test(size=(220, 52)) as pilot:
         screen = host.screen_stack[-1]
@@ -379,7 +446,8 @@ async def test_generation_failure_preserves_last_good_content_and_has_own_state(
             row for row in screen._loaded_briefings if row["id"] == briefing_id
         )
         screen._apply_briefing_state_to_pane()
-        await pilot.pause()
+        # TASK-39058: the selection move queues a load; let it finish first.
+        await _drain_briefings_loads(host, pilot, posted)
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         table = pane.query_one("#artifacts-table", DataTable)
 
@@ -392,7 +460,8 @@ async def test_generation_failure_preserves_last_good_content_and_has_own_state(
             watchlist_id,
             None,
         )
-        await pilot.pause()
+        # The failure repaints through a queued load (generation_failed=True).
+        await _drain_briefings_loads(host, pilot, posted)
 
         assert pane.query_one("#artifacts-table", DataTable) is table
         assert pane.selected_briefing["id"] == briefing_id
@@ -411,6 +480,7 @@ async def test_failed_generation_receipt_does_not_replace_readable_selection(
     app_instance = _build_test_app()
     watchlist_id, briefing_id = _seed_complete_briefing(app_instance)
     host = ArtifactsScreenHarness(app_instance, "watchlists_collections")
+    posted = _track_every_pane_load_request(monkeypatch)
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = host.screen_stack[-1]
@@ -425,7 +495,8 @@ async def test_failed_generation_receipt_does_not_replace_readable_selection(
             {"item_id": 7, "label": Text("[item 7] Source"), "available": True}
         ]
         screen._apply_briefing_state_to_pane()
-        await pilot.pause()
+        # TASK-39058: the selection move queues a load; let it finish first.
+        await _drain_briefings_loads(host, pilot, posted)
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
 
         async def return_failed_receipt(db, selected_watchlist_id, **_kwargs):
@@ -442,7 +513,7 @@ async def test_failed_generation_receipt_does_not_replace_readable_selection(
             watchlist_id,
             None,
         )
-        await pilot.pause()
+        await _drain_briefings_loads(host, pilot, posted)
 
         assert len(pane.briefings) == 2
         assert pane.selected_briefing["id"] == briefing_id
@@ -452,11 +523,12 @@ async def test_failed_generation_receipt_does_not_replace_readable_selection(
 
 
 @pytest.mark.asyncio
-async def test_durable_receipt_mismatch_retains_last_good_content():
+async def test_durable_receipt_mismatch_retains_last_good_content(monkeypatch):
     """Only a durable expected ID missing from a successful reload is mismatch."""
     app_instance = _build_test_app()
     watchlist_id, briefing_id = _seed_complete_briefing(app_instance)
     host = ArtifactsScreenHarness(app_instance, "watchlists_collections")
+    posted = _track_every_pane_load_request(monkeypatch)
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = host.screen_stack[-1]
@@ -468,7 +540,8 @@ async def test_durable_receipt_mismatch_retains_last_good_content():
             row for row in screen._loaded_briefings if row["id"] == briefing_id
         )
         screen._apply_briefing_state_to_pane()
-        await pilot.pause()
+        # TASK-39058: the selection move queues a load; let it finish first.
+        await _drain_briefings_loads(host, pilot, posted)
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         table = pane.query_one("#artifacts-table", DataTable)
 
@@ -476,7 +549,7 @@ async def test_durable_receipt_mismatch_retains_last_good_content():
             select_briefing_id=briefing_id + 10_000,
             expect_durable_receipt=True,
         )
-        await pilot.pause()
+        await _drain_briefings_loads(host, pilot, posted)
 
         assert pane.query_one("#artifacts-table", DataTable) is table
         assert pane.selected_briefing["id"] == briefing_id
@@ -559,9 +632,11 @@ async def test_accepted_missing_receipt_retries_its_exact_id(
         )
 
         hidden_db.visible = True
+        posted = _track_load_requests(pane)
         pane.query_one("#artifacts-retry-button", Button).press()
-        await host.workers.wait_for_complete()
-        await pilot.pause()
+        await _drain_briefings_loads(
+            host, pilot, posted, after=RefreshBriefingsRequested
+        )
 
         assert pane.view_state == "idle"
         assert pane.selected_briefing["id"] == accepted_id
@@ -636,7 +711,9 @@ async def test_coordinated_briefing_follow_releases_ui_when_receipt_stays_genera
 
 
 @pytest.mark.asyncio
-async def test_coordinated_failed_receipt_shows_the_generation_failed_state():
+async def test_coordinated_failed_receipt_shows_the_generation_failed_state(
+    monkeypatch,
+):
     """TASK-38990 review: a failed coordinated receipt reaches the failure banner.
 
     The coordinated follower hands `generation_failed` to the loader group's
@@ -652,6 +729,7 @@ async def test_coordinated_failed_receipt_shows_the_generation_failed_state():
         async def accept_briefing(self, _watchlist_id, _preset_id):
             return {"id": failed_id}
 
+    posted = _track_every_pane_load_request(monkeypatch)
     async with host.run_test(size=(220, 52)) as pilot:
         screen = host.screen_stack[-1]
         screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
@@ -662,12 +740,13 @@ async def test_coordinated_failed_receipt_shows_the_generation_failed_state():
             row for row in screen._loaded_briefings if row["id"] == briefing_id
         )
         screen._apply_briefing_state_to_pane()
-        await pilot.pause()
+        # TASK-39058: the selection move queues a load; let it finish first.
+        await _drain_briefings_loads(host, pilot, posted)
 
         await screen._follow_coordinated_briefing(
             db, watchlist_id, None, Coordinator()
         )
-        await _settle_briefings_load(host, pilot)
+        await _drain_briefings_loads(host, pilot, posted)
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.view_state == "failed"
@@ -749,6 +828,9 @@ async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope
             )
 
         await entered.wait()
+        posted = _track_load_requests(
+            screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        )
         screen._request_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=second_watchlist_id)
         )
@@ -762,7 +844,8 @@ async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope
         else:
             release.set()
         await task
-        await pilot.pause()
+        # The scope change queued its own load (TASK-39058); wait for it.
+        await _drain_briefings_loads(host, pilot, posted)
 
         assert screen.tree_scope.watchlist_id == second_watchlist_id
         assert screen._selected_briefing["id"] == second_briefing_id
@@ -815,6 +898,7 @@ async def test_citation_resolution_failure_retains_last_good_citations(monkeypat
     app_instance = _build_test_app()
     watchlist_id, briefing_id = _seed_complete_briefing(app_instance)
     host = ArtifactsScreenHarness(app_instance, "watchlists_collections")
+    posted = _track_every_pane_load_request(monkeypatch)
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = host.screen_stack[-1]
@@ -830,9 +914,10 @@ async def test_citation_resolution_failure_retains_last_good_citations(monkeypat
         ]
         screen._citation_item_lookup = {7: {"id": "local:item:7"}}
         screen._apply_briefing_state_to_pane()
-        await pilot.pause()
         # Drain the initial section-load messages before establishing the
-        # exact last-good snapshot this refresh owns.
+        # exact last-good snapshot this refresh owns (TASK-39058: every
+        # queued load, not one pause).
+        await _drain_briefings_loads(host, pilot, posted)
         screen._loaded_citations = [
             {"item_id": 7, "label": Text("[item 7] Last good"), "available": True}
         ]
@@ -858,7 +943,7 @@ async def test_citation_resolution_failure_retains_last_good_citations(monkeypat
             fail_citations,
         )
         await screen._load_briefings(select_briefing_id=failed_projection_id)
-        await pilot.pause()
+        await _drain_briefings_loads(host, pilot, posted)
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert screen._loaded_citations[0]["available"] is True
