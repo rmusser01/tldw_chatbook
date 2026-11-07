@@ -49,7 +49,7 @@ from loguru import logger as logging
 
 #
 # Local Imports
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from .keyword_store import KeywordStore, KeywordStoreSpec
 from .library_search_engine import LibrarySearchSpec, library_search_page
 from .sql_validation import validate_table_name, validate_column_name

@@ -28,7 +28,7 @@ from typing import Iterator, Union
 
 from loguru import logger
 
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Research_Workspace.source_operations import (
     validate_source_operation_id,
 )
