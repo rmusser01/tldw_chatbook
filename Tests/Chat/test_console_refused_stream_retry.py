@@ -79,6 +79,7 @@ class _OpenAICompatibleServer(ThreadingHTTPServer):
         tool_first: bool = False,
         tool_on_retry: bool = False,
         finish_records: bool = False,
+        broken_stream: str | None = None,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.stream_status = stream_status
@@ -90,6 +91,7 @@ class _OpenAICompatibleServer(ThreadingHTTPServer):
         self.tool_first = tool_first
         self.tool_on_retry = tool_on_retry
         self.finish_records = finish_records
+        self.broken_stream = broken_stream
         self.payloads: list[dict[str, Any]] = []
         self.stream_flags: list[bool] = []
 
@@ -125,6 +127,24 @@ class _Handler(BaseHTTPRequestHandler):
                 + "\n```"
             )
             self._send_stream(tool_text, _USAGE)
+            return
+        if streamed and server.broken_stream == "malformed_json":
+            self._send(
+                200, "text/event-stream", b'data: {"choices": [\n\ndata: [DONE]\n\n'
+            )
+            return
+        if streamed and server.broken_stream == "read_failure":
+            # The body stops short of its declared length and the connection
+            # closes: the client's read of the stream fails mid-record.
+            partial = b'data: {"choi'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(partial) + 512))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(partial)
+            self.wfile.flush()
+            self.close_connection = True
             return
         if streamed and server.empty_stream:
             # No text; with ``empty_stream_usage``, the usage of the prompt it
@@ -393,6 +413,57 @@ def test_named_custom_endpoint_stream_with_nothing_readable_is_retried_once(
     assert server.stream_flags == [True, False]
     assert outcome.total_tokens == _USAGE["total_tokens"]
     assert signals.usage_payloads() == [_USAGE]
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("shape", ["malformed_json", "read_failure"])
+def test_named_custom_endpoint_stream_failing_for_another_reason_is_not_asked_again(
+    tmp_path, shape
+):
+    """TASK-37762 review: only an empty or unreadable stream is asked again.
+
+    The hosted engine raises the same protocol error type for every stream it
+    cannot use. A stream that ENDS with nothing in it (no terminal record, or
+    a ``[DONE]`` with no finish reason) is what a server that cannot stream
+    sends; a malformed record or a failed read is a broken reply, which a
+    Custom slot is not asked again for either. Asking again without
+    streaming would be a silent second generation for a failure streaming did
+    not cause.
+    """
+    with _server(broken_stream=shape) as server:
+        gateway, resolution = _resolve("custom-ep:box", server.base_url)
+        assert resolution.execution_key == "custom-hosted"
+        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
+
+    assert outcome.status != "done"
+    assert server.stream_flags, "the endpoint was never asked"
+    assert False not in server.stream_flags, server.stream_flags
+    assert signals.usage_payloads() == []
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("shape", ["empty", "whole_json"])
+def test_cloud_hosted_preset_stream_with_nothing_readable_is_not_asked_again(
+    tmp_path, shape
+):
+    """TASK-37762 review: the empty-stream retry stays with retried servers.
+
+    ``zenmux`` streams through the same hosted engine as a named custom
+    endpoint and raises the same error for a stream with nothing readable,
+    but it is a cloud preset: a second request there is a silent second paid
+    call, so it is never asked again without streaming.
+    """
+    server_kwargs = (
+        {"empty_stream": True} if shape == "empty" else {"ignore_stream": True}
+    )
+    with _server(**server_kwargs) as server:
+        gateway, resolution = _resolve("zenmux", server.base_url)
+        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
+
+    assert outcome.status != "done"
+    assert server.stream_flags, "the provider was never asked"
+    assert False not in server.stream_flags, server.stream_flags
+    assert signals.usage_payloads() == []
 
 
 @pytest.mark.loopback_network

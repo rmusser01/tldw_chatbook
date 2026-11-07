@@ -74,24 +74,27 @@ def is_refused_stream(exc: BaseException) -> bool:
 
 
 def is_unreadable_stream(exc: BaseException) -> bool:
-    """Whether a streamed reply failed because its stream could not be read.
+    """Whether a streamed reply failed because its stream ended unusable.
 
     A named custom endpoint (``custom-ep:<slug>``) streams through the hosted
     engine, which raises a protocol error, not a status, for a stream that
-    ends with no finish record or is not SSE at all: what a server that
-    sends no text, or ignores ``stream`` and answers whole, looks like there
-    (TASK-37762). The caller decides the rest: the request was streamed, to
-    a server that is retried, and nothing arrived before the failure.
+    ends with no terminal record (an empty body, or not SSE at all) or with a
+    ``[DONE]`` but no finish reason: what a server that sends no text, or
+    ignores ``stream`` and answers whole, looks like there (TASK-37762). A
+    malformed record or a failed read is a broken reply, not a server that
+    cannot stream, so it is not matched. The caller decides the rest: the
+    request was streamed, to a server that is retried, and nothing arrived
+    before the failure.
 
     Args:
         exc: The adapter's failure, before any projection.
 
     Returns:
-        True for the hosted engine's stream protocol error.
+        True for the hosted engine's incomplete-stream error only.
     """
-    from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatProtocolError
+    from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatStreamIncompleteError
 
-    return isinstance(exc, HostedChatProtocolError)
+    return isinstance(exc, HostedChatStreamIncompleteError)
 
 
 def retries_refused_stream(resolution: Any) -> bool:

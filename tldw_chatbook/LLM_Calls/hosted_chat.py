@@ -31,7 +31,11 @@ from tldw_chatbook.Provider_Contract import (
     ChatProviderError,
     ChatRateLimitError,
 )
-from tldw_chatbook.LLM_Calls.hosted_chat_streaming import OwnedSSEStream, SSERecord
+from tldw_chatbook.LLM_Calls.hosted_chat_streaming import (
+    HostedSSEIncompleteError,
+    OwnedSSEStream,
+    SSERecord,
+)
 from tldw_chatbook.Utils.egress import create_pooled_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
@@ -86,6 +90,17 @@ class HostedChatBaseURLValidationError(ValueError):
 
 class HostedChatProtocolError(ValueError):
     """Raised when a hosted provider returns malformed Chat data."""
+
+
+class HostedChatStreamIncompleteError(HostedChatProtocolError):
+    """Raised when a hosted Chat stream ends before its terminal metadata.
+
+    The body ended with no terminal record (an empty body, or a whole JSON
+    answer that is not SSE), or the ``[DONE]`` came with no finish reason or
+    required usage. A malformed record or a failed read raises the parent
+    type only. Console asks a retried server once more without streaming for
+    this one (TASK-37762).
+    """
 
 
 def _same_json_value(left: object, right: object) -> bool:
@@ -231,9 +246,9 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             raise StopIteration
         try:
             record = next(self._records)
-        except StopIteration:
+        except (StopIteration, HostedSSEIncompleteError):
             self.close()
-            raise HostedChatProtocolError(
+            raise HostedChatStreamIncompleteError(
                 "Hosted Chat stream ended before a clean terminal record."
             ) from None
         except Exception:
@@ -248,7 +263,7 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 and not (self._tolerant or self._usage_optional)
             ):
                 self.close()
-                raise HostedChatProtocolError(
+                raise HostedChatStreamIncompleteError(
                     "Hosted Chat stream terminated before required metadata."
                 )
             self._terminal_turn = _build_turn(
