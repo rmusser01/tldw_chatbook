@@ -1028,6 +1028,12 @@ The following conservative read-open candidates have been reviewed individually:
 | --- | --- | --- | --- | --- | --- |
 | tldw_chatbook/Backup_Recovery/bootstrap.py | _read | open | 1 | generic_boundary | backup_control_reader |
 | tldw_chatbook/Backup_Recovery/bootstrap.py | _fingerprint | open | 1 | generic_boundary | backup_selector_reader |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _resolved | open | 1 | generic_boundary | admission_path_resolution |
+
+`storage_admission._resolved` (TASK-33620.15.47) opens only the parent directory
+of a path admission is resolving, read-only with `O_NOFOLLOW_ANY`, to prove the
+path link-free; it lstats the leaf through that descriptor and closes it. It
+writes nothing, never opens the leaf, and leaves no descriptor behind.
 
 `DB/private_sqlite.py` retains its exact two raw connection sites and the
 registered owner inventory. Connection lifetime admission wraps that seam without
