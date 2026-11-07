@@ -1,6 +1,6 @@
 # Console approval PR #3036 resync
 
-The existing PR is rebased onto `dev` at `5ca7ec6a03d92a9d8113468d37aac99cdb4d511c`. The owner requires native timing and actual Windows dispatch qualification before auto-merge. Source integration and actual dispatch are verified; presented-frame timing is still unqualified. The PR remains draft and auto-merge remains off.
+The existing PR is rebased onto `dev` at `8b762b52fa9c38be8c978f2b2175d9f070bc829a`. Earlier phase records below retain their original source scope. The owner requires native timing and actual Windows dispatch qualification before auto-merge. Source integration is verified. Actual Windows dispatch is recorded for the earlier published source; renewed dispatch and presentation qualification on the latest revision remain open. The PR remains draft and auto-merge remains off.
 
 ## Integration
 
@@ -54,3 +54,6 @@ Fresh CI identified startup-import and UAT integration regressions after the pre
 
 
 The [worker-bundle follow-up](artifact-followup.md) records the inherited hosted stamp failure, durable Windows LF repair, exact source hashes and focused verification limits.
+
+
+[Current-dev follow-up](dev8b-followup.md) records the rebase, exact1816-member census, targeted results, Windows governance repair, independent review and remaining physical gates.
