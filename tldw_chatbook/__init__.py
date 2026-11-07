@@ -129,7 +129,7 @@ def _install_zero_width_fold_guard() -> None:
     that exits the app, and no stylesheet rule can rule the width out: a
     grid's auto row ignores ``min-width`` and ``max-width: 100%`` follows a
     2-cell parent. Every height and paint of a ``Content`` goes through this
-    one method, so only that exact width changes: it renders as
+    one method, so the guard lives here: at that width the text renders as
     ``text-wrap: nowrap; text-overflow: clip``, one line cropped to the box.
     ``text-overflow: ellipsis`` everywhere would also stop the raise, but in
     this Textual a wrapped line then paints two cells wider than its widget

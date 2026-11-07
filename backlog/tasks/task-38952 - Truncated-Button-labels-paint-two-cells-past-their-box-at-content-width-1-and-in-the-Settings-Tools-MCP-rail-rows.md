@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-06 18:35
+updated_date: 2026-11-07 00:06
 labels:
 - follow-up
 - ui
@@ -65,3 +65,8 @@ The shared shim now keeps every wrapped line inside its box, so the fix covers b
 - Covering run (run.sh, `-n 4`, load 25-69): 25 UI, Widgets, Watchlists and Wizards files that pin Button paint or line-pad, plus every `Tests/UI/test_mcp_*.py`: 1825 passed, 229 failed. 8 of the 229 were this round's new tests, red because Settings' one-pane mode (TASK-38953) was not in the tree yet. 217 fail at `fu-base-r11` too. The other 4: 2 passed serially, and 2 (`test_trash_page_past_fold_reachable_wide_split_layout`, `test_server_source_empty_tools_diagnosis_uses_refresh_not_disabled_actions`) fail serially at base as well.
 
 Files: `tldw_chatbook/__init__.py`, `Tests/Architecture/test_zero_width_fold_guard.py`, `Tests/UI/test_settings_tools_hub.py`.
+
+Review r11g-rev1 M3: the stale text is fixed.
+- `test_no_width_raises_and_only_the_zero_fold_width_changes` is renamed `test_no_width_raises_and_lines_that_fit_render_as_upstream`.
+- The module docstring now names the widened widths.
+- The shim's TASK-38740 paragraph no longer says only the zero width changes.
