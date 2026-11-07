@@ -578,7 +578,9 @@ _BUDGETS: dict[str, int] = {
     # wrapper is gone, the save reads Provider_Contract's rule directly.
     # 2026-11-06, TASK-1378.1: Network moved to its registered panel
     # (UI/Settings_Modules/category_panels.py); 2026-11-07 rebase onto dev: 35,728 -> 35,586.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35586,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
+    # 2026-11-07, TASK-1378.2: Providers & Models moved onto its registered panel;
+    # measured after the rebase onto dev: 34,891.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 34891,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -1154,8 +1156,9 @@ def test_every_module_of_the_guard_size_has_a_row() -> None:
 #: `Settings_Modules/category_panels.py::CATEGORY_PANELS` removes its arms;
 #: lower this when one moves, never raise it -- new category behaviour goes in
 #: a registered panel. Base (dev 5ca7ec6a03): 245; Network 240; Speech's
-#: save, revert, render and scope arms through its adapter 236.
-_SETTINGS_CATEGORY_COMPARISON_CEILING = 236
+#: save, revert, render and scope arms through its adapter 236; TASK-1378.2,
+#: Providers & Models' save, revert, unsaved, render and scope arms 230.
+_SETTINGS_CATEGORY_COMPARISON_CEILING = 230
 
 
 @lru_cache(maxsize=1)

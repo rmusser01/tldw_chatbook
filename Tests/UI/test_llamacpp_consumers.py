@@ -25,7 +25,7 @@ from tldw_chatbook.UI.Navigation.llamacpp_handoff import (
 )
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
-from tldw_chatbook.state.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.category_panels import PROVIDERS_MODELS_PANEL
 
 
 def _ready_target(
@@ -145,7 +145,7 @@ async def test_settings_stages_verified_llamacpp_without_persisting():
         )
         assert config_path.read_bytes() == before
         assert not app.pending_handoffs.has_pending(HandoffChannel.LLAMACPP_DEFAULT)
-        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+        PROVIDERS_MODELS_PANEL.discard(screen)  # r's discard, after its confirm
         assert screen._provider_draft() is None
         assert config_path.read_bytes() == before
 
