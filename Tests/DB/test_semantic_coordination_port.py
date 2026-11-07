@@ -127,6 +127,27 @@ def test_unset_port_fails_closed_on_update_and_leaves_content(db, monkeypatch):
     assert _content_and_version(db, message_id) == ("hi", 1)
 
 
+def test_slot_cleared_after_the_read_never_becomes_a_type_error():
+    """Clear the slot on the `return` line, after the None check (a forced race)."""
+    code = port.semantic_coordinator_for.__code__
+    race_line = max(line for *_, line in code.co_lines() if line)
+
+    def local(frame, event, _arg):
+        if event == "line" and frame.f_lineno == race_line:
+            port._factory = None
+        return local
+
+    saved, previous = port._factory, sys.gettrace()
+    port._factory = lambda db: ("coordinator", db)
+    sys.settrace(lambda frame, *_: local if frame.f_code is code else None)
+    try:
+        result = port.semantic_coordinator_for("db")
+    finally:
+        sys.settrace(previous)
+        port._factory = saved
+    assert result == ("coordinator", "db")
+
+
 def test_install_is_idempotent(monkeypatch):
     monkeypatch.setattr(port, "_factory", None)
     install_semantic_coordination()
