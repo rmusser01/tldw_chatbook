@@ -25,6 +25,7 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_key_ownership import _mounted
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -263,9 +264,14 @@ async def test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn(monkeypa
         console = await _mounted_console(app, pilot)
         store = console._ensure_console_chat_store()
         session_id = await _temporary_chat_with_parked_turn(pilot, app, console)
+        messages = store.all_messages_for_session(session_id)
+        # The refused send leaves its "Provider blocked" error notice, a
+        # Console SYSTEM row: never loss, so never counted (TASK-33628.16).
+        assert any(message.role is ConsoleMessageRole.SYSTEM for message in messages)
         unsaved = sum(
             message.persisted_message_id is None
-            for message in store.all_messages_for_session(session_id)
+            and message.role is not ConsoleMessageRole.SYSTEM
+            for message in messages
         )
 
         dialog = await _ctrl_q_asks(
