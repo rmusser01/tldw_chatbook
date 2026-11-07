@@ -911,7 +911,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-36534, 2026-11-03: size waiver (owner rule: a fix over a size ratchet
     # raises the row with a dated comment); 6973 -> 7009, settings_revision_held
     # and the convergence span it reads. Exact measurement.
-    "tldw_chatbook/UI/Console_Modules/session.py": 7009,
+    # TASK-33621.59 review, 2026-11-06: size waiver (owner rule: a fix over a
+    # size ratchet raises the row by exactly the branch's growth, dated):
+    # 7009 -> 7014. A card action whose Stop won over its failed save settles
+    # like the card's Cancel, so the turn and attachments return to the draft.
+    "tldw_chatbook/UI/Console_Modules/session.py": 7014,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
