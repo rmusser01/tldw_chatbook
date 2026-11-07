@@ -173,7 +173,9 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     # TASK-33007 (PR #3057): ten, by the same replay once Phase 7's 92 census
     # entries joined (heaviest shard 15.2 pytest min at nine, 13.7 at ten).
     # TASK-37266..37268: measured 32 slices, retaining the 17-runner ceiling.
-    assert strategy["matrix"]["shard"] == list(range(1, 33))
+    # TASK-39144: 34, the fewest whose re-deal projected every shard's slowest
+    # job 5 min under the cap once round 12's census entries joined.
+    assert strategy["matrix"]["shard"] == list(range(1, 35))
     assert strategy["max-parallel"] == 17
     assert job["timeout-minutes"] == 20
 

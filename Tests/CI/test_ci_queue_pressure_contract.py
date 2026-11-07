@@ -529,6 +529,11 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-39049: the Library ingest runner, guard-clean since its tests close
     # the stores they open (130 live leases before).
     "Tests/Library/test_library_ingest_runner.py",
+    # TASK-39043 / TASK-39142: two Tests/UI files whose module pytestmark is
+    # bootstrap_profile, so the UI census may not hold them (ledger R11,
+    # TASK-32873); guard-clean, ~25 s and ~160 s serial at load 50-160.
+    "Tests/UI/test_console_full_config_preparation.py",
+    "Tests/UI/test_console_inspector_focus_carriers.py",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
@@ -868,7 +873,7 @@ def _pytest_targets(run: str) -> tuple[str, ...]:
 
 def _assert_ui_capacity(workflow: dict) -> None:
     strategy = workflow["jobs"]["ui-fast-lane"]["strategy"]
-    assert strategy["matrix"] == {"shard": list(range(1, 33))}
+    assert strategy["matrix"] == {"shard": list(range(1, 35))}
     assert strategy.get("max-parallel") == 17
 
 

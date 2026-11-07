@@ -147,7 +147,7 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane currently runs 32 shards, with at most 17 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
+  grown since: the UI lane currently runs 34 shards, with at most 17 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
@@ -403,11 +403,12 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 32 shards. The current total is 42 eligible test jobs per PR
+Current UI lane: 34 shards. The current total is 44 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
-35-min cap, PR #3399; 2026-11-07: and `recovered-suites`, below).
+35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and two more UI
+shards, below).
 The `max-parallel: 17` ceiling, peak 23 application test runners (24 with
 Perf Guard), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.

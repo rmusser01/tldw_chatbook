@@ -509,7 +509,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36512 lists four heavy whole-file entries by function (the MCP
 # permissions handoff by parametrize case), so no shard takes one whole:
 # every test still runs once, and the floor follows the entry count.
-# Current UI lane: 32 shards.
+# Current UI lane: 34 shards (TASK-39144).
 # TASK-36454..36458 append all 58 exact mounted regressions after dev's
 # measured split-file tail (TASK-36512), preserving its slots and coverage.
 # 2026-10-24, TASK-36479 appends two static node ids at the tail -- the
@@ -876,58 +876,11 @@ MINIMUM_FILES = 1761
 # five heaviest tests) at the tail, split so they spread over consecutive
 # shards. The floor is the measured entry count.
 MINIMUM_FILES = 1809
-# TASK-33910.36 (2026-11-06, rebased on dev 8b762b52fa): append the five
-# TestPersonaHumanIdentityRemoval node ids at the tail (the class errored at
-# setup on dev until this change; the whole file is far over the 30 s
-# per-file budget). The floor is the measured entry count.
-MINIMUM_FILES = 1814
-# TASK-38605 (2026-11-02 audit, re-landed 2026-11-06): the dead MediaViewerPanel
-# and its whole-file entry Tests/UI/test_media_viewer_prompt_search_15477.py are
-# deleted, so the census drops one entry: 1814 - 1 = 1813.
-MINIMUM_FILES = 1813
-# PR3036 resync: retain all 1813 current entries and append 4 approval contracts.
-MINIMUM_FILES = 1817
-# PR3036 whole-branch review: append two bounded literal-Details regressions.
-MINIMUM_FILES = 1819
-# TASK-34569: preserve actual feedback MessagePump dispatch without eager helpers.
-MINIMUM_FILES = 1820
-# TASK-39122 (2026-11-07): append the region editor's cancelled-before-mount
-# case at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1821
-# TASK-39146 (2026-11-07): append the cancelled-dialog-wait file (nine
-# cases at insertion, eight since dev deleted media_viewer_panel.py; about
-# 10 s) at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1822
-# TASK-38977 (2026-11-07): append the five Prompts modal and response-rule
-# copy/gateway nodes at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1827
-# TASK-38961 (2026-11-07): append the three Console endpoint-discovery
-# retry and pick-mode nodes at the tail. The floor is the measured entry
-# count.
-MINIMUM_FILES = 1830
-# TASK-38968 (2026-11-07): append the send-admission deferred-Enter capture
-# node at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1831
-# TASK-39120 (2026-11-07): append the Console Inspector section file at the
-# tail. The floor is the measured entry count.
-MINIMUM_FILES = 1832
-# TASK-38948 (2026-11-07): append the two 100 ms Send-feedback route nodes
-# at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1834
-# TASK-39133 / TASK-39135 / TASK-39134 (2026-11-07): append the llama.cpp
-# Settings handoff nodes (9), the moved-focus swap nodes (3) and the detail
-# width sweep (1) at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1847
-# TASK-39135 review r12s-rev1 (2026-11-07): append the PageDown case of the
-# moved-focus swap test at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1848
-# TASK-39135 review r12s-rev2 (2026-11-07): append the mid-rebuild move and
-# the Tab-into-the-rebuilt-panes nodes at the tail. The floor is the measured
-# entry count.
-MINIMUM_FILES = 1850
-# TASK-39135 review r12s-rev3 (2026-11-07): append the focus-reset and the
-# new-pane control nodes at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1852
+# TASK-39142 / TASK-38993 / TASK-39136 (2026-11-07): append the inspector
+# workflow file's 18 tests, the llama.cpp snapshot file's [size0] and its 13
+# plain tests, and TASK-38953's 13 Settings sweep nodes at the tail, one
+# entry each. The floor is the measured entry count.
+MINIMUM_FILES = 1854
 
 
 def read_census(path: Path) -> list[str]:
