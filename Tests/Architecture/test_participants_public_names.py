@@ -6,6 +6,9 @@ are flagged in production code: ``from ...x_participants import _name``,
 ``vars(module).get("_name")``.  Module STATE that is rebound or shared
 (not a def/class) stays private and is listed in ``STATE_ALLOWLIST`` until it has
 an accessor API.
+
+TASK-36948.1: stores declare their own registration (``@declare_store``);
+``participants.py`` keeps no store table, and the declared set is frozen here.
 """
 
 import ast
@@ -142,3 +145,93 @@ def test_guard_detects_injected_private_uses(tmp_path):
         "store.py:8 raw_participants._check_temporary_identity (getattr)",
         "store.py:9 raw_participants._scope (vars().get)",
     ]
+
+
+
+# TASK-36948.1: each store declares its backup-participant registration with
+# @declare_store. owner id -> (class under tldw_chatbook, the decorator's keywords).
+# A new store, or a changed closer or policy, updates this table in the same commit.
+DECLARED_STORES = {
+    "db.agent_runs": ("DB.AgentRuns_DB.AgentRunsDB", "closer='close', policy='db.base', finite_worker=False"),
+    "db.chachanotes.primary": ("DB.ChaChaNotes_DB.CharactersRAGDB", "closer='close_connection'"),
+    "db.dreams": ("DB.Dreams_DB.DreamsDB", "closer='close', policy='db.base'"),
+    "db.evals": ("DB.Evals_DB.EvalsDB", "closer='close'"),
+    "db.guardian": ("DB.Guardian_DB.GuardianDB", "closer='close', policy='db.base'"),
+    "db.library_collections": ("DB.Library_Collections_DB.LibraryCollectionsDB", "closer='close', policy='db.base'"),
+    "db.library_ingest_jobs": ("DB.Library_Ingest_Jobs_DB.LibraryIngestJobsDB", "closer='close', finite_worker=False, shared_connection=True"),
+    "db.media.primary": ("DB.Client_Media_DB_v2.MediaDatabase", "closer='close_connection'"),
+    "db.prompts.primary": ("DB.Prompts_DB.PromptsDatabase", "closer='close_connection'"),
+    "db.rag_indexing": ("DB.RAG_Indexing_DB.RAGIndexingDB", "closer='close', finite_worker=False"),
+    "db.scheduled_tasks": ("Scheduling.db.scheduled_tasks_db.ScheduledTasksDB", "policy='db.base'"),
+    "db.subscriptions": ("DB.Subscriptions_DB.SubscriptionsDB", "closer='close', policy='db.base', read_only_policy='db.subscriptions.agent_read'"),
+    "db.subscriptions.site_configs": ("Subscriptions.site_config_manager.SiteConfigManager", ""),
+    "db.workspace_project_index": ("DB.Workspace_Project_Index_DB.WorkspaceProjectIndexDB", "closer='close'"),
+    "db.workspaces": ("DB.Workspace_DB.WorkspaceDB", "closer='close', policy='db.base'"),
+    "kanban.local": ("Kanban_Interop.local_kanban_service.LocalKanbanService", ""),
+    "notes.file_notes": ("Notes.file_notes_replica.FileNotesReplica", "closer='close', policy='notes.file_notes_replica', finite_worker=False, shared_connection=True"),
+    "notes.sync_state": ("Notes.notes_device_state_store.NotesDeviceStateStore", "thread_cache=lambda store: getattr(store._thread_local, 'connection', None)"),
+    "notifications.client": ("Notifications.client_notifications_db.ClientNotificationsDB", "closer='close', policy='db.base'"),
+    "recovered.media": ("Backup_Recovery.recovered_media.RecoveredMedia", ""),
+    "research.local": ("Research_Interop.local_research_service.LocalResearchService", "thread_cache=_thread_cache"),
+    "runtime.event_state": ("Notifications.event_state_repository.EventStateRepository", "thread_cache=_thread_cache, policy='notifications.event_state'"),
+    "runtime.sync_state": ("Sync_Interop.sync_state_repository.SyncStateRepository", "policy='db.base'"),
+    "writing.local": ("Writing_Interop.local_writing_service.LocalWritingService", "thread_cache=_thread_cache"),
+}
+
+
+def declared_stores(root: Path = PACKAGE) -> dict[str, tuple[str, str]]:
+    """Every ``@declare_store`` class in the source tree, read statically."""
+    found = {}
+    for path in sorted(root.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "@declare_store(" not in source:
+            continue
+        module = ".".join(path.relative_to(root).with_suffix("").parts)
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for decorator in node.decorator_list:
+                if isinstance(decorator, ast.Call) and getattr(decorator.func, "id", None) == "declare_store":
+                    owner = decorator.args[0].value
+                    assert owner not in found, f"{owner} is declared twice"
+                    keywords = ", ".join(ast.unparse(keyword) for keyword in decorator.keywords)
+                    found[owner] = (f"{module}.{node.name}", keywords)
+    return found
+
+
+def test_declared_store_set_is_frozen():
+    assert declared_stores() == DECLARED_STORES
+
+    import importlib
+
+    from tldw_chatbook.Backup_Recovery.participants import repository_types
+
+    for owner, (dotted, _) in DECLARED_STORES.items():
+        module, name = dotted.rsplit(".", 1)
+        store = getattr(importlib.import_module(f"tldw_chatbook.{module}"), name)
+        assert repository_types()[store] == owner
+
+
+def test_participants_keeps_no_store_table():
+    tree = ast.parse((PACKAGE / "Backup_Recovery" / "participants.py").read_text(encoding="utf-8"))
+    strings = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    policies = {"db.base", "notes.file_notes_replica", "notifications.event_state", "db.subscriptions.agent_read"}
+    assert strings & (set(DECLARED_STORES) | policies) == set()
+    store_modules = {f"tldw_chatbook.{dotted.rsplit('.', 1)[0]}" for dotted, _ in DECLARED_STORES.values()}
+    imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
+    assert imported & store_modules == set()
+
+
+def test_registration_table_is_built_once_not_per_connection_access(tmp_path):
+    from tldw_chatbook.Backup_Recovery.participants import repository_types
+    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+
+    table = repository_types()
+    db = LibraryCollectionsDB(tmp_path / "collections.sqlite")
+    try:
+        with db.transaction() as connection:
+            connection.execute("SELECT 1")
+        assert repository_types() is table
+        assert table[LibraryCollectionsDB] == "db.library_collections"
+    finally:
+        db.close()

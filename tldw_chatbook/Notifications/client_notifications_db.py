@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from ..DB.base_db import BaseDB
 from ..DB.private_sqlite import connect_private_sqlite
 from ..DB.store_kernel import SQLiteStoreKernel
@@ -35,6 +36,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
 )
 
 
+@declare_store("notifications.client", closer="close", policy="db.base")
 class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
     """Dedicated local queue/inbox store for client notifications.
 

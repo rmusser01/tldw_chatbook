@@ -44,6 +44,7 @@ from loguru import logger
 if TYPE_CHECKING:
     from tldw_chatbook.Evals.ab_testing import ABTestResult
 
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Backup_Recovery.participants import (
@@ -207,6 +208,7 @@ def _clean_task_description(description: Optional[str]) -> Optional[str]:
     return "".join(c for c in description if c.isprintable() and ord(c) != 0)
 
 
+@declare_store("db.evals", closer="close")
 class EvalsDB:
     """Database manager for LLM evaluation data and results."""
 
