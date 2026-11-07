@@ -24,6 +24,12 @@ from Tests.UI.test_library_shell import (
 )
 from Tests.UI.app_factory import _build_test_app
 
+# TASK-39141: the `library_screen` fixture's `_build_test_app()` and the
+# ingest backend's `get_cli_setting` read config, which the per-test
+# TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed). Keep the collection-time sandbox profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _preflight_result(**overrides):
     """Build a PreflightResult with sensible defaults."""

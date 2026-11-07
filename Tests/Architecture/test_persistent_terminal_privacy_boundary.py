@@ -609,6 +609,10 @@ def test_model_tool_guard_rejects_a_realistic_terminal_registration() -> None:
         )
 
 
+# TASK-39141: `_build_test_app()` reads config, which the per-test
+# TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed); the other nodes here are pure.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_app_owned_terminal_session_leaves_live_console_boundaries_free(
     tmp_path: Path,
