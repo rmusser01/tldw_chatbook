@@ -12,6 +12,7 @@ import contextlib
 import json
 import re
 import sqlite3
+import weakref
 from datetime import timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -29,7 +30,20 @@ class LearningRepository:
     """Flashcard, quiz and study-stat persistence over one ``CharactersRAGDB``."""
 
     def __init__(self, db: CharactersRAGDB) -> None:
-        self.db = db
+        # Weak: ``db.learning`` caches this repository on the db, so a strong
+        # reference back would make every db that read it a cycle that only
+        # the cyclic GC (or never, after the boot ``gc.freeze()``) frees.
+        self._db_ref = weakref.ref(db)
+
+    @property
+    def db(self) -> CharactersRAGDB:
+        db = self._db_ref()
+        if db is None:
+            raise CharactersRAGDBError(
+                "LearningRepository's CharactersRAGDB no longer exists; "
+                "use db.learning on a live database."
+            )
+        return db
 
     # --- Study Methods (Learning Paths, Flashcards, Mindmaps) ---
 

@@ -5,7 +5,9 @@ Tests flashcards, spaced repetition, learning paths, and study statistics.
 """
 
 import contextlib
+import gc
 import shutil
+import weakref
 
 import pytest
 import sqlite3
@@ -18,7 +20,12 @@ from hypothesis import strategies as st
 from hypothesis import given, settings, HealthCheck
 
 # Local Imports
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    CharactersRAGDBError,
+    ConflictError,
+    InputError,
+)
 
 
 # --- Test Fixtures ---
@@ -1390,6 +1397,37 @@ class TestLearningRepositoryTransactions:
         assert learning.get_deck(deck_id)["card_count"] == 0
         assert [deck["name"] for deck in learning.list_decks()] == ["Kept"]
         assert db_instance.managed_transaction_depth() == 0
+
+    @staticmethod
+    def _fresh_db(db_path, client_id, template):
+        shutil.copyfile(template, db_path)
+        return CharactersRAGDB(db_path, client_id)
+
+    def test_dropped_database_is_freed_without_the_cycle_collector(
+        self, db_path, client_id, chachanotes_template_db
+    ):
+        """Reading db.learning must not tie the db into a cycle only gc can free."""
+        db = self._fresh_db(db_path, client_id, chachanotes_template_db)
+        assert db.learning.list_decks() == []
+        alive = weakref.ref(db)
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            del db
+            assert alive() is None
+        finally:
+            if gc_was_enabled:
+                gc.enable()
+
+    def test_repository_of_a_freed_database_fails_clearly(
+        self, db_path, client_id, chachanotes_template_db
+    ):
+        db = self._fresh_db(db_path, client_id, chachanotes_template_db)
+        learning = db.learning
+        del db
+        gc.collect()
+        with pytest.raises(CharactersRAGDBError, match="no longer exists"):
+            learning.list_decks()
 
     def test_characters_rag_db_keeps_no_learning_members(self):
         from tldw_chatbook.DB.learning_repository import LearningRepository

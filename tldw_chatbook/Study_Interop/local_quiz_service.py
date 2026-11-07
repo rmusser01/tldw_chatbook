@@ -16,7 +16,6 @@ class LocalQuizService:
         notification_app: Any = None,
     ):
         self.db = db
-        self.learning = None if db is None else db.learning
         self.notification_dispatch_service = notification_dispatch_service
         self.notification_app = notification_app
 
@@ -30,9 +29,11 @@ class LocalQuizService:
         self.notification_app = notification_app
 
     def _require_learning(self) -> Any:
-        if self.learning is None:
+        # Resolved on use, not in __init__: the services are built at boot and
+        # reading db.learning there loads learning_repository before _ui_ready.
+        if self.db is None:
             raise ValueError("Local quiz backend is unavailable.")
-        return self.learning
+        return self.db.learning
 
     def _dispatch_local_notification(
         self,
