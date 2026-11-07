@@ -52,9 +52,9 @@ def sheets() -> list[Path]:
 # must never silently bless a regression. core/_variables.tcss is exempt:
 # raw values are legal ONLY in token definitions (ADR-150).
 dim_offenders = [
-    f"{s.relative_to(CSS)}: {len(_DIM.findall(_COMMENT.sub('', s.read_text(encoding='utf-8'))))}"
+    f"{s.relative_to(CSS).as_posix()}: {len(_DIM.findall(_COMMENT.sub('', s.read_text(encoding='utf-8'))))}"
     for s in sheets()
-    if str(s.relative_to(CSS)) != "core/_variables.tcss"
+    if s.relative_to(CSS).as_posix() != "core/_variables.tcss"
     and _DIM.findall(_COMMENT.sub("", s.read_text(encoding="utf-8")))
 ]
 if dim_offenders:

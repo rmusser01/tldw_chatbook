@@ -24817,3 +24817,6 @@ During the 2026-11-06 approval resync, a Windows text-decoding error occurred in
 ### 2026-11-07: generated identity must survive Windows regeneration
 
 During PR3036 qualification, both Linux Tool Recovery jobs exposed an inherited stale remote-worker stamp. Canonical regeneration corrected it, but the Windows raw-prefix check still failed: the existing CLI's default write_text converted LF to CRLF. A real CLI-to-private-temp byte test failed at byte73 before the repair and passed with explicit newline="\n". Pinning that one generated artifact to LF also preserves its identity on checkout. Verify the real writer and raw bytes as well as read_text drift checks; universal-newline reads can hide a broken self-stamp.
+### 2026-11-07: normalize paths before applying governance exemptions
+
+PR3036's Windows verification first exposed a CSS pin error message using components\active.css while the check expected a portable path. Reading the same helper found a substantive second defect: str(relative_path) also prevented its documented core/_variables.tcss exemption on Windows. A real temporary-token fixture went RED, then nine targeted cases passed after two as_posix conversions; the hard-zero refusal, existing assertions and actual baseline bytes stayed unchanged. Inspect path-dependent decisions before treating a separator failure as an assertion-only fix.
