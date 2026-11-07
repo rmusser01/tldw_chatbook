@@ -418,6 +418,9 @@ def _resync(screen: Any) -> None:
     # still hold the token from before Enter. A refusal that writes no store
     # row (accept_turn raising, a hook refusal) then matched it and skipped.
     screen._console_transcript_sync_token = None  # past TASK-34958's gate
+    # TASK-33621.59: the paint pushed "running" to the header past the push
+    # cache; a send that ends where it began would otherwise leave it there.
+    screen._last_console_workbench_state = None
     # Re-arms the running sync pass for this request, or starts one.
     request_console_repaint(screen)
 
