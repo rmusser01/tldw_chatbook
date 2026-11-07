@@ -485,3 +485,54 @@ async def test_prepared_skills_without_selected_source_refuses_before_capture(ru
             case.session.id, _prepared_skills=object()
         )
     assert not case.controller._preparation_reads
+
+
+@pytest.mark.asyncio
+async def test_received_profile_depth_capture_uses_lightweight_metadata():
+    """Use the actual selected-capture owner with a cold real profile-depth read."""
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        ConsoleTurnCaptureSelection,
+    )
+
+    app = SimpleNamespace(app_config=config.load_settings())
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Cold metadata capture",
+        workspace_id="global",
+        ephemeral=True,
+        settings=ConsoleSessionSettings(provider="openai", model="synthetic-metadata"),
+    )
+    runtime = ConsoleRuntime(app)
+    runtime.set_chat_store(store)
+    controller = runtime.ensure_chat_controller(
+        store=store,
+        provider_gateway=SimpleNamespace(),
+        agent_runtime_enabled=False,
+    )
+    selection = ConsoleTurnCaptureSelection(
+        ConsoleProviderSelection(
+            provider="openai", explicit_model="synthetic-metadata"
+        ),
+        None,
+        None,
+        {"local_tools_enabled": False, "direct_library_tools": False},
+        session.workspace_id,
+        False,
+        False,
+    )
+    try:
+        captured = await controller.capture_turn_configuration_snapshot(
+            session.id,
+            selection=selection,
+        )
+        assert captured.session_id == session.id
+        assert captured.provider_selection == selection.provider_selection
+        assert captured.rag_defaults["top_k"] == 15
+        assert not controller._preparation_reads and not runtime._preparation_reads
+    finally:
+        await runtime.dispose()

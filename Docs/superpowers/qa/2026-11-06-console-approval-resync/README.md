@@ -71,3 +71,7 @@ Timing samples remain zero. Repeated old-baseline workspace-setup stalls are ret
 ## Repaired-source native dispatch and failed timing validation
 
 [The f66a native witness](native-v21-validation-evidence.json) renews actual isolated Windows dispatch after the Speech preload repair: Root viewed the live one-call card and accepted feedback, the 33-byte read succeeded, and all owned processes closed with clean source/profile guards. This dispatch witness does not pass timing validation: all 19 settlement observations retained a Running/Preparing screen, so no settled reference or qualified samples exist. Source investigation identified that the fixture bypassed the normal visible-send lifecycle; the correction is confined to QA and must be revalidated without extending the observation limits. The earlier c183 records retain their historical scope.
+
+## Received-send metadata follow-up
+
+[The RAG metadata repair](rag-metadata-followup.md) records the observed inherited import edge, actual guarded Library/received-capture RED/GREEN, class/export compatibility and unchanged profile authority. The current source passes its targeted metadata checks; native/browser qualification must be renewed on a new committed freeze. The canonical diagnostic inventory was also regenerated after reviewing the obsolete NumPy meter warning: only the Audio owner changes55 to54 calls, with all other owner and policy/sink rows unchanged.

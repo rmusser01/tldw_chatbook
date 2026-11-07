@@ -1,0 +1,57 @@
+{
+  "scope": "Final RAG metadata repair source/control bindings; no physical performance qualification",
+  "before_revision": "7cf51a723f0636aa585d00e91c70938447a9e887",
+  "files_SHA256": {
+    "tldw_chatbook/RAG_Search/config_metadata.py": "1011c53d669b52ba2da372dc0377df5119d1dcea4d9e905fe6c62100519b8d8a",
+    "tldw_chatbook/RAG_Search/simplified/__init__.py": "f166934307fdf247ba799732763187742e994937fa4651853ddddd69d8489993",
+    "tldw_chatbook/RAG_Search/simplified/active_config.py": "401a682aadad36e7f3c169db4129b626750f06309604d22d9bbb98feb73e8801",
+    "tldw_chatbook/RAG_Search/config_profiles.py": "9fa2e5b53ccadc754e9c9752c7f0422557b39eca4060b721d6222751307e8546",
+    "tldw_chatbook/RAG_Search/reranker.py": "49024b18d08a293645cb123ba019ecea5e8883c9f26178c2a3de10ee45e059b6",
+    "tldw_chatbook/RAG_Search/parallel_processor.py": "1a90f0d548295be79e0a8d4a7eb8da58f4d02ab86d9c0a12291af395df0be0fe",
+    "Tests/RAG/_metadata_import_probe.py": "46575ac9fc93a362ab0e7f243e8173c8a8361ce9da743d1771061a5ffe64d4c5",
+    "Tests/RAG/test_metadata_import_boundary.py": "7e35cfdfa98b84a8856faddae7e472530e1b1b3d0b95a90edf08c43097db50c8",
+    "Tests/Chat/test_console_configuration_preparation.py": "90c5e167e51107952911663af03db079498b40d2f4cb4bd25e8ef524bbf1f447",
+    "backlog/tasks/task-34569 - Qualify-Console-approval-clarity-and-responsiveness.md": "1c826283d05a46e097d25da8a16e07e41be23d44293be61b12c83a7b72d669ca",
+    "backlog/decisions/355-lightweight-rag-state-path-resolution.md": "3c379d655154f4cae5bf32e9d9e82d9956cd0716d464cb928c7a0414ca0ebfd1",
+    "Docs/superpowers/plans/2026-11-06-console-approval-resync.md": "2f9645bb2b2b0f3230c1c5a346ef1fd5c74a5f394c43ebe0c2976232c59b9d58",
+    "Docs/superpowers/qa/2026-11-06-console-approval-resync/rag-metadata-followup.md": "6ae033bcf972e4c4c645d18c0a9c2496d0d1f0425773bd664a1b187b50dd0da8"
+  },
+  "class_and_body_AST_equivalence": {
+    "RerankingConfig_original_AST_preserved": true,
+    "tldw_chatbook/RAG_Search/reranker.py_other_bodies_unchanged": true,
+    "ProcessingConfig_original_AST_preserved": true,
+    "tldw_chatbook/RAG_Search/parallel_processor.py_other_bodies_unchanged": true,
+    "tldw_chatbook/RAG_Search/simplified/active_config.py_all_nonimport_bodies_unchanged": true,
+    "tldw_chatbook/RAG_Search/config_profiles.py_all_nonimport_bodies_unchanged": true,
+    "ordered_public_all_preserved": true
+  },
+  "results": {
+    "unique_current_passed": 109,
+    "exact_same_baseline_failed": 20,
+    "metadata": 40,
+    "profiles": 46,
+    "import_order": 3,
+    "facade": 2,
+    "received_node": 1,
+    "active_current_and_exact8b": {
+      "passed": 17,
+      "failed": 20,
+      "failed_node_list_identical": true
+    },
+    "baseline_tracked_clean": true,
+    "new_Ruff_diagnostics": 0,
+    "Root_metadata": 40,
+    "Root_Audio": 12,
+    "Root_CI": 119,
+    "UI_ready_budget": "PASS unchanged limit",
+    "Windows_eager_budget": "688; inherited strict<688 failure with no new module"
+  },
+  "preserved_preparation_negatives": [
+    "local-hostname overclassification (corrected as local metadata, no traffic allowance)",
+    "exact urllib3._has_ipv6 bind remains refused/OSError, separate from unknown network failures"
+  ],
+  "physical_qualified_samples": 0,
+  "full_wait_causality": "not established",
+  "independent_source_review": "CLEAR",
+  "commit_or_App_launch_by_implementer": false
+}
