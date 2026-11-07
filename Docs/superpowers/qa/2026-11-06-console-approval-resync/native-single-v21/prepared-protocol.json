@@ -1,6 +1,6 @@
 {
-  "version": "NativeV21-portable-SINGLE-source-only",
-  "prepared_UTC": "2026-11-07T11:19:30.219580+00:00",
+  "version": "NativeV21-portable-SINGLE-received-intent-successor-source-only",
+  "prepared_UTC": "2026-11-07T11:58:32.016832+00:00",
   "publication": "Exact QA code/ref bytes must be committed before live validation/measurements. Outputs never committed.",
   "product_revision": "PENDING_ROOT_FINAL_CODE_COMMIT_AND_FREEZE",
   "historical_reference_product_revision": "c1833ae9e9fdabb38a976151ab3c9a79c280b245",
@@ -23,12 +23,12 @@
   },
   "runtime_SHA256": {
     "approval_fixture_driver.py": "39abfcfc93519df330b107cdf632d92cdba0095238322accb5c14a03cda7027d",
-    "approval_fixture_workload_v7.py": "2bab44e762702a8c8f18f3e59e5e769a1cc67fa31a2d4d735599b4217cc2825c",
+    "approval_fixture_workload_v7.py": "065b32f8b491741170b5e1c9d79d0cd00382d2d27e87047bb1b016b1cb899987",
     "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
     "native_bootstrap.py": "fba33556c87bd321c138d6d50bb037ed90d7bb0c4ace59440a74f1689e87ca08",
-    "native_product_child.py": "5c39cc89332cc83a591950ac43aad57d64d469ea9eb444f55a68e13efb9e3f15",
-    "native_product_observer.py": "fd38994f999431636ea472fdc93a196f24254c8de2285a30e47bdb8b541fc608",
-    "native_rehearsal_observation.py": "b962f2c158069180dfbbd29b47626f097758a2554edb449e61390e2a30142c3a",
+    "native_product_child.py": "fee627ae2c1dd9288aabe4b171c7221a5ec517e068f0dd52903ef587a1909fc8",
+    "native_product_observer.py": "32a66d9ffa58ed64c660df490fc0e361747ca06d8b1aff04c74994a16925bd0b",
+    "native_rehearsal_observation.py": "b59490d5be3a33bfc89b9e80c272f1fa96d91574fc3a66e2e2b4f83be76c14b2",
     "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
     "native_window_api.py": "194ef1d9f31b5983e7a50424cfea539ba7a15da5dfdcf47216fd0eb5f1783ee4",
     "owned_roi_capture.py": "161718b7fcca0e2851a01c3f9694bda83ac90f0f6d8b15fd81fe3e357963fe7d",
@@ -64,10 +64,11 @@
       "large_UTF8_bytes": 1048576,
       "raw_UTF8_bytes": 16384
     },
-    "AST_count": 19,
+    "AST_count": 20,
     "Ruff_format": "PASS before final controls",
     "Ruff_check_no_cache": "PASS",
-    "source_semantics": {
+    "diagnostic_policy": 12,
+    "historical_V20_source_semantics": {
       "approval_fixture_driver.py_semantic_AST_preserved": true,
       "approval_fixture_workload_v7.py_semantic_AST_preserved": true,
       "common_activity_observer.py_semantic_AST_preserved": true,
@@ -81,7 +82,49 @@
       "reference_hashes_match": true,
       "no_original_home_worktree_private_run_literal": true
     },
-    "diagnostic_policy": 12
+    "received_intent_delegation_refusal_source_contracts": 28,
+    "final_existing_control_returncodes": [
+      {
+        "file": "check_visible_send_route.py",
+        "returncode": 0
+      },
+      {
+        "file": "check_stage_watchdog.py",
+        "returncode": 0
+      },
+      {
+        "file": "check_preparation_clock.py",
+        "returncode": 0
+      },
+      {
+        "file": "check_series_method.py",
+        "returncode": 0
+      },
+      {
+        "file": "check_series_spool.py",
+        "returncode": 0
+      },
+      {
+        "file": "check_workload_script_protocol.py",
+        "returncode": 0
+      },
+      {
+        "file": "check_qualification_freeze.py",
+        "returncode": 0
+      },
+      {
+        "file": "check_diagnostic_policy.py",
+        "returncode": 0
+      },
+      {
+        "file": "ruff ['format', '--check']",
+        "returncode": 0
+      },
+      {
+        "file": "ruff ['check', '--no-cache']",
+        "returncode": 0
+      }
+    ]
   },
   "receipt_exports": [
     {
@@ -145,6 +188,27 @@
       "original_output_SHA256": "d9af77e632e9c943da99490e68d4476ac04943800c555b7c52b09175e553710e",
       "export_SHA256": "5f51073d8933587d5ab9443a11dd5800961493a743993545578bb46ea250a7dd",
       "JSON_values_identical": true
+    },
+    {
+      "file": "selfcheck-receipts/received-intent-controls-RED-f66a.json",
+      "original_output_SHA256": "c6804544517b5b07f213fd7f000e67e98d8c6bc7a7840c1a6f25ae20a5487092",
+      "export_SHA256": "fb34c5d3247716e24bcb468012a4cfa54d031c5b19c7546b37720fe7819ed284",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF metadata export; original retained."
+    },
+    {
+      "file": "selfcheck-receipts/received-intent-release-controls-RED.json",
+      "original_output_SHA256": "356cb22ebdf21a0f550324690779a71223acfd21004785f66e1911bdc6075740",
+      "export_SHA256": "839a9944acf11ac6d50f562d87521803839f4a162736f0a313bae00dc92dbbdd",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF metadata export; original retained."
+    },
+    {
+      "file": "selfcheck-receipts/received-intent-controls-GREEN.json",
+      "original_output_SHA256": "cdb9410a8f66865b7e987ffc603e562d5c25c64577f8d2b23368978e713e9977",
+      "export_SHA256": "199ed30a0c8b7c0673ea667b21b06283315efce6d63a481a641ab1208fbf353f",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF metadata export; original retained."
     }
   ],
   "caps": {
@@ -193,13 +257,13 @@
   "profile_source_security": "Original-home guard before redirect/products, selected main/Core source first in no-pip venv and -I workers; real admission/gateway/catalog/load/permissions/rootpin/executor, exact owned endpoints, no model/external network",
   "original_V19_checkpoint_SHA256": "8c192125ab1dbc89d724d903b5cf383c1c5b0192c4d766054ae315e61532cdbd",
   "source_export_notes": "New public copy formatted LF/Ruff; unused imports/locals removed, exact-type and essential E402 exceptions documented. Original V18/V19 code/receipts untouched. Guard semantic change only per-command safe.directory.as_posix; stricter qualification-freeze gate explicitly RED/GREEN reviewed.",
-  "readme_SHA256": "447ce7349de01c1da9a55229056b8f9681126fd21d463f371f71376ddbbeeede",
+  "readme_SHA256": "63a864669f6dc3673b8e35e1947ea28918fab9ef27e36acb71f5501076116a54",
   "qualified": false,
   "product_samples": 0,
   "GUI_launched": false,
   "run_seeded": false,
   "launch_authorized": false,
-  "review_status": "Root diagnostic ruling implemented; independent V21 delta review pending",
+  "review_status": "Release-safe received-intent successor; final independent delta review pending; no launch authorization",
   "original_V20_packet": {
     "protocol_SHA256": "58b196cfeeed1c9c3412d3691d5562231c35e836edfcb92a9a3032086a282eb1",
     "manifest_SHA256": "8d97843a937bdb9c207de986633cb66b19021893012635c135b87ef8a5037f59",
@@ -216,7 +280,20 @@
     "debug": "One20s repeatFalse stage timer with original lifecycle retained",
     "causality": "Operator method ruling removes optional observer work/risk; no attribution of historical crashes/stalls"
   },
-  "semantic_delta_checks": {
+  "semantic_delta": {
+    "file": "v20-to-v21-diagnostic-policy.diff",
+    "SHA256": "990134304d049f3758dfefb43251c88ebee0b596691a0ec0891a8baa0677f180",
+    "receipt": "selfcheck-receipts/v20-v21-semantic-delta-results.json",
+    "receipt_SHA256": "ad2a82c3716b4c5704bf894a72aa3714025ae2b0c2c781ab952801bb7f0168d0"
+  },
+  "formatting_scratch": "Wholesale V19/V20 formatting diff excluded from publication; retained in exact verified V20 checkpoint.",
+  "previous_executed_packet": {
+    "revision": "f66a2b49fff0b2cd218f21ff31215f062b6e9711",
+    "protocol_SHA256": "4b6a2b1e17b9f83a31b8fad50fbeac6f8f6ab69a5148bd09330079e5d64af923",
+    "manifest_SHA256": "52fd53b0442642bdf64d4b5f8094da348c835ca85fae2af430cff2f89798567d",
+    "validation": "actual approval/worker; terminal settlement invalid; qualified0; immutable original code in Git"
+  },
+  "historical_V20_to_V21_semantic_delta_checks": {
     "StageWatchdog_unchanged_AST": true,
     "run_round_unchanged_AST": true,
     "capture_unchanged_AST": true,
@@ -232,11 +309,17 @@
     "guard_bytes_unchanged": true,
     "spool_bytes_unchanged": true
   },
-  "semantic_delta": {
-    "file": "v20-to-v21-diagnostic-policy.diff",
-    "SHA256": "990134304d049f3758dfefb43251c88ebee0b596691a0ec0891a8baa0677f180",
-    "receipt": "selfcheck-receipts/v20-v21-semantic-delta-results.json",
-    "receipt_SHA256": "ad2a82c3716b4c5704bf894a72aa3714025ae2b0c2c781ab952801bb7f0168d0"
-  },
-  "formatting_scratch": "Wholesale V19/V20 formatting diff excluded from publication; retained in exact verified V20 checkpoint."
+  "received_intent_successor": {
+    "plan": "Docs/superpowers/plans/2026-11-06-console-approval-resync.md",
+    "scope": "Stock settings/bind/composer captured revision -> original receive -> matching actual custody task, with no await gap and no fallback",
+    "lifecycle": "Resident read-only same-screen/attachment/timer/custody facts; retained self.worker remains usable after actual release clears record.task/store/intent; no manual timer/poll/label/sync",
+    "invalid_rounds": "Partial correlation-filtered real stages retained; invalid outcomes remain invalid",
+    "delta": "v21-received-intent-route.diff",
+    "delta_SHA256": "7f1dea8deabbda64fe2c64c61e452f6e89819244875311ca54df52da061a37cf",
+    "controls": "selfcheck-receipts/received-intent-semantic-delta-results.json",
+    "controls_SHA256": "4395d90aeebe194830a022608e6a32f40561128098a373af374bcbc9e3af438d",
+    "new_live_validation": "HELD until review/commit/freeze/lease",
+    "guards_caps_pixels_clock_refs": "unchanged",
+    "selection_proof": "O(1) actual admitted intent.selection.provider_selection, boundary actual_received_intent_selection; legacy absence honest, observer failures cannot replace task result; actual canonical/SDK/owned endpoint evidence independent"
+  }
 }

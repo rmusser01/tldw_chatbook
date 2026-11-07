@@ -1,6 +1,6 @@
 # Console approval PR #3036 resync
 
-The existing PR is rebased onto `dev` at `8b762b52fa9c38be8c978f2b2175d9f070bc829a`. Earlier phase records below retain their original source scope. The owner requires native timing and actual Windows dispatch qualification before auto-merge. Source integration is verified. Actual Windows dispatch has also been witnessed on current source `c1833ae9`; presentation qualification remains open. The PR remains draft and auto-merge remains off.
+The existing PR is rebased onto `dev` at `8b762b52fa9c38be8c978f2b2175d9f070bc829a`. Earlier phase records below retain their original source scope. The owner requires native timing and actual Windows dispatch qualification before auto-merge. Source integration is verified. Actual Windows dispatch is renewed on source `f66a2b49`; presentation qualification remains open. The PR remains draft and auto-merge remains off.
 
 ## Integration
 
@@ -67,3 +67,7 @@ The original protected-path helper after ADR355 took 0.6743465 seconds and added
 Timing samples remain zero. Repeated old-baseline workspace-setup stalls are retained as censored failures, including missing final source closure after forced cleanup; they are excluded from distributions. Browser capture also remains unqualified. Its latest diagnostic observed an original Windows control-connect refusal before cleanup; the later WebSocket close and child pipe error do not establish the initial cause. Neither trace-admission negative was invoked in these failed browser setups. Passive owned-file setup observation is being prepared without changing production behavior, heartbeat, timeout or capture gates.
 
 [Speech preload follow-up](audio-meter-followup.md) records the subsequent measured import-edge repair, 12 focused passes, 45 affected Audio passes, exact inherited failures and unchanged CI limits. The earlier c183 physical witnesses retain their original source scope; presentation qualification must be renewed on the repaired source.
+
+## Repaired-source native dispatch and failed timing validation
+
+[The f66a native witness](native-v21-validation-evidence.json) renews actual isolated Windows dispatch after the Speech preload repair: Root viewed the live one-call card and accepted feedback, the 33-byte read succeeded, and all owned processes closed with clean source/profile guards. This dispatch witness does not pass timing validation: all 19 settlement observations retained a Running/Preparing screen, so no settled reference or qualified samples exist. Source investigation identified that the fixture bypassed the normal visible-send lifecycle; the correction is confined to QA and must be revalidated without extending the observation limits. The earlier c183 records retain their historical scope.

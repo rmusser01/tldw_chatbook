@@ -361,6 +361,7 @@ def main():
     def capture_state():
         full = fixture.snapshot()
         keep = (
+            "visible_send_lifecycle",
             "card_identity",
             "card_identity_source",
             "feature_presentation_revision",
