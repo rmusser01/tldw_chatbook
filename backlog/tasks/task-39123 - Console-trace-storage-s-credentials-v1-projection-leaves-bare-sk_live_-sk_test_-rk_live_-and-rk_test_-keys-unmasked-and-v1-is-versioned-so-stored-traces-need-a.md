@@ -1,16 +1,15 @@
 ---
 id: TASK-39123
 title: "Console trace storage's credentials-v1 projection leaves bare sk_live_, sk_test_, rk_live_ and rk_test_ keys unmasked, and v1 is versioned, so stored traces need a credentials-v2 projection"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-07 06:31
+updated_date: 2026-11-07 22:47
 labels:
 - follow-up
 - security
 - console
 - tracing
-- needs-owner-decision
 priority: medium
 references:
 - tldw_chatbook/Chat/console_trace_redaction.py
@@ -52,11 +51,11 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 New traces are stored under a credentials-v2 projection that masks bare `sk_live_`, `sk_test_`, `rk_live_` and `rk_test_` keys of realistic length in prose, in a tool-result string and in a nested JSON trace value; a test is red before the change on each case
-- [ ] #2 Identifiers that only share a prefix (for example `sk_live_mode`) stay readable under v2
-- [ ] #3 v1 output is byte-identical: the v1 pins stay green, and existing v1 policies and revisions still read
-- [ ] #4 The owner decides how existing credentials-v1 policies are treated once v2 exists; the decision is recorded
-- [ ] #5 The new tests run on a PR lane (never the fast PR contract), with three timings of that lane's command recorded
+- [x] #1 New traces are stored under a credentials-v2 projection that masks bare `sk_live_`, `sk_test_`, `rk_live_` and `rk_test_` keys of realistic length in prose, in a tool-result string and in a nested JSON trace value; a test is red before the change on each case
+- [x] #2 Identifiers that only share a prefix (for example `sk_live_mode`) stay readable under v2
+- [x] #3 v1 output is byte-identical: the v1 pins stay green, and existing v1 policies and revisions still read
+- [x] #4 The owner decides how existing credentials-v1 policies are treated once v2 exists; the decision is recorded
+- [x] #5 The new tests run on a PR lane (never the fast PR contract), with three timings of that lane's command recorded
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -67,3 +66,32 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 4. `Chat/console_trace_redaction.py`: `CREDENTIAL_FILTER_VERSION = "credentials-v2"`; `CredentialSanitizer` takes the projection version (v1 kept only to align a stored v1 policy's frozen PII spans) and reports it.
 5. `Chat/console_semantic_revision.py`: revisions keep binding stored v1 policies (readable versions v1 and v2; materialized bytes use the current v2 masks); `project_semantic_revision_trace_message` applies a v1 PII policy's frozen spans to the v1 projection, then the v2 masks.
 6. Update pins of the current version string; run the trace suites on head and base.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Owner decision (2026-11-06), AC#4:** "Mask v1 on read: new traces are written under v2; stored v1 traces keep their version tag, but every read, export and share re-applies the v2 masks, so old keys never surface. No stored data is rewritten."
+
+**Approach.**
+- `Utils/log_sanitizer.py`: `sanitize_trace_credentials_v2` = `sanitize_trace_credentials_v1` then TASK-39061's bare `sk_`/`rk_` live/test pattern. The pattern tuple is shared (renamed `_DIAGNOSTIC_ONLY_CREDENTIALS` -> `_UNDERSCORE_KEY_CREDENTIALS`, still used by diagnostics), not copied. v1 is untouched.
+- `Chat/console_trace_redaction.py`: `CREDENTIAL_FILTER_VERSION = "credentials-v2"`, so every new policy (controller, voice, legacy import) records v2. `CredentialSanitizer` takes a `version` (default v2, `credentials-v1` accepted) and reports it as `detector_version`. `READABLE_CREDENTIAL_FILTER_VERSIONS` = {v1, v2}.
+- Bump rule (`console_semantic_revision.py`): revisions bind only policies whose credential version the code supports (`:922`) and only sanitizer results of the current version (`:968`). So the supported set now holds v1 and v2, or every stored v1 policy would turn into `trace_redaction_policy_unsupported` omissions on the next message edit. What a v1 policy now materializes is masked by the current (v2) sanitizer; nothing already stored is rewritten.
+- Reads: the Conversation Inspector (`project_capture_for_viewer`), export to file and share to the clipboard (both write `project_exchange_export(...).json_text`, `Widgets/Console/console_exchange_export_dialog.py`) already re-run `CredentialSanitizer()` over every stored call, native or legacy, so they now apply v2 whatever the trace's version. The one version-sensitive read is `project_semantic_revision_trace_message`: a v1 PII policy's frozen spans index its v1 projection. It now sanitizes with that policy's version, applies the frozen spans, then the v2 masks. A naive v2-first read shifted the spans and made the v1 PII trace's request unreadable (`{'omitted': 'native_request_reconstruction_unavailable'}`), shown by the control below.
+
+**Red first.** In `Tests/Utils/test_log_sanitizer.py` (it runs on a PR lane):
+- `test_trace_credentials_v2_masks_bare_underscore_keys[prose|tool-result-string|tool-result-value|nested-json x sk-live|sk-test|rk-live|rk-test]` (AC#1): all 16 red before (`(True, False) == (False, True)`: key present, no marker); green after.
+- `test_stored_v1_trace_is_masked_on_read_export_and_share_but_not_rewritten[x4]`: a native trace stored under a `credentials-v1` policy whose user message and provider-response artifact hold a bare key, read through `ConsoleTraceNativeReader`, both viewer profiles and all three export profiles. Before: `read-full`, `export-full_trace`, `export-redacted_diagnostic` exposed the key. After: none does, and the policy row still says `credentials-v1` and the artifact bytes are unchanged before and after the reads.
+- `test_stored_v1_pii_masks_still_land_with_the_v2_key_mask`: before, `'key sk_live_... then mail [PII omitted] please'`; after, `'key [credential omitted] then mail [PII omitted] please'`. Control (v2-first read, frozen spans not realigned): `assert None == [...]`, request `{'omitted': 'native_request_reconstruction_unavailable'}`.
+- AC#2 `test_trace_credentials_v2_keeps_identifiers_that_share_the_prefix[x5]` and AC#3 `test_trace_credentials_v1_projection_stays_byte_identical`: green before and after (invariants); red under temporary edits (pattern without its 24-character floor: `short-word`, `underscore-identifier` red; the underscore pattern added to v1: the v1 test red), then reverted.
+- AC#3, v1 pins: `test_logging_change_preserves_legacy_trace_credential_projection` stays green; `Tests/Chat/test_console_semantic_revision_coordinator.py` (its policies are `credentials-v1`; `test_two_policy_edit_materializes_once_binds_each_policy_and_advances_epoch_once` materializes under them) and `Tests/Chat/test_console_trace_native_reader.py` stay green. `test_sanitizer_never_exposes_secret_through_failure_or_diagnostic_text` pinned the current version string and now reads `credentials-v2`.
+
+**Covering run.** The 107 test files that reference the credential filter version, `CredentialSanitizer`, the trace redaction, semantic revision, exchange export, trace projection or native reader, or the log sanitizer, at `-n 4` on this branch: 4844 passed, 282 failed, 10 errors in 58 min (load 50-160). Every failing node was rerun on base `fu-base-r12`, grouped per file: 272 fail there too. Of the 13 that did not: `test_sanitizer_never_exposes_secret_through_failure_or_diagnostic_text` pinned the old version string (updated, green); the 8 `test_console_voice_factory_composition.py` nodes fail on base as well when run by file (`RecoveryRequired: raw_source_selection_changed`, the known local trap); `test_discovered_tool_schema_changes_preserve_the_captured_run[bare_fence-True-True-False]` and `test_closed_history_is_revalidated_before_dispatch[sibling]` fail on both trees on a rerun; `test_real_gateway_blocking_response_close_is_off_loop_and_owned` and `test_ownerless_segments_reject_calls_and_response_links` pass on both on a rerun (load flakes). `Tests/Architecture/test_persistent_terminal_privacy_boundary.py::test_app_owned_terminal_session_leaves_live_console_boundaries_free` fails serially on both.
+
+**Lane (AC#5).** The new tests are in `Tests/Utils/test_log_sanitizer.py`, already on architecture-guards "Run Architecture guard contracts" (35 targets, serial; it runs `Tests/Architecture/test_backup_owner_inventory.py`, `Tests/Utils/test_log_sanitizer.py`, `Tests/test_persistent_diagnostic_boundary.py` and `Tests/Persona_Buddy/test_controller_failure_logging.py`), with this round's nodes added, through `jobstep.sh` three times: 430 passed each, in 821.6 s, 564.2 s and 522.6 s, at 1-minute load 158, 52 and 33 when each started. Its last CI run took 7.2 min (PR run 42310788537), so the added nodes stay small against the 20-min cap; the local spread is load. Not the fast PR contract.
+
+**Behaviour to know.** Policy agreement across a continuation compares the credential version, by design (ADR 337). A completed-tool-turn continuation whose prior call was traced under v1 is refused (`completed_tool_turn_policy`, the existing `wrong_policy` case in `Tests/Chat/test_console_trace_runtime.py`). It can only meet a v2 turn across an upgrade restart, for example the resume of an interrupted agent turn.
+
+**Not covered.** The trajectory export (`Chat/trajectory_export.py`, the Trace export dialog) has its own credential regex (`_CREDENTIAL_VALUE_RES`, `sk-` only) and does not read console trace storage; listed as a follow-up.
+
+**Files.** `tldw_chatbook/Utils/log_sanitizer.py`, `tldw_chatbook/Chat/console_trace_redaction.py`, `tldw_chatbook/Chat/console_semantic_revision.py`, `Tests/Utils/test_log_sanitizer.py`, `Tests/Chat/test_console_trace_credential_filter.py`.
+<!-- SECTION:NOTES:END -->
