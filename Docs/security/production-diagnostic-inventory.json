@@ -114,7 +114,7 @@
     },
     {
       "call_count": 2,
-      "diagnostic_digest": "24fd56b3843064f8a24c",
+      "diagnostic_digest": "10775b44040b4dee7eb0",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/persona_policy.py",
       "reason": "remaining Chatbook production diagnostic owner"

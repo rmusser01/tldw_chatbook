@@ -23,7 +23,7 @@ _CONSTANT_DIAGNOSTIC_PREFIXES = {
         "MCPToolProvider: persona_policy_provider failed",
     ),
     "tldw_chatbook/Agents/persona_policy.py": (
-        "Dropping non-mapping persona policy rule",
+        "Dropping a non-mapping policy rule",
         "Dropping malformed persona policy rule",
     ),
     "tldw_chatbook/Character_Chat/local_character_persona_service.py": (
@@ -309,3 +309,38 @@ def test_persona_policy_failure_forwards_only_its_error_class() -> None:
     formatted = RedactingFileFormatter("%(message)s").format(ours[0])
     assert "RuntimeError" in formatted
     assert PRIVATE_SENTINEL not in formatted
+
+
+def test_non_mapping_policy_rule_forwards_a_constant_line_without_a_type() -> None:
+    """TASK-39127: the forwarder appends a bound ``exception_type`` as if it
+    were an error class, so a rejected rule's data type must not be bound.
+    Owner decision (2026-11-06): drop the type; the line is constant."""
+    from tldw_chatbook.Agents.persona_policy import parse_persona_policy_from_rules
+
+    class _Capture(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__(logging.DEBUG)
+            self.records: list[logging.LogRecord] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.records.append(record)
+
+    handler = _Capture()
+    root = logging.getLogger()
+    old_level = root.level
+    root.setLevel(logging.DEBUG)
+    root.addHandler(handler)
+    sink_id = loguru_logger.add(_forward_loguru_to_standard, level="DEBUG")
+    try:
+        policy = parse_persona_policy_from_rules([PRIVATE_SENTINEL, 7])
+    finally:
+        loguru_logger.remove(sink_id)
+        root.removeHandler(handler)
+        root.setLevel(old_level)
+
+    assert policy.rules == ()
+    assert [
+        record.getMessage()
+        for record in handler.records
+        if "non-mapping" in record.getMessage()
+    ] == ["Dropping a non-mapping policy rule"] * 2

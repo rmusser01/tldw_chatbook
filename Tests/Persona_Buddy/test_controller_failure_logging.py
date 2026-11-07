@@ -399,7 +399,7 @@ def test_bounded_exception_type_returns_only_a_class_name():
 #: unreviewed loguru ``extra`` value). A new occurrence fails until reviewed.
 EXCEPTION_TYPE_TOKEN_ROWS: dict[tuple[str, str, str], tuple[int, str]] = {
     ("tldw_chatbook/Agents/mcp_tool_provider.py", "MCPToolProvider._persona_floor", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
-    ("tldw_chatbook/Agents/persona_policy.py", "parse_persona_policy_from_rules", "keyword"): (2, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/Agents/persona_policy.py", "parse_persona_policy_from_rules", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
     ("tldw_chatbook/Audio/voice_phrase_sequencer.py", "PhraseSpeechSequencer._drain_phrases", "string"): (1, "structured metadata dict field, not loguru extra"),
     ("tldw_chatbook/Audio/voice_process_core.py", "ConsoleSpeculativeVoiceSession._fail_transport.preserve_and_report", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
     ("tldw_chatbook/Audio/voice_transcription.py", "_stt_failure_metadata", "string"): (2, "structured metadata dict field, not loguru extra"),

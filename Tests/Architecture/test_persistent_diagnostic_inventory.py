@@ -64,7 +64,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "MCPToolProvider: persona_policy_provider failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/Agents/persona_policy.py": {
-        "Dropping non-mapping persona policy rule": ("type(entry).__name__",),
+        # TASK-39127: constant, nothing bound (owner decision 2026-11-06).
+        "Dropping a non-mapping policy rule": (),
         "Dropping malformed persona policy rule": ("type(exc).__name__",),
     },
     "tldw_chatbook/Agents/run_log_eviction.py": {
