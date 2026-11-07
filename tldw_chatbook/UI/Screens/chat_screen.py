@@ -173,6 +173,7 @@ from ..Console_Modules.transcript import (
     _ConsoleTranscriptReadingState,
     note_console_conversation_painted,
     request_console_heap_refreeze,
+    request_transcript_sync as _request_transcript_sync,
 )
 from ..Console_Modules import console_spend_projection as spend
 from ..Console_Modules import inspector_data
@@ -18116,9 +18117,7 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
-    def request_transcript_sync(self) -> None:
-        """Public seam: ConsoleRuntime asks the view to re-arm its sync poll."""
-        self._start_console_transcript_sync_timer()
+    request_transcript_sync = _request_transcript_sync
 
     def _start_console_transcript_sync_timer(self) -> None:
         self._console_transcript_poll_asked = True

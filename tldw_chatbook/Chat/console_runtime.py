@@ -140,8 +140,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleViewHookSlot as ConsoleViewHookSlot,
 )
 from tldw_chatbook.Chat.console_display_state import console_sent_source_count
-from tldw_chatbook.Chat.console_hook_review import HookReviewResult
-from tldw_chatbook.Chat.hook_review_screen import screen_hook_review_projection
+from tldw_chatbook.Chat.console_hook_review import HookReviewResult, screen_hook_review_projection
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
@@ -5290,6 +5289,7 @@ class ConsoleRuntime:
             loop=asyncio.get_running_loop(),
         )
         return await asyncio.shield(answer)
+
 
     def _hook_review_presentation_current(
         self,
