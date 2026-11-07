@@ -123,6 +123,33 @@ class LocalFirstSyncService:
         note_id = str(object_id or "")
         return note_id or None
 
+    @classmethod
+    def _purge_guarded_note_id(
+        cls, domain: Any, operation: Any, object_id: Any, payload: Any
+    ) -> str | None:
+        """The note an envelope pushes content or a link for, or ``None``.
+
+        Content: a ``notes`` / ``notes.note`` upsert (final review C-1).
+        Link (PR #3423 Qodo 2): a ``notes.folder_link`` upsert's ``note_id``,
+        or a note-subject ``notes.keyword_link`` upsert's ``subject_id`` --
+        a link to a note deleted for good would reach the server without the
+        note. Tombstones are never held, for content or links.
+        """
+        note_id = cls._note_content_envelope_id(domain, operation, object_id)
+        if note_id is not None:
+            return note_id
+        if str(operation) != "upsert" or not isinstance(payload, Mapping):
+            return None
+        if str(domain) == "notes.folder_link":
+            subject = payload.get("note_id")
+        elif str(domain) != "notes.keyword_link":
+            return None
+        elif payload.get("subject_type") == "note":
+            subject = payload.get("subject_id")
+        else:
+            return None
+        return str(subject or "") or None
+
     def _drop_purged_note_outbox_entries(
         self, outbox_entries: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -138,13 +165,21 @@ class LocalFirstSyncService:
         a logged try, so a failed heal retries next cycle instead of
         pushing). Delete and tombstone envelopes still go out, and a note in
         Recently deleted still has its row, so its upsert may go.
+
+        PR #3423 Qodo 2: a folder or keyword LINK upsert for such a note is
+        held and healed the same way (``_purge_guarded_note_id``). The
+        organization drain can copy a link after the purge's own outbox
+        discard -- it reads its pending intents, the purge commits and
+        discards, then the drain inserts -- and that discard may fail or
+        never run.
         """
         def content_note_id(entry: Mapping[str, Any]) -> str | None:
             envelope = entry.get("envelope") or {}
-            return self._note_content_envelope_id(
+            return self._purge_guarded_note_id(
                 entry.get("domain", envelope.get("domain")),
                 envelope.get("operation"),
                 envelope.get("object_id"),
+                envelope.get("payload") or envelope.get("payload_clear"),
             )
 
         candidates = {
@@ -173,8 +208,11 @@ class LocalFirstSyncService:
         """Skip an unsaved upsert for a note deleted for good (no outbox row)."""
 
         def content_note_id(envelope: Any) -> str | None:
-            return self._note_content_envelope_id(
-                envelope.domain, envelope.operation, envelope.object_id
+            return self._purge_guarded_note_id(
+                envelope.domain,
+                envelope.operation,
+                envelope.object_id,
+                getattr(envelope, "payload", None),
             )
 
         candidates = {
