@@ -676,7 +676,9 @@ saved chats stay in the Chats rail. **Stay** keeps every draft, Temporary chat,
 staged attachment and unsent turn as it was. With nothing to lose, Ctrl+Q quits
 without asking. Command output such as `/help` or `/doctor`, and error notices,
 are not counted in either dialog and never make one appear on their own: a
-saved chat holding only those rows closes and quits without a question.
+saved chat holding only those rows closes and quits without a question once
+its composer is empty. Text a command leaves in the composer after it runs,
+such as `/help`, still counts as an unsent draft until you clear it (Ctrl+U).
 
 ## Assistant recovery choices
 
