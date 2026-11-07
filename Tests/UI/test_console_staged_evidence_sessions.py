@@ -57,9 +57,7 @@ from tldw_chatbook.Chat.console_live_work import (
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
-    LocalRagContextResult,
-)
+from tldw_chatbook.RAG_Search.scope_evidence import LocalRagContextResult
 from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
     ConsoleSendAuthoritySummary,
 )

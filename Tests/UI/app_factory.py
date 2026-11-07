@@ -217,6 +217,9 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
 
     db = CharactersRAGDB(":memory:", client_id)
     app.chachanotes_db = db
+    # Code that reads ``app.services.storage`` (the RAG scope/evidence wiring,
+    # TASK-36947.3) must see the same DB as the alias.
+    app._publish_application_services()
     return db
 
 

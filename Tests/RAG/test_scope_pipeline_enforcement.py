@@ -58,6 +58,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
+from tldw_chatbook.RAG_Search import scope_evidence as se
 from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
 from tldw_chatbook.RAG_Search.local_citation_capture import normalize_local_result
@@ -71,6 +72,7 @@ from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 # Tests/UI/test_console_internals_decomposition.py, Tests/UI/
 # test_destination_shells.py) rather than duplicating it here.
 from Tests.UI.app_factory import _build_test_app
+from Tests.app_services_doubles import AliasServices
 
 pytestmark = pytest.mark.unit
 
@@ -88,6 +90,8 @@ def _scoped(**allowlist: set) -> EffectiveScope:
 
 class _App:
     """App double exposing the seams the pipeline legs read."""
+
+    services = property(AliasServices)
 
     def __init__(self, media_db=None, chachanotes_db=None, rag_service=None):
         self.media_db = media_db
@@ -974,6 +978,8 @@ class _ChatMockApp:
     .py``'s ``_ChatMockApp`` fixture, extended with ``media_db``/
     ``chachanotes_db`` since this task drives real seeded DBs end to end)."""
 
+    services = property(AliasServices)
+
     def __init__(
         self,
         search_mode: str = "plain",
@@ -1522,13 +1528,13 @@ class TestScopeCacheWiring:
         app = _App(media_db=media_db, chachanotes_db=cha_db)
 
         calls: list[int] = []
-        real_resolve = cre._resolve_scope_with_current_ids
+        real_resolve = se._resolve_scope_with_current_ids
 
         async def _spy_resolve(*args, **kwargs):
             calls.append(1)
             return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
+        monkeypatch.setattr(se, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         second = await cre.resolve_effective_scope_for_chat(app)
@@ -1556,13 +1562,13 @@ class TestScopeCacheWiring:
         app = _App(media_db=media_db, chachanotes_db=cha_db)
 
         calls: list[int] = []
-        real_resolve = cre._resolve_scope_with_current_ids
+        real_resolve = se._resolve_scope_with_current_ids
 
         async def _spy_resolve(*args, **kwargs):
             calls.append(1)
             return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
+        monkeypatch.setattr(se, "_resolve_scope_with_current_ids", _spy_resolve)
 
         await cre.resolve_effective_scope_for_chat(app)
         await cre.resolve_effective_scope_for_chat(app)
@@ -1591,13 +1597,13 @@ class TestScopeCacheWiring:
         app = _App(media_db=media_db, chachanotes_db=cha_db)
 
         calls: list[int] = []
-        real_resolve = cre._resolve_scope_with_current_ids
+        real_resolve = se._resolve_scope_with_current_ids
 
         async def _spy_resolve(*args, **kwargs):
             calls.append(1)
             return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
+        monkeypatch.setattr(se, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1652,13 +1658,13 @@ class TestScopeCacheWiring:
         app.workspace_registry_service = registry
 
         calls: list[int] = []
-        real_resolve = cre._resolve_scope_with_current_ids
+        real_resolve = se._resolve_scope_with_current_ids
 
         async def _spy_resolve(*args, **kwargs):
             calls.append(1)
             return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
+        monkeypatch.setattr(se, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1717,13 +1723,13 @@ class TestScopeCacheWiring:
         app.workspace_registry_service = registry
 
         calls: list[int] = []
-        real_resolve = cre._resolve_scope_with_current_ids
+        real_resolve = se._resolve_scope_with_current_ids
 
         async def _spy_resolve(*args, **kwargs):
             calls.append(1)
             return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
+        monkeypatch.setattr(se, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1924,7 +1930,7 @@ class TestResolveEffectiveScopeMemoryDbGuard:
                 calls.append(True)
                 return await real_to_thread(func, *args, **kwargs)
 
-            monkeypatch.setattr(cre.asyncio, "to_thread", _spy_to_thread)
+            monkeypatch.setattr(se.asyncio, "to_thread", _spy_to_thread)
 
             app = _App(chachanotes_db=cha_db)
 
@@ -1953,14 +1959,14 @@ class TestResolveEffectiveScopeMemoryDbGuard:
             )
             main_thread = threading.current_thread()
             call_threads = []
-            real_read_metadata = cre._read_fresh_conversation_metadata_sync
+            real_read_metadata = se._read_fresh_conversation_metadata_sync
 
             def _recording_read_metadata(*args, **kwargs):
                 call_threads.append(threading.current_thread())
                 return real_read_metadata(*args, **kwargs)
 
             monkeypatch.setattr(
-                cre,
+                se,
                 "_read_fresh_conversation_metadata_sync",
                 _recording_read_metadata,
             )
@@ -2002,7 +2008,7 @@ class TestResolveEffectiveScopeMemoryDbGuard:
             )
             main_thread = threading.current_thread()
             call_threads = {"media": [], "note": []}
-            real_sensitive_fetchall = cre._sensitive_fetchall
+            real_sensitive_fetchall = se._sensitive_fetchall
 
             def _record_existence_thread(db, query, params):
                 if query.startswith("SELECT id FROM Media"):
@@ -2012,7 +2018,7 @@ class TestResolveEffectiveScopeMemoryDbGuard:
                 return real_sensitive_fetchall(db, query, params)
 
             monkeypatch.setattr(
-                cre,
+                se,
                 "_sensitive_fetchall",
                 _record_existence_thread,
             )
@@ -2473,7 +2479,7 @@ class TestFreshPromptBoundaryAuthority:
 
     @pytest.mark.asyncio
     async def test_failed_authority_or_existence_read_rejects_every_candidate(
-        self, monkeypatch
+        self, media_db, monkeypatch
     ):
         candidate = self._normalized("media", "m1", "Media", rank=1)
         app = _App(media_db=_RefusingMediaDB())
@@ -2481,11 +2487,20 @@ class TestFreshPromptBoundaryAuthority:
 
         assert await cre.authorize_local_results_for_prompt(app, (candidate,)) == ()
 
+        # A readable source authorizes its candidate, so only the failed scope
+        # authority below can reject it.
+        media_id = _seed_media(media_db, n=1)[0]
+        readable = _App(media_db=media_db)
+        present = self._normalized("media", media_id, "Media", rank=1)
+        assert await cre.authorize_local_results_for_prompt(readable, (present,)) == (
+            present,
+        )
+
         async def _raise_authority(*_args, **_kwargs):
             raise RuntimeError("authority unavailable")
 
-        monkeypatch.setattr(cre, "resolve_effective_scope_for_chat", _raise_authority)
-        assert await cre.authorize_local_results_for_prompt(app, (candidate,)) == ()
+        monkeypatch.setattr(se, "resolve_scope_for_session", _raise_authority)
+        assert await cre.authorize_local_results_for_prompt(readable, (present,)) == ()
 
     @pytest.mark.asyncio
     async def test_missing_or_failed_active_scope_authority_rejects_all(
@@ -2549,7 +2564,7 @@ class TestFreshPromptBoundaryAuthority:
             ]
         )
         calls = {"media": 0, "chacha": 0}
-        real_sensitive_fetchall = cre._sensitive_fetchall
+        real_sensitive_fetchall = se._sensitive_fetchall
 
         def _recording_sensitive_fetchall(db, *args, **kwargs):
             if db is media_db:
@@ -2559,7 +2574,7 @@ class TestFreshPromptBoundaryAuthority:
             return real_sensitive_fetchall(db, *args, **kwargs)
 
         monkeypatch.setattr(
-            cre,
+            se,
             "_sensitive_fetchall",
             _recording_sensitive_fetchall,
         )
@@ -2719,7 +2734,7 @@ class TestCapturePromptBoundaryFreshAuthority:
             ], "legacy context must not survive canonical capture"
 
         monkeypatch.setattr(cre, "perform_plain_rag_search", _return_candidate)
-        real_sensitive_fetchall = cre._sensitive_fetchall
+        real_sensitive_fetchall = se._sensitive_fetchall
         scope_existence_reads = 0
 
         def _fail_fresh_scope_existence(db, query, params):
@@ -2730,7 +2745,7 @@ class TestCapturePromptBoundaryFreshAuthority:
                     raise RuntimeError(failure_sentinel)
             return real_sensitive_fetchall(db, query, params)
 
-        monkeypatch.setattr(cre, "_sensitive_fetchall", _fail_fresh_scope_existence)
+        monkeypatch.setattr(se, "_sensitive_fetchall", _fail_fresh_scope_existence)
         captured_logs = []
         sink_id = loguru_logger.add(
             captured_logs.append,
@@ -2743,7 +2758,7 @@ class TestCapturePromptBoundaryFreshAuthority:
             loguru_logger.remove(sink_id)
 
         assert scope_existence_reads == 2
-        assert captured == cre.LocalRagContextResult(None, None)
+        assert captured == se.LocalRagContextResult(None, None)
         assert repository.builders[0].evidence_runs == ()
         rendered_logs = "".join(str(message) for message in captured_logs)
         assert failure_sentinel not in rendered_logs

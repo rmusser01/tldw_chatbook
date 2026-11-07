@@ -132,6 +132,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.conversation_archive_actions",
     "tldw_chatbook.Agents.canvas_tool_provider",
     "tldw_chatbook.Chat.console_agent_reply",
+    "tldw_chatbook.RAG_Search.scope_evidence",  # TASK-36947.3: evidence capture.
     "tldw_chatbook.Chat.citation_key_first_use",
     "tldw_chatbook.Canvas.guide",
     "tldw_chatbook.Chat.console_stream_persistence",
