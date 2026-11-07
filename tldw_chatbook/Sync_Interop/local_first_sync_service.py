@@ -150,6 +150,20 @@ class LocalFirstSyncService:
             return None
         return str(subject or "") or None
 
+    @staticmethod
+    def _guarded_payload(payload: Any, payload_clear: Any) -> Mapping[str, Any] | None:
+        """The payload the purge guard reads: ``payload`` when it is a
+        non-empty object, else ``payload_clear`` when it is one.
+
+        PR #3423 re-review 3 (m-3): the same rule, spelled in SQL, is the one
+        the heal deletes by (``SyncStateRepository._GUARDED_PAYLOAD_PATH_SQL``),
+        so a link this guard holds back is one the heal can drop -- never
+        held on every push for ever.
+        """
+        if isinstance(payload, Mapping) and payload:
+            return payload
+        return payload_clear if isinstance(payload_clear, Mapping) else None
+
     def _drop_purged_note_outbox_entries(
         self, outbox_entries: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -179,7 +193,9 @@ class LocalFirstSyncService:
                 entry.get("domain", envelope.get("domain")),
                 envelope.get("operation"),
                 envelope.get("object_id"),
-                envelope.get("payload") or envelope.get("payload_clear"),
+                self._guarded_payload(
+                    envelope.get("payload"), envelope.get("payload_clear")
+                ),
             )
 
         candidates = {
@@ -212,7 +228,10 @@ class LocalFirstSyncService:
                 envelope.domain,
                 envelope.operation,
                 envelope.object_id,
-                getattr(envelope, "payload", None),
+                self._guarded_payload(
+                    getattr(envelope, "payload", None),
+                    getattr(envelope, "payload_clear", None),
+                ),
             )
 
         candidates = {

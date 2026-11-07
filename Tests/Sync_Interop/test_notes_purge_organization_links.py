@@ -48,7 +48,8 @@ link survives the purge in the outbox; an acknowledged link keeps the note's
 id in its payload; the raced link is pushed. Base for the re-review 3 pins
 (``67ddead5e9``): the purge deletes every pending unlink, so an uncopied one
 never reaches the server, and a copied one's acknowledgement leaves the head
-on ``upsert``.
+on ``upsert``; and a link held back from a ``payload_clear``-only envelope
+is never healed (re-review 3 m-3).
 """
 
 from __future__ import annotations
@@ -82,6 +83,7 @@ from tldw_chatbook.Sync_Interop.local_first_sync_service import LocalFirstSyncSe
 from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
     NotesOrganizationSyncService,
 )
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -702,3 +704,96 @@ async def test_an_unlink_learned_from_the_server_still_reaches_it_after_a_purge(
     finally:
         device_a.close()
         device_b.close()
+
+
+# -- PR #3423 re-review 3 m-3: the guard and its heal read one payload -------
+
+
+async def test_a_link_held_from_its_clear_payload_is_healed_too(
+    tmp_path, monkeypatch
+) -> None:
+    """m-3: the push guard and its heal read one payload. An outbox row
+    whose link sits only in ``payload_clear`` (a row ``SyncV2Envelope`` did
+    not write -- it fills ``payload`` from ``payload_clear`` itself) is held
+    back AND dropped, not held back on every push for ever."""
+    linked = _Linked(tmp_path, monkeypatch)
+    linked.drain()
+    with linked.state.transaction() as connection:
+        changed = connection.execute(
+            "UPDATE sync_v2_local_outbox SET envelope = "
+            "json_set(envelope, '$.payload', json('{}')) "
+            "WHERE domain IN ('notes.folder_link', 'notes.keyword_link') "
+            "AND instr(envelope, ?) > 0",
+            (linked.note,),
+        ).rowcount
+    assert changed == 2
+    # The purge, without its post-commit outbox discard (it never ran).
+    assert linked.db.hard_delete_note(linked.note, expected_version=linked.version)
+    assert linked.links_of(linked.note) == {
+        ("notes.keyword_link", "upsert", linked.note),
+        ("notes.folder_link", "upsert", linked.note),
+    }
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=linked.state,
+        local_store=RecordingLocalStore(),
+        dataset_keys={DATASET: generate_dataset_key()},
+        note_exists=linked.db.note_ids_present,
+    )
+
+    await service.sync_once(**SCOPE, domains=DOMAINS)
+
+    pushed = {
+        _subject(envelope["domain"], envelope.get("payload") or {})
+        for envelope in server.calls[0][3]
+    }
+    assert linked.note not in pushed
+    assert linked.links_of(linked.note) == set(), (
+        "held back but never healed: it is held again on every push"
+    )
+
+
+_ABSENT = object()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [_ABSENT, None, {}, {"note_id": "from-payload"}, "not an object"],
+    ids=["absent", "null", "empty", "object", "text"],
+)
+@pytest.mark.parametrize(
+    "payload_clear",
+    [_ABSENT, {}, {"note_id": "from-clear"}],
+    ids=["clear-absent", "clear-empty", "clear-object"],
+)
+async def test_the_guard_and_its_heal_read_the_same_payload(payload, payload_clear) -> None:
+    """m-3: ``LocalFirstSyncService._guarded_payload`` (the push guard) and
+    ``SyncStateRepository._GUARDED_PAYLOAD_PATH_SQL`` (its heal) pick the
+    same payload for every envelope shape."""
+    import sqlite3
+
+    envelope: dict = {}
+    if payload is not _ABSENT:
+        envelope["payload"] = payload
+    if payload_clear is not _ABSENT:
+        envelope["payload_clear"] = payload_clear
+    guarded = LocalFirstSyncService._guarded_payload(
+        envelope.get("payload"), envelope.get("payload_clear")
+    )
+    text = json.dumps(envelope)
+    connection = sqlite3.connect(":memory:")
+    try:
+        (path,) = connection.execute(
+            f"SELECT {SyncStateRepository._GUARDED_PAYLOAD_PATH_SQL} "
+            "FROM (SELECT ? AS envelope)",
+            (text,),
+        ).fetchone()
+        (healed,) = connection.execute(
+            "SELECT json_extract(?, ?)", (text, path)
+        ).fetchone()
+    finally:
+        connection.close()
+    assert (json.loads(healed) if healed is not None else None) == (
+        dict(guarded) if guarded is not None else None
+    ), (envelope, path)
