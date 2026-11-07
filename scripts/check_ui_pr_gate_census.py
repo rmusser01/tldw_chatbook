@@ -908,6 +908,9 @@ MINIMUM_FILES = 1830
 # TASK-38968 (2026-11-07): append the send-admission deferred-Enter capture
 # node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1831
+# TASK-39120 (2026-11-07): append the Console Inspector section file at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1832
 
 
 def read_census(path: Path) -> list[str]:

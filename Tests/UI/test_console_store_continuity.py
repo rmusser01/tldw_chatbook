@@ -367,14 +367,16 @@ def _step(label: str) -> None:
 
 
 async def _seed_console(app, pilot, gateway):
-    """Mount a real Console, send once, return the live handles."""
-    _step("seed: constructing screen")
-    chat = ChatScreen(app)
-    await app.push_screen(chat)
-    _step("seed: pushed screen")
-    app._initial_screen_pushed = True
-    app.current_tab = "chat"
-    await pilot.pause()
+    """Route to the app's real Console, send once, return the live handles.
+
+    TASK-39120: since fed0b7257a (TASK-31520) the Console route reuses the
+    app's one installed ChatScreen. A ChatScreen this harness pushed itself
+    kept the runtime's view across the navigation, so the routed Console
+    never attached and painted an empty transcript on return.
+    """
+    _step("seed: routing to the app's Console")
+    chat = await _navigate(app, pilot, "chat", expect="ChatScreen")
+    _step("seed: routed")
     await _wait_for_selector(chat, pilot, "#console-native-composer")
     _step("seed: composer present")
     controller = chat._ensure_console_chat_controller()
@@ -478,7 +480,9 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
     chat2 = await _navigate(app, pilot, "chat", expect="ChatScreen")
     _step("nav: returned")
     assert isinstance(chat2, ChatScreen), type(chat2).__name__
-    assert chat2 is not chat, "screens are never cached"
+    # fed0b7257a (TASK-31520) made the Console route reusable: navigation
+    # suspends and resumes the app's one installed ChatScreen.
+    assert chat2 is chat, "the Console route reuses its installed screen"
     await _wait_for_selector(chat2, pilot, "#console-native-composer")
     await pilot.pause()
     return chat2, store, session_id, conversation_id, runs_db, run_id

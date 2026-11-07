@@ -2656,3 +2656,7 @@ Tests/UI/test_console_endpoint_discovery.py::test_endpoint_command_create_lands_
 # whole file is 115 s serial; this node 24-39 s per lane run at load 61-89).
 # Appended at the tail.
 Tests/UI/test_console_send_admission_off_pump.py::test_an_enter_deferred_behind_a_send_sends_its_own_capture_only
+# TASK-39120 (2026-11-07): the Inspector-style section, now that its harness
+# loads the app bundle its utility classes live in (38 tests, 50 s serial at
+# load about 150). Appended at the tail.
+Tests/UI/test_console_inspector_section.py
