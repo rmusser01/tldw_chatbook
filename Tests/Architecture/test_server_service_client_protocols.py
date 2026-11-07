@@ -9,16 +9,21 @@ A service lists, in a ``typing.Protocol`` class in its own module, exactly the
 * the scan cannot follow what a service does with its client.
 
 "The client" is ``self.client``, ``self._require_client()``, a name ``client``,
-and whatever is bound from one of these: a plain, annotated, walrus or tuple
-assignment to a name or to ``self.<attr>``; an argument to a same-module
-function or method, followed by position or keyword to its parameter whatever
-that parameter is called; or the result of a same-module function that returns
-it. A use is an attribute read on the client or ``getattr(<client>, name)``.
-Handing the client to anything else (another module's function, a container)
-fails as unresolved.
+and whatever is bound from one of these: a plain, annotated or walrus
+assignment (or a same-length tuple assignment) to a name or to ``self.<attr>``;
+an argument to a same-module function or method, followed by position or
+keyword to its parameter whatever that parameter is called; or the result of a
+same-module function that returns it. A use is an attribute read on the client
+or ``getattr(<client>, name)``. Comparing or truth-testing the client is
+allowed. A client expression anywhere else fails as unresolved: handed to
+another module's function, stored in a subscript or another object's
+attribute, put in a list, dict or unpaired tuple, used as an operand of
+``or``/``and`` or a ternary branch, iterated with ``for`` or entered with
+``with``.
 
 A non-literal ``getattr`` name fails closed: it must resolve to string
-literals through module-level string constants, through a parameter's
+literals through module-level string constants (a name the whole module
+stores to exactly once, at top level), through a parameter's
 arguments at every same-module call site (by keyword or position,
 recursively), or, for ``x.<field>``, through every value a same-module
 dataclass constructor or ``<field>=`` keyword binds to that field. Any value
@@ -33,6 +38,7 @@ full signatures are a possible follow-up.
 from __future__ import annotations
 
 import ast
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -107,8 +113,8 @@ def _default(fn: ast.FunctionDef | ast.AsyncFunctionDef, param: str) -> ast.expr
 
 
 # ponytail: names are tracked module-wide, not per scope (an over-approximation,
-# so it fails closed), and ``for``/``with`` targets are not followed; scope it
-# per function if a service ever trips over a reused name.
+# so it fails closed); scope it per function if a service ever trips over a
+# reused name.
 class ClientScan:
     """What one service module does with its client: ``used`` and ``unresolved``."""
 
@@ -123,20 +129,19 @@ class ClientScan:
         self.classes = {
             n.name: n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
         }
-        bindings: dict[str, list[ast.expr | None]] = {}
-        for stmt in tree.body:
-            if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
-                targets = (
-                    stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
-                )
-                for t in targets:
-                    if isinstance(t, ast.Name):
-                        bindings.setdefault(t.id, []).append(stmt.value)
-        # Module-level names bound exactly once, to a string literal.
+        stores = Counter(
+            n.id
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load)
+        )
+        # Top-level names assigned a string literal and stored nowhere else in
+        # the module (no other top-level, if/try, global or local rebind).
         self.constants = {
-            name: values[0].value
-            for name, values in bindings.items()
-            if len(values) == 1 and _is_str(values[0])
+            t.id: stmt.value.value
+            for stmt in tree.body
+            if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and _is_str(stmt.value)
+            for t in (stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target])
+            if isinstance(t, ast.Name) and stores[t.id] == 1
         }
         self.names = {"client"}  # names bound to the client
         self.attrs = {"client"}  # self.<attr> bound to the client
@@ -145,6 +150,7 @@ class ClientScan:
         while self._bind_once():
             pass
         self.used = self._uses()
+        self._report_unfollowed()
 
     def _where(self, node: ast.AST) -> str:
         return f"{self.rel_path}:{node.lineno}"
@@ -157,7 +163,7 @@ class ClientScan:
         if isinstance(node, ast.Call):
             func = node.func
             return getattr(func, "attr", getattr(func, "id", None)) in self.returners
-        return False
+        return isinstance(node, ast.NamedExpr) and self.is_client(node.value)
 
     def _enclosing(self, node: ast.AST, kinds: tuple[type, ...]) -> ast.AST | None:
         node = self.parent.get(node)
@@ -292,6 +298,47 @@ class ClientScan:
                 names = self._method_names(node.args[1], self._enclosing(node, _SCOPES))
                 used |= names - absent if len(node.args) == 3 else names
         return used
+
+    def _followed(self, node: ast.AST) -> bool:
+        """Whether the scan follows (or reports) the client expression ``node``."""
+        if not isinstance(getattr(node, "ctx", ast.Load()), ast.Load):
+            return True  # a store target: _bind_once handles the binding
+        parent = self.parent.get(node)
+        if isinstance(parent, ast.Attribute | ast.Return | ast.keyword | ast.Compare):
+            return True  # a use, a returner, a hand-off, an identity/None check
+        if isinstance(parent, ast.Call):
+            return node is not parent.func  # a hand-off; calling the client is not
+        if isinstance(parent, ast.Assign | ast.AnnAssign | ast.NamedExpr):
+            return node is parent.value  # _bind binds it or reports the target
+        if isinstance(parent, ast.UnaryOp):
+            return isinstance(parent.op, ast.Not)
+        if isinstance(parent, ast.If | ast.While | ast.IfExp | ast.Assert):
+            return node is parent.test  # a truth test
+        if isinstance(parent, ast.Tuple | ast.List):
+            # One element of ``a, b = x, y``: _bind pairs it only if every
+            # target is a same-length, star-free tuple or list.
+            holder = self.parent.get(parent)
+            targets = getattr(holder, "targets", [])
+            return (
+                isinstance(holder, ast.Assign)
+                and holder.value is parent
+                and all(
+                    isinstance(t, ast.Tuple | ast.List)
+                    and len(t.elts) == len(parent.elts)
+                    and not any(isinstance(e, ast.Starred) for e in t.elts)
+                    for t in targets
+                )
+            )
+        return False
+
+    def _report_unfollowed(self) -> None:
+        for node in ast.walk(self.tree):
+            if self.is_client(node) and not self._followed(node):
+                parent = type(self.parent.get(node)).__name__
+                self.unresolved.add(
+                    f"client used in {parent} at {self._where(node)}: "
+                    f"{ast.unparse(self.parent.get(node))[:80]}"
+                )
 
     def _method_names(
         self, expr: ast.AST, scope: ast.AST | None, seen: frozenset = frozenset()
