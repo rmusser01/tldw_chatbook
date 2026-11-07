@@ -2,18 +2,25 @@
 
 ``SettingsScreen`` used to render, label and save every category through
 if/elif chains keyed on ``SettingsCategoryId``. A category registered in
-``CATEGORY_PANELS`` is served by its panel instead: the screen asks the
-panel to render, save, report unsaved state, revert and describe its scope,
-and carries no arm for that category. Network is the first category served
-this way; the others still use the screen's chains until they are moved.
+``CATEGORY_PANELS`` is served by its panel instead: for it, the screen asks
+the panel to render, save, report unsaved state (the rail's ``*``, the
+banner count and the quit guard), revert, and give its scope copy, and it
+reads what ``s`` and ``r`` may do from the panel's ADR-303 commit model. The
+screen's own chains still serve every other category until it moves.
 
-Panels are stateless strategies. The screen owns the per-visit state (for
-Network, ``screen._network_pending``) and each method takes it as ``screen``.
-This generalises the Speech & TTS panel's ``has_unsaved_changes`` /
-``request_save`` pair, which stays a widget the screen mounts and queries.
+Panels are stateless strategies, so each method takes the screen. Per-visit
+edits live in the screen's ``_category_panel_states`` slot, keyed by
+category and shaped by the panel that owns them; leaving Settings keeps
+them like any other draft. A panel saves through ``screen.
+_settings_config_adapter()``, which resolves the adapter in the screen's
+module at call time, so tests that patch ``settings_screen.
+SettingsConfigAdapter`` reach panel saves too.
 
-Every panel names its ADR-303 commit model (``CommitModel``) so the screen's
-badge is the panel's own words, not a lookup keyed on the category.
+Network is served wholly by its panel. Speech & TTS goes through
+``SpeechTTSCategoryPanel``, a thin adapter that routes its mounted widget's
+own contract (``has_unsaved_changes`` / ``request_save`` /
+``revert_to_saved``) through the same registry; its detail pane is still
+built by the screen.
 """
 
 from __future__ import annotations
@@ -22,21 +29,27 @@ import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import QueryError
 from textual.widgets import Input, Select, Static
 
 from ...state.settings_config_models import SettingsCategoryId
+from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
+    SpeechTTSSettingsPanel,
+)
 from ..Screens.settings_network_defaults import (
     SettingsNetworkTLS,
     build_network_save_sections,
     load_network_tls,
     validate_network_tls,
 )
-from .settings_config_adapter import SettingsConfigAdapter
 
 if TYPE_CHECKING:
     from ..Screens.settings_screen import SettingsScreen
+
+NO_CHANGES_TO_REVERT_COPY = "No Settings changes to revert."
 
 
 @dataclass(frozen=True)
@@ -45,6 +58,26 @@ class CommitModel:
 
     kind: Literal["staged", "instant", "raw_toml"]
     badge: str
+
+    @property
+    def saves(self) -> bool:
+        """Staged drafts and guarded raw TOML commit on ``s`` (ADR-303)."""
+        return self.kind != "instant"
+
+    @property
+    def reverts(self) -> bool:
+        """Staged drafts and guarded raw TOML revert on ``r`` (ADR-303)."""
+        return self.kind != "instant"
+
+
+@dataclass(frozen=True)
+class ScopeText:
+    """A category's scope copy for the screen's two surfaces."""
+
+    #: After the badge on the State banner (one row at 211x44).
+    banner: str
+    #: The guided-action row, and the guidance ``s`` gives when it cannot save.
+    guided: str
 
 
 class SettingsCategoryPanel(Protocol):
@@ -64,12 +97,12 @@ class SettingsCategoryPanel(Protocol):
         """Validate and commit the category's edits (the screen's ``s``)."""
         ...
 
-    def revert(self, screen: SettingsScreen) -> bool:
-        """Discard unsaved edits; False when the category offers no revert."""
+    def revert(self, screen: SettingsScreen) -> None:
+        """Discard unsaved edits (the screen's ``r``), confirming as needed."""
         ...
 
-    def scope_text(self, screen: SettingsScreen) -> str:
-        """The one-line scope/commit guidance shown for the category."""
+    def scope_text(self, screen: SettingsScreen) -> ScopeText:
+        """The category's scope copy for the banner and the guided row."""
         ...
 
 
@@ -85,27 +118,57 @@ NETWORK_TLS_MODE_OPTIONS: list[tuple[str, str]] = [
 _NETWORK_TLS_MODE_VALUES = frozenset(value for _, value in NETWORK_TLS_MODE_OPTIONS)
 
 
+class _NetworkCard(Vertical):
+    """Network's card; its Select and Input stage edits through the panel."""
+
+    def __init__(self, settings_screen: SettingsScreen, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._settings_screen = settings_screen
+
+    @on(Select.Changed, "#settings-network-ssl-mode")
+    def _mode_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        NETWORK_PANEL.stage(self._settings_screen, mode=str(event.value or "verify"))
+        try:
+            warning = self.query_one("#settings-network-warning", Static)
+        except QueryError:
+            return
+        warning.update(
+            NETWORK_PANEL.warning_text(
+                NETWORK_PANEL.effective_values(self._settings_screen).mode
+            )
+        )
+
+    @on(Input.Changed, "#settings-network-ca-path")
+    def _ca_path_changed(self, event: Input.Changed) -> None:
+        NETWORK_PANEL.stage(self._settings_screen, ca_bundle_path=event.value)
+
+
 class NetworkPanel:
     """Network: TLS trust for outbound API traffic.
 
-    Staged commit with no ``SettingsDraft``: edits accumulate in
-    ``screen._network_pending`` until ``s`` validates and saves them.
+    Staged commit with no ``SettingsDraft``: edits wait in the screen's
+    panel-state slot until ``s`` validates and saves them, or ``r`` discards
+    them after asking.
     """
 
+    category = SettingsCategoryId.NETWORK
     commit_model = CommitModel("staged", "Pending — save with s")
 
     def render(self, screen: SettingsScreen) -> ComposeResult:
         values = load_network_tls(screen._app_config_mapping())
         # Seed the Select and CA Input from the EFFECTIVE (pending-aware)
-        # state, not the loaded config: `_network_pending` survives a
-        # category hop, so seeding from the loaded values let a hop-away-and-
-        # back repaint the Select with the LOADED mode while `s` still saved
-        # the PENDING one. The invalid-row banner below stays keyed on the
-        # LOADED mode -- a hand-edited invalid config is a config-file fact,
-        # not a pending edit.
+        # state, not the loaded config: the pending edit survives a category
+        # hop, so seeding from the loaded values let a hop-away-and-back
+        # repaint the Select with the LOADED mode while `s` still saved the
+        # PENDING one. The invalid-row banner below stays keyed on the LOADED
+        # mode -- a hand-edited invalid config is a config-file fact, not a
+        # pending edit.
         effective = self.effective_values(screen)
         yield Static("Network", classes="destination-section settings-column-title")
-        with Vertical(id="settings-network-card", classes="settings-focus-card"):
+        with _NetworkCard(
+            screen, id="settings-network-card", classes="settings-focus-card"
+        ):
             yield Static(
                 "TLS trust for outbound API traffic", classes="destination-section"
             )
@@ -144,15 +207,15 @@ class NetworkPanel:
                     placeholder="/path/to/corp-ca.pem (used by 'Custom CA bundle')",
                 )
             yield Static(
-                self.warning_text(self.effective_mode(screen)),
+                self.warning_text(effective.mode),
                 id="settings-network-warning",
                 classes="settings-network-warning",
             )
 
     def has_unsaved_changes(self, screen: SettingsScreen) -> bool:
-        # ponytail: not consulted by the screen's dirty marker / quit guard;
-        # Network has never raised them (ADR-303 staged, no SettingsDraft).
-        return bool(screen._network_pending)
+        # Compared by value, not by "anything staged": the Select and Input
+        # echo their seeded values on mount, which is no edit.
+        return self.effective_values(screen) != self.effective_values(screen, {})
 
     def request_save(self, screen: SettingsScreen) -> None:
         values = self.effective_values(screen)
@@ -161,7 +224,7 @@ class NetworkPanel:
             screen.app.notify(validation.message, severity="error", markup=False)
             return
         section_values = build_network_save_sections(values)
-        saved = SettingsConfigAdapter().save_sections(section_values)
+        saved = screen._settings_config_adapter().save_sections(section_values)
         screen.app.notify(
             "Network TLS setting saved."
             if saved
@@ -176,33 +239,46 @@ class NetworkPanel:
             screen._app_config_update_target().update(
                 copy.deepcopy(dict(section_values))
             )
-            screen._network_pending = {}
+            self._clear(screen)
 
-    def revert(self, screen: SettingsScreen) -> bool:
-        # Network offers no revert: `r` is not advertised and answers with
-        # guidance. Switching the Select back is the way to discard.
-        return False
+    def revert(self, screen: SettingsScreen) -> None:
+        if not self.has_unsaved_changes(screen):
+            screen.app.notify(NO_CHANGES_TO_REVERT_COPY, severity="information")
+            return
+        screen._confirm_category_revert(self.category, lambda: self._discard(screen))
 
-    def scope_text(self, screen: SettingsScreen) -> str:
-        return (
-            "Save with s: the TLS trust setting applies to newly created "
-            "clients; already-open connections keep their trust policy "
-            "until restart."
+    def scope_text(self, screen: SettingsScreen) -> ScopeText:
+        return ScopeText(
+            banner="Trust applies to new connections; open ones keep theirs.",
+            guided=(
+                "Save with s: the TLS trust setting applies to newly created "
+                "clients; already-open connections keep their trust policy "
+                "until restart."
+            ),
         )
 
-    # -- state helpers (also used by the screen's Select/Input handlers) --
+    # -- state helpers ----------------------------------------------------
 
-    def effective_mode(self, screen: SettingsScreen) -> str:
-        loaded = load_network_tls(screen._app_config_mapping())
-        pending_mode = screen._network_pending.get("mode")
-        return pending_mode if isinstance(pending_mode, str) else loaded.mode
+    def pending(self, screen: SettingsScreen) -> dict[str, object]:
+        """The staged edits (read-only view; ``stage`` writes them)."""
+        return screen._category_panel_states.get(self.category, {})
 
-    def effective_values(self, screen: SettingsScreen) -> SettingsNetworkTLS:
+    def stage(self, screen: SettingsScreen, **values: object) -> None:
+        """Stage an edit from the card, then repaint the dirty markers."""
+        screen._category_panel_states.setdefault(self.category, {}).update(values)
+        screen._update_draft_status_widgets(self.category)
+
+    def effective_values(
+        self, screen: SettingsScreen, pending: dict[str, object] | None = None
+    ) -> SettingsNetworkTLS:
+        """The loaded config with the staged edits (or ``pending``) applied."""
+        pending = self.pending(screen) if pending is None else pending
         loaded = load_network_tls(screen._app_config_mapping())
-        mode = self.effective_mode(screen)
+        mode = pending.get("mode")
+        mode = mode if isinstance(mode, str) else loaded.mode
         if mode in ("verify", "off", "invalid"):
             return SettingsNetworkTLS(mode, raw=loaded.raw)
-        path = str(screen._network_pending.get("ca_bundle_path", loaded.ca_bundle_path))
+        path = str(pending.get("ca_bundle_path", loaded.ca_bundle_path))
         return SettingsNetworkTLS(mode, ca_bundle_path=path, raw=loaded.raw)
 
     @staticmethod
@@ -219,11 +295,78 @@ class NetworkPanel:
             )
         return ""
 
+    def _clear(self, screen: SettingsScreen) -> None:
+        screen._category_panel_states.pop(self.category, None)
+        screen._update_draft_status_widgets(self.category)
+
+    def _discard(self, screen: SettingsScreen) -> None:
+        self._clear(screen)
+        # Rebuild the pane so the Select and Input show the loaded values.
+        screen.mutate_reactive(type(screen).active_category)
+        screen.app.notify("Settings category changes reverted.", severity="information")
+
+
+class SpeechTTSCategoryPanel:
+    """Speech & TTS: routes the mounted widget's own contract through here.
+
+    ponytail: a thin adapter, not a full move. The detail pane is still built
+    by ``SettingsScreen._render_speech_tts_detail`` (its names are patched on
+    the screen module by many tests), and the dirty banner, unsaved count and
+    F1 note keep their Speech arms in the screen. Move them here when Speech
+    moves for real.
+    """
+
+    category = SettingsCategoryId.SPEECH_TTS
+    commit_model = CommitModel("staged", "Draft — save with s")
+
+    def render(self, screen: SettingsScreen) -> ComposeResult:
+        yield from screen._render_speech_tts_detail()
+
+    def has_unsaved_changes(self, screen: SettingsScreen) -> bool:
+        # Mirrored from the widget's DraftModified messages.
+        draft = screen._settings_drafts.get(self.category)
+        return bool(draft and draft.is_dirty)
+
+    def request_save(self, screen: SettingsScreen) -> None:
+        widget = self._mounted(screen)
+        if widget is not None:
+            widget.request_save()
+
+    def revert(self, screen: SettingsScreen) -> None:
+        widget = self._mounted(screen)
+        if widget is None:
+            return
+        if not widget.has_unsaved_changes():
+            screen.app.notify(NO_CHANGES_TO_REVERT_COPY, severity="information")
+            return
+        screen.run_worker(widget.revert_to_saved(), exclusive=False)
+
+    def scope_text(self, screen: SettingsScreen) -> ScopeText:
+        return ScopeText(
+            banner="Application-wide defaults; Studio preferences remain separate.",
+            guided=(
+                "Guided edits: Save or Revert changes."
+                if self.has_unsaved_changes(screen)
+                else "Guided edits: change a field first."
+            ),
+        )
+
+    @staticmethod
+    def _mounted(screen: SettingsScreen) -> SpeechTTSSettingsPanel | None:
+        try:
+            return screen.query_one("#settings-speech-tts-panel", SpeechTTSSettingsPanel)
+        except QueryError:
+            screen.app.notify(
+                "Speech & TTS Settings are not available.", severity="warning"
+            )
+            return None
+
 
 NETWORK_PANEL = NetworkPanel()
 
-#: Categories served by a registered panel. The screen holds no per-category
-#: arm for these; add a category here when it moves.
+#: Categories served through a registered panel. For these the screen asks
+#: the panel instead of keeping an arm; add a category here when it moves.
 CATEGORY_PANELS: dict[SettingsCategoryId, SettingsCategoryPanel] = {
     SettingsCategoryId.NETWORK: NETWORK_PANEL,
+    SettingsCategoryId.SPEECH_TTS: SpeechTTSCategoryPanel(),
 }

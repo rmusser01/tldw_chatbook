@@ -539,7 +539,9 @@ _BUDGETS: dict[str, int] = {
     # wrapper is gone, the save reads Provider_Contract's rule directly.
     # 2026-11-06, TASK-1378.1: 35,654 -> 35,523; Network moved to its
     # registered panel (UI/Settings_Modules/category_panels.py).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35523,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
+    # 2026-11-06, TASK-1378.1 fix round 1: 35,523 -> 35,512; Network's
+    # handlers moved onto its panel, Speech's save/revert arms onto its adapter.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35512,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -1077,27 +1079,72 @@ def test_every_module_of_the_guard_size_has_a_row() -> None:
     )
 
 
-#: TASK-1378.1: SettingsCategoryId references inside comparisons in
-#: SettingsScreen (the if/elif chains the panel registry replaces). A category
-#: moved onto `Settings_Modules/category_panels.py::CATEGORY_PANELS` removes
-#: its arms; lower this when one moves, never raise it -- new category
-#: behaviour goes in a registered panel. Base (dev 5ca7ec6a03): 245.
-_SETTINGS_CATEGORY_COMPARISON_CEILING = 240
+#: TASK-1378.1: category comparisons in SettingsScreen (the if/elif chains
+#: the panel registry replaces): SettingsCategoryId references inside a
+#: comparison, `case` arms naming a category, and category ids compared as
+#: strings ("network"). A category moved onto
+#: `Settings_Modules/category_panels.py::CATEGORY_PANELS` removes its arms;
+#: lower this when one moves, never raise it -- new category behaviour goes in
+#: a registered panel. Base (dev 5ca7ec6a03): 245; Network 240; Speech's
+#: save, revert, render and scope arms through its adapter 236.
+_SETTINGS_CATEGORY_COMPARISON_CEILING = 236
+
+
+@lru_cache(maxsize=1)
+def _settings_category_ids() -> frozenset[str]:
+    """SettingsCategoryId's string values, read from its source."""
+    tree = ast.parse(
+        (_REPO_ROOT / "tldw_chatbook/state/settings_config_models.py").read_text()
+    )
+    enum = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "SettingsCategoryId"
+    )
+    return frozenset(
+        stmt.value.value
+        for stmt in enum.body
+        if isinstance(stmt, ast.Assign)
+        and isinstance(stmt.value, ast.Constant)
+        and isinstance(stmt.value.value, str)
+    )
+
+
+def _count_category_comparisons(tree: ast.AST) -> int:
+    ids = _settings_category_ids()
+
+    def names_a_category(node: ast.AST) -> bool:
+        if isinstance(node, ast.Attribute):
+            return isinstance(node.value, ast.Name) and node.value.id == "SettingsCategoryId"
+        return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in ids
+
+    return sum(
+        names_a_category(sub)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Compare, ast.MatchValue))
+        for sub in ast.walk(node)
+    )
 
 
 def _settings_category_comparisons() -> int:
-    tree = ast.parse(
-        (_REPO_ROOT / "tldw_chatbook/UI/Screens/settings_screen.py").read_text()
+    return _count_category_comparisons(
+        ast.parse((_REPO_ROOT / "tldw_chatbook/UI/Screens/settings_screen.py").read_text())
     )
-    return sum(
-        1
-        for compare in ast.walk(tree)
-        if isinstance(compare, ast.Compare)
-        for node in ast.walk(compare)
-        if isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "SettingsCategoryId"
+
+
+def test_category_comparison_count_sees_every_arm_shape() -> None:
+    """An enum member in a comparison or a tuple, a `case` arm, and an id
+    compared as a string all count (review M1: the last two did not)."""
+    source = (
+        "if c is SettingsCategoryId.NETWORK: pass\n"
+        "if c in (SettingsCategoryId.HOOKS, SettingsCategoryId.THEME): pass\n"
+        "if self.active_category == 'network': pass\n"
+        "match c:\n"
+        "    case SettingsCategoryId.NETWORK: pass\n"
+        "    case 'hooks' | 'theme': pass\n"
+        "if mode == 'off': pass\n"
     )
+    assert _count_category_comparisons(ast.parse(source)) == 7
 
 
 def test_settings_screen_category_comparisons_do_not_rise() -> None:

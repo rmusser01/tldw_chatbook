@@ -284,6 +284,7 @@ def test_clean_settings_overview_passes_without_constructing_forms():
     screen = object.__new__(SettingsScreen)
     Screen.__init__(screen)
     screen._settings_drafts = {}
+    screen._category_panel_states = {}
     screen._speech_tts_draft_snapshot = None
     screen._speech_tts_draft_state = None
     screen._speech_tts_original_state = None
@@ -304,6 +305,7 @@ def test_settings_storage_reads_live_inputs_before_draft_event(changed):
     Screen.__init__(screen)
     screen.app_instance = SimpleNamespace(app_config={"database": {}})
     screen._settings_drafts = {}
+    screen._category_panel_states = {}
     screen._speech_tts_draft_snapshot = None
     screen._speech_tts_draft_state = None
     screen._speech_tts_original_state = None
