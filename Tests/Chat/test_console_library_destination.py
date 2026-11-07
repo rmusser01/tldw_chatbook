@@ -80,10 +80,19 @@ def _resolution(
             ConsoleEgressClass.PRIVATE_NETWORK,
             "http://169.254.2.3",
         ),
+        # TASK-39137 rewrote this row on purpose: the owner's 2026-11-06
+        # ruling refuses an IPv6 zone id everywhere, so it is an endpoint the
+        # classifier cannot use (it read as a private network before).
         (
             "http://[fe80::1%25en0]:8080/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        ("http://[fe80::1%en0]:8080/v1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        (
+            "http://[fe80::1]:8080/v1",
             ConsoleEgressClass.PRIVATE_NETWORK,
-            "http://[fe80::1%25en0]:8080",
+            "http://[fe80::1]:8080",
         ),
         (
             "http://[fd12:3456::9]:8080",

@@ -16,6 +16,9 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    canonical_endpoint_host,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
@@ -261,7 +264,8 @@ def _parse_endpoint_origin(
         ):
             return None
         hostname = parsed.hostname.lower().rstrip(".")
-        if not hostname or len(hostname) > 253:
+        # TASK-39137: the contract's host rule, which refuses an IPv6 zone id.
+        if not hostname or canonical_endpoint_host(hostname) is None:
             return None
         port = parsed.port
     except (TypeError, ValueError):

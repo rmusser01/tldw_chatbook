@@ -1119,6 +1119,43 @@ def test_an_ipv6_zone_id_is_refused_by_discover_the_save_and_console():
         ), provider
 
 
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        (_ZONE_ID_HOST, "unknown"),
+        ("[fe80::1%en0]", "unknown"),
+        ("[fe80::1]", "private_network"),
+        ("[fd12:3456::9]", "private_network"),
+    ],
+)
+def test_console_egress_reads_a_zone_id_as_an_endpoint_it_cannot_use(host, expected):
+    """TASK-39137: the owner's 2026-11-06 ruling refuses zone ids everywhere,
+    but Console's Library egress classifier read one as a private network and
+    kept the zone in its identity. Without a zone, link-local and ULA literals
+    stay private."""
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleEgressClass
+    from tldw_chatbook.Chat.console_library_destination import (
+        resolve_console_destination,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderResolution,
+    )
+
+    destination = resolve_console_destination(
+        ConsoleProviderResolution(
+            provider="vllm",
+            base_url=f"http://{host}:5001/v1",
+            model="m",
+            ready=True,
+        )
+    )
+    assert destination.egress_class is ConsoleEgressClass(expected)
+    if expected == "unknown":
+        assert destination.endpoint_identity == "external/unknown"
+    else:
+        assert destination.endpoint_identity == f"http://{host}:5001"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("host", _LOOPBACK_HOSTS)
 async def test_qwencloud_discover_reads_a_schemeless_loopback_endpoint_as_http(host):
