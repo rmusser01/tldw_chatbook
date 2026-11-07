@@ -626,7 +626,12 @@ def _private_screen_reads(source: str) -> list[int]:
     iterating a screen stack. A screen stack is an expression naming
     ``screen_stack`` or a local assigned from one. Anything else is not
     statically a screen; the bound is that every screen enters the runtime
-    through these names.
+    through these names. Only literal attribute names are seen: a
+    ``getattr(view, CONSTANT)`` is not resolved. The one such read today is the
+    runtime's own ``_VIEW_RUNTIME_FALLBACK_ATTR`` (an attribute the runtime
+    itself writes onto the view, read by the module-level
+    ``ensure_console_runtime`` / ``leave_console_runtime``, not by
+    ConsoleRuntime), which is not a screen-owned private field.
     """
     import ast
 
@@ -725,16 +730,23 @@ def test_console_runtime_reads_no_private_screen_attribute():
 
 def test_every_view_seam_console_runtime_looks_up_exists_on_chat_screen() -> None:
     """The runtime reaches the screen through `getattr(self.view, "<name>", None)`
-    and does nothing when the name is missing, so a rename on ChatScreen would
-    silently stop that work (the transcript re-render, for one). Pin every such
-    name to a callable on ChatScreen."""
+    (or `getattr(view, ...)` / `hasattr` on a local view) and does nothing when
+    the name is missing, so a rename on ChatScreen would silently stop that work
+    (the transcript re-render, for one). Pin every such name to a callable on
+    ChatScreen. The string keys read from the `console_view_hooks()` dict are a
+    separate, older seam this test does not cover."""
     import re
     from pathlib import Path
 
     import tldw_chatbook.Chat.console_runtime as module
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    names = set(re.findall(r'getattr\(\s*self\.view,\s*"([A-Za-z_]\w*)"', Path(module.__file__).read_text()))
+    names = set(
+        re.findall(
+            r"""(?:getattr|hasattr)\(\s*(?:self\.)?view,\s*["']([A-Za-z_]\w*)["']""",
+            Path(module.__file__).read_text(),
+        )
+    )
     assert "request_transcript_sync" in names
     missing = sorted(name for name in names if not callable(getattr(ChatScreen, name, None)))
     assert not missing, f"ConsoleRuntime looks these up on the view, but ChatScreen lacks them: {missing}"
