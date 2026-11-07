@@ -455,7 +455,7 @@ def get_safe_relative_path(full_path: Union[str, Path], base_directory: Union[st
     except ValueError:
         return None
 
-def validate_path_simple(user_path: Union[str, Path], require_exists: bool=False, *, probe_existing: bool=True, reject_shell_metacharacters: bool=True) -> Path:
+def validate_path_simple(user_path: Union[str, Path], require_exists: bool=False, *, probe_existing: bool=True, reject_shell_metacharacters: bool=False) -> Path:
     """
     Simple path validation that checks for common security issues without requiring a base directory.
 
@@ -464,12 +464,16 @@ def validate_path_simple(user_path: Union[str, Path], require_exists: bool=False
         require_exists: Whether to require the path exists
         probe_existing: Whether to inspect and resolve an existing selected path.
             Disable this when a later no-follow boundary owns link validation.
-        reject_shell_metacharacters: Reject ``| ; && || ` $( ${`` in the path.
-            These are COMMAND-INJECTION guards, and they are legal characters
-            in a POSIX filename -- ``Q3 P&L; final.txt`` is a real file a user
-            can create and select. Pass False at a boundary that only ever
-            hands the path to ``open()``/``stat()``, never to a shell.
-            Traversal, NUL and ``~`` expansion are checked either way.
+        reject_shell_metacharacters: Also reject ``| ; && || ` $( ${`` in the
+            path. These are COMMAND-INJECTION guards, and they are legal
+            characters in a POSIX filename -- ``Q3 P&L; final.txt`` is a real
+            file a user can create and select. Off by default since
+            TASK-38227: dev refused such names in every importer, although no
+            caller hands the path to a shell (every spawn in the package is
+            list-argv, and the one Windows ``cmd /c`` fallback went through
+            ``os.startfile`` in TASK-39040). Pass True only at a boundary
+            that does hand the path to a shell. Traversal, NUL and ``~``
+            expansion are checked either way.
 
     Returns:
         Path: The validated path
@@ -5857,4 +5861,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("8eeeedca0f435f9b60a55b4233332c4daef0f54773ff058c0e28bb289c396e26")
+BUNDLE_SHA256 = _enter_worker_exchange("b094fdb766253adef504085824245bc6db3aecf1058928138ba324f34eb0e70d")
