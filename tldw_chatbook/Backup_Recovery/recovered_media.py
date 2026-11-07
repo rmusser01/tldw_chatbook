@@ -15,7 +15,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.recovery_sqlite import _validate_sqlite
 from tldw_chatbook.Utils.platform_files import os

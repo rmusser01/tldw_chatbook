@@ -1007,8 +1007,8 @@ _BUDGETS: dict[str, int] = {
     # and the convergence span it reads. Exact measurement.
     "tldw_chatbook/UI/Console_Modules/session.py": 7009,
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
-    # comment): +2, the store's @declare_store backup-participant declaration and import.
-    "tldw_chatbook/DB/Subscriptions_DB.py": 6995,
+    # comment): +3, the store's @declare_store backup-participant declaration (wrapped) and import.
+    "tldw_chatbook/DB/Subscriptions_DB.py": 6996,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.

@@ -52,7 +52,7 @@ from loguru import logger
 
 
 # Local Imports
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
     core_cached_connection,
@@ -461,7 +461,8 @@ _UNSET = object()
 _ITEM_ID_LOOKUP_CHUNK_SIZE = 500
 
 
-@declare_store("db.subscriptions", closer="close", policy="db.base", read_only_policy="db.subscriptions.agent_read")
+@declare_store("db.subscriptions", closer="close", policy="db.base",
+               read_only_policy="db.subscriptions.agent_read")
 class SubscriptionsDB(BaseDB):
     """Database operations for subscription management."""
 

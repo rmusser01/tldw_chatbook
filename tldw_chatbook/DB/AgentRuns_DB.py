@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence, Union, overl
 
 from loguru import logger
 
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Agents.agent_models import (
     AGENT_LIFECYCLE_INDEX_BASE,
     AgentDefinition,

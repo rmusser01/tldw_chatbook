@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from ..DB.base_db import BaseDB
 from ..DB.private_sqlite import connect_private_sqlite
 from ..DB.store_kernel import SQLiteStoreKernel
