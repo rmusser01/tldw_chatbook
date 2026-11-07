@@ -1,7 +1,7 @@
 {
   "scope": "Private bounded-innermost completed-task diagnostic successor; preserved public54 and prefix59; review required before enrollment/freeze/App; qualified0",
   "files": {
-    "README.md": "34c2d6fb0f483bd8a74d6f251651697e59a155519cd5484a374e2d4d3368163d",
+    "README.md": "4ac137ea20f43683801bd1baf3f178b2c328ee9f53fa19dd3bf20ad97f006dd7",
     "approval_fixture_driver.py": "39abfcfc93519df330b107cdf632d92cdba0095238322accb5c14a03cda7027d",
     "approval_fixture_workload_v7.py": "ef0b030865070035a0e32258c72adfc5f471646ef76feebe393e4d68e707067b",
     "check_completed_task_diagnostic.py": "5c372f0496a40db38bfcecd9df75a5fc4f8adbc94a43dffaab614e0ea550bac8",
@@ -16,14 +16,14 @@
     "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
     "exact-pixel-refs.json": "8fd0d99a7810fe07ec5b4e130471dfd3125272c22191d4c8c76073f5ae91d187",
     "native_bootstrap.py": "fba33556c87bd321c138d6d50bb037ed90d7bb0c4ace59440a74f1689e87ca08",
-    "native_product_child.py": "fee627ae2c1dd9288aabe4b171c7221a5ec517e068f0dd52903ef587a1909fc8",
+    "native_product_child.py": "6723d106cbebb633a4e15926ae52edd6c1aece9efae51008b380d8c737c838a6",
     "native_product_observer.py": "32a66d9ffa58ed64c660df490fc0e361747ca06d8b1aff04c74994a16925bd0b",
     "native_rehearsal_observation.py": "b59490d5be3a33bfc89b9e80c272f1fa96d91574fc3a66e2e2b4f83be76c14b2",
     "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
     "native_window_api.py": "194ef1d9f31b5983e7a50424cfea539ba7a15da5dfdcf47216fd0eb5f1783ee4",
     "owned_roi_capture.py": "161718b7fcca0e2851a01c3f9694bda83ac90f0f6d8b15fd81fe3e357963fe7d",
     "prepare_native_run.py": "38bdeb7f6881b8fbf12461e0d958b44ad35c9502ee4c7deb6a0478125d6801a7",
-    "prepared-protocol.json": "64f91d09b223bf66f83f34683a02e429a15c8a91949578e5d6845941dca9391b",
+    "prepared-protocol.json": "720c0e1d23cd5d5805d4e22f34822199c747530e49ba6f215452863ccf73ea3d",
     "qa_process_guard.py": "5929c9d89253645b205a90a37215a2fa131c20deb8bdfba0e39fc6876f590251",
     "reference-fixtures/accepted-feedback-scene.png": "58eac3f9d559cb1a11ced9ae1fe51199300380cbc2912e45195e896af7184be2",
     "reference-fixtures/accepted-feedback-state.json": "a8a33c19b4e08d6a3c3ed8bc79eb4df09ead801a0bce64725caf47bbe653f97b",
@@ -62,6 +62,10 @@
     "v20-to-v21-diagnostic-policy.diff": "990134304d049f3758dfefb43251c88ebee0b596691a0ec0891a8baa0677f180",
     "v21-completed-task-diagnostic.diff": "f0ad5f44790c47590a8515701f922bac76b7a23bde2161b9cdcdbd63254c676f",
     "v21-received-intent-route.diff": "7f1dea8deabbda64fe2c64c61e452f6e89819244875311ca54df52da061a37cf",
-    "v22-prefix-to-bounded-innermost.diff": "668cd6f6598bf85b98c10f01872b4f0b934681213e9a9b3a2bb9bd6cba88fac4"
+    "v22-prefix-to-bounded-innermost.diff": "668cd6f6598bf85b98c10f01872b4f0b934681213e9a9b3a2bb9bd6cba88fac4",
+    "check_terminal_semantics.py": "8fa775c83359fee58b543cf38733c5a84ad1411032a85fcbeeb9f620532dd134",
+    "selfcheck-receipts/terminal-semantics-RED.json": "d8b601af9c1cd8a94b17fba9fec196b91bc85b3087ae03212e6261fac6b34cac",
+    "selfcheck-receipts/terminal-semantics-GREEN.json": "b0afa1e7e8bba6a4b7f9bb7738691da902ffc8b27c7eeab582277ac5906c7276",
+    "selfcheck-receipts/terminal-observation-source-equivalence.json": "c5d461bd5db4c25455581bab48cc27c524a0c6e27949af03fcb168e35d958627"
   }
 }

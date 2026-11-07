@@ -1,8 +1,8 @@
 {
   "version": "BrowserConsoleSINGLE-source-v1",
   "status": "COMPLETE_PRIVATE_SOURCE_READY_FOR_WHOLE_REVIEW_NOT_LAUNCHED",
-  "source_manifest_sha256": "8f07c7903ef21c5d7627fb8d56f4dcc8443ba2610fea1839cff2362f8f73ea40",
-  "source_manifest_files": 29,
+  "source_manifest_sha256": "12d8716c64a37d7bffbb01573f8fc38f972c7cae7d95d91dc627946f37ec6610",
+  "source_manifest_files": 33,
   "runtime_files": 19,
   "scope": "CURRENTfeature SINGLE actual120x40 Inspectclosed textual-dark only; validationhard1 thenexplicitfreeze-bound41=cold1+warm40. No baseline/four-shape/matrix claim.",
   "qualified": false,
@@ -120,5 +120,35 @@
   ],
   "predecessor_protocol_sha256": "1503546138a9d1c5056665f84142f91d125731f7e03f707840370fedb9e88f02",
   "git_path_successor": "ONLY seeder/guard safe.directory values now actualPath.as_posix; original-C path/check/capture/text/frozenHEAD/hash behavior preserved. No product/Git/App execution in actualAST once/return controls.",
-  "deadline_successor": "ONLY whole positive sampling enclosed in asyncio.timeout(600) with postreply actualelapsed refusal before accepting success; failedTracing.end send+complete enclosed TOGETHER in original30s budget. Original600/30 caps, cleanupoutside, allsource/OS/15heartbeat/60phase300total/tracecaps unchanged. Reverse-onlytransform byteequalsv2 parent."
+  "deadline_successor": "ONLY whole positive sampling enclosed in asyncio.timeout(600) with postreply actualelapsed refusal before accepting success; failedTracing.end send+complete enclosed TOGETHER in original30s budget. Original600/30 caps, cleanupoutside, allsource/OS/15heartbeat/60phase300total/tracecaps unchanged. Reverse-onlytransform byteequalsv2 parent.",
+  "terminal_observation_correction": {
+    "plan": "Docs/superpowers/plans/2026-11-07-console-approval-terminal-observation.md",
+    "scope": "QA observations only; no product or live-run change",
+    "header_exact_builtin_labels": [
+      "Ready",
+      "Ready \u00b7 not tested"
+    ],
+    "provider": "Unique actual provider span at zero scroll, wholly contained in actual content/widget/compositor clip; other three ROI whole-visibility requirements retained",
+    "old_source_controls": {
+      "passed": 39,
+      "failed": 3,
+      "receipt": "selfcheck-receipts/terminal-semantics-RED.json",
+      "receipt_sha256": "9ac9e7335fb152f77385b3de40c2861988212ff73d461bd196ee906224d448a2"
+    },
+    "corrected_source_controls": {
+      "passed": 42,
+      "failed": 0,
+      "receipt": "selfcheck-receipts/terminal-semantics-GREEN.json",
+      "receipt_sha256": "1cd316e91563a41a0a71f148dcc1a858a43b15b4d38c9c3559da58b0f8f6cf63"
+    },
+    "control_sha256": "8fa775c83359fee58b543cf38733c5a84ad1411032a85fcbeeb9f620532dd134",
+    "runtime_child_sha256": "36a0c821fb7f9ec20e820777942daff21e43a35fc9c8dd2821290c8ddfa3f633",
+    "source_equivalence_receipt": "selfcheck-receipts/terminal-observation-source-equivalence.json",
+    "source_equivalence_sha256": "c5d461bd5db4c25455581bab48cc27c524a0c6e27949af03fcb168e35d958627",
+    "all_other_capture_authority_caps_clocks_deadlines_AST_preserved": true,
+    "validation17_remains_invalid": true,
+    "new_live_run_authorized": false,
+    "qualified": false,
+    "product_samples": 0
+  }
 }

@@ -24888,3 +24888,7 @@ PR3036's Windows verification first exposed a CSS pin error message using compon
 ### 2026-11-07: functional tests do not detect unrelated encoding drift
 
 During the PR3036 audio-meter repair, Path.read_text() used the Windows locale rather than UTF8, and write_text(..., encoding="utf-8") encoded that misdecoded text. The meter tests passed, but full-diff review found eight corrupted preexisting bullet characters in unrelated error messages; the same edit pattern affected the speech architecture note. Both files were reconstructed from preserved original bytes with explicit UTF8 decoding before publication. Use explicit encodings for both reads and writes, retain original byte snapshots, and compare the entire diff; passing focused behavior tests does not establish preservation of untouched strings.
+
+### A tool session ID is not an operating-system PID
+
+PR3036 native validation17 (2026-11-07) returned exec session 82824. The initial postflight audit incorrectly passed that number to OpenProcess and counted its absence as authenticated process closure. The actual guarded observer receipt identified PID 37684; the captured product, worker and launcher identified 43112, 41036 and 26956. Preserve the erroneous seal and bind an explicit correction. Obtain process identities from authenticated run/guard receipts and retain their lineage/creation evidence; a tool session identifier is only a handle for polling tool output and its absence as a PID proves nothing.

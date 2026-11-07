@@ -214,7 +214,10 @@ def capture_state():
         header = getattr(header, "plain", header)
         send = widgets["send"].label
         send = getattr(send, "plain", send)
-        settlement["header_terminal"] = type(header) is str and header == "Ready"  # noqa: E721 - Exact boundary types reject bool/subclasses.
+        settlement["header_terminal"] = (
+            type(header) is str  # noqa: E721 - Exact builtin labels only.
+            and header in ("Ready", "Ready · not tested")
+        )
         settlement["send_terminal"] = (
             type(send) is str  # noqa: E721 - Exact boundary types reject bool/subclasses.
             and send == "Send"
@@ -238,7 +241,7 @@ def capture_state():
             if (
                 bounds.width <= 0
                 or bounds.height != 1
-                or bounds.intersection(clip) != bounds
+                or (name != "provider" and bounds.intersection(clip) != bounds)
             ):
                 continue
             region = [bounds.x, bounds.y, bounds.width, bounds.height]
@@ -253,7 +256,7 @@ def capture_state():
                     continue
                 region = [content.x + 18, content.y, 12, 1]
             elif name == "provider":
-                if content.height != 1 or content.intersection(clip) != content:
+                if content.height != 1:
                     continue
                 provider = [
                     (start, end) for label, start, end in spans if label == "provider"
@@ -263,6 +266,14 @@ def capture_state():
                     continue
                 start, end = provider[0]
                 if start < 0 or end <= start or end > content.width:
+                    continue
+                provider_region = type(content)(
+                    content.x + start, content.y, end - start, 1
+                )
+                if any(
+                    provider_region.intersection(area) != provider_region
+                    for area in (content, bounds, clip)
+                ):
                     continue
                 region = [content.x + start, content.y, end - start, 1]
             settlement["rois"][name] = region

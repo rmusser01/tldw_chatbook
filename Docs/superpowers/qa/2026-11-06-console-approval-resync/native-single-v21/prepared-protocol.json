@@ -26,7 +26,7 @@
     "approval_fixture_workload_v7.py": "ef0b030865070035a0e32258c72adfc5f471646ef76feebe393e4d68e707067b",
     "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
     "native_bootstrap.py": "fba33556c87bd321c138d6d50bb037ed90d7bb0c4ace59440a74f1689e87ca08",
-    "native_product_child.py": "fee627ae2c1dd9288aabe4b171c7221a5ec517e068f0dd52903ef587a1909fc8",
+    "native_product_child.py": "6723d106cbebb633a4e15926ae52edd6c1aece9efae51008b380d8c737c838a6",
     "native_product_observer.py": "32a66d9ffa58ed64c660df490fc0e361747ca06d8b1aff04c74994a16925bd0b",
     "native_rehearsal_observation.py": "b59490d5be3a33bfc89b9e80c272f1fa96d91574fc3a66e2e2b4f83be76c14b2",
     "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
@@ -364,5 +364,35 @@
       "snapshot_AST_identical_to_prefix": true,
       "raise_site_included_requires_actual_chain_end": true
     }
+  },
+  "terminal_observation_correction": {
+    "plan": "Docs/superpowers/plans/2026-11-07-console-approval-terminal-observation.md",
+    "scope": "QA observations only; no product or live-run change",
+    "header_exact_builtin_labels": [
+      "Ready",
+      "Ready \u00b7 not tested"
+    ],
+    "provider": "Unique actual provider span at zero scroll, wholly contained in actual content/widget/compositor clip; other three ROI whole-visibility requirements retained",
+    "old_source_controls": {
+      "passed": 39,
+      "failed": 3,
+      "receipt": "selfcheck-receipts/terminal-semantics-RED.json",
+      "receipt_sha256": "d8b601af9c1cd8a94b17fba9fec196b91bc85b3087ae03212e6261fac6b34cac"
+    },
+    "corrected_source_controls": {
+      "passed": 42,
+      "failed": 0,
+      "receipt": "selfcheck-receipts/terminal-semantics-GREEN.json",
+      "receipt_sha256": "b0afa1e7e8bba6a4b7f9bb7738691da902ffc8b27c7eeab582277ac5906c7276"
+    },
+    "control_sha256": "8fa775c83359fee58b543cf38733c5a84ad1411032a85fcbeeb9f620532dd134",
+    "runtime_child_sha256": "6723d106cbebb633a4e15926ae52edd6c1aece9efae51008b380d8c737c838a6",
+    "source_equivalence_receipt": "selfcheck-receipts/terminal-observation-source-equivalence.json",
+    "source_equivalence_sha256": "c5d461bd5db4c25455581bab48cc27c524a0c6e27949af03fcb168e35d958627",
+    "all_other_capture_authority_caps_clocks_deadlines_AST_preserved": true,
+    "validation17_remains_invalid": true,
+    "new_live_run_authorized": false,
+    "qualified": false,
+    "product_samples": 0
   }
 }
