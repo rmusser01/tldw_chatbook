@@ -56,7 +56,7 @@ _ROW_KINDS = {
     "help": ("/help", "Console commands:"),
     "doctor": ("/doctor", "Doctor"),
     # A command's error notice: /prefill pin with no text.
-    "error notice": ("/prefill pin", "Usage: /prefill pin <text>."),
+    "error_notice": ("/prefill pin", "Usage: /prefill pin <text>."),
 }
 
 

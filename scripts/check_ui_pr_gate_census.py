@@ -1323,6 +1323,12 @@ MINIMUM_FILES = 2765
 # the tail as a whole file (22.6 s serially; the time is in the task's notes).
 # The floor is the measured entry count.
 MINIMUM_FILES = 2766
+# 2026-11-20: re-counted after rebasing onto dev d85e90bc9e. The floor is the measured entry count.
+# 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
+# 2026-11-21: re-counted after rebasing onto dev fe84affafc. The floor is the measured entry count.
+# 2026-11-22: re-counted after rebasing onto dev ddd3c02052. The floor is the measured entry count.
+# 2026-11-22: re-counted after rebasing onto dev 2f7790873a. The floor is the measured entry count.
+MINIMUM_FILES = 2769
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
