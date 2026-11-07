@@ -14,6 +14,7 @@ from typing import Any, Iterator, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
     core_cached_connection,
@@ -102,6 +103,18 @@ class EventReplayWindow:
     updated_at: str | None = None
 
 
+def _thread_cache(store):
+    """This thread's held connection once no scope uses it, for backup retirement."""
+    with store._held_lock:
+        entry = store._held.get(threading.get_ident())
+        return None if entry is None or entry.depth else entry.conn
+
+
+@declare_store(
+    "runtime.event_state",
+    thread_cache=_thread_cache,
+    policy="notifications.event_state",
+)
 class EventStateRepository(BaseDB):
     """Durable event rows, dedupe records, cursors, and presentation watermarks.
 

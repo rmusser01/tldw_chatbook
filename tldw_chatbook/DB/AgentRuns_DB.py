@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence, Union, overl
 
 from loguru import logger
 
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from tldw_chatbook.Agents.agent_models import (
     AGENT_LIFECYCLE_INDEX_BASE,
     AgentDefinition,
@@ -304,6 +305,7 @@ def _canonical_step_payload(index: int, payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
+@declare_store("db.agent_runs", closer="close", policy="db.base", finite_worker=False)
 class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model).
 

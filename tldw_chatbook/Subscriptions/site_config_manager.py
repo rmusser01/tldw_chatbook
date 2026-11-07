@@ -23,6 +23,7 @@ from loguru import logger
 
 #
 # Local Imports
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Subscriptions_DB import ensure_site_configs_schema
 from ..Backup_Recovery.participants import core_operation
@@ -242,6 +243,7 @@ class RateLimiter:
             self._request_times[domain].clear()
 
 
+@declare_store("db.subscriptions.site_configs")
 class SiteConfigManager:
     """Manages per-site configurations for subscriptions."""
 
