@@ -774,6 +774,13 @@ async def test_bare_stop_action_also_silences_legacy_file_playback(
         def get_current_file(self):
             return clip
 
+        def get_state(self):
+            # TASK-39040: the stop helper reads the state to refuse a clip
+            # handed to the default app; a legacy clip is PLAYING.
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            return PlaybackState.PLAYING
+
         def stop(self):
             stop_calls.append(True)
             return True
@@ -809,6 +816,13 @@ async def test_message_scoped_stop_does_not_silence_a_different_messages_legacy_
     class _FakePlayer:
         def get_current_file(self):
             return clip
+
+        def get_state(self):
+            # TASK-39040: the stop helper reads the state to refuse a clip
+            # handed to the default app; a legacy clip is PLAYING.
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            return PlaybackState.PLAYING
 
         def stop(self):
             stop_calls.append(True)
@@ -980,6 +994,11 @@ async def test_stop_with_empty_string_message_id_is_treated_as_a_bare_stop(
     class _FakePlayer:
         def get_current_file(self):
             return clip
+
+        def get_state(self):
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            return PlaybackState.PLAYING
 
         def stop(self):
             player_stop_calls.append(True)

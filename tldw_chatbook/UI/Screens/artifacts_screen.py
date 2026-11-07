@@ -31,6 +31,7 @@ from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
     WATCHLISTS_NAV_CONTEXT_SECTION,
 )
+from ...Subscriptions.briefing_audio import briefing_audio_dir
 from ...Subscriptions.briefing_export import (
     BriefingExportError,
     briefing_markdown_document,
@@ -48,7 +49,7 @@ from ...Subscriptions.html_text import strip_control_characters
 from ...Third_Party.textual_fspicker import FileSave
 from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
-from ...Utils.path_validation import validate_path_simple
+from ...Utils.path_validation import validate_path, validate_path_simple
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -2028,15 +2029,28 @@ class ArtifactsScreen(BaseAppScreen):
         )
         if report is None or not report.get("has_audio"):
             return
-        # Qodo #1: the centralized path validator is the authority here, not
-        # a boolean `.exists()` plus a rebuilt Path -- its normalized result
-        # is what reaches the player, and its `ValueError` (a missing file,
-        # a dangerous pattern) is the existing "no longer exists" warning.
+        # TASK-39040: on dev this press trusted the row the refresh cached and
+        # played `validate_path_simple`'s UNRESOLVED path, which the player
+        # opens against the working directory. Like the Library player, play
+        # only the RESOLVED path `validate_path` confines to
+        # `briefing_audio_dir()`: links are followed, a relative row means the
+        # audio folder, and the absolute result can never be read as a player
+        # option. `redact_paths` keeps the row's path out of the log.
         try:
-            path = validate_path_simple(
-                Path(str(report["audio_file_path"])), require_exists=True
+            path = validate_path(
+                str(report["audio_file_path"]),
+                briefing_audio_dir(),
+                redact_paths=True,
             )
         except ValueError:
+            self.app_instance.notify(
+                "This report's audio is not in the app's audio folder, "
+                "so it was not played.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if not path.is_file():
             self.app_instance.notify(
                 "This audio file no longer exists on disk.", severity="warning"
             )

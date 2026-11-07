@@ -467,8 +467,17 @@ async def test_owned_file_started_callback_preserves_app_context_for_observer_ta
         return True
 
     monkeypatch.setattr(module, "_play_legacy_clip_and_await_completion", playback)
+
+    class _PlayingPlayer:
+        # TASK-39040: the started callback reads the player's state (a clip
+        # handed to the default app is retained); this one is a normal clip.
+        def get_state(self):
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            return PlaybackState.PLAYING
+
     monkeypatch.setattr(
-        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: object()
+        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: _PlayingPlayer()
     )
     lifecycle = TTSPlaybackLifecycle(
         message_id="file-context", request_id=1, validator=lambda: True, callback=report

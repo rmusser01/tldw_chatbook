@@ -859,6 +859,13 @@ async def test_bare_stop_still_uses_the_tracked_branch_when_something_is_tracked
         def get_current_file(self):
             return clip
 
+        def get_state(self):
+            # TASK-39040: the stop helper reads the state to refuse a clip
+            # handed to the default app; a legacy clip is PLAYING.
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            return PlaybackState.PLAYING
+
         def stop(self):
             stop_calls.append("stop")
             return True

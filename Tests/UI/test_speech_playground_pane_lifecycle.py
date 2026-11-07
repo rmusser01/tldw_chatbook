@@ -4249,6 +4249,103 @@ async def test_playback_lease_survives_replacement_until_playback_ends(
 
 
 @pytest.mark.asyncio
+async def test_handed_off_playback_ends_its_polling_and_unmount_releases_the_copy(
+    audio_cpp_playground: FakeTTSService,
+    tmp_path: Path,
+) -> None:
+    """TASK-39040 fix round 2 (Qodo). A clip the Windows fallback hands to the
+    default app has no process, so on `854e00b9e3` the pane's progress task
+    polled every 100 ms for as long as the pane lived and held the result's
+    lease (new with that PR). Now the task ends on the hand-off, the status
+    says where the clip plays, the transport is hidden, the lease is kept for
+    the hand-off bound instead of released, and the pane's unmount (its
+    existing release point) releases it at once."""
+    del audio_cpp_playground
+    clip = tmp_path / "handed.wav"
+    clip.write_bytes(b"handed")
+    artifact = STTSGeneratedAudio(
+        path=clip,
+        provider_id="audio_cpp",
+        model_id="handed-model",
+        voice_id=None,
+        source_text="handed",
+        operation_id="handed-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+
+    class Player:
+        def __init__(self) -> None:
+            self.state = PlaybackState.IDLE
+
+        async def get_state(self) -> PlaybackState:
+            return self.state
+
+        async def stop(self) -> bool:
+            # A handed-off clip releases the slot without claiming a stop.
+            self.state = PlaybackState.IDLE
+            return False
+
+        async def play(self, _path: Path) -> bool:
+            self.state = PlaybackState.HANDED_OFF
+            return True
+
+        async def is_playing(self) -> bool:
+            return False
+
+        async def pause(self) -> bool:
+            return False
+
+        async def resume(self) -> bool:
+            return False
+
+        async def get_position(self) -> float:
+            return 0.0
+
+        async def get_duration(self) -> float:
+            return 1.0
+
+    app = _PaneHost()
+    handler = STTSEventHandler(app)
+    handler._accept_playground_artifact(artifact)
+    app._stts_handler = handler
+    player = Player()
+    app.audio_player = player
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        pane._play_audio()
+        await _wait_until(
+            pilot,
+            lambda: (
+                pane._play_worker_task is None
+                and pane._progress_timer_task is not None
+                and pane._progress_timer_task.done()
+            ),
+        )
+
+        assert clip.exists()
+        assert handler._playground_file_leases[clip] == 1
+        assert pane._active_playback_release is None
+        assert len(pane._hand_off_releases) == 1
+        assert str(app.query_one("#audio-player-status", Static).render()) == (
+            "Playing in your default audio app. Pause or stop it there."
+        )
+        assert app.query_one("#audio-player-transport").has_class("hidden")
+        assert app.query_one("#audio-progress-bar").has_class("hidden")
+        assert "Playback complete" not in [message for message, _ in app.notices]
+
+    # The unmount released the playback lease without waiting out the bound.
+    # The file itself stays: it is still the pane's current result, and only
+    # a replaced result is deleted on release.
+    assert clip not in handler._playground_file_leases
+    assert pane._hand_off_releases == {}
+
+
+@pytest.mark.asyncio
 async def test_export_uses_artifact_captured_before_dialog_completes(
     audio_cpp_playground: FakeTTSService,
     monkeypatch: pytest.MonkeyPatch,
