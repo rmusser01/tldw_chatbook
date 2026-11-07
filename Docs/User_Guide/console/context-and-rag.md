@@ -145,8 +145,9 @@ compaction threshold …", and the agent fleet section reads **Paused: context
 limit. Results saved. Run /compact to continue.** The results wait until you
 decide:
 
-- `/compact` (or **Compact now**, **Compact and send**, or `/rewind` ▸
-  **Summarize**) lets the agent go on with its results straight away.
+- `/compact` (or **Compact now**, or `/rewind` ▸ **Summarize**) lets the
+  agent go on with its results straight away. **Compact and send** on a held
+  message of yours does too, once your message's reply is done.
 - Setting **When limit nears** to Automatic or Off lets it go on the next
   time anything in Console settles, for example after your next message.
 - A message you send yourself, with or without compacting, is your own turn;
