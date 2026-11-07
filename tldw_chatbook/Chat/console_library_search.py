@@ -129,7 +129,7 @@ async def automatic_search_outcome(
 
     search = asyncio.ensure_future(
         run_bounded_library_search(
-            getattr(controller.app, "library_rag_search_service", None),
+            controller._host.library_rag_search_service,
             request,
             search_budget=controller._library_preparation_timeout,
             initialization_budget=controller._library_initialization_timeout,

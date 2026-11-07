@@ -280,7 +280,15 @@ def project_index_key(
     app, workspace_id: str, binding_id: str, root: Path
 ) -> ProjectIndexKey:
     """Derive one caller-selected binding key off-thread; never select a workspace."""
-    service = get_project_index_service(app)
+    return project_index_key_for_service(
+        get_project_index_service(app), workspace_id, binding_id, root
+    )
+
+
+def project_index_key_for_service(
+    service: ProjectIndexService, workspace_id: str, binding_id: str, root: Path
+) -> ProjectIndexKey:
+    """``project_index_key`` over an already resolved service (TASK-36947.4)."""
     factory = service._factory
     with service.registry_connection_scope(), factory.retain() as pin, pin.bind():
         chain = capture_directory_chain(root)

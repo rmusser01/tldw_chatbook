@@ -336,7 +336,8 @@ def capture_console_turn_configuration(
     """Capture common domain state using the adapters' explicit selected values.
 
     Args:
-        app: Owning application services, never a Console screen.
+        app: Owning application services, never a Console screen: the app,
+            or the Console controller's ``ConsoleControllerHost``.
         store: Owning session store.
         session_id: Selected session, independent of the foreground session.
         provider_selection: Detached provider selection from the existing adapter.

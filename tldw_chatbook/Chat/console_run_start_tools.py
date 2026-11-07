@@ -121,15 +121,15 @@ def capture_run_tool_read(controller, session_id, turn_context, project_guard, *
                 return False
         return True
 
-    app = controller.app
-    service = getattr(app, "unified_mcp_service", None)
+    host = controller._host
+    service = host.unified_mcp_service
     if (
         not original_methods()
         or not providers.controller_factory_current(owner.MCPToolProvider)
         or not snapshot.standard_console_catalog_sources(service)
     ):
         return result
-    app_config = getattr(app, "app_config", None)
+    app_config = host.read_app_config(None)
     store = controller.store
     session = next((item for item in store.sessions() if item.id == session_id), None)
     revision = store.session_settings_revision(session_id) if session is not None else None
@@ -140,11 +140,9 @@ def capture_run_tool_read(controller, session_id, turn_context, project_guard, *
         if (
             not original_methods()
             or not providers.controller_factory_current(owner.MCPToolProvider)
-            or controller.app is not app
-            or getattr(app, "app_config", None) is not app_config
+            or host.read_app_config(None) is not app_config
             or controller.store is not store
             or controller._scratch_spaces is not scratch
-            or getattr(app, "unified_mcp_service", None) is not service
             or sys.modules.get("tldw_chatbook.config") is not config
             or config.current_config_identity() != identity
             or next((item for item in store.sessions() if item.id == session_id), None) is not session

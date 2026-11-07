@@ -84,7 +84,7 @@ def capture_execution_roots(
             (item for item in controller.store.sessions() if item.id == session_id),
             None,
         ),
-        registry=getattr(controller.app, "workspace_registry_service", None),
+        registry=controller._host.workspace_registry_service,
         project_selection=project_selection,
         project_authority_guard=project_authority_guard,
         remote_session_key=remote_session_key,
@@ -483,7 +483,7 @@ async def read_hook_admission_result(self) -> tuple[str | None, Any]:
 
     try:
         session_id = hook_preparation_session_for(self)
-        store, app = self.store, self.app
+        store = self.store
         session = (
             next((row for row in store.sessions() if row.id == session_id), None)
             if session_id is not None
@@ -527,7 +527,6 @@ async def read_hook_admission_result(self) -> tuple[str | None, Any]:
             if (
                 self._disposed
                 or self.store is not store
-                or self.app is not app
                 or not same(self._hook_permissions_accessor, accessor)
                 or not same(self._hook_admission_reason, callback)
                 or current is not session

@@ -988,7 +988,7 @@ class ConsolePromptQueueUIController:
         controller = self._chat_controller_accessor()
         runtime = getattr(controller, "_archive_recovery_runtime", None)
         if runtime is None:
-            owner = getattr(getattr(controller, "app", None), "console_runtime", None)
+            owner = getattr(controller, "_hooks_v2_runtime", None)
             if owner is not None:
                 runtime = owner.ensure_archive_recovery()
         if runtime is None or configuration is None:

@@ -59,7 +59,7 @@ class ConsolePluginTests:
     ):
         controller, session = self._session(session_id)
         service = controller._skills_service.local_service.plugin_service
-        owners = (controller, session, controller.store, controller.app, service)
+        owners = (controller, session, controller.store, service)
         details = await service.management_details(
             installation_id, workspace_id=session.workspace_id
         )
@@ -75,7 +75,6 @@ class ConsolePluginTests:
             current_controller,
             current_session,
             current_controller.store,
-            current_controller.app,
             current_controller._skills_service.local_service.plugin_service,
         )
         if any(actual is not expected for actual, expected in zip(current, owners)):
@@ -140,7 +139,7 @@ class ConsolePluginTests:
         controller, session = self._session(review.session_id)
         owners = self._owners[review.token]
         service = controller._skills_service.local_service.plugin_service
-        current = (controller, session, controller.store, controller.app, service)
+        current = (controller, session, controller.store, service)
         if any(actual is not expected for actual, expected in zip(current, owners)):
             raise PermissionError("plugin_test_session_changed")
         if session.workspace_id != review.workspace_id:

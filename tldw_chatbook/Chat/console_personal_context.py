@@ -196,7 +196,7 @@ async def _build_personal_context_snapshot(
         project_selection = None
         if session.project_instruction_state.project_instructions_enabled:
             try:
-                registry = getattr(self.app, "workspace_registry_service", None)
+                registry = self._host.workspace_registry_service
                 project_selection = owner.resolve_project_instruction_binding(
                     session,
                     registry,
@@ -224,7 +224,7 @@ async def _build_personal_context_snapshot(
         )
         preview_admitted_roots = owner.capture_run_admitted_workspace_roots(
             session=session,
-            registry=getattr(self.app, "workspace_registry_service", None),
+            registry=self._host.workspace_registry_service,
             project_selection=project_selection,
         )
         virtual_cli_provider, _virtual_cli_review_hook = (

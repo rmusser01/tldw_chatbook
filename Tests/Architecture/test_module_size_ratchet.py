@@ -85,7 +85,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
     "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
-    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1566,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
@@ -245,7 +245,7 @@ _BUDGETS: dict[str, int] = {
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
     # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
     # the chat's previous ordinary outcome id at acceptance.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29167,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29125,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.

@@ -173,6 +173,7 @@ from tldw_chatbook.Chat.message_metadata import (
     HANDOFF_LAUNCH_REVIEW_REQUIRED,
 )
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
+from tldw_chatbook.Chat.console_controller_host import ConsoleControllerHost
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     ProviderContinuationSidecar,
@@ -2709,8 +2710,9 @@ def build_local_review_hook(
     provider: "LocalToolProvider",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
 ) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
-    """Forward to the documented console_interrupt_rounds implementation."""
-    from tldw_chatbook.Chat.console_interrupt_rounds import (
+    """Forward to the documented console_local_review_hook implementation."""
+    # Deferred to first use: no review hook is built before an agent run.
+    from tldw_chatbook.Chat.console_local_review_hook import (
         build_local_review_hook as _owned_build_local_review_hook,
     )
 
@@ -3519,6 +3521,9 @@ class _ChatCreationObservation:
     parent: dict[str, Any] | None = None
 
 
+_NO_HOST = ConsoleControllerHost()  # a controller built without a host app
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -3675,6 +3680,7 @@ class ConsoleChatController:
         ensure_run_hooks: "Callable[[], Any] | None" = None,
         hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
         response_rules_changed: Callable[[str], None] | None = None,
+        host: ConsoleControllerHost | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -4089,7 +4095,7 @@ class ConsoleChatController:
             read_controller_announce_hidden_decision=lambda: (
                 self.announce_hidden_decision
             ),
-            read_controller_app=lambda: self.app,
+            read_controller_host=lambda: self._host,
             read_controller_ask_user_timeout_seconds=lambda: (
                 self.ask_user_timeout_seconds
             ),
@@ -4520,14 +4526,10 @@ class ConsoleChatController:
         #: can read tool metadata later without recomposing.
         self._mcp_provider: Any | None = None
 
-        # -- MCP batch-approval bridge (task-5) ------------------------------
-        #: Textual App-like object exposing ``call_from_thread`` -- assigned
-        #: by the owning screen (``ChatScreen._ensure_console_chat_
-        #: controller``), mirroring how ``on_submission_accepted`` is wired.
-        #: ``None`` (e.g. in most existing controller-only tests) makes
-        #: ``request_mcp_approvals`` a safe no-op UI bridge that still
-        #: resolves via cancellation/timeout.
-        self.app: Any | None = None
+        # -- Host services and UI bridge (TASK-36947.4, ADR-250 s7) ---------
+        #: Members and narrow callables in place of the app. ``_NO_HOST``
+        #: (most controller-only tests) makes every UI bridge a safe no-op.
+        self._host = host if host is not None else _NO_HOST
         #: TASK-32954: one CharacterReadGuard per Console session, kept
         #: across turns (never rebuilt per turn) -- a full read of a field
         #: in one turn must still permit character_save on a later turn of
@@ -4537,7 +4539,7 @@ class ConsoleChatController:
         #: UI-thread callback that pushes/clears the pending-approval batch
         #: into the owning screen's task-resume state (``ChatScreen.
         #: _set_console_pending_approval``). Always invoked through
-        #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
+        #: ``self._host.call_from_thread`` from ``request_mcp_approvals``.
         self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
         #: ADR-332: UI-thread bridge that patches a mounted approval card's
         #: advisory summary line ``(round_id, text)``. Registered by the
@@ -4551,7 +4553,7 @@ class ConsoleChatController:
             Callable[[ConsolePendingDecisionProjection | None], Any] | None
         ) = None
         #: Task 9 (parked background approvals): UI-thread callback invoked
-        #: (via ``self.app.call_from_thread``) when ``request_mcp_approvals``
+        #: (via ``self._host.call_from_thread``) when ``request_mcp_approvals``
         #: raises a round for a NON-active session -- sets the fleet
         #: pending-approval badge and fires the one-per-card toast, WITHOUT
         #: touching ``set_pending_approval``'s mounted-card slot (that stays
@@ -4562,7 +4564,7 @@ class ConsoleChatController:
         #: other UI bridge slot here.
         self.park_pending_approval: Callable[[str], None] | None = None
         #: Task 10 (background completion toasts): UI-thread callback
-        #: invoked DIRECTLY (never via ``self.app.call_from_thread`` --
+        #: invoked DIRECTLY (never via ``self._host.call_from_thread`` --
         #: unlike the two bridges above, every terminal ``_set_run_state``
         #: call already runs on the main event-loop thread: worker-thread
         #: agent runs resume here only after ``await asyncio.to_thread(...)``
@@ -4694,7 +4696,7 @@ class ConsoleChatController:
         #: UI-thread callback that pushes/clears the pending skill-install
         #: confirm payload into the owning screen's task-resume state
         #: (`ConsoleSkillController._set_console_pending_skill_install`). Invoked through
-        #: self.app.call_from_thread from request_skill_install_confirm.
+        #: self._host.call_from_thread from request_skill_install_confirm.
         self.set_pending_skill_install: Callable[[dict | None], None] | None = None
         #: Optional test override for the confirm timeout.
         self.skill_install_confirm_timeout_seconds: Callable[[], float] | None = None
@@ -4720,7 +4722,7 @@ class ConsoleChatController:
         ]
         #: UI-thread callback that pushes/clears the pending skill-SCRIPT
         #: confirm payload into the owning screen's task-resume state.
-        #: Invoked through self.app.call_from_thread from
+        #: Invoked through self._host.call_from_thread from
         #: request_skill_script_confirm. Mirrors set_pending_skill_install,
         #: but the round-trip decision carries a "remember" flag too.
         self.set_pending_skill_script: Callable[[dict | None], None] | None = None
@@ -4795,7 +4797,7 @@ class ConsoleChatController:
         self._chat_creation_revoked_runs: set[str] = set()
         #: UI-thread callback that pushes/clears the pending chat-create
         #: confirm payload into the owning screen's state. Invoked through
-        #: self.app.call_from_thread from request_chat_create_confirm.
+        #: self._host.call_from_thread from request_chat_create_confirm.
         #: Mirrors set_pending_skill_script.
         self.set_pending_chat_create: Callable[[dict | None], None] | None = None
         #: Optional test override for the confirm timeout, mirroring
@@ -8838,7 +8840,7 @@ class ConsoleChatController:
         one_shot_prefill, one_shot_prefill_revision = (
             self.store.session_one_shot_prefill_snapshot(session_id)
         )
-        runtime = getattr(getattr(self, "app", None), "console_runtime", None)
+        runtime = getattr(self, "_hooks_v2_runtime", None)
         accept_turn = getattr(runtime, "accept_turn", None)
         staged_evidence_snapshot = getattr(
             runtime, "snapshot_console_staged_evidence", None
@@ -8965,14 +8967,9 @@ class ConsoleChatController:
         )
         if session is None:
             raise VoicePreparationError("session_unavailable")
-        if self.app is not None and session.persisted_conversation_id:
-            from tldw_chatbook.Chat.conversation_archive_actions import (
-                conversation_send_refusal,
-            )
-
-            if await conversation_send_refusal(
-                self.app, session.persisted_conversation_id
-            ):
+        send_refusal = self._host.send_refusal
+        if send_refusal is not None and session.persisted_conversation_id:
+            if await send_refusal(session.persisted_conversation_id):
                 raise VoicePreparationError("session_unavailable")
         (
             resolution,
@@ -12310,7 +12307,7 @@ class ConsoleChatController:
             )
         if not state.project_instructions_enabled:
             return None
-        registry = getattr(self.app, "workspace_registry_service", None)
+        registry = self._host.workspace_registry_service
         try:
             if snapshot is not None:
                 if snapshot.selected is None:
@@ -14070,11 +14067,7 @@ class ConsoleChatController:
             canonical_settings_baseline=settings,
         )
         if creating_blank_session:
-            generation = getattr(
-                self.app,
-                "console_new_chat_default_generation",
-                0,
-            )
+            generation = self._host.read_new_chat_default_generation()
             session.new_chat_default_generation = (
                 generation if type(generation) is int and generation >= 0 else 0
             )
@@ -15517,10 +15510,9 @@ class ConsoleChatController:
     ) -> None:
         """Publish this run's MCP catalog counts for the inspector's "MCP" row.
 
-        ``setattr`` onto ``self.app`` -- the exact same object
+        Through the host's publisher onto the app -- the exact object
         ``ChatScreen._console_mcp_tool_count``/``_console_mcp_not_connected_
-        count`` ``getattr`` from (wired onto this controller as ``self.app``
-        by ``ChatScreen._ensure_console_chat_controller``). Every
+        count`` ``getattr`` from. Every
         ``_compose_mcp_provider`` return path calls this: ``(None, None)``
         is the row's documented "absent" contract (see
         ``console_display_state._mcp_inspector_row``) for the no-service /
@@ -15539,30 +15531,18 @@ class ConsoleChatController:
         both already re-derive inspector state from these attributes on
         their own next pass.
         """
-        if self.app is None:
+        publish = self._host.publish_mcp_inspector_counts
+        if publish is None:
             return
         from tldw_chatbook.Agents.plain_chat_tool_surface import offered_builtin_tool_count
 
-        app = self.app
-        try:
-            counts = app.console_selected_tool_counts
-        except AttributeError:
-            counts = {}
-        counts.pop(session_id, None)
-        self.app.console_tool_count = offered_builtin_tool_count(self._agent_bridge, session_id)
-        self.app.console_mcp_tool_count = tool_count
-        self.app.console_mcp_not_connected_count = not_connected_count
+        builtin_count = offered_builtin_tool_count(self._agent_bridge, session_id)
+        publish(session_id, builtin_count, tool_count, not_connected_count)
 
     def _publish_selected_tool_count(self, session_id: str, count: int) -> None:
         """Publish the selected first request on the controller loop."""
-        if self.app is not None:
-            app = self.app
-            try:
-                counts = app.console_selected_tool_counts
-            except AttributeError:
-                counts = {}
-            counts[session_id] = count
-            self.app.console_selected_tool_counts = counts
+        if self._host.publish_selected_tool_count is not None:
+            self._host.publish_selected_tool_count(session_id, count)
 
     def _console_tool_kill_switch_reader(self) -> Callable[[], bool] | None:
         """Forward to the documented InterruptRoundHost implementation."""
@@ -15733,7 +15713,7 @@ class ConsoleChatController:
             if publish_counts:
                 self._publish_mcp_inspector_counts(tool_count, not_connected, session_id)
 
-        service = getattr(self.app, "unified_mcp_service", None)
+        service = self._host.unified_mcp_service
         if service is None:
             if _freeze_definition_maximum_on_compose:
                 raise PermissionError("mcp_catalog_source_changed")
@@ -15934,7 +15914,7 @@ class ConsoleChatController:
             **({"_freeze_definition_maximum_on_compose": True} if deferred else {}),
         )
         builtin_gate = build_builtin_gate(
-            getattr(self.app, "unified_mcp_service", None), profile_id=profile_id
+            self._host.unified_mcp_service, profile_id=profile_id
         )
         if admitted_roots is None:
             session = next(
@@ -15942,7 +15922,7 @@ class ConsoleChatController:
             )
             admitted_roots = capture_run_admitted_workspace_roots(
                 session=session,
-                registry=getattr(self.app, "workspace_registry_service", None),
+                registry=self._host.workspace_registry_service,
                 project_selection=project_selection,
                 project_authority_guard=project_authority_guard,
             )
@@ -16066,7 +16046,7 @@ class ConsoleChatController:
         )
         if not coerce_bool_setting(local_tools_enabled, LOCAL_TOOLS_DEFAULT_ENABLED):
             return None, None
-        service = getattr(self.app, "unified_mcp_service", None)
+        service = self._host.unified_mcp_service
         if service is None:
             return None, None
         from .console_run_start_tools import local_tools_kill_switch
@@ -16139,20 +16119,16 @@ class ConsoleChatController:
         else:
             root = project_root
             authority_scope = None
-        subscriptions_db = getattr(self.app, "subscriptions_db", None)
+        subscriptions_db = self._host.subscriptions_db
         watchlists_service = WatchlistsToolService(
             db_resolver=lambda: subscriptions_db,
             # Owner-module loader (TASK-18609): constructing the store here
             # violated the runtime-policy ownership boundary.
             runtime_source_loader=load_default_runtime_source_state,
         )
-        local_watchlists_service = getattr(self.app, "local_watchlists_service", None)
-        watchlist_bundle_service = getattr(self.app, "watchlist_bundle_service", None)
-        watchlists_coordinator = getattr(
-            self.app,
-            "watchlists_operation_coordinator",
-            None,
-        )
+        local_watchlists_service = self._host.local_watchlists_service
+        watchlist_bundle_service = self._host.watchlist_bundle_service
+        watchlists_coordinator = self._host.read_watchlists_operation_coordinator()
 
         def _create_collection(**kwargs: Any) -> Any:
             if watchlist_bundle_service is None:
@@ -16169,9 +16145,7 @@ class ConsoleChatController:
                 raise RuntimeError("Watchlists source service unavailable")
             return local_watchlists_service.create_sources_exact_batch_sync(rows)
 
-        watchlists_command_service = getattr(
-            self.app, "watchlists_command_service", None
-        )
+        watchlists_command_service = self._host.read_watchlists_command_service()
         if watchlists_command_service is None:
             watchlists_command_service = WatchlistsCommandService(
                 runtime_source_loader=load_default_runtime_source_state,
@@ -16289,7 +16263,7 @@ class ConsoleChatController:
             return None, None
         if admitted_roots is not None and not admitted_roots:
             return None, None
-        service = getattr(self.app, "unified_mcp_service", None)
+        service = self._host.unified_mcp_service
         if service is None:
             return None, None
         try:
@@ -16427,8 +16401,8 @@ class ConsoleChatController:
         local_enabled = coerce_bool_setting(configured, LOCAL_TOOLS_DEFAULT_ENABLED)
         if not local_enabled or not session_id:
             return None, None
-        service = getattr(self.app, "unified_mcp_service", None)
-        runtime = getattr(self.app, "raw_cli_runtime", None)
+        service = self._host.unified_mcp_service
+        runtime = self._host.raw_cli_runtime
         if service is None or runtime is None:
             return None, None
         try:
@@ -16539,7 +16513,7 @@ class ConsoleChatController:
         """
         if (
             session_id is None
-            or self.app is None
+            or self._host is _NO_HOST
             or (
                 self.set_pending_question is None
                 and not self._interrupt_host.has_retained_decision_target(session_id)
@@ -16581,7 +16555,7 @@ class ConsoleChatController:
         Returns:
             ``{"character_service": CharacterToolService}`` or ``{}``.
         """
-        if session_id is None or self.app is None:
+        if session_id is None or self._host is _NO_HOST:
             return {}
         session = next((s for s in self.store.sessions() if s.id == session_id), None)
         if session is None:
@@ -16592,10 +16566,10 @@ class ConsoleChatController:
         )
 
         guard = self._character_read_guards.setdefault(session_id, CharacterReadGuard())
-        app = self.app
+        host = self._host
 
         def _service() -> Any:
-            service = getattr(app, "local_character_persona_service", None)
+            service = host.local_character_persona_service
             if service is None:
                 raise RuntimeError("local character service unavailable")
             return service
@@ -16610,7 +16584,7 @@ class ConsoleChatController:
             # message_pump.py) and returns False once the app is closed;
             # call_from_thread would instead block this worker thread with
             # no timeout, and can hang at shutdown (task-32954 Task 5, R11).
-            app.post_message(CharacterCardChanged(character_id))
+            host.post_message(CharacterCardChanged(character_id))
 
         return {
             "character_service": CharacterToolService(
@@ -17167,13 +17141,13 @@ class ConsoleChatController:
             scope_type=scope, workspace_id=workspace
         ):
             raise PermissionError("destination_unavailable")
-        runtime = getattr(self.app, "console_runtime", None)
+        runtime = getattr(self, "_hooks_v2_runtime", None)
         if runtime is None:
             raise PermissionError("runtime_unavailable")
         settings = (
             self._default_session_settings()
             if self._default_session_settings
-            else blank_console_session_settings(getattr(self.app, "app_config", {}))
+            else blank_console_session_settings(self._host.read_app_config({}))
         )
         if public["instructions"].strip():
             settings = replace(settings, system_prompt=public["instructions"])
@@ -17442,7 +17416,7 @@ class ConsoleChatController:
                     )
                     return created_session
 
-                target = self.app.call_from_thread(restore)
+                target = self._host.call_from_thread(restore)
                 if target is None:
                     result["reason"] = "source_unavailable"
                 else:
@@ -17480,7 +17454,7 @@ class ConsoleChatController:
                         conversation_id, launch
                     )
                     if result["reason"] == "runtime_unavailable":
-                        self.app.call_from_thread(
+                        self._host.call_from_thread(
                             setattr, target, "agent_handoff_launch", launch
                         )
                 except Exception:
@@ -17507,7 +17481,7 @@ class ConsoleChatController:
                     )
 
             try:
-                self.app.call_from_thread(complete_if_source_open)
+                self._host.call_from_thread(complete_if_source_open)
             except Exception:
                 pass
             return result
@@ -17950,10 +17924,10 @@ class ConsoleChatController:
             return True
 
         completion_allowed = self._chat_create_source_is_open(session_id)
-        app = self.app
-        if completion_allowed and app is not None:
+        call_from_thread = self._host.call_from_thread
+        if completion_allowed and call_from_thread is not None:
             try:
-                completion_allowed = app.call_from_thread(
+                completion_allowed = call_from_thread(
                     complete_if_source_open,
                     conversation_id=new_conv,
                     title=title,
@@ -20785,9 +20759,7 @@ class ConsoleChatController:
             its budget.
         """
 
-        getter = getattr(
-            getattr(self, "app", None), "get_personal_context_service", None
-        )
+        getter = self._host.personal_context_service
         if not callable(getter):
             return None
         if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
@@ -21046,7 +21018,7 @@ class ConsoleChatController:
             return None
         if not getattr(resolution, "ready", True):
             return None
-        registry = getattr(self.app, "workspace_registry_service", None)
+        registry = self._host.workspace_registry_service
         try:
             selection = resolve_project_instruction_binding(
                 session,
@@ -21652,22 +21624,22 @@ class ConsoleChatController:
         session = next(item for item in self.store.sessions() if item.id == session_id)
         workspace_id = self.store.session_workspace_id(session_id)
         roots, _aliases, _skipped = read_session_change_review_admission(
-            self.app, self.store, session_id
+            self._host, self.store, session_id
         )
         return {
             "workspace_roots": roots,
             "project_authority": capture_project_instruction_authority(
                 session,
-                getattr(self.app, "workspace_registry_service", None),
+                self._host.workspace_registry_service,
                 include_bindings=self._agent_dispatch_is_eligible(
                     session, prefill=self.store.session_one_shot_prefill(session_id)
                 ),
             ),
             "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(
-                self.app, workspace_id
+                self._host, workspace_id
             ),
             "persona_policy_rules": resolve_turn_persona_policy_rules(
-                self.app, session
+                self._host, session
             ),
         }
 
@@ -21675,24 +21647,12 @@ class ConsoleChatController:
         """Compose the selection owner from this runtime's existing app services."""
         from .console_prompt_mixin_service import ConsolePromptMixinService
 
-        store = self.store
-        app = self.app
-        try:
-            prompt_scope_service = app.prompt_scope_service
-        except AttributeError:
-            prompt_scope_service = None
-        persistence = self.store.persistence
-        app = self.app
-        try:
-            settings_durability_owner = app.console_settings_durability_owner
-        except AttributeError:
-            settings_durability_owner = None
         return ConsolePromptMixinService(
-            store=store,
-            prompt_scope_service=prompt_scope_service,
-            persistence=persistence,
+            store=self.store,
+            prompt_scope_service=self._host.prompt_scope_service,
+            persistence=self.store.persistence,
             preparation_owner=self,
-            settings_durability_owner=settings_durability_owner,
+            settings_durability_owner=self._host.read_settings_durability_owner(),
         )
 
     async def capture_turn_configuration_snapshot(
@@ -21708,7 +21668,11 @@ class ConsoleChatController:
             _controller_capture_turn_configuration_snapshot,
         )
 
-        return await _controller_capture_turn_configuration_snapshot(self, session_id, context_provider=context_provider, selection=selection, _prepared_skills=_prepared_skills)
+        # The host's capture is anchored on its app; without a host, on none.
+        capture = self._host.capture_turn_configuration or functools.partial(
+            _controller_capture_turn_configuration_snapshot, None
+        )
+        return await capture(self, session_id, context_provider=context_provider, selection=selection, _prepared_skills=_prepared_skills)
 
 
     def resolve_turn_configuration_snapshot(
@@ -21748,7 +21712,7 @@ class ConsoleChatController:
         if not isinstance(console_config, Mapping):
             console_config = {}
         return capture_console_turn_configuration(
-            self.app,
+            self._host,
             self.store,
             session_id,
             provider_selection=selection,
@@ -21796,7 +21760,7 @@ class ConsoleChatController:
             },
             project_authority=capture_project_instruction_authority(
                 session,
-                getattr(self.app, "workspace_registry_service", None),
+                self._host.workspace_registry_service,
                 include_bindings=self._agent_dispatch_is_eligible(
                     session, prefill=self.store.session_one_shot_prefill(session_id)
                 ),
@@ -21804,9 +21768,9 @@ class ConsoleChatController:
             skill_workspace_id=workspace_id,
             character_repository=self._visual_identity_repository,
             tool_policy_profile_id=resolve_turn_tool_policy_profile_id(
-                self.app, workspace_id
+                self._host, workspace_id
             ),
-            persona_policy_rules=resolve_turn_persona_policy_rules(self.app, session),
+            persona_policy_rules=resolve_turn_persona_policy_rules(self._host, session),
             mcp_definition_maximum=mcp_definition_maximum,
         )
 
@@ -22914,8 +22878,7 @@ class ConsoleChatController:
         turn a refusal into an exception on the send path.
         """
 
-        app = self.app
-        notify = getattr(app, "notify", None) if app is not None else None
+        notify = self._host.notify
         if not callable(notify):
             return
         try:
@@ -29132,11 +29095,7 @@ def _stock_console_tool_composition_current(controller):
 
     if not providers.controller_factory_current(MCPToolProvider):
         return False
-    app = controller.app
-    try:
-        service = app.unified_mcp_service
-    except AttributeError:
-        service = None
+    service = controller._host.unified_mcp_service
     if not standard_console_catalog_sources(service):
         return False
     for name, original, code, namespace, defaults, keyword_defaults, keyword_items, closure in _CONSOLE_TOOL_COMPOSITION_METHODS:

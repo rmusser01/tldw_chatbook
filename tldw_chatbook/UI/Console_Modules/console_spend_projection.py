@@ -1516,7 +1516,7 @@ class ConsoleContextReadSnapshot:
                 getattr(controller, "_context_repository", None),
                 getattr(getattr(controller, "_context_repository", None), "db", None),
                 getattr(getattr(store, "persistence", None), "db", None),
-                getattr(getattr(controller, "app", None), "chachanotes_db", None),
+                getattr(getattr(controller, "_host", None), "chachanotes_db", None),
                 store.active_session_id,
                 session_id,
                 id(owner),

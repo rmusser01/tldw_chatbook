@@ -896,9 +896,9 @@ class _CanvasNativeViewBinding:
 #: on the STORE, not the controller. Each still holds the dead screen
 #: transitively.
 #:
-#: `controller.app` is deliberately absent: it is the APP, which outlives
-#: every view, and clearing it would break the `call_from_thread` bridge a
-#: surviving turn still needs.
+#: The controller's host is deliberately absent: it is built over the APP,
+#: which outlives every view, and clearing it would break the
+#: `call_from_thread` bridge a surviving turn still needs.
 #:
 #: **Task 4's rule for `viewless_default`.** Every entry now carries a
 #: `why` naming the production read site that makes its value correct.
@@ -1029,7 +1029,7 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
     ConsoleViewHookSlot(
         "complete_agent_chat_create",
         "controller",
-        why="Guarded (`if self.app is not None and self.complete_agent_"
+        why="Guarded (the host's `call_from_thread` and `complete_agent_"
         "chat_create is not None`) in `execute_agent_chat_create`, and it "
         "is the EXECUTE half's advertised-equals-usable gate: with it None "
         "the controller passes `execute_agent_chat_create=None` to the "
@@ -2126,8 +2126,6 @@ class ConsoleRuntime:
             if reads is not None:
                 observe_preparation_reads(reads, self._preparation_reads)
             value._hooks_v2_runtime = self
-        if value is not None and self._app is not None:
-            value.app = self._app
         if value is not None:
             # These are domain-admission seams, not detachable view hooks:
             # ``None`` makes a newly armed skill round deny immediately and
@@ -5169,6 +5167,7 @@ class ConsoleRuntime:
         from tldw_chatbook.Chat.console_chat_controller import (
             ConsoleChatController,
         )
+        from tldw_chatbook.Chat.console_controller_host import controller_host_for_app
 
         # Run hooks (spec 2026-09-11, Task 7): hand the controller this
         # runtime's engine accessor exactly as `ensure_agent_bridge` hands
@@ -5235,6 +5234,7 @@ class ConsoleRuntime:
             "cancel_raw_cli_session",
             getattr(raw_cli_runtime, "cancel_session", None),
         )
+        kwargs["host"] = controller_host_for_app(self._app, raw_cli_runtime=raw_cli_runtime)
         self.set_chat_controller(ConsoleChatController(**kwargs))
         self._chat_controller._archive_recovery_runtime = self._archive_recovery
         self._chat_controller.prompt_history = self.ensure_prompt_history()
