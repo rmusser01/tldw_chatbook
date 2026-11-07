@@ -3166,7 +3166,7 @@ async def test_character_save_reread_failure_warns_without_success_toast(
         lambda *_args, **_kwargs: True,
     )
 
-    def fail_fetch(_character_id):
+    def fail_fetch(_db, _character_id):
         raise OSError(private_token)
 
     monkeypatch.setattr(
@@ -3448,7 +3448,7 @@ async def test_character_save_reconciliation_never_repaints_new_session(
             screen.character_handler, "refresh_character_list", block_refresh
         )
 
-        def record_fetch(character_id):
+        def record_fetch(_db, character_id):
             fetch_calls.append(str(character_id))
             return {"id": char_id, "name": "Old saved session", "version": 2}
 
@@ -3459,7 +3459,7 @@ async def test_character_save_reconciliation_never_repaints_new_session(
         )
     else:
 
-        def block_fetch(_character_id):
+        def block_fetch(_db, _character_id):
             entered.set()
             assert release.wait(2)
             return {"id": char_id, "name": "Old saved session", "version": 2}
@@ -3509,7 +3509,7 @@ async def test_character_save_reconciliation_never_launches_detached_reload(
     late_workers: list[asyncio.Task] = []
     rendered_character_ids: list[int | str | None] = []
     saved_record = personas_screen_module.ccp_character_handler.fetch_character_by_id(
-        char_id
+        screen._character_db(), char_id
     )
     assert saved_record is not None
     saved_record = {**saved_record, "name": "After save"}
@@ -3529,7 +3529,7 @@ async def test_character_save_reconciliation_never_launches_detached_reload(
     monkeypatch.setattr(
         personas_screen_module.ccp_character_handler,
         "fetch_character_by_id",
-        lambda _character_id: dict(saved_record),
+        lambda _db, _character_id: dict(saved_record),
     )
 
     async def record_thumbnail_render(_screen, character_id):
@@ -3577,7 +3577,7 @@ async def test_character_save_fetch_failure_clears_handler_without_detached_relo
     load_character = AsyncMock()
     monkeypatch.setattr(screen.character_handler, "load_character", load_character)
 
-    def fail_fetch(_character_id):
+    def fail_fetch(_db, _character_id):
         raise RuntimeError("read failed")
 
     monkeypatch.setattr(

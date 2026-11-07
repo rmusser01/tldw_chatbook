@@ -59,7 +59,7 @@ def _cheap_app_init_patches():
             patch_app_global("get_cli_setting", side_effect=fake_cli_setting)
         )
         stack.enter_context(
-            patch_app_global("get_chachanotes_db_lazy", return_value=None)
+            patch_app_global("_open_profile_chachanotes", return_value=None)
         )
         stack.enter_context(
             patch(

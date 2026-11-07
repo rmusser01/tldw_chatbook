@@ -56,7 +56,7 @@ async def _until(predicate):
 @asynccontextmanager
 async def _dictionary_app(mock_app_instance, tmp_path, monkeypatch):
     db = CharactersRAGDB(tmp_path / "dictionary.db", "pending-dictionary-settings")
-    monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: db)
+    monkeypatch.setattr("tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: db)
     local = LocalChatDictionaryService(db, history_store_path=tmp_path / "history.json")
     service = ChatDictionaryScopeService(local_service=local, server_service=None)
     record = await service.create_dictionary(

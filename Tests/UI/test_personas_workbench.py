@@ -214,12 +214,12 @@ def stub_characters(monkeypatch):
     monkeypatch.setattr(
         character_handler_module,
         "fetch_all_characters",
-        lambda: [dict(c) for c in CHARACTERS],
+        lambda _db: [dict(c) for c in CHARACTERS],
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: next(
+        lambda _db, character_id: next(
             dict(c) for c in CHARACTERS if str(c["id"]) == str(character_id)
         ),
     )
@@ -982,7 +982,7 @@ class TestCharacterSelectionAndEdit:
         monkeypatch.setattr(
             character_handler_module,
             "create_character",
-            lambda data: created.append(data) or 99,
+            lambda _db, data: created.append(data) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
@@ -1015,7 +1015,7 @@ class TestCharacterSelectionAndEdit:
         monkeypatch.setattr(
             character_handler_module,
             "create_character",
-            lambda data: created.append(data) or 99,
+            lambda _db, data: created.append(data) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
@@ -1054,7 +1054,7 @@ class TestCharacterSelectionAndEdit:
         )
 
         monkeypatch.setattr(
-            character_handler_module, "update_character", lambda cid, data: True
+            character_handler_module, "update_character", lambda _db, cid, data: True
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
@@ -1116,10 +1116,10 @@ class TestCharacterSelectionAndEdit:
         monkeypatch.setattr(
             character_handler_module,
             "create_character",
-            lambda data: created.append(data) or 99,
+            lambda _db, data: created.append(data) or 99,
         )
 
-        def fetch_all_with_created():
+        def fetch_all_with_created(_db):
             characters = [dict(c) for c in CHARACTERS]
             if created:
                 characters.append({"id": 99, "name": "New Hero", "version": 1})
@@ -1176,7 +1176,7 @@ class TestCharacterSelectionAndEdit:
         release = threading.Event()
         created = []
 
-        def blocking_create(data):
+        def blocking_create(_db, data):
             release.wait(timeout=5)
             created.append(data)
             return 99
@@ -1910,7 +1910,7 @@ class TestImportExport:
     def stub_db(self, monkeypatch):
         sentinel = object()
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: sentinel
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: sentinel
         )
         return sentinel
 
@@ -1954,7 +1954,7 @@ class TestImportExport:
         card_path.write_bytes(card_bytes)
         imported_sources: list[bytes] = []
 
-        def fake_import(source_bytes):
+        def fake_import(_db, source_bytes):
             imported_sources.append(source_bytes)
             return CharacterCardImportOutcome(3, True, None, None)
 
@@ -1967,7 +1967,7 @@ class TestImportExport:
             character_handler_module, "import_character_card_with_outcome", fake_import
         )
 
-        def fetch_all_with_imported():
+        def fetch_all_with_imported(_db):
             characters = [dict(c) for c in CHARACTERS]
             if imported_sources:
                 characters.append({"id": 3, "name": "Imported Hero", "version": 1})
@@ -1979,10 +1979,10 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_character_by_id",
-            lambda character_id: next(
+            lambda _db, character_id: next(
                 (
                     dict(c)
-                    for c in fetch_all_with_imported()
+                    for c in fetch_all_with_imported(None)
                     if str(c["id"]) == str(character_id)
                 ),
                 None,
@@ -2017,7 +2017,7 @@ class TestImportExport:
         card_path.write_bytes(card_bytes)
         imported_sources: list[bytes] = []
 
-        def fake_import(source_bytes):
+        def fake_import(_db, source_bytes):
             imported_sources.append(source_bytes)
             return CharacterCardImportOutcome(3, True, None, None)
 
@@ -2030,7 +2030,7 @@ class TestImportExport:
             character_handler_module, "import_character_card_with_outcome", fake_import
         )
 
-        def fetch_all_with_imported():
+        def fetch_all_with_imported(_db):
             characters = [dict(c) for c in CHARACTERS]
             if imported_sources:
                 characters.append({"id": 3, "name": "Imported Hero", "version": 1})
@@ -2042,10 +2042,10 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_character_by_id",
-            lambda character_id: next(
+            lambda _db, character_id: next(
                 (
                     dict(c)
-                    for c in fetch_all_with_imported()
+                    for c in fetch_all_with_imported(None)
                     if str(c["id"]) == str(character_id)
                 ),
                 None,
@@ -2078,7 +2078,7 @@ class TestImportExport:
         card_path.write_text("# Character Card\n", encoding="utf-8")
         card_bytes = card_path.read_bytes()
 
-        def fake_import(source_bytes):
+        def fake_import(_db, source_bytes):
             imported_sources.append(source_bytes)
             return CharacterCardImportOutcome(3, True, None, None)
 
@@ -2091,7 +2091,7 @@ class TestImportExport:
             character_handler_module, "import_character_card_with_outcome", fake_import
         )
 
-        def fetch_all_with_imported():
+        def fetch_all_with_imported(_db):
             characters = [dict(c) for c in CHARACTERS]
             if imported_sources:
                 characters.append({"id": 3, "name": "Markdown Hero", "version": 1})
@@ -2103,10 +2103,10 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_character_by_id",
-            lambda character_id: next(
+            lambda _db, character_id: next(
                 (
                     dict(c)
-                    for c in fetch_all_with_imported()
+                    for c in fetch_all_with_imported(None)
                     if str(c["id"]) == str(character_id)
                 ),
                 None,
@@ -2136,7 +2136,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda _source_bytes: None,
+            lambda _db, _source_bytes: None,
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -2205,7 +2205,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda _source_bytes: CharacterCardImportOutcome(1, False, None, None),
+            lambda _db, _source_bytes: CharacterCardImportOutcome(1, False, None, None),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -2233,7 +2233,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_character_by_id",
-            lambda character_id: {
+            lambda _db, character_id: {
                 "extensions": {
                     "character_world_books": [
                         {"name": "Second Chance Lore", "entries": [{}, {}]}
@@ -2255,7 +2255,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_character_by_id",
-            lambda character_id: {
+            lambda _db, character_id: {
                 "extensions": json.dumps(
                     {"character_world_books": [{"name": "Old Lore"}]}
                 )
@@ -2286,7 +2286,7 @@ class TestImportExport:
         """A DB error while re-fetching the character must never raise; the
         toast should simply omit the lorebook note (guard-every-read)."""
 
-        def boom(character_id):
+        def boom(_db, character_id):
             raise RuntimeError("db offline")
 
         monkeypatch.setattr(character_handler_module, "fetch_character_by_id", boom)
@@ -2305,7 +2305,7 @@ class TestImportExport:
         card_path.write_bytes(b'{"name":"Imported Hero"}')
         imported_sources: list[bytes] = []
 
-        def fake_import(source_bytes):
+        def fake_import(_db, source_bytes):
             imported_sources.append(source_bytes)
             return CharacterCardImportOutcome(3, True, None, None)
 
@@ -2318,7 +2318,7 @@ class TestImportExport:
             character_handler_module, "import_character_card_with_outcome", fake_import
         )
 
-        def fetch_all_with_imported():
+        def fetch_all_with_imported(_db):
             characters = [dict(c) for c in CHARACTERS]
             if imported_sources:
                 characters.append({"id": 3, "name": "Imported Hero", "version": 1})
@@ -2328,11 +2328,11 @@ class TestImportExport:
             character_handler_module, "fetch_all_characters", fetch_all_with_imported
         )
 
-        def fetch_with_book(character_id):
+        def fetch_with_book(_db, character_id):
             record = next(
                 (
                     dict(c)
-                    for c in fetch_all_with_imported()
+                    for c in fetch_all_with_imported(None)
                     if str(c["id"]) == str(character_id)
                 ),
                 None,
@@ -2376,7 +2376,7 @@ class TestImportExport:
         created_payloads: list[dict] = []
         characters = [dict(c) for c in CHARACTERS]
 
-        def fake_create(data):
+        def fake_create(_db, data):
             record = dict(data)
             record["id"] = 99
             record["version"] = 1
@@ -2386,12 +2386,12 @@ class TestImportExport:
 
         monkeypatch.setattr(character_handler_module, "create_character", fake_create)
         monkeypatch.setattr(
-            character_handler_module, "fetch_all_characters", lambda: list(characters)
+            character_handler_module, "fetch_all_characters", lambda _db: list(characters)
         )
         monkeypatch.setattr(
             character_handler_module,
             "fetch_character_by_id",
-            lambda character_id: next(
+            lambda _db, character_id: next(
                 (dict(c) for c in characters if str(c["id"]) == str(character_id)),
                 None,
             ),
@@ -2434,7 +2434,7 @@ class TestImportExport:
     ):
         from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 
-        def fake_create(data):
+        def fake_create(_db, data):
             raise ConflictError(
                 "already exists", entity="character_cards", entity_id=data["name"]
             )
@@ -2921,7 +2921,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda source_bytes: (
+            lambda _db, source_bytes: (
                 events.append("character_write")
                 or CharacterCardImportOutcome(1, True, portable, None)
             ),
@@ -3026,7 +3026,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+            lambda _db, _bytes: CharacterCardImportOutcome(1, True, portable, None),
         )
         app = PersonasTestApp(mock_app_instance)
 
@@ -3105,7 +3105,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda _bytes: CharacterCardImportOutcome(1, False, portable, None),
+            lambda _db, _bytes: CharacterCardImportOutcome(1, False, portable, None),
         )
         app = PersonasTestApp(mock_app_instance)
 
@@ -3194,7 +3194,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+            lambda _db, _bytes: CharacterCardImportOutcome(1, True, portable, None),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -3307,7 +3307,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+            lambda _db, _bytes: CharacterCardImportOutcome(1, True, portable, None),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -3397,7 +3397,7 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+            lambda _db, _bytes: CharacterCardImportOutcome(1, True, portable, None),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -3487,7 +3487,7 @@ class TestImportExport:
             lambda _bytes: CharacterCardTTSInspection(portable),
         )
 
-        def persist_character(source_bytes):
+        def persist_character(_db, source_bytes):
             character_writes.append(source_bytes)
             return CharacterCardImportOutcome(1, True, portable, None)
 
@@ -3511,7 +3511,7 @@ class TestImportExport:
                 screen = await _mounted(pilot)
                 fetch_calls = 0
 
-                def fetch_after_import(character_id):
+                def fetch_after_import(_db, character_id):
                     nonlocal fetch_calls
                     fetch_calls += 1
                     if fetch_calls == 1:
@@ -3747,14 +3747,10 @@ class TestFtsTermSafety:
 
     @pytest.fixture
     def stub_db(self, monkeypatch):
-        stub = _FtsStubDB()
-        monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: stub
-        )
-        return stub
+        return _FtsStubDB()
 
     async def test_normal_term_becomes_quoted_prefix_query(self, stub_db):
-        results = character_handler_module.search_characters_fts("sam")
+        results = character_handler_module.search_characters_fts(stub_db, "sam")
         assert [term for term, _ in stub_db.calls] == ['"sam"*']
         assert results and results[0]["name"] == "Match"
         # The raw term is still passed positionally, but when
@@ -3765,22 +3761,22 @@ class TestFtsTermSafety:
         assert stub_db.plain_terms == ["sam"]
 
     async def test_apostrophe_term_is_safe(self, stub_db):
-        character_handler_module.search_characters_fts("O'Brien")
+        character_handler_module.search_characters_fts(stub_db, "O'Brien")
         assert [term for term, _ in stub_db.calls] == ['"O\'Brien"*']
 
     async def test_embedded_double_quote_is_escaped(self, stub_db):
-        character_handler_module.search_characters_fts('sam"')
+        character_handler_module.search_characters_fts(stub_db, 'sam"')
         assert [term for term, _ in stub_db.calls] == ['"sam"""*']
 
     async def test_fts_operator_characters_are_quoted(self, stub_db):
-        character_handler_module.search_characters_fts("(")
+        character_handler_module.search_characters_fts(stub_db, "(")
         assert [term for term, _ in stub_db.calls] == ['"("*']
-        character_handler_module.search_characters_fts("sam-")
+        character_handler_module.search_characters_fts(stub_db, "sam-")
         assert [term for term, _ in stub_db.calls][-1] == '"sam-"*'
 
     async def test_empty_term_returns_empty_without_db_call(self, stub_db):
-        assert character_handler_module.search_characters_fts("") == []
-        assert character_handler_module.search_characters_fts("   ") == []
+        assert character_handler_module.search_characters_fts(stub_db, "") == []
+        assert character_handler_module.search_characters_fts(stub_db, "   ") == []
         assert stub_db.calls == []
 
 
@@ -4800,7 +4796,7 @@ async def test_mounted_aggregate_waits_exact_inflight_character_save(
     started = threading.Event()
     release = threading.Event()
 
-    def delayed_update(_character_id, _data):
+    def delayed_update(_db, _character_id, _data):
         started.set()
         assert release.wait(5)
         return True
@@ -4840,7 +4836,7 @@ async def test_mounted_aggregate_save_and_continue_uses_real_owner_worker(
     monkeypatch.setattr(
         character_handler_module,
         "update_character",
-        lambda character_id, _data: persisted.append(str(character_id)) or True,
+        lambda _db, character_id, _data: persisted.append(str(character_id)) or True,
     )
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test(size=(120, 50)) as pilot:
@@ -4898,7 +4894,7 @@ class TestConversationsPanel:
     def stub_conversations(self, monkeypatch):
         """Stub the DB resolver, conversation listing, and message retrieval."""
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: object()
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
         )
         db = _install_conversation_db(
             monkeypatch, [_conversation_record(1, title="First case")]
@@ -7705,7 +7701,7 @@ class TestConsoleActions:
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: object()
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
         )
         _install_conversation_db(
             monkeypatch, [_conversation_record(1, title="First case")]
@@ -7769,7 +7765,7 @@ class TestConsoleActions:
         # No-selection requires an empty library now: F-031 auto-selects the
         # first row on a fresh mount when rows exist.
         monkeypatch.setattr(
-            character_handler_module, "fetch_all_characters", lambda: []
+            character_handler_module, "fetch_all_characters", lambda _db: []
         )
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
@@ -10366,7 +10362,7 @@ class TestPreviewIntegration:
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: object()
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
         )
         _install_conversation_db(monkeypatch, [])
 
@@ -11733,7 +11729,7 @@ class TestDelete:
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: object()
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
         )
         _install_conversation_db(
             monkeypatch, [_conversation_record(1, title="First case")]
@@ -11788,13 +11784,13 @@ class TestDelete:
     ):
         deleted: list[tuple] = []
 
-        def fake_delete(character_id, expected_version):
+        def fake_delete(_db, character_id, expected_version):
             deleted.append((character_id, expected_version))
             return True
 
         monkeypatch.setattr(character_handler_module, "delete_character", fake_delete)
 
-        def fetch_all_post_delete():
+        def fetch_all_post_delete(_db):
             characters = [dict(c) for c in CHARACTERS]
             if deleted:
                 characters = [c for c in characters if str(c["id"]) != "1"]
@@ -11834,7 +11830,7 @@ class TestDelete:
         monkeypatch.setattr(
             character_handler_module,
             "delete_character",
-            lambda character_id, expected_version: False,
+            lambda _db, character_id, expected_version: False,
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -11857,7 +11853,7 @@ class TestDelete:
         monkeypatch.setattr(
             character_handler_module,
             "delete_character",
-            lambda character_id, expected_version: (
+            lambda _db, character_id, expected_version: (
                 deleted.append((character_id, expected_version)) or True
             ),
         )
@@ -11900,7 +11896,7 @@ class TestDelete:
         monkeypatch.setattr(
             character_handler_module,
             "delete_character",
-            lambda character_id, expected_version: (
+            lambda _db, character_id, expected_version: (
                 deleted.append((character_id, expected_version)) or True
             ),
         )
@@ -12014,7 +12010,7 @@ class TestBulkLibraryActions:
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: object()
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
         )
         _install_conversation_db(
             monkeypatch, [_conversation_record(1, title="First case")]
@@ -12078,7 +12074,7 @@ class TestBulkLibraryActions:
     ):
         deleted: list[tuple[str, int]] = []
 
-        def _delete(character_id, expected_version):
+        def _delete(_db, character_id, expected_version):
             deleted.append((str(character_id), expected_version))
             return True
 
@@ -12087,7 +12083,7 @@ class TestBulkLibraryActions:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_all_characters",
-            lambda: [
+            lambda _db: [
                 dict(c)
                 for c in CHARACTERS
                 if str(c["id"]) not in {did for did, _ in deleted}
@@ -12121,7 +12117,7 @@ class TestBulkLibraryActions:
     ):
         deleted: list[str] = []
 
-        def _delete(character_id, expected_version):
+        def _delete(_db, character_id, expected_version):
             deleted.append(str(character_id))
             return True
 
@@ -12129,7 +12125,7 @@ class TestBulkLibraryActions:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_all_characters",
-            lambda: [dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)],
+            lambda _db: [dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)],
         )
 
         async def _confirm(copy) -> bool:
@@ -12536,7 +12532,7 @@ class TestCharactersEmptyStateGuidance:
         conversation listing so a real character selection/delete round-trip
         doesn't hit an unstubbed DB."""
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: object()
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
         )
         _install_conversation_db(
             monkeypatch, [_conversation_record(1, title="First case")]
@@ -12610,7 +12606,7 @@ class TestCharactersEmptyStateGuidance:
         guidance paints (the state first-time users with no card see until
         they New/Import one)."""
         monkeypatch.setattr(
-            character_handler_module, "fetch_all_characters", lambda: []
+            character_handler_module, "fetch_all_characters", lambda _db: []
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -12661,7 +12657,7 @@ class TestCharactersEmptyStateGuidance:
         """F-035: empty copy aligns like the app's other empty states
         (left/top, cf. .chat-empty-state), not centered in a void."""
         monkeypatch.setattr(
-            character_handler_module, "fetch_all_characters", lambda: []
+            character_handler_module, "fetch_all_characters", lambda _db: []
         )
         app = StyledPersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -12724,7 +12720,7 @@ class TestCharactersEmptyStateGuidance:
         monkeypatch.setattr(
             character_handler_module,
             "delete_character",
-            lambda character_id, expected_version: True,
+            lambda _db, character_id, expected_version: True,
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -12750,7 +12746,7 @@ class TestKeyboardInteraction:
     def stub_conversations(self, monkeypatch):
         """Stub the DB resolver, conversation listing, and message retrieval."""
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: object()
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
         )
         _install_conversation_db(
             monkeypatch, [_conversation_record(1, title="First case")]
@@ -12874,7 +12870,7 @@ class TestKeyboardInteraction:
         monkeypatch.setattr(
             character_handler_module,
             "create_character",
-            lambda data: created.append(data) or 99,
+            lambda _db, data: created.append(data) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
@@ -12896,7 +12892,7 @@ class TestKeyboardInteraction:
         monkeypatch.setattr(
             character_handler_module,
             "create_character",
-            lambda data: created.append(dict(data)) or 99,
+            lambda _db, data: created.append(dict(data)) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
 
@@ -12924,7 +12920,7 @@ class TestKeyboardInteraction:
         monkeypatch.setattr(
             character_handler_module,
             "create_character",
-            lambda data: created.append(data) or 99,
+            lambda _db, data: created.append(data) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
@@ -13042,7 +13038,7 @@ class TestDirtyTracking:
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
         monkeypatch.setattr(
-            character_handler_module, "_default_character_db", lambda: object()
+            "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
         )
         _install_conversation_db(monkeypatch, [])
 
@@ -13184,7 +13180,7 @@ class TestDirtyTracking:
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
         monkeypatch.setattr(
-            character_handler_module, "update_character", lambda cid, data: True
+            character_handler_module, "update_character", lambda _db, cid, data: True
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -13227,7 +13223,7 @@ class TestDirtyTracking:
         # the "no prior selection" baseline this test pins needs an empty
         # library.
         monkeypatch.setattr(
-            character_handler_module, "fetch_all_characters", lambda: []
+            character_handler_module, "fetch_all_characters", lambda _db: []
         )
         monkeypatch.setattr(
             character_handler_module,
@@ -13237,7 +13233,7 @@ class TestDirtyTracking:
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda _source_bytes: CharacterCardImportOutcome(1, False, None, None),
+            lambda _db, _source_bytes: CharacterCardImportOutcome(1, False, None, None),
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -14261,7 +14257,7 @@ async def test_character_tts_population_requires_one_generation_and_observes_off
 ) -> None:
     # F-031: an empty library keeps first-paint auto-select from consuming
     # this state machine's exact-call seams before the explicit select below.
-    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda _db: [])
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -14503,7 +14499,7 @@ async def test_character_tts_off_page_assignment_requires_matching_capability_re
     monkeypatch,
 ) -> None:
     # F-031: empty library - see the population-generation test above.
-    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda _db: [])
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -14656,7 +14652,7 @@ async def test_character_tts_local_authority_change_rejects_late_population(
     monkeypatch,
 ) -> None:
     # F-031: empty library - see the population-generation test above.
-    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda _db: [])
     profile = _character_tts_profile(1)
     original_ref = CharacterRef(
         source="local",

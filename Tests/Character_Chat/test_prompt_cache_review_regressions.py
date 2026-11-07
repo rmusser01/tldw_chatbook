@@ -90,9 +90,8 @@ def test_native_card_save_refreshes_warm_prompt_content(
     else:
         from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
 
-        monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: db)
         assert ccp_character_handler.update_character(
-            str(character), {"extensions": _extensions("NEW")}
+            db, str(character), {"extensions": _extensions("NEW")}
         )
     updated = db.get_character_card_by_id(character)
     assert "NEW" in inject(db, conversation, updated)
@@ -116,8 +115,7 @@ def _save_card(db, monkeypatch, writer, character, card, payload):
     else:
         from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
 
-        monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: db)
-        assert ccp_character_handler.update_character(str(character), payload)
+        assert ccp_character_handler.update_character(db, str(character), payload)
     return db.get_character_card_by_id(character)
 
 

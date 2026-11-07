@@ -86,7 +86,7 @@ def roleplay_data(monkeypatch):
     """Twelve characters and one conversation through the screen's seams."""
     seed_mock_characters(monkeypatch, CHARACTERS)
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: object()
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
     )
     _install_conversation_db(monkeypatch, [_conversation_record(1)])
     return CHARACTERS
@@ -159,7 +159,7 @@ async def test_nineteen_characters_show_at_120x36(
     show. B2a's stacked toolbar left room for 14 (it pinned 13)."""
     seed_mock_characters(monkeypatch, MANY_CHARACTERS)
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: object()
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
     )
     _install_conversation_db(monkeypatch, [_conversation_record(1)])
     async with open_styled_roleplay(

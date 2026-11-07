@@ -1236,7 +1236,7 @@ def gateable_builtin_tools() -> tuple[GateableTool, ...]:
 
 
 def build_gateable_tool(
-    entry: GateableTool, db_provider: Callable[[], Any] | None = None
+    entry: GateableTool, storage_provider: Callable[[], Any] | None = None
 ) -> Any:
     """Instantiate ``entry``'s tool class.
 
@@ -1246,9 +1246,11 @@ def build_gateable_tool(
 
     Args:
         entry: The table entry to construct.
-        db_provider: ChaChaNotes DB getter handed to tool classes that
-            declare ``accepts_notes_db_provider``; others ignore it.
-            ``None`` leaves the tool's own lazy default.
+        storage_provider: Zero-argument callable returning the host's
+            ``ProfileStorage`` (ADR-250 section 6). Tool classes that declare
+            ``accepts_storage_provider`` get it; those that declare
+            ``accepts_notes_db_provider`` get its ChaChaNotes DB; others
+            ignore it. ``None`` leaves each tool without a database.
 
     Returns:
         The instantiated ``Tool``.
@@ -1262,10 +1264,13 @@ def build_gateable_tool(
         f"..Tools.{entry.module_name}", package=__package__
     )
     factory = getattr(module, entry.factory_name)
-    if db_provider is not None and getattr(
-        factory, "accepts_notes_db_provider", False
-    ):
-        return factory(db_provider=db_provider)
+    if storage_provider is not None:
+        if getattr(factory, "accepts_storage_provider", False):
+            return factory(storage_provider=storage_provider)
+        if getattr(factory, "accepts_notes_db_provider", False):
+            return factory(
+                db_provider=lambda: getattr(storage_provider(), "chachanotes", None)
+            )
     return factory()
 
 
@@ -1372,18 +1377,12 @@ class BuiltinToolProvider:
         instruction_root: Path | None = None,
         sandbox_root: Path | None = None,
         sandbox_lease: Callable[[], ContextManager[Path]] | None = None,
-        chachanotes_db_provider: Callable[[], Any] | None = None,
+        storage_provider: Callable[[], Any] | None = None,
     ) -> None:
-        # The note tools get their database from this registrar. Default is
-        # the self-initializing getter, so a fresh process works unaided.
-        if chachanotes_db_provider is None:
-
-            def chachanotes_db_provider() -> Any:
-                from .. import config
-
-                return config.get_chachanotes_db_lazy()
-
-        self._chachanotes_db_provider = chachanotes_db_provider
+        # The note tools and expand_document get their databases from the
+        # host's ProfileStorage (ADR-250 section 6): the TUI's services bundle,
+        # or a root's own factory-opened storage. None leaves them unavailable.
+        self._storage_provider = storage_provider
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
         # resolve THIS run's folder roots -- never whatever workspace the
@@ -1439,7 +1438,7 @@ class BuiltinToolProvider:
                     get_cli_setting("tools", entry.gate_key, False), False
                 ):
                     continue
-                tool = build_gateable_tool(entry, self._chachanotes_db_provider)
+                tool = build_gateable_tool(entry, self._storage_provider)
             except Exception as exc:  # noqa: BLE001 — an unavailable tool is just absent
                 # Log rather than vanish silently. The gate-off path `continue`s
                 # ABOVE this handler, so reaching here means the user asked for

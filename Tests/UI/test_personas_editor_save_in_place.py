@@ -16,7 +16,7 @@ Mirrors ``Tests/UI/test_personas_character_widgets.py`` /
 ``test_persona_profile_widgets.py`` for the bare-widget harness, and
 ``Tests/UI/test_personas_character_world_books_screen.py`` /
 ``test_personas_dictionaries.py`` for the real-DB screen harness
-(``PersonasTestApp`` + routing ``ccp_character_handler._default_character_db``
+(``PersonasTestApp`` + routing ``PersonasScreen._character_db``
 at a real db - the same seam ``create_character``/``update_character``/
 ``fetch_character_by_id``/the library-paging loader all read from).
 """
@@ -144,10 +144,10 @@ def real_char_db(tmp_path):
 @pytest.fixture
 def route_character_db(monkeypatch, real_char_db):
     """Route character CRUD + library paging (all read via
-    ``ccp_character_handler._default_character_db``) at a real DB, so a
+    ``PersonasScreen._character_db``) at a real DB, so a
     round-tripped Save carries the DB's genuine incremented ``version``."""
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: real_char_db
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: real_char_db
     )
     return real_char_db
 
@@ -272,9 +272,9 @@ def stub_characters(monkeypatch):
     """Empty character library - only exists so Characters-mode code paths
     don't explode while this suite drives Personas mode (mirrors the
     identically-named fixture in test_personas_dictionaries.py)."""
-    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda _db: [])
     monkeypatch.setattr(
-        character_handler_module, "fetch_character_by_id", lambda character_id: None
+        character_handler_module, "fetch_character_by_id", lambda _db, character_id: None
     )
     patch_character_paging(monkeypatch)
 

@@ -23,7 +23,8 @@ from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 
 route, outcome = sys.argv[1:]
 root = Path.home()
-template = config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+template = open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 local = NotesInteropService(template.db_path.parent, "test", template)
 scope = NotesScopeService(local, None)
 db = local._get_db("test")
@@ -185,7 +186,8 @@ from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 
-template = config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+template = open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 local = NotesInteropService(template.db_path.parent, "test", template)
 acquired = []
 def forbidden_acquisition(user_id):

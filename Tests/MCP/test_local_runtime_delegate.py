@@ -255,3 +255,26 @@ def test_all_three_gate_error_surfaces_derive_from_the_shared_clause():
     assert _UNKNOWN_ORIGIN_SENTENCE == (
         f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
     )
+
+
+# -- TASK-36947.6: the delegate's databases come from its host ----------------
+
+
+def test_delegate_without_host_storage_reports_its_databases_unavailable():
+    delegate = _delegate()
+    with pytest.raises(RuntimeError, match="ChaChaNotes database is unavailable"):
+        delegate._require_chachanotes_db()
+    with pytest.raises(RuntimeError, match="media database is unavailable"):
+        delegate._require_media_db()
+
+
+def test_delegate_resolves_host_storage_per_call():
+    from types import SimpleNamespace
+
+    current = {"storage": None}
+    delegate = LocalMCPRuntimeDelegate(
+        manifest_provider=lambda: {}, storage_provider=lambda: current["storage"]
+    )
+    database = object()
+    current["storage"] = SimpleNamespace(chachanotes=database, media=None)
+    assert delegate._require_chachanotes_db() is database

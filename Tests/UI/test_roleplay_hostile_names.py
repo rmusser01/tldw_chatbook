@@ -182,7 +182,7 @@ async def test_a_character_name_tag_and_conversation_title(
         [{"id": 1, "name": name, "description": "d", "tags": [name], "version": 1}],
     )
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: object()
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
     )
     _install_conversation_db(monkeypatch, [_conversation_record(1, title=name)])
     app = _RecordingApp(mock_app_instance)
@@ -442,7 +442,7 @@ async def test_the_items_list_paints_both_prompt_lines_and_the_tooltip_literally
         ],
     )
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: object()
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
     )
     async with open_styled_roleplay(
         "mock", mock_app_instance, size=SIZE, app_class=_RecordingStyledApp
@@ -484,7 +484,7 @@ async def test_the_items_border_title_paints_the_tag_literally(
         ],
     )
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: object()
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
     )
     async with open_styled_roleplay(
         "mock", mock_app_instance, size=SIZE, app_class=_RecordingStyledApp
@@ -528,7 +528,7 @@ async def test_the_delete_modal_names_marked_and_open_items_literally(
         ],
     )
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: object()
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
     )
     async with open_styled_roleplay(
         "mock", mock_app_instance, size=SIZE, app_class=_RecordingStyledApp

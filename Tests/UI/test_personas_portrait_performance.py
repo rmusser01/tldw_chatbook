@@ -617,7 +617,9 @@ async def test_actual_save_reconciliation_preserves_only_same_source_draft(
     )
     assert db.update_character_card(character_id, update, record["version"])
     monkeypatch.setattr(
-        ccp_character_handler, "fetch_character_by_id", db.get_character_card_by_id
+        ccp_character_handler,
+        "fetch_character_by_id",
+        lambda _db, character_id: db.get_character_card_by_id(character_id),
     )
     screen._character_save_inflight = True
     if stale_session:

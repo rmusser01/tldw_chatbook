@@ -288,7 +288,7 @@ async def test_personas_mount_does_not_block_on_the_character_library(monkeypatc
 
     import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as handler_module
 
-    def blocking_fetch_all_characters():
+    def blocking_fetch_all_characters(_db):
         # Stands in for a large character library or a server-backed scope.
         time.sleep(SERVICE_DELAY)
         return []

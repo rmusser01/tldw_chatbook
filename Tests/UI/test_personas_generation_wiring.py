@@ -17,7 +17,6 @@ from contextlib import asynccontextmanager
 import pytest
 from textual.widgets import Button, Input
 
-import tldw_chatbook.config as config_module
 from tldw_chatbook.Character_Chat.character_generation import (
     CharacterGenerationError,
 )
@@ -66,7 +65,7 @@ class _FakeController:
 
 @asynccontextmanager
 async def _editor(mock_app_instance, db, monkeypatch, controller):
-    monkeypatch.setattr(config_module, "get_chachanotes_db_lazy", lambda: db)
+    mock_app_instance.services.storage.chachanotes = db
     mock_app_instance.chachanotes_db = db
     mock_app_instance.chat_dictionary_scope_service = None
     app = PersonasTestApp(mock_app_instance)

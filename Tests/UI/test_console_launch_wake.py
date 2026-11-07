@@ -104,7 +104,7 @@ def _launch_app(tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service
             `_wire_chat_conversation_services()` instead, so the tree comes
             from the PRODUCTION `ChatConversationService` reading the real
             on-disk rows. `_build_test_app` patches
-            `get_chachanotes_db_lazy` to `None`, so that wiring ran at
+            `_open_profile_chachanotes` to `None`, so that wiring ran at
             `__init__` with no DB and left the local service `None` — which
             is why every resume test in this suite otherwise injects a
             double. Used by the headline e2e so its "the payload carried

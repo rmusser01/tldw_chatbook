@@ -39,24 +39,20 @@ def _long_body() -> str:
 def dbs(tmp_path, monkeypatch):
     """Real ChaChaNotes/Media/Prompts databases, wired in as the tool's handles.
 
-    The tool resolves its handles through `config.get_*_db_lazy()` with
-    function-local imports (the `note_management_tools` precedent), so
-    patching the config module's attributes is the seam that reaches it.
+    The tool gets its handles from its host's ``ProfileStorage`` (ADR-250
+    section 6), so ``_tool(dbs)`` hands it a storage over these three.
     """
+    from tldw_chatbook.app_services import ProfileStorage
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-    import tldw_chatbook.config as config_module
 
     chacha = CharactersRAGDB(tmp_path / "chacha.db", client_id=CLIENT_ID)
     media = MediaDatabase(tmp_path / "media.db", client_id=CLIENT_ID)
     prompts = PromptsDatabase(tmp_path / "prompts.db", client_id=CLIENT_ID)
+    storage = ProfileStorage(chachanotes=chacha, media=media, prompts=prompts)
 
-    monkeypatch.setattr(config_module, "get_chachanotes_db_lazy", lambda: chacha)
-    monkeypatch.setattr(config_module, "get_media_db_lazy", lambda: media)
-    monkeypatch.setattr(config_module, "get_prompts_db_lazy", lambda: prompts)
-
-    yield SimpleNamespace(chacha=chacha, media=media, prompts=prompts)
+    yield SimpleNamespace(chacha=chacha, media=media, prompts=prompts, storage=storage)
 
     for db in (prompts, media, chacha):
         try:
@@ -65,10 +61,12 @@ def dbs(tmp_path, monkeypatch):
             pass
 
 
-def _tool():
+def _tool(dbs=None):
     from tldw_chatbook.Tools.document_expansion_tool import ExpandDocumentTool
 
-    return ExpandDocumentTool()
+    if dbs is None:
+        return ExpandDocumentTool()
+    return ExpandDocumentTool(storage_provider=lambda: dbs.storage)
 
 
 def _seed_note(dbs, body: str = NOTE_BODY, title: str = "Tide note") -> str:
@@ -139,7 +137,7 @@ def _assert_shape(result: dict) -> None:
 async def test_note_expands_to_full_body(dbs):
     note_id = _seed_note(dbs)
 
-    result = await _tool().execute(source_type="note", source_id=note_id)
+    result = await _tool(dbs).execute(source_type="note", source_id=note_id)
 
     _assert_shape(result)
     assert result["status"] == "ok"
@@ -162,7 +160,7 @@ async def test_media_label_only_row_expands(dbs):
     media_id = _seed_media(dbs)
     stored = dbs.media.get_media_by_id(int(media_id))
 
-    result = await _tool().execute(source_type="media", source_id=media_id, chunk_id="")
+    result = await _tool(dbs).execute(source_type="media", source_id=media_id, chunk_id="")
 
     _assert_shape(result)
     assert result["status"] == "ok"
@@ -179,7 +177,7 @@ async def test_conversation_returns_role_prefixed_transcript(dbs):
     rendering, so what the agent reads matches what was indexed."""
     conversation_id = _seed_conversation(dbs)
 
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="conversation", source_id=conversation_id, chunk_id=""
     )
 
@@ -198,7 +196,7 @@ async def test_prompt_expands(dbs):
     rendering the prompts sub-leg indexes (`rag_service._prompt_document_text`)."""
     prompt_id = _seed_prompt(dbs)
 
-    result = await _tool().execute(source_type="prompt", source_id=prompt_id)
+    result = await _tool(dbs).execute(source_type="prompt", source_id=prompt_id)
 
     _assert_shape(result)
     assert result["status"] == "ok"
@@ -215,7 +213,7 @@ async def test_over_budget_returns_window_and_next_offset(dbs):
     body = _long_body()
     note_id = _seed_note(dbs, body=body)
 
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="note", source_id=note_id, max_chars=1000
     )
 
@@ -242,7 +240,7 @@ async def test_chunk_start_centres_the_window(dbs):
     note_id = _seed_note(dbs, body=body)
     anchor = body.index(DEEP_MARKER)
 
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="note",
         source_id=note_id,
         chunk_start=anchor,
@@ -262,7 +260,7 @@ async def test_offset_continuation_walks_the_document(dbs):
     """Navigation within one document without re-querying."""
     body = _long_body()
     note_id = _seed_note(dbs, body=body)
-    tool = _tool()
+    tool = _tool(dbs)
 
     first = await tool.execute(source_type="note", source_id=note_id, max_chars=1000)
     second = await tool.execute(
@@ -288,7 +286,7 @@ async def test_chunk_id_is_accepted_but_is_not_agent_facing_surface(dbs):
     HEAD, which is the proof the index never anchored anything. Shipping a
     knob wired to nothing is the exact surface this arc's Phase K retired.
     """
-    tool = _tool()
+    tool = _tool(dbs)
     assert "chunk_id" not in tool.parameters["properties"]
     assert "chunk_id" not in tool.parameters["required"]
 
@@ -335,7 +333,7 @@ async def test_absurd_budget_is_capped_at_the_hard_max(dbs):
     body = "z" * (HARD_MAX_CHARS + 5000)
     note_id = _seed_note(dbs, body=body)
 
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="note", source_id=note_id, max_chars=10**9
     )
 
@@ -358,7 +356,7 @@ async def test_useless_budget_falls_back_to_the_default(dbs, budget):
     body = "z" * (DEFAULT_MAX_CHARS + 2000)
     note_id = _seed_note(dbs, body=body)
 
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="note", source_id=note_id, max_chars=budget
     )
 
@@ -403,7 +401,7 @@ async def test_conversation_over_the_message_cap_reports_itself_truncated(dbs):
             }
         )
 
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="conversation",
         source_id=str(conversation_id),
         max_chars=32000,
@@ -426,7 +424,7 @@ async def test_a_short_conversation_carries_no_truncation_note(dbs):
     transcript is complete and says nothing."""
     conversation_id = _seed_conversation(dbs)
 
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="conversation", source_id=conversation_id
     )
 
@@ -438,7 +436,7 @@ async def test_a_short_conversation_carries_no_truncation_note(dbs):
 
 
 async def test_unknown_id_is_not_found(dbs):
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="note", source_id="00000000-0000-0000-0000-000000000000"
     )
 
@@ -461,7 +459,7 @@ async def test_semantic_identity_fallbacks(dbs):
     must resolve as well as a bare `note_id` does.
     """
     note_id = _seed_note(dbs)
-    tool = _tool()
+    tool = _tool(dbs)
 
     via_note_id = await tool.execute(
         source_type="note",
@@ -615,7 +613,7 @@ async def test_conversation_fetch_asks_for_no_image_blobs(dbs, monkeypatch):
 
     monkeypatch.setattr(dbs.chacha, "get_messages_for_conversation", _recording_reader)
 
-    result = await _tool().execute(
+    result = await _tool(dbs).execute(
         source_type="conversation", source_id=str(conversation_id)
     )
 
@@ -637,3 +635,11 @@ async def test_conversation_fetch_asks_for_no_image_blobs(dbs, monkeypatch):
     assert result["text"] == (
         f"user: Why does the beam carry?\nassistant: {MEDIA_BODY}"
     ), "the rendered text is byte-identical with the BLOBs skipped"
+
+
+@pytest.mark.asyncio
+async def test_without_host_storage_every_source_reports_its_database_unavailable():
+    """No config global to fall back on (TASK-36947.6): no storage, no DB."""
+    result = await _tool().execute(source_type="note", source_id="1")
+    assert result["status"] == "error"
+    assert "notes database is unavailable" in result["error"]
