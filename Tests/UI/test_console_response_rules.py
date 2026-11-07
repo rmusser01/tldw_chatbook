@@ -294,10 +294,10 @@ async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_p
                 if entered.is_set():
                     break
             assert entered.is_set(), case.controller.run_state
-            assert (
-                case.console._console_active_run_copy()
-                == case.controller.run_state.visible_copy
-            )
+            # The held provider has sent no chunk yet, so the run's own copy
+            # is the pre-first-chunk wording (077e5bfa09 moved streaming copy
+            # to Agent.console_run_feedback_copy), never the rule verdict.
+            assert case.console._console_active_run_copy() == "Waiting for reply…"
             helpers = len(case.transport.requests)
             primary_calls = len(case.requests)
             case.composer.load_draft("/omfg Add evidence")

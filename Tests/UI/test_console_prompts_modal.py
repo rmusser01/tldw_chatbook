@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,10 +17,12 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
+from Tests.UI.pump_probe import until
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
     AuxiliaryCompletionResult,
+    ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
@@ -135,6 +138,33 @@ def _brief(identifier: str = "prompt-1", *, artifact_type: str = "prompt"):
         "backend": "local",
         "version": 4,
     }
+
+
+async def _mounted(root: Any, selector: str, kind: type[Any] = Button) -> Any:
+    """Return ``selector`` once the remount a press started has mounted it.
+
+    TASK-38977: one ``pilot.pause()`` after a press could end before the
+    modal's handler remounted its body (1-4 of 160 runs at load ~40 read a
+    missing button or a stale Save menu).
+    """
+    assert await until(
+        lambda: any(node.is_mounted for node in root.query(selector)), 10
+    ), f"{selector} never mounted"
+    return root.query_one(selector, kind)
+
+
+async def _recipe_fill_settled(modal: Any) -> None:
+    """Wait until Fill with AI's improvement worker has handled its outcome."""
+
+    def settled() -> bool:
+        worker = modal._improvement_worker
+        return (
+            modal._active_activation_id is None
+            and worker is not None
+            and worker.is_finished
+        )
+
+    assert await until(settled, 15), "the recipe fill never finished"
 
 
 def _choose_save_action(root: Any, action: str) -> None:
@@ -368,13 +398,33 @@ class _ImprovementDriver:
 
 
 class _OneShotAuxiliaryGateway:
+    """Answer once, accepting only calls the real gateway would accept.
+
+    TASK-38977: the old stub took ``(request)`` alone; once the service called
+    ``complete_auxiliary(request, route=None)`` (c78f641adf) its TypeError was
+    caught as a generic ``provider_error``. Binding every call against the
+    real ``ConsoleProviderGateway.complete_auxiliary`` records the mismatch
+    so the recipe helper can name it.
+    """
+
     def __init__(self, response: str) -> None:
         self.response = response
         self.requests: list[AuxiliaryCompletionRequest] = []
+        self.call_mismatches: list[str] = []
 
     async def complete_auxiliary(
-        self, request: AuxiliaryCompletionRequest
+        self, *args: Any, **kwargs: Any
     ) -> AuxiliaryCompletionResult:
+        try:
+            bound = inspect.signature(ConsoleProviderGateway.complete_auxiliary).bind(
+                self, *args, **kwargs
+            )
+        except TypeError as exc:
+            self.call_mismatches.append(
+                f"complete_auxiliary(*{args!r}, **{kwargs!r}): {exc}"
+            )
+            raise
+        request = bound.arguments["request"]
         self.requests.append(request)
         return AuxiliaryCompletionResult(
             provider=request.resolution.provider,
@@ -443,6 +493,10 @@ async def _real_additional_context_recipe_outcome(
 
     outcome = await PromptImprovementService(gateway=gateway).improve(snapshot)
 
+    assert not gateway.call_mismatches, (
+        "the service's complete_auxiliary call does not match the real gateway: "
+        f"{gateway.call_mismatches}"
+    )
     assert gateway.requests
     assert outcome.kind == "success"
     assert outcome.filled_definition is not None
@@ -663,7 +717,11 @@ async def test_no_matches_retry_and_source_unavailable_are_explicit() -> None:
         backend.list_error = ValueError("Server prompt backend is unavailable.")
         await app.screen.set_query("")
         await pilot.pause()
-        assert "source is unavailable" in str(status.renderable)
+        # 378413f0f4 (draft shelf) renamed the copy from "<Source> Prompt
+        # source is unavailable"; TASK-38977 re-pins the shipped wording.
+        assert "Local is unavailable — its items cannot be shown" in str(
+            status.renderable
+        )
         assert "Retry or switch source" in str(status.renderable)
 
 
@@ -1597,7 +1655,7 @@ async def test_source_switch_clears_foreign_rows_before_unavailable_result() -> 
         assert modal.browse_result.source == "server"
         assert modal.browse_result.items == ()
         assert not modal.query("#console-prompts-result-local-only")
-        assert "Server Prompt source is unavailable" in str(
+        assert "Server is unavailable — its items cannot be shown" in str(
             modal.query_one("#console-prompts-browse-status", Static).renderable
         )
 
@@ -3358,16 +3416,12 @@ async def test_real_recipe_fill_with_additional_context_reaches_block_review() -
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await app.screen.enter_mode("improve")
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
+        (await _mounted(app.screen, "#console-prompts-structured-recipe")).press()
+        (await _mounted(app.screen, "#console-prompts-recipe-outcome-first")).press()
+        (await _mounted(app.screen, "#console-prompts-recipe-fill")).press()
+        await _recipe_fill_settled(app.screen)
 
-        app.screen.query_one("#console-prompts-recipe-fill", Button).press()
-        await pilot.pause()
-        await pilot.pause()
-
-        editor = app.screen.query_one(PromptBlockEditor)
+        editor = await _mounted(app.screen, "#console-prompts-editor", PromptBlockEditor)
         mapped = editor.state.definition.lanes[1].blocks[-1]
         assert editor.state.artifact_type == "prompt"
         assert mapped.id == ADDITIONAL_CONTEXT_RESERVED_PREFIX
@@ -3402,16 +3456,13 @@ async def test_mapped_context_blocks_recipe_save_until_deleted(
             capabilities=backend.capabilities_result,
         )
         await modal.enter_mode("improve")
-        modal.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-recipe-fill", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
+        (await _mounted(modal, "#console-prompts-recipe-outcome-first")).press()
+        (await _mounted(modal, "#console-prompts-recipe-fill")).press()
+        await _recipe_fill_settled(modal)
 
-        editor = modal.query_one(PromptBlockEditor)
-        save_menu = modal.query_one("#prompt-editor-save-menu", Select)
+        editor = await _mounted(modal, "#console-prompts-editor", PromptBlockEditor)
+        save_menu = await _mounted(modal, "#prompt-editor-save-menu", Select)
         editor._sync_footer()
         modal._sync_editor_host_gates(editor)
         await modal._save_editor_state(editor.state, artifact_type="recipe")
@@ -3428,14 +3479,21 @@ async def test_mapped_context_blocks_recipe_save_until_deleted(
             "#prompt-block-delete-additional-context",
             Button,
         ).press()
-        await pilot.pause()
+        # The modal's BlockActionRequested handler is the delete's last hop.
+        assert await until(
+            lambda: all(
+                block.id != ADDITIONAL_CONTEXT_RESERVED_PREFIX
+                for lane in modal._editor_state.definition.lanes
+                for block in lane.blocks
+            ),
+            10,
+        ), "the mapped block's delete never reached the modal"
 
         assert "recipe" in [
             value for _label, value in save_menu._options if value is not Select.NULL
         ]
         _choose_save_action(modal, "recipe")
-        await pilot.pause()
-        await pilot.pause()
+        assert await until(lambda: len(notifications) > 1, 10), notifications
 
     assert len(backend.save_calls) == 1
     assert backend.save_calls[0]["artifact_type"] == "recipe"

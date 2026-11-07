@@ -1,8 +1,11 @@
 ---
 id: TASK-38977
 title: "Console prompts-modal and response-rule run-copy tests pin superseded copy and a stale gateway call, so they are red on dev"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 01:42
+updated_date: 2026-11-07 05:49
 labels:
 - follow-up
 - tests
@@ -54,3 +57,14 @@ TASK-38536, TASK-38747 and TASK-38703 recorded some of these as pre-existing. No
 - [ ] #3 If complete_auxiliary's call shape changes again, the recipe tests fail naming the call mismatch rather than reading it as a generic provider_error
 - [ ] #4 The five nodes join the UI census with their measured serial times, and their shard stays at least 5 minutes under its cap
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Re-run the five nodes on base 8b762b52fa to confirm the reds (done: 5 failed, 144 passed for both files at -n 4).
+2. Update the two copy pins to the shipped unavailable copy (378413f0f4).
+3. Make `_OneShotAuxiliaryGateway.complete_auxiliary` take any call shape and bind it against the real `ConsoleProviderGateway.complete_auxiliary` signature; record a mismatch and have the helper assert no mismatch (naming it) before `assert gateway.requests`.
+4. Pin the active-run copy to the pre-first-chunk run copy ("Waiting for reply…", 077e5bfa09) instead of `run_state.visible_copy`.
+5. Negative controls by temporary source edits: unavailable branch without the unavailable copy; the service's call shape changed (and a recipe fill that never reaches the gateway); the active-run branch returning the rule verdict.
+6. Append the five nodes at the UI census tail with measured serial times; raise MINIMUM_FILES; check their shard's measured time stays at least 5 min under the 20-min cap.
+<!-- SECTION:PLAN:END -->
