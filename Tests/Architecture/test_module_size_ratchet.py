@@ -227,7 +227,9 @@ _BUDGETS: dict[str, int] = {
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29173,
+    # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
+    # the chat's previous ordinary outcome id at acceptance.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29180,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
