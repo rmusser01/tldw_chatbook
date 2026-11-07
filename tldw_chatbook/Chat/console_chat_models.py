@@ -39,6 +39,9 @@ class ConsoleMessageRole(str, Enum):
 
     USER = "user"
     ASSISTANT = "assistant"
+    #: App-written rows only: command output, notices, wake and goal echoes,
+    #: hook context. Fork skips them and close/quit never counts them as loss
+    #: (ADR-334 §2, TASK-33628.16), so the only copy of user text never goes here.
     SYSTEM = "system"
     TOOL = "tool"
 

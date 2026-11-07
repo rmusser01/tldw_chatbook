@@ -147,6 +147,11 @@ def _is_unsaved_message(message: Any) -> bool:
     loss, saved or not. They never raise the close or quit question on their
     own and are never counted beside real loss. Fork leaves the same rows out
     of a copied lineage (``console_fork_skips``, ADR-334 §2).
+
+    The rule goes by role, so it holds only while every SYSTEM row is
+    app-written (see ``ConsoleMessageRole.SYSTEM``). A row that is the only
+    copy of text the user typed must use another role, or this rule and
+    Fork's must change with it.
     """
     return (
         message.persisted_message_id is None
