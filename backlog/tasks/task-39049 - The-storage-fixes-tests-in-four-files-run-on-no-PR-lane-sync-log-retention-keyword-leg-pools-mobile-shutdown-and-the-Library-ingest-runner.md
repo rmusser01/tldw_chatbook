@@ -4,7 +4,7 @@ title: "The storage fixes' tests in four files run on no PR lane: sync-log reten
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 23:13
+updated_date: 2026-11-07 22:20
 labels:
 - follow-up
 - ci
@@ -65,7 +65,7 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - [x] #1 `Tests/DB/test_sync_log_retention.py` runs whole on a PR lane, appended at the end of the dreams-boundary step (never ahead of the storage-pausing tests pinned first); the lane pins in `Tests/CI` (`DREAMS_BOUNDARY_TARGETS`, the step argv pin in `test_response_rules_critical_gate.py`) are updated, and three timings of the step's exact command are recorded
 - [x] #2 `Tests/Web_Server/test_mobile_service.py` runs on a PR lane once TASK-38992 makes it green, with three timings of that lane's command recorded
 - [ ] #3 `Tests/RAG_Search/test_keyword_leg_db_resolution.py` runs on a PR lane; its evidence is a green CI run of that lane (locally every node hits TASK-38111), linked in the notes
-- [ ] #4 `Tests/Library/test_library_ingest_runner.py` either leaves no live lease (0 lease-guard errors under `--storage-lease-guard`, with the before count of 130 recorded) and joins the guarded step, or the owner places it on a lane without the guard; the decision is recorded
+- [x] #4 `Tests/Library/test_library_ingest_runner.py` either leaves no live lease (0 lease-guard errors under `--storage-lease-guard`, with the before count of 130 recorded) and joins the guarded step, or the owner places it on a lane without the guard; the decision is recorded
 - [ ] #5 Recent job times of every lane touched are quoted before and after; the fast PR contract is not used
 <!-- AC:END -->
 
@@ -75,6 +75,7 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 2. Append `Tests/DB/test_sync_log_retention.py` to "Run Dreams and Guardian boundary contracts", after the last target and before `--storage-lease-guard`. Update `DREAMS_BOUNDARY_TARGETS` and the step argv pin in `Tests/CI/test_response_rules_critical_gate.py`.
 3. Run the step's exact command 3 times (`jobstep.sh`) and record the times, with the base step for comparison.
 4. Check the other three files against their criteria: mobile waits for TASK-38992; the keyword-leg and ingest-runner files must pass in the step, under the guard.
+5. Round 12 (TASK-38111 landed): close the ingest runner's live leases in its own test code, then lane it and the keyword-leg pool file in the owner's new `recovered-suites` job, beside TASK-39142's keyword-leg files; time it 3 times with `jobstep.sh`.
 
 ## Implementation Notes
 
@@ -123,4 +124,23 @@ So at moderate load the step should be about 10-11 minutes: close to the 12-minu
 I did not fix the leases: that alone does not let the file join, and the leases of the 85 refused nodes cannot be checked until they run. There is no owner decision for a lane without the guard. One of these is needed: TASK-38111 lands first; this task is allowed to enroll the file (bootstrap profile, or a config selection in `_IngestRunnerHarness`); or the owner places the file on a lane without the guard.
 
 **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`. `Tests/CI` at `-n 4`: 1216 passed, 1 skipped (after the review round).
+**Round 12 (2026-11-07).** TASK-38111 landed, so both remaining files run.
+
+**Owner decision (2026-11-06):** "New CI job: add one derived-artifacts job, 'PR lane (recovered suites)', holding all of these files serially under --storage-lease-guard; one more runner per PR; ADR-103's job and runner counts updated." `Tests/RAG_Search/test_keyword_leg_db_resolution.py` and `Tests/Library/test_library_ingest_runner.py` run there, beside TASK-39142's four keyword-leg files, under `--storage-lease-guard`.
+
+**AC#4 (met).** Before: 130 lease-guard errors (128 `library_ingest.db` on MainThread from `_make_db`; `workspace.sqlite` on asyncio_0 and asyncio_1; `retry-workspaces-local.sqlite` and `retry-workspaces-server.sqlite` on asyncio_0). The file's autouse fixture now closes every `_make_db` store on all threads (`close_idle_connections()`). The four WorkspaceDB handles were opened by research retries on the loop's executor threads, and SQLite refuses to close them from the test thread. So the fixture keeps a closer for each handle in a test-owned `threading.local()` of the thread that opened it, and the two research tests end with `shutdown_default_executor()`: each thread closes its own handle as it exits. After: 0 lease findings, 154 passed, 1 skipped, 2 failed. The 2 are TASK-39140's stale `error_detail` pin (fixed on fu/r12-ctlr, 489e2338f5). The keyword-leg file's FTS5 pool leaks are closed in `Tests/RAG_Search/conftest.py` (TASK-39142's notes). A lessons entry records the executor-thread trap.
+
+**AC#3 (laned; CI evidence open).** Locally the keyword-leg pool file passes in the step, 11 of 11, guard-clean. The criterion asks for a green CI run of the lane, which needs a PR run of this branch, so it stays open.
+
+**AC#5 (before quoted; after open).**
+
+**CI before (read-only `gh`).** Dreams boundary job over 15 PR runs, 2026-11-06 14:36Z to 2026-11-07 00:55Z (42235403758 to 42321107301): job 9.80-14.05 min, step 6.10-8.93 min. None of them has round 11's three Dreams additions; no PR run of round-11 dev had finished when these were read (the queue held 04:33Z-05:31Z runs, all queued or cancelled). The recovered-suites job is new, so it has no before time.
+
+**The recovered-suites step**, `jobstep.sh fu-r12-lanes "Run the recovered suites"` (14 targets, serial, `--storage-lease-guard --timeout=180`), 3 runs on 2026-11-07: 534.8 s (load 40-63), 703.2 s (load 40-60), 641.7 s (load 50-60). Each run: 723 passed, 1 skipped, 2 failed. The 2 are `test_executor_failure_uses_stable_job_terminal[artifact_incompatible-failed]` and `[engine_crashed-failed]` in the ingest runner, TASK-39140's stale `error_detail` pin, red on dev too and fixed on round-12 branch fu/r12-ctlr (489e2338f5); the step is green once both land. No lease finding in any run. The slowest run plus about 1.5 min of setup is about 13.2 min, 6.8 min under the job's 20-min cap; CI ran comparable lanes at 0.5-1.0 times this machine's loaded time.
+
+**The Dreams step**, `jobstep.sh fu-r12-lanes "Run Dreams and Guardian boundary contracts"` (33 targets), 3 runs on 2026-11-07: 548.1 s (load 52 falling to 12), 422.4 s (load 12-8), 372.6 s (load 8-5); 1022 passed each, no lease finding. A diagnostic run of the same command with full output, at load 49-67, took 1214 s, also all green. The two TASK-39043 files take about 30 s of it serially (13 s and 17 s on #3434).
+
+CI after times need a PR run of this branch.
+
+**Files (round 12).** `Tests/Library/test_library_ingest_runner.py`, `Tests/RAG_Search/conftest.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, ADR-103.
 <!-- SECTION:NOTES:END -->

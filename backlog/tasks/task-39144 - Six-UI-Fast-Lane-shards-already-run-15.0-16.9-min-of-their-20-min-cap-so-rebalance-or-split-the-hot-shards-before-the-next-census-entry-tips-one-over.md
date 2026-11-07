@@ -1,8 +1,10 @@
 ---
 id: TASK-39144
 title: "Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, so rebalance or split the hot shards before the next census entry tips one over"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-07 02:28
+updated_date: 2026-11-07 22:25
 labels:
 - follow-up
 - ci
@@ -47,7 +49,78 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f and aga
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Every UI Fast Lane shard's slowest finished job, over at least 12 PR runs after the change, is at least 5 min under its cap; the per-shard figures and runs are recorded before and after
-- [ ] #2 The approach is named in the notes (re-ordering entries within the census by measured weight, splitting heavy entries, adding shards, or a combination), with the measured entry weights it used
-- [ ] #3 Every census entry still runs exactly once per PR, and the census checker and `Tests/CI` pass
-- [ ] #4 The census header records how new tail entries keep the 5 min margin, so the next addition does not re-derive it
+- [x] #2 The approach is named in the notes (re-ordering entries within the census by measured weight, splitting heavy entries, adding shards, or a combination), with the measured entry weights it used
+- [x] #3 Every census entry still runs exactly once per PR, and the census checker and `Tests/CI` pass
+- [x] #4 The census header records how new tail entries keep the 5 min margin, so the next addition does not re-derive it
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Collect per-shard UI job minutes and every shard log of at least 12 recent PR runs (read-only `gh`), and build per-entry weights from the logs' progress lines and `--durations=0` rows (`scripts/ui_lane_shard_replay.py`).
+2. Check the replay against the measured slowest job per shard, and compute the floor (all work / 32 shards + setup).
+3. Extend `scripts/ui_lane_shard_replay.py` with a whole-census `--rebalance` that swaps the fewest entries between shards (the checker's `read_census`/`shard` still deal), and re-deal the census with this round's tail entries charged.
+4. Add shards only if no re-deal brings every shard's projected slowest job 5 min under the cap.
+5. Record the before/after projections and add the census header note; AC#1's 12 post-change PR runs need the merge.
+
+## Implementation Notes
+
+**Owner decision (2026-11-06):** "Reorder by weight first: re-deal the census by measured per-entry CI time so heavy entries spread out; no extra runners. Add shards only if reordering can't reach the 5-min margin."
+
+**Approach (AC#2): re-deal by measured weight, plus two shards, because no order of 32 reaches the margin.**
+- Weights. Every UI shard log of 22 PR runs, read-only (`gh api .../jobs/<id>/logs`): 42321107301, 42320698779, 42319781834, 42310788537, 42309351181, 42306963606, 42294368927, 42287112198, 42270955674, 42268842238, 42267936447, 42263533424, 42253456601, 42252461355, 42233793917, 42233786797, 42233778418, 42233324796, 42233321199, 42218508176, 42210918177, 42202410121 (2026-11-06 10:24Z to 2026-11-07 00:55Z; 42209855017 left out, 16 shards red on its own change). Each entry costs its slowest run, from the logs' progress-line stamps and `--durations=0` rows (`scripts/ui_lane_shard_replay.py`'s `entry_seconds`, unchanged). The UI lane passes `--durations=0 --durations-min=0`, which overrides pyproject's `--durations=25`.
+- 106 entries no log timed (round 11's 61 tail entries, merged without a CI run, and this round's 45) are charged at their serial seconds here with the UI step's command, at load 50-155. Twelve already-timed entries run in the same local run took 0.51-0.99 times as long in CI as here (median 0.73), so 1.0 times local is the upper end. Charged total: 34.7 min.
+- Model check. Replayed pytest minutes plus 1.7 min (the median of job minutes minus logged file seconds over all 704 shard jobs; p90 1.87) against each shard's slowest measured job: shard 5 18.51 vs 18.63, shard 3 17.84 vs 17.65; the measured minus the model runs from -2.16 (shard 30) to +0.85 min (shard 29), median about -0.6: the worst-case-per-entry sum leans high.
+- Floor. The census carries 448 worst-case pytest minutes: 13.9 min a shard at 32 shards, about 15.6 min a job, so no order of 32 keeps every job 5 min under the cap. The whole-census swap search reached 14.0 at 32, 13.6 at 33, and 13.2 at 34 (44 swaps); 35 would reach 12.7.
+- Tool. `scripts/ui_lane_shard_replay.py` gained `--rebalance MINUTES` (swap entries between shards, fewest swaps, until no shard's replay passes MINUTES; `--write` moves each entry with the comment lines right above it, leaving blank lines and block-opening entries in place) and `--charge ENTRY=SECONDS`. Dealing stays the checker's own `read_census`/`shard`, which `shard_loads` now calls too. Two `Tests/CI/test_ui_lane_shard_replay.py` tests pin the swap search and the rewrite; red under a temporary edit that skipped the target check and the comment walk.
+- Applied: `--shards 34 --rebalance 13.2 --write`, with the matrix at 34 shards and every shard-count statement updated (workflow, census, checker, replay usage, ADR-103: 44 eligible jobs). `max-parallel` stays 17, so peak runners do not change.
+
+**Per shard, minutes (AC#1's before; after is projected):**
+
+| Shard | Slowest job, 22 runs before | Before: replay + 1.7 (32 shards, base census) | After: replay + 1.7 (34 shards) |
+|---|---|---|---|
+| 1 | 14.93 | 15.92 | 14.89 |
+| 2 | 14.63 | 15.07 | 14.87 |
+| 3 | 17.65 | 17.84 | 14.88 |
+| 4 | 14.05 | 14.67 | 14.90 |
+| 5 | 18.63 | 18.51 | 14.89 |
+| 6 | 13.02 | 13.51 | 14.88 |
+| 7 | 14.47 | 15.11 | 14.88 |
+| 8 | 15.28 | 15.81 | 14.88 |
+| 9 | 13.98 | 14.51 | 14.90 |
+| 10 | 13.92 | 13.89 | 14.88 |
+| 11 | 14.60 | 14.91 | 14.88 |
+| 12 | 14.40 | 14.14 | 14.90 |
+| 13 | 16.07 | 16.14 | 14.88 |
+| 14 | 13.93 | 14.35 | 14.87 |
+| 15 | 15.02 | 15.34 | 14.87 |
+| 16 | 14.87 | 15.40 | 14.89 |
+| 17 | 13.33 | 14.72 | 14.87 |
+| 18 | 14.62 | 16.29 | 14.88 |
+| 19 | 15.00 | 16.20 | 14.90 |
+| 20 | 14.30 | 14.48 | 14.88 |
+| 21 | 13.95 | 14.75 | 14.88 |
+| 22 | 13.13 | 13.94 | 14.90 |
+| 23 | 14.20 | 14.39 | 14.88 |
+| 24 | 15.87 | 16.47 | 14.87 |
+| 25 | 12.62 | 13.46 | 14.87 |
+| 26 | 14.70 | 15.92 | 14.90 |
+| 27 | 13.78 | 14.54 | 14.90 |
+| 28 | 14.50 | 15.76 | 14.87 |
+| 29 | 15.60 | 14.75 | 14.89 |
+| 30 | 13.45 | 15.61 | 14.90 |
+| 31 | 13.80 | 14.60 | 14.88 |
+| 32 | 12.38 | 13.95 | 14.88 |
+| 33 | - | - | 14.88 |
+| 34 | - | - | 14.88 |
+
+The after column is 14.87-14.90 on every shard with the untimed entries at 1.0 times local; at the median ratio (0.73) it would be about 14.6. That margin is thin: the model put one shard 0.85 min under its measured slowest job. If post-merge runs show a shard over 15, 35 shards replays at 12.7 + 1.7.
+
+**Spot check.** Shard 30 of the new deal (54 entries, 8 of them moved by the swaps), run serially in lane order with the UI step's command: 87 passed in 920 s at load 33-53. A re-deal changes which entries run before each entry; the first CI run of all 34 shards is the full check.
+
+**AC#1 (open).** It asks for 12 PR runs after the change, which only exist after the merge.
+
+**AC#3.** `scripts/check_ui_pr_gate_census.py`: OK, 1854 entries, floor 1854, no duplicates: the swaps only reorder. `Tests/CI` at `-n 4`: 1228 passed, 1 skipped (2026-11-07, final tree). Preflight passed; the boot budget ratchets (`bootbudget.sh`): 32 passed.
+
+**AC#4.** The census header now says how a new tail entry keeps the margin: charge it at its local serial time, replay, and run `--rebalance 13.3 --write` if a shard passes 13.3 pytest min.
+
+**Files.** `scripts/ui_lane_shard_replay.py`, `Tests/CI/test_ui_lane_shard_replay.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`, `backlog/docs/lessons-testing-evidence.md`.

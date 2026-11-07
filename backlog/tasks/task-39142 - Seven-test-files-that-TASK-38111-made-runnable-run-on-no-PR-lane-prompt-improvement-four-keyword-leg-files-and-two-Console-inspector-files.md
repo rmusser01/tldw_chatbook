@@ -1,8 +1,10 @@
 ---
 id: TASK-39142
 title: "Seven test files that TASK-38111 made runnable run on no PR lane: prompt improvement, four keyword-leg files and two Console inspector files"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-07 02:03
+updated_date: 2026-11-07 22:20
 labels:
 - follow-up
 - ci
@@ -59,9 +61,38 @@ None is in the census or any PR workflow. The fifth keyword-leg file, `test_keyw
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner decides the lane for the five non-UI files (a new derived-artifacts job or an existing one); the decision is recorded
+- [x] #1 The owner decides the lane for the five non-UI files (a new derived-artifacts job or an existing one); the decision is recorded
 - [ ] #2 Each of the seven files runs on a PR lane, never the fast PR contract; the two Tests/UI files use UI census tail entries of about 30 s each, split by node where needed
 - [ ] #3 Every step touched is timed 3 times with its exact command, with the load, and the CI job times of every touched lane are quoted before and after
-- [ ] #4 Any target added to the Dreams boundary step passes under `--storage-lease-guard`, sits after the pinned storage-pausing targets, and leaves the job under its 20 min cap with the margin recorded; all lane pins are updated
-- [ ] #5 The keyword-leg files end on one lane together with TASK-39049's `test_keyword_leg_db_resolution`, or the notes say why not
+- [x] #4 Any target added to the Dreams boundary step passes under `--storage-lease-guard`, sits after the pinned storage-pausing targets, and leaves the job under its 20 min cap with the margin recorded; all lane pins are updated
+- [x] #5 The keyword-leg files end on one lane together with TASK-39049's `test_keyword_leg_db_resolution`, or the notes say why not
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Read recent CI times of the lanes touched (read-only `gh`).
+2. Add the owner's new derived-artifacts job, "PR lane (recovered suites)" (`recovered-suites`), with the five non-UI files, serial under `--storage-lease-guard`, after the sandboxed suites (bootstrap_profile files last, TASK-32873); aggregation verdict, `Tests/CI` pins and ADR-103 counts.
+3. Put the two Tests/UI files on UI census tail entries of about 30 s each, split by node where a whole file is heavier, measured with the UI step's command.
+4. Time the new step 3 times with `jobstep.sh`; keep the keyword-leg files together with TASK-39049's `test_keyword_leg_db_resolution`.
+
+## Implementation Notes
+
+**Owner decision (2026-11-06):** "New CI job: add one derived-artifacts job, 'PR lane (recovered suites)', holding all of these files serially under --storage-lease-guard; one more runner per PR; ADR-103's job and runner counts updated. The Dreams job keeps its margin; only TASK-39043's two small files go there."
+
+**The five non-UI files (AC#1, AC#5).** `test_prompt_improvement_service.py` and the four keyword-leg files run in the new `recovered-suites` job, with TASK-39049's `test_keyword_leg_db_resolution.py` beside them, so all five keyword-leg files share one lane. They are bootstrap_profile files (TASK-38111), so they follow every sandboxed target in the step (TASK-32873). The job has the same install line, serial pytest, `--timeout=180`, `timeout-minutes: 20`, its own verdict step in the required check, and its argv, run-once rule and aggregation are pinned in `Tests/CI`; ADR-103 says 27 runners in parallel (28 with perf-guard).
+
+**Guard findings, fixed in test code.** Under `--storage-lease-guard` 33 keyword-leg tests failed at teardown: their `RAGService` was never closed, so the FTS5 pool thread kept a `tldw_cli_media_v2.db` lease. `Tests/RAG_Search/conftest.py` now retires every pool (`close_all_pools()`) after each test in a `test_keyword_leg_*` file. Red: 33 lease errors in the step's first run; green: 0.
+
+**The two Tests/UI files (AC#2, not met as written).**
+- `test_console_inspector_workflow.py` (sandboxed) is on the UI census tail: one entry per test, 18 entries, 1.6-12.3 s each serially at load 50-155 (69 s whole).
+- `test_console_inspector_focus_carriers.py` has a module `pytestmark = pytest.mark.bootstrap_profile` (TASK-38111). The census may not hold bootstrap_profile entries: their enrollment can poison the sandboxed tests sharing a shard (ledger R11, TASK-32873; the checker's history moved such nodes out three times). So it runs at the end of the recovered-suites step instead, guard-clean, 15 passed, about 160 s serially at load 50-160. AC#2 asks for census entries, so it stays unticked until the coordinator or owner accepts this lane.
+
+**AC#3 (timings met, after times open).**
+
+**The recovered-suites step**, `jobstep.sh fu-r12-lanes "Run the recovered suites"` (14 targets, serial, `--storage-lease-guard --timeout=180`), 3 runs on 2026-11-07: 534.8 s (load 40-63), 703.2 s (load 40-60), 641.7 s (load 50-60). Each run: 723 passed, 1 skipped, 2 failed. The 2 are `test_executor_failure_uses_stable_job_terminal[artifact_incompatible-failed]` and `[engine_crashed-failed]` in the ingest runner, TASK-39140's stale `error_detail` pin, red on dev too and fixed on round-12 branch fu/r12-ctlr (489e2338f5); the step is green once both land. No lease finding in any run. The slowest run plus about 1.5 min of setup is about 13.2 min, 6.8 min under the job's 20-min cap; CI ran comparable lanes at 0.5-1.0 times this machine's loaded time.
+
+The keyword-leg files alone, serially under the guard: 339 passed with the two prompt files in 171.8 s. **CI before (read-only `gh`).** Dreams boundary job over 15 PR runs, 2026-11-06 14:36Z to 2026-11-07 00:55Z (42235403758 to 42321107301): job 9.80-14.05 min, step 6.10-8.93 min. None of them has round 11's three Dreams additions; no PR run of round-11 dev had finished when these were read (the queue held 04:33Z-05:31Z runs, all queued or cancelled). The recovered-suites job is new, so it has no before time. CI after times need a PR run of this branch, so AC#3 stays open.
+
+**AC#4.** No target of this task went to the Dreams step. The recovered-suites step also runs under `--storage-lease-guard` and holds no storage-pausing target; its margin is above.
+
+**Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `Tests/CI/test_ui_lane_shard_count_statements.py`, `Tests/RAG_Search/conftest.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, ADR-103.
