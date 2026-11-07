@@ -8,9 +8,21 @@ import tempfile
 from pathlib import Path
 
 repo = Path(__file__).resolve().parents[4]
+core = repo / "packages/tldw_profile_core/src"
 sys.path.insert(0, str(repo))
-assert Path(importlib.util.find_spec("Tests").origin).is_relative_to(repo)
-assert Path(importlib.util.find_spec("tldw_chatbook").origin).is_relative_to(repo)
+sys.path.insert(1, str(core))
+assert (
+    Path(importlib.util.find_spec("Tests").origin).resolve()
+    == (repo / "Tests/__init__.py").resolve()
+)
+assert (
+    Path(importlib.util.find_spec("tldw_chatbook").origin).resolve()
+    == (repo / "tldw_chatbook/__init__.py").resolve()
+)
+assert (
+    Path(importlib.util.find_spec("tldw_profile_core").origin).resolve()
+    == (core / "tldw_profile_core/__init__.py").resolve()
+)
 from Tests import real_profile_guard  # noqa: E402 - Verify origins first.
 
 real_profile_guard.install()
@@ -67,6 +79,14 @@ target = (
     sys.argv[1] if len(sys.argv) > 1 else "Tests/UI/test_approval_action_ownership.py"
 )
 assert target in {
+    "Tests/Tools/test_remote_worker_bundle.py::test_cli_regeneration_writes_canonical_utf8_lf_bytes",
+    "Tests/Tools/test_remote_worker_bundle.py::test_bundle_rebuild_matches_committed_artifact",
+    "Tests/Tools/test_remote_executor_loopback.py::test_committed_bundle_stamp_matches_artifact_prefix",
+    "Tests/Tools/test_remote_executor_loopback.py::test_stamp_covers_the_executable_entry_guard",
+    "Tests/Tools/test_remote_executor_loopback.py::test_ping_bundle_sha256_matches_the_artifact_stamp",
+    "Tests/Tools/test_remote_executor_loopback.py::test_executor_ping_returns_verified_payload",
+    "Tests/Tools/test_remote_executor_loopback.py::test_executor_ping_rejects_a_bundle_mismatch",
+    "Tests/Tools/test_remote_executor_loopback.py::test_fs_list_long_roundtrip_retains_exclusions_and_plain_output",
     "Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size",
     "Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size",
     "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[wrong-family]",
