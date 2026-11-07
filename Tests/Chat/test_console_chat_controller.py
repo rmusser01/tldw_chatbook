@@ -11,6 +11,7 @@ import pytest
 from Tests.Agents.hook_test_utils import trusted_hook_engine
 
 from Tests.Chat.console_close_helpers import close_controller_session
+from Tests.console_provider_doubles import until_provider_starts
 from tldw_chatbook.Agents.agent_models import (
     normalize_tool_review,
     RUN_CANCELLED,
@@ -18,6 +19,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_ERROR,
     RunOutcome,
     ToolCall,
+    ToolResult,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import (
     TIMEOUT_REFUSAL,
@@ -27,6 +29,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat import console_chat_controller as controller_module
+from tldw_chatbook.Chat import console_configuration_capture
 from tldw_chatbook.Chat import console_history_budget
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import (
@@ -1152,7 +1155,7 @@ async def test_skill_refuse_after_preparation_removes_transient_echo():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
-    async def _refuse(messages, _turn_context):
+    async def _refuse(messages, _turn_context, **_kwargs):
         return messages, "Refused: untrusted skill.", (), (), ""
 
     controller._apply_skill_substitution = _refuse
@@ -1458,7 +1461,17 @@ async def test_generic_dispatch_does_not_arm_character_emote_protocol():
     assert gateway.messages_seen == [{"role": "user", "content": "hello"}]
     completed = store.messages_for_session(store.active_session_id)[-1]
     assert completed.content == "Emote: happy\nHello"
-    assert completed.metadata is None
+    # 7970fbcada stamps every attempt's prompt mix-in marker on its reply;
+    # apart from that marker the generic reply carries no metadata.
+    assert completed.metadata.mixin_snapshot_schema_version == 1
+    assert (
+        replace(
+            completed.metadata,
+            mixin_attempt_id=None,
+            mixin_snapshot_schema_version=None,
+        )
+        == MessageMetadata()
+    )
 
 
 @pytest.mark.asyncio
@@ -1515,7 +1528,11 @@ async def test_character_retry_without_chunks_preserves_prior_emote_metadata():
 
     after = store.get_message(failed.id)
     assert after.content == "Partial"
-    assert after.metadata == prior_metadata
+    # 7970fbcada: the retry is a new attempt and stamps its own mix-in
+    # attempt id; every other field, the emote among them, is kept.
+    assert after.metadata == replace(
+        prior_metadata, mixin_attempt_id=after.metadata.mixin_attempt_id
+    )
 
 
 @pytest.mark.asyncio
@@ -2815,6 +2832,18 @@ async def test_regenerate_failure_adds_system_row_without_touching_variants():
     assert controller.run_state.status is ConsoleRunStatus.FAILED
 
 
+def _patch_capability(monkeypatch, name, value):
+    """Patch a model-capability reader at both bindings a turn reads.
+
+    3e618d7119 moved the turn's frozen capability capture (the send's vision
+    gate and history-image budget) into ``console_configuration_capture``;
+    the controller's own binding still serves regenerate and the next-send
+    estimate without a turn context.
+    """
+    monkeypatch.setattr(controller_module, name, value)
+    monkeypatch.setattr(console_configuration_capture, name, value)
+
+
 def _pending_image(name="photo.png", data=b"\x89PNG-bytes"):
     return PendingAttachment(
         file_path=f"/tmp/{name}",
@@ -2829,7 +2858,7 @@ def _pending_image(name="photo.png", data=b"\x89PNG-bytes"):
 
 
 def test_submit_draft_sends_image_parts_when_vision_capable(monkeypatch):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -2852,7 +2881,7 @@ def test_submit_draft_sends_image_parts_when_vision_capable(monkeypatch):
 
 
 def test_submit_draft_blocks_pending_image_on_non_vision_model(monkeypatch):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: False)
     store = ConsoleChatStore()
     controller = ConsoleChatController(
         store=store, provider_gateway=RecordingStreamingGateway(), model="text-model"
@@ -2868,7 +2897,7 @@ def test_submit_draft_blocks_pending_image_on_non_vision_model(monkeypatch):
 
 
 def test_image_only_draft_is_sendable(monkeypatch):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -2886,8 +2915,8 @@ def test_image_only_draft_is_sendable(monkeypatch):
 
 
 def test_history_images_capped_to_most_recent(monkeypatch):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
-    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "max_history_images", lambda p, m: 1)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -2918,7 +2947,7 @@ def test_history_images_capped_to_most_recent(monkeypatch):
 
 
 def test_non_vision_history_stays_plain_strings(monkeypatch):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: False)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -2940,7 +2969,7 @@ def test_non_vision_history_stays_plain_strings(monkeypatch):
 
 
 def test_submit_stages_all_pendings_and_clears(monkeypatch):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -2969,8 +2998,8 @@ def test_image_budget_excludes_failed_send_blocked_echo(monkeypatch):
     payload by skip_failed. The image-budget RESERVATION loop must skip it too —
     otherwise the reserved-but-never-emitted slots starve a real older image
     message (silent wrong payload)."""
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
-    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "max_history_images", lambda p, m: 1)
     store = ConsoleChatStore()
     controller = ConsoleChatController(
         store=store, provider_gateway=StreamingGateway(), model="vision-model"
@@ -3127,8 +3156,8 @@ async def test_impersonate_excludes_an_empty_transcript_placeholder():
 
 
 def test_image_budget_counts_images_newest_first(monkeypatch):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
-    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 3)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "max_history_images", lambda p, m: 3)
     # This test's subject is the image-count budget in
     # `_provider_message_payloads`, not the token-window trim added in
     # task 3. The default (unmocked) token window for an unrecognized
@@ -3202,8 +3231,8 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
 def test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization(
     monkeypatch,
 ):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
-    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "max_history_images", lambda p, m: 1)
     monkeypatch.setattr(
         controller_module,
         "image_url_part",
@@ -3290,13 +3319,13 @@ def test_provider_messages_for_next_send_estimate_uses_lightweight_projection_wi
 def test_provider_messages_for_next_send_estimate_uses_owning_session_selection(
     monkeypatch,
 ):
-    monkeypatch.setattr(
-        controller_module,
+    _patch_capability(
+        monkeypatch,
         "is_vision_capable",
         lambda provider, model: (provider, model) == ("openai", "session-vision-model"),
     )
-    monkeypatch.setattr(
-        controller_module,
+    _patch_capability(
+        monkeypatch,
         "max_history_images",
         lambda provider, model: (
             1 if (provider, model) == ("openai", "session-vision-model") else 0
@@ -3334,8 +3363,8 @@ def test_provider_messages_for_next_send_estimate_uses_owning_session_selection(
 def test_provider_message_payloads_serializes_only_after_lightweight_projection(
     monkeypatch,
 ):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
-    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "max_history_images", lambda p, m: 1)
     calls = []
 
     def _serialize(data, mime_type):
@@ -3380,7 +3409,7 @@ def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypat
     back to the same default mime the send-time staging path already uses
     (``pending.mime_type or "image/png"`` in this module, and
     ``image_mime_type or "image/png"`` in ``ConsoleChatStore.append_message``)."""
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    _patch_capability(monkeypatch, "is_vision_capable", lambda p, m: True)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -5087,7 +5116,10 @@ def _arm_session(store):
         workspace_id=store.workspace_context.active_workspace_id
     )
     session.project_instruction_state = ProjectInstructionControlState.legacy_disabled()
-    if session.settings is None:
+    # b7dd8e53f2 seeds a runtime store's sessions with config-derived
+    # settings; with no provider configured here that provider is blank,
+    # and the first durable commit refuses a blank provider.
+    if session.settings is None or not session.settings.provider:
         session.settings = ConsoleSessionSettings(provider="llama_cpp")
     return session
 
@@ -5795,7 +5827,9 @@ async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner
         authority = kwargs["canvas_authority"]
         coordinator, run_id = provider.lifecycle_binding(authority)
         assert coordinator.controller is canvas
+        # 2aed6c384d added the scoped canvas_guide tool to the catalog.
         assert {entry.name for entry in provider.list_catalog()} == {
+            "canvas_guide",
             "canvas_list",
             "canvas_read",
             "canvas_create",
@@ -6925,6 +6959,13 @@ class _UsageRecordingPersistence:
         self.console_dispatch_repository = self
         self._policy_snapshot = None
         self._checkpoint = None
+        # 7970fbcada: a saved chat's prompt mix-in attempt is recorded through
+        # its persistence owner (which must expose a db) before provider entry.
+        self.db = SimpleNamespace(is_memory_db=True)
+        self.mixin_attempts = []
+
+    def save_conversation_mixin_attempt(self, conversation_id, *, batch, **_kwargs):
+        self.mixin_attempts.append((conversation_id, batch))
 
     def _read_policy(self, conversation_id):
         del conversation_id
@@ -7176,11 +7217,11 @@ async def test_stopped_stream_persists_partial_input_usage():
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     task = asyncio.create_task(controller.submit_draft("hello"))
-    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await until_provider_starts(gateway.started, task)
     await asyncio.sleep(0)
 
     assert controller.stop_active_run() is True
-    result = await asyncio.wait_for(task, timeout=1)
+    result = await task
     assert result.accepted
 
     stopped = [
@@ -7252,14 +7293,14 @@ async def test_stop_path_usage_attach_survives_a_persistence_exception():
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     task = asyncio.create_task(controller.submit_draft("hello"))
-    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await until_provider_starts(gateway.started, task)
     await asyncio.sleep(0)
 
     assert controller.stop_active_run() is True
     # Must not raise: the RuntimeError from the persistence layer's usage
     # write must be swallowed inside `_attach_stream_usage`, not propagate
     # out through the stream task.
-    result = await asyncio.wait_for(task, timeout=1)
+    result = await task
     assert result.accepted
 
     stopped = [
@@ -7460,7 +7501,7 @@ async def test_baseline_ignores_dispatch_time_substitution_and_stays_comparable(
     )
     session = store.ensure_session(title="Chat 1")
 
-    async def _substitute_final_turn(provider_messages, _turn_context):
+    async def _substitute_final_turn(provider_messages, _turn_context, **_kwargs):
         # Stand-in for skill/chat-dictionary/world-info substitution: the
         # ephemeral payload for this turn differs from what the store
         # actually holds (the raw text the user typed is what's persisted).
@@ -8253,8 +8294,8 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
         if change_history:
             substitute = controller._apply_skill_substitution
 
-            async def changed_history(rows, turn_context=None):
-                result = await substitute(rows, turn_context)
+            async def changed_history(rows, turn_context=None, **kwargs):
+                result = await substitute(rows, turn_context, **kwargs)
                 result[0][0] = {**result[0][0], "content": "Different history."}
                 return result
 
@@ -8832,7 +8873,12 @@ async def test_production_trace_factory_keeps_canvas_tool_loops_on_their_saved_t
         nonlocal adapter_calls
         adapter_calls += 1
         if adapter_calls in {1, 5}:
-            assert "use find_tools, then load_tools" in kwargs["system_message"]
+            # 0077b872f1 raised an unknown openai model's window from 4,096 to
+            # 32,000 tokens. Every schema now fits the direct-disclosure
+            # budget, so the first request offers the Canvas tools directly
+            # instead of naming them in the find_tools hint.
+            offered = {tool["function"]["name"] for tool in kwargs["tools"]}
+            assert {"canvas_create", "canvas_update"} <= offered
             content = (
                 f"{FENCE_OPEN}\n"
                 + json.dumps({"name": "find_tools", "arguments": {"query": "canvas"}})
@@ -9616,7 +9662,7 @@ def test_mcp_provider_session_and_persistent_paths_use_named_profile():
             stale=False,
             executable=True,
         )
-        provider._execute = lambda *_args, **_kwargs: SimpleNamespace(ok=True)
+        provider._execute = lambda *_args, **_kwargs: ToolResult(ok=True)
 
         provider._is_session_approved_safe(tool)
         provider._apply_verdict("approve_session", tool, {})
@@ -9660,6 +9706,8 @@ async def test_agent_provider_composition_captures_one_named_profile_for_mcp_and
         persona_policy_rules=None,
         mcp_tool_maximum=None,
         mcp_definition_maximum={},
+        mcp_definition_capture="captured",
+        skill_context_maximum={},
     )
 
     await controller._compose_agent_request_providers(
@@ -9787,12 +9835,15 @@ async def test_unattributed_fleet_tokens_is_zero_for_an_unwatched_session():
 
 
 @pytest.mark.asyncio
-async def test_accepted_send_survives_prompt_history_maintenance_refusal(tmp_path, monkeypatch):
+async def test_accepted_send_survives_prompt_history_maintenance_refusal():
     from tldw_chatbook.Chat import prompt_history
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
-    selected = tmp_path / "prompt_history.jsonl"
-    monkeypatch.setattr(prompt_history, "default_prompt_history_path", lambda: selected)
+    # The raw guard checks the history path against the bound config's data
+    # directory (b5251e9a6e), which a stubbed default path cannot satisfy, so
+    # use the path production selects (the sandbox profile's).
+    selected = prompt_history.default_prompt_history_path()
+    before = selected.read_bytes() if selected.exists() else None
     history = prompt_history.PromptHistory(selected)
     participant = raw._raw_participant(history)
     participant.close_admission()
@@ -9803,7 +9854,7 @@ async def test_accepted_send_survives_prompt_history_maintenance_refusal(tmp_pat
         assert result.accepted
         assert history.size == 0
         assert history.persistence_error == "RecoveryRequired"
-        assert not selected.exists()
+        assert (selected.read_bytes() if selected.exists() else None) == before
     finally:
         participant.resume()
 # Thinking capture is exercised at the real direct-provider consumer seam so
@@ -9824,12 +9875,13 @@ async def test_direct_stream_pairs_typed_thinking_with_visible_answer() -> None:
     thinking_tokens: list[int | None] = []
     original_replace = store.replace_message_thinking
 
-    def record_thinking_token(message_id, envelope, *, generation_token=None):
+    def record_thinking_token(message_id, envelope, *, generation_token=None, **kwargs):
         thinking_tokens.append(generation_token)
         return original_replace(
             message_id,
             envelope,
             generation_token=generation_token,
+            **kwargs,
         )
 
     store.replace_message_thinking = record_thinking_token
@@ -11206,8 +11258,8 @@ async def test_agent_cancellation_before_worker_start_retires_and_rejects_handof
     original_begin = store.begin_generation_attempt
     original_to_thread = controller_module.asyncio.to_thread
 
-    def record_begin(message_id):
-        token = original_begin(message_id)
+    def record_begin(message_id, **kwargs):
+        token = original_begin(message_id, **kwargs)
         issued.append((message_id, token))
         return token
 

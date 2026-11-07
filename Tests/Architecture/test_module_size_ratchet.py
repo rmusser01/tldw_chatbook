@@ -235,7 +235,10 @@ _BUDGETS: dict[str, int] = {
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
     # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
     # the chat's previous ordinary outcome id at acceptance.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29167,
+    # 2026-11-07, TASK-39138 (owner size waiver): +3, a send to a closed chat
+    # reaches its dispatch-gap result, and a close mid-stream reads "Session
+    # closed." again instead of the ownership-changed result.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29183,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.

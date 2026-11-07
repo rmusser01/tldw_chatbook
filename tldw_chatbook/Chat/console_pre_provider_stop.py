@@ -77,6 +77,21 @@ class AcceptedStopAuthority:
             and any(row is self.session for row in self.store.sessions())
         )
 
+    def closed_in_place(self, controller: Any) -> bool:
+        """Return whether the session was closed, with no successor owner.
+
+        The same store, persistence and database still own the controller,
+        and no session with this id remains, so a closed-session result can
+        reach no successor (TASK-39138).
+        """
+        return (
+            controller.store is self.store
+            and self.store.persistence is self.persistence
+            and getattr(self.persistence, "db", None) is self.database
+            and self.session is not None
+            and all(row.id != self.session.id for row in self.store.sessions())
+        )
+
     def live_ephemeral_acceptance(
         self, preparation: Any, recovery: Any, assistant_id: str
     ) -> bool:
