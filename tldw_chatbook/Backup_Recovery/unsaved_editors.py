@@ -205,9 +205,32 @@ SETTINGS_SNAPSHOT_KEYS = frozenset(
         "web_search_session",
         "raw_config_session",
         "snapshot_preferences",  # written only while unsaved
+        # Registered panels' staged edits (TASK-1378.1); unsaved_titles names
+        # a dirty one, since only the panel can compare it with the config.
+        "category_panel_states",
         "unsaved_titles",  # the screen's own list of its unsaved categories
     }
 )
+
+
+def _is_panel_state(category, values) -> bool:
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
+
+    return (
+        type(category) is SettingsCategoryId
+        and type(values) is dict
+        and all(type(key) is str and type(value) is str for key, value in values.items())
+    )
+
+
+def _settings_panels_dirty(owner) -> bool:
+    """A registered panel's staged edit, answered as the screen answers it."""
+    states = owner._category_panel_states
+    if type(states) is not dict or any(
+        not _is_panel_state(category, values) for category, values in states.items()
+    ):
+        raise TypeError("unknown settings panel state")
+    return any(type(owner)._category_has_unsaved_changes(owner, c) for c in states)
 
 
 def _settings_snapshot_dirty(state: dict) -> bool:
@@ -243,6 +266,12 @@ def _settings_snapshot_dirty(state: dict) -> bool:
         or any(type(part) is not str for part in pick)
     ):
         raise TypeError("unknown retained discovered pick")
+    panel_states = state.get("category_panel_states", {})
+    if type(panel_states) is not dict or any(
+        not _is_panel_state(category, values)
+        for category, values in panel_states.items()
+    ):
+        raise TypeError("unknown retained Settings panel state")
     dirty = _settings_drafts_dirty(state.get("settings_drafts", {}))
     dirty = _speech_snapshot_dirty(state.get("speech_tts_panel_draft")) or dirty
     if "web_search_session" in state:
@@ -658,6 +687,7 @@ def _editor(owner: object) -> list[UnsavedEditor]:
         label = "Settings"
         dirty = _settings_drafts_dirty(owner._settings_drafts)
         dirty = _speech_snapshot_dirty(owner._speech_tts_draft_snapshot) or dirty
+        dirty = _settings_panels_dirty(owner) or dirty
         if not dirty:
             dirty = not _clean_settings_form(owner)
     elif _exact(owner, "UI.Screens.personas_screen", "PersonasScreen"):
