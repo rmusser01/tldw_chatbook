@@ -84,6 +84,7 @@ _STAGING_CATEGORIES = (
     SettingsCategoryId.IMAGE_GENERATION,
     SettingsCategoryId.VIDEO_GENERATION,
     SettingsCategoryId.ADVANCED_CONFIG,
+    SettingsCategoryId.NETWORK,  # registered panel; review N5
 )
 
 
@@ -352,6 +353,7 @@ async def test_f1_help_says_switching_categories_keeps_the_draft(request) -> Non
         *GUIDED_SETTINGS_MUTATION_CATEGORIES,
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
+        SettingsCategoryId.NETWORK,  # TASK-1378.1: kept on switch, marked *
     } - {SettingsCategoryId.SPEECH_TTS}
     note = "Switching categories keeps the draft; the rail marks it with *."
     for category in SettingsCategoryId:
@@ -576,3 +578,51 @@ async def test_network_save_failure_keeps_the_edit_and_r_discards_it_after_askin
         assert toasts == [("Settings category changes reverted.", "information")]
         select = screen.query_one("#settings-network-ssl-mode", Select)
         assert select.value == "verify"  # repainted from the loaded config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ssl_verify", ["moved-ca-file", 7], ids=["moved-ca-file", "not-a-mode"])
+@private_profile_test
+async def test_network_with_an_unreadable_ssl_verify_opens_clean_and_r_keeps_it_clean(
+    request, tmp_path, ssl_verify
+) -> None:
+    """Review N1: an ``ssl_verify`` the loader reads as "invalid" (a CA file
+    since moved away, or a value of no known form) seeds the Select with
+    "verify", and the Select's mount echo was staged as an edit: opening
+    Network raised a ``*`` no ``r`` could clear and blocked Recovery. Opening
+    is no edit; a real choice on that Select still is, and ``r`` clears it."""
+    if ssl_verify == "moved-ca-file":
+        ssl_verify = str(tmp_path / "corp-ca.pem")  # configured, then moved
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        screen = _active_destination_screen(host)
+        screen._app_config_update_target().update({"network": {"ssl_verify": ssl_verify}})
+        await _click_settings_category(pilot, "network")
+        assert screen.query_one("#settings-network-invalid-row", Static)
+
+        def marked() -> bool:
+            rail = screen.query_one("#settings-category-network", Button)
+            return str(rail.label).endswith(" *")
+
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert not marked()
+        assert "Network" not in unsaved_settings_titles(screen)
+        store = ScreenStateStore()
+        store.save("settings", screen.save_state(), RuntimeIdentity("server", "other"))
+        assert probe_unsaved_editors(screen_state_store=store) == ()
+
+        screen.query_one("#settings-network-ssl-mode", Select).value = "off"
+        await pilot.pause()
+        assert NETWORK_PANEL.pending(screen)["mode"] == "off"
+        assert screen._category_has_unsaved_changes(_NETWORK) is True and marked()
+
+        screen.action_settings_revert_category()
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # Discard changes
+        await _settle_settings(pilot)
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert not marked()
+        screen.action_settings_revert_category()  # nothing left: no dialog
+        await pilot.pause(0.2)
+        assert not isinstance(host.screen, ConfirmationDialog)
