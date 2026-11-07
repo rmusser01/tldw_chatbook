@@ -24062,7 +24062,7 @@ class ConsoleChatController:
         compacted, copy = await self._compaction_preflight.compact_context_now(
             session_id, micro=micro
         )
-        if compacted:  # TASK-33621.80: a wake paused at Ask may go on.
+        if compacted or not micro:  # TASK-33621.80: a wake paused at Ask re-checks.
             self._fleet_wake.release_compaction_pause(session_id)
         return compacted, copy
 

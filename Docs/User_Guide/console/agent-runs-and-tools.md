@@ -1676,7 +1676,8 @@ the supervisor is not woken, nothing is saved to the conversation, no turn is
 marked Failed, and the fleet section reads **Paused: context limit. Results
 saved. Run /compact to continue.** Compacting the chat (`/compact`, **Compact now**, or `/rewind` ▸
 **Summarize**) lets the wake go on; so does switching **When limit nears** to
-Automatic or Off. See
+Automatic or Off, the next time anything in Console settles (for example
+after your next message). See
 [When a chat reaches its context limit](context-and-rag.md#when-a-chat-reaches-its-context-limit).
 
 **Exactly-once, by ledger.** Every sub-agent run has a durable

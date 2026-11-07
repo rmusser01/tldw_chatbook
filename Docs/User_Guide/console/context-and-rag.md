@@ -147,7 +147,9 @@ decide:
 
 - `/compact` (or **Compact now**, or `/rewind` ▸ **Summarize**) lets the
   agent go on with its results straight away. **Compact and send** on a held
-  message of yours does too, once your message's reply is done.
+  message of yours does too, once your message's reply is done. If `/compact`
+  finds nothing to summarize (say, after you deleted turns), the agent still
+  checks again and goes on if the chat is now under its trigger.
 - Setting **When limit nears** to Automatic or Off lets it go on the next
   time anything in Console settles, for example after your next message.
 - A message you send yourself, with or without compacting, is your own turn;
