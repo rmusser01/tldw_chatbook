@@ -312,8 +312,8 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
             what="the new deck to be selected",
         )
         deck_id = str(deck_select.value)
-        assert db.get_deck(deck_id) is not None, "deck row missing from the DB"
-        assert db.get_deck(deck_id)["name"] == "Cell biology"
+        assert db.learning.get_deck(deck_id) is not None, "deck row missing from the DB"
+        assert db.learning.get_deck(deck_id)["name"] == "Cell biology"
 
         card_list = app.screen.query_one("#card-list", ListView)
         # Select.Changed may still be rebuilding rows after the direct refresh:
@@ -341,7 +341,7 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
             what="the created card in the list",
         )
 
-        rows = db.list_flashcards(deck_id=deck_id, q=None, limit=100, offset=0)
+        rows = db.learning.list_flashcards(deck_id=deck_id, q=None, limit=100, offset=0)
         assert [(row["front"], row["back"]) for row in rows] == [
             ("What is a ribosome?", "The protein factory.")
         ], "card row missing from the DB"

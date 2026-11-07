@@ -59,7 +59,7 @@ if route in ("active", "flashcards", "reconcile", "migration"):
         target, method = adapter.watchlist_service, "list_home_run_snapshot"
         app_call = adapter.refresh_active_work_cache_async
     elif route == "flashcards":
-        target, method = db, "count_due_flashcards"
+        target, method = db.learning, "count_due_flashcards"
         async def app_call():
             return await asyncio.to_thread(TldwCli._local_flashcards_due_count, app)
     else:

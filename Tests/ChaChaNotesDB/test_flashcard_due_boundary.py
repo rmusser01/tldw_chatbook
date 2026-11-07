@@ -43,8 +43,8 @@ def db():
 
 
 def _card(db) -> str:
-    deck_id = db.create_deck("Biology", "Cell review")
-    return db.create_flashcard(
+    deck_id = db.learning.create_deck("Biology", "Cell review")
+    return db.learning.create_flashcard(
         {"deck_id": deck_id, "front": "Q", "back": "A", "type": "basic"}
     )
 
@@ -70,9 +70,9 @@ def test_a_card_due_earlier_today_is_returned_as_due(db):
     due = datetime.now(timezone.utc) - timedelta(hours=2)
     _set_next_review(db, card_id, _canonical(due))
 
-    due_ids = [row["id"] for row in db.get_due_flashcards()]
+    due_ids = [row["id"] for row in db.learning.get_due_flashcards()]
     assert card_id in due_ids
-    assert db.count_due_flashcards() >= 1
+    assert db.learning.count_due_flashcards() >= 1
 
 
 def test_a_card_due_later_today_is_not_yet_due(db):
@@ -80,7 +80,7 @@ def test_a_card_due_later_today_is_not_yet_due(db):
     later = datetime.now(timezone.utc) + timedelta(hours=2)
     _set_next_review(db, card_id, _canonical(later))
 
-    assert card_id not in [row["id"] for row in db.get_due_flashcards()]
+    assert card_id not in [row["id"] for row in db.learning.get_due_flashcards()]
 
 
 def test_a_card_due_exactly_now_is_due(db):
@@ -90,15 +90,15 @@ def test_a_card_due_exactly_now_is_due(db):
     now = datetime.now(timezone.utc).replace(microsecond=0)
     _set_next_review(db, card_id, _canonical(now))
 
-    assert card_id in [row["id"] for row in db.get_due_flashcards()]
+    assert card_id in [row["id"] for row in db.learning.get_due_flashcards()]
 
 
 def test_a_never_reviewed_card_is_due(db):
     """NULL next_review (what ``create_flashcard`` leaves) means due now."""
     card_id = _card(db)
 
-    assert card_id in [row["id"] for row in db.get_due_flashcards()]
-    assert db.count_due_flashcards() >= 1
+    assert card_id in [row["id"] for row in db.learning.get_due_flashcards()]
+    assert db.learning.count_due_flashcards() >= 1
 
 
 def test_the_real_review_write_stores_the_canonical_shape(db):
@@ -112,7 +112,7 @@ def test_the_real_review_write_stores_the_canonical_shape(db):
     """
     card_id = _card(db)
     before = datetime.now(timezone.utc)
-    db.update_flashcard_review(card_id, rating=5)
+    db.learning.update_flashcard_review(card_id, rating=5)
 
     with db.transaction() as cursor:
         stored = cursor.execute(
@@ -135,11 +135,11 @@ def test_same_date_cards_are_served_chronologically_with_limit_one(db):
     on the same date must be ordered by their time, not anything else, so
     ``get_next_review_candidate`` (limit=1) serves the
     chronologically-earliest card."""
-    deck_id = db.create_deck("Chrono", "order check")
-    earlier = db.create_flashcard(
+    deck_id = db.learning.create_deck("Chrono", "order check")
+    earlier = db.learning.create_flashcard(
         {"deck_id": deck_id, "front": "Q1", "back": "A1", "type": "basic"}
     )
-    later = db.create_flashcard(
+    later = db.learning.create_flashcard(
         {"deck_id": deck_id, "front": "Q2", "back": "A2", "type": "basic"}
     )
     # Two days ago: safely due, fixed, away from the midnight edge.
@@ -149,6 +149,6 @@ def test_same_date_cards_are_served_chronologically_with_limit_one(db):
     _set_next_review(db, earlier, _canonical(base))
     _set_next_review(db, later, _canonical(base.replace(hour=20)))
 
-    first = db.get_due_flashcards(limit=1)
+    first = db.learning.get_due_flashcards(limit=1)
     assert [row["id"] for row in first] == [earlier]
-    assert [row["id"] for row in db.get_due_flashcards()] == [earlier, later]
+    assert [row["id"] for row in db.learning.get_due_flashcards()] == [earlier, later]

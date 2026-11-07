@@ -8,6 +8,10 @@ from tldw_chatbook.Study_Interop.local_quiz_service import LocalQuizService
 
 
 class FakeDB:
+    @property
+    def learning(self):
+        return self
+
     def __init__(self):
         self.calls = []
 

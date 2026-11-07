@@ -4,6 +4,7 @@ Comprehensive tests for study-related functionality in ChaChaNotes_DB.
 Tests flashcards, spaced repetition, learning paths, and study statistics.
 """
 
+import contextlib
 import shutil
 
 import pytest
@@ -78,7 +79,7 @@ def mem_db_instance(client_id):
 @pytest.fixture
 def sample_deck(db_instance):
     """Creates a sample deck and returns its ID."""
-    deck_id = db_instance.create_deck("Test Deck", "A deck for testing")
+    deck_id = db_instance.learning.create_deck("Test Deck", "A deck for testing")
     return deck_id
 
 
@@ -92,14 +93,14 @@ def sample_flashcard(db_instance, sample_deck):
         "tags": "geography europe",
         "type": "basic",
     }
-    card_id = db_instance.create_flashcard(card_data)
+    card_id = db_instance.learning.create_flashcard(card_data)
     return {"id": card_id, "deck_id": sample_deck, **card_data}
 
 
 @pytest.fixture
 def sample_learning_path(db_instance):
     """Creates a sample learning path and returns its ID."""
-    path_id = db_instance.create_learning_path(
+    path_id = db_instance.learning.create_learning_path(
         "Python Programming", "Learn Python from basics to advanced"
     )
     return path_id
@@ -129,23 +130,23 @@ class TestFlashcardOperations:
 
     def test_create_deck(self, db_instance):
         """Test creating a new flashcard deck."""
-        deck_id = db_instance.create_deck("Spanish Vocabulary", "Learn Spanish words")
+        deck_id = db_instance.learning.create_deck("Spanish Vocabulary", "Learn Spanish words")
         assert deck_id is not None
         assert isinstance(deck_id, str)
         assert len(deck_id) == 36  # UUID length with dashes
 
     def test_create_deck_duplicate_name(self, db_instance):
         """Test that duplicate deck names raise an error."""
-        db_instance.create_deck("Duplicate Deck", "First deck")
+        db_instance.learning.create_deck("Duplicate Deck", "First deck")
         with pytest.raises(sqlite3.IntegrityError):
-            db_instance.create_deck("Duplicate Deck", "Second deck")
+            db_instance.learning.create_deck("Duplicate Deck", "Second deck")
 
     def test_create_flashcard(self, db_instance, sample_deck):
         """Test creating a flashcard with valid data."""
         card_data = create_flashcard_data(
             sample_deck, "What is 2+2?", "4", "math basic"
         )
-        card_id = db_instance.create_flashcard(card_data)
+        card_id = db_instance.learning.create_flashcard(card_data)
 
         assert card_id is not None
         assert isinstance(card_id, str)
@@ -156,36 +157,36 @@ class TestFlashcardOperations:
         # Missing 'back' field
         card_data = {"deck_id": sample_deck, "front": "Question only"}
         with pytest.raises(InputError, match="must have both front and back"):
-            db_instance.create_flashcard(card_data)
+            db_instance.learning.create_flashcard(card_data)
 
         # Missing 'front' field
         card_data = {"deck_id": sample_deck, "back": "Answer only"}
         with pytest.raises(InputError, match="must have both front and back"):
-            db_instance.create_flashcard(card_data)
+            db_instance.learning.create_flashcard(card_data)
 
     def test_create_flashcard_requires_active_deck(self, db_instance):
         missing_deck_id = str(uuid.uuid4())
-        deleted_deck_id = db_instance.create_deck("Biology")
-        db_instance.delete_deck(deleted_deck_id, expected_version=1)
+        deleted_deck_id = db_instance.learning.create_deck("Biology")
+        db_instance.learning.delete_deck(deleted_deck_id, expected_version=1)
 
         with pytest.raises(InputError, match="Deck .* not found"):
-            db_instance.create_flashcard(
+            db_instance.learning.create_flashcard(
                 create_flashcard_data(missing_deck_id, "ATP", "Energy")
             )
 
         with pytest.raises(InputError, match="Deck .* not found"):
-            db_instance.create_flashcard(
+            db_instance.learning.create_flashcard(
                 create_flashcard_data(deleted_deck_id, "ADP", "Spent energy")
             )
 
     def test_create_flashcard_recounts_active_cards_instead_of_incrementing_drift(
         self, db_instance
     ):
-        deck_id = db_instance.create_deck("Biology")
-        first_card_id = db_instance.create_flashcard(
+        deck_id = db_instance.learning.create_deck("Biology")
+        first_card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(deck_id, "ATP", "Energy")
         )
-        second_card_id = db_instance.create_flashcard(
+        second_card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(deck_id, "ADP", "Lower energy")
         )
 
@@ -199,13 +200,13 @@ class TestFlashcardOperations:
                 (deck_id,),
             )
 
-        third_card_id = db_instance.create_flashcard(
+        third_card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(deck_id, "NADH", "Electron carrier")
         )
-        deck = db_instance.get_deck(deck_id)
-        first_card = db_instance.get_flashcard(first_card_id)
-        second_card = db_instance.get_flashcard(second_card_id)
-        third_card = db_instance.get_flashcard(third_card_id)
+        deck = db_instance.learning.get_deck(deck_id)
+        first_card = db_instance.learning.get_flashcard(first_card_id)
+        second_card = db_instance.learning.get_flashcard(second_card_id)
+        third_card = db_instance.learning.get_flashcard(third_card_id)
 
         assert deck is not None
         assert deck["card_count"] == 2
@@ -215,7 +216,7 @@ class TestFlashcardOperations:
 
     def test_get_flashcard(self, db_instance, sample_flashcard):
         """Test retrieving a flashcard by ID."""
-        retrieved = db_instance.get_flashcard(sample_flashcard["id"])
+        retrieved = db_instance.learning.get_flashcard(sample_flashcard["id"])
 
         assert retrieved is not None
         assert retrieved["id"] == sample_flashcard["id"]
@@ -230,18 +231,18 @@ class TestFlashcardOperations:
     def test_get_flashcard_not_found(self, db_instance):
         """Test retrieving a non-existent flashcard returns None."""
         fake_id = str(uuid.uuid4())
-        result = db_instance.get_flashcard(fake_id)
+        result = db_instance.learning.get_flashcard(fake_id)
         assert result is None
 
     def test_search_flashcards(self, db_instance, sample_deck):
         """Test searching flashcards using FTS."""
         # Create multiple flashcards
-        db_instance.create_flashcard(
+        db_instance.learning.create_flashcard(
             create_flashcard_data(
                 sample_deck, "Python functions", "def keyword", "programming python"
             )
         )
-        db_instance.create_flashcard(
+        db_instance.learning.create_flashcard(
             create_flashcard_data(
                 sample_deck,
                 "JavaScript functions",
@@ -249,7 +250,7 @@ class TestFlashcardOperations:
                 "programming javascript",
             )
         )
-        db_instance.create_flashcard(
+        db_instance.learning.create_flashcard(
             create_flashcard_data(
                 sample_deck,
                 "What is a variable?",
@@ -259,58 +260,58 @@ class TestFlashcardOperations:
         )
 
         # Search for 'functions'
-        results = db_instance.search_flashcards("functions")
+        results = db_instance.learning.search_flashcards("functions")
         assert len(results) == 2
 
         # Search with deck filter
-        results = db_instance.search_flashcards("functions", deck_id=sample_deck)
+        results = db_instance.learning.search_flashcards("functions", deck_id=sample_deck)
         assert len(results) == 2
 
         # Search for 'python'
-        results = db_instance.search_flashcards("python")
+        results = db_instance.learning.search_flashcards("python")
         assert len(results) == 1
         assert "Python" in results[0]["front"]
 
     def test_search_flashcards_respects_limit(self, db_instance, sample_deck):
         """search_flashcards caps its result set (it had no LIMIT before)."""
         for i in range(5):
-            db_instance.create_flashcard(
+            db_instance.learning.create_flashcard(
                 create_flashcard_data(
                     sample_deck, f"Widget number {i}", "answer", "shared keyword"
                 )
             )
         # All five match the token; the explicit limit caps the returned rows.
-        assert len(db_instance.search_flashcards("widget", limit=2)) == 2
-        assert len(db_instance.search_flashcards("widget", limit=100)) == 5
+        assert len(db_instance.learning.search_flashcards("widget", limit=2)) == 2
+        assert len(db_instance.learning.search_flashcards("widget", limit=100)) == 5
         # Non-positive / non-int limits fall back to the default cap rather than
         # reaching SQLite (where LIMIT -1 means "no limit" and a str would error).
-        assert len(db_instance.search_flashcards("widget", limit=-1)) == 5
-        assert len(db_instance.search_flashcards("widget", limit=0)) == 5
-        assert len(db_instance.search_flashcards("widget", limit="7")) == 5  # type: ignore[arg-type]
+        assert len(db_instance.learning.search_flashcards("widget", limit=-1)) == 5
+        assert len(db_instance.learning.search_flashcards("widget", limit=0)) == 5
+        assert len(db_instance.learning.search_flashcards("widget", limit="7")) == 5  # type: ignore[arg-type]
 
     def test_get_due_flashcards(self, db_instance, sample_deck):
         """Test getting flashcards due for review."""
         # Create cards with different review states
-        new_card_id = db_instance.create_flashcard(
+        new_card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(sample_deck, "New card", "Never reviewed")
         )
 
         # Get due cards (should include new cards)
-        due_cards = db_instance.get_due_flashcards()
+        due_cards = db_instance.learning.get_due_flashcards()
         assert len(due_cards) >= 1
         assert any(card["id"] == new_card_id for card in due_cards)
 
         # Test with deck filter
-        due_cards = db_instance.get_due_flashcards(deck_id=sample_deck)
+        due_cards = db_instance.learning.get_due_flashcards(deck_id=sample_deck)
         assert all(card["deck_id"] == sample_deck for card in due_cards)
 
         # Test limit
-        due_cards = db_instance.get_due_flashcards(limit=1)
+        due_cards = db_instance.learning.get_due_flashcards(limit=1)
         assert len(due_cards) <= 1
 
     def test_get_deck_returns_created_deck_record(self, db_instance, sample_flashcard):
         """Decks should be fetchable by ID for explicit deck selection flows."""
-        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+        deck = db_instance.learning.get_deck(sample_flashcard["deck_id"])
 
         assert deck is not None
         assert deck["id"] == sample_flashcard["deck_id"]
@@ -320,13 +321,13 @@ class TestFlashcardOperations:
     def test_update_deck_updates_metadata_and_version(
         self, db_instance, sample_flashcard
     ):
-        updated = db_instance.update_deck(
+        updated = db_instance.learning.update_deck(
             sample_flashcard["deck_id"],
             name="Updated Deck",
             description="Updated description",
             expected_version=1,
         )
-        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+        deck = db_instance.learning.get_deck(sample_flashcard["deck_id"])
 
         assert updated is True
         assert deck is not None
@@ -339,11 +340,11 @@ class TestFlashcardOperations:
         self, db_instance, sample_flashcard
     ):
         with pytest.raises(ConflictError, match="Version mismatch updating deck"):
-            db_instance.update_deck(
+            db_instance.learning.update_deck(
                 sample_flashcard["deck_id"], name="Stale", expected_version=0
             )
 
-        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+        deck = db_instance.learning.get_deck(sample_flashcard["deck_id"])
 
         assert deck is not None
         assert deck["name"] == "Test Deck"
@@ -353,11 +354,11 @@ class TestFlashcardOperations:
         self, db_instance, sample_flashcard
     ):
         with pytest.raises(InputError, match="Deck name cannot be blank"):
-            db_instance.update_deck(
+            db_instance.learning.update_deck(
                 sample_flashcard["deck_id"], name="   ", expected_version=1
             )
 
-        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+        deck = db_instance.learning.get_deck(sample_flashcard["deck_id"])
 
         assert deck is not None
         assert deck["name"] == "Test Deck"
@@ -366,31 +367,31 @@ class TestFlashcardOperations:
     def test_delete_flashcard_hides_card_and_recounts_deck(
         self, db_instance, sample_flashcard
     ):
-        deck_before_delete = db_instance.get_deck(sample_flashcard["deck_id"])
+        deck_before_delete = db_instance.learning.get_deck(sample_flashcard["deck_id"])
 
-        deleted = db_instance.delete_flashcard(
+        deleted = db_instance.learning.delete_flashcard(
             sample_flashcard["id"], expected_version=1
         )
-        deck_after_delete = db_instance.get_deck(sample_flashcard["deck_id"])
+        deck_after_delete = db_instance.learning.get_deck(sample_flashcard["deck_id"])
 
         assert deck_before_delete is not None
         assert deck_before_delete["card_count"] == 1
         assert deleted is True
-        assert db_instance.get_flashcard(sample_flashcard["id"]) is None
+        assert db_instance.learning.get_flashcard(sample_flashcard["id"]) is None
         assert deck_after_delete is not None
         assert deck_after_delete["card_count"] == 0
 
     def test_move_flashcard_changes_deck_and_recounts_both_decks(self, db_instance):
-        source = db_instance.create_deck("Biology")
-        target = db_instance.create_deck("Chemistry")
-        card_id = db_instance.create_flashcard(
+        source = db_instance.learning.create_deck("Biology")
+        target = db_instance.learning.create_deck("Chemistry")
+        card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(source, "ATP", "Energy")
         )
 
-        moved = db_instance.move_flashcard(card_id, target, expected_version=1)
-        moved_card = db_instance.get_flashcard(card_id)
-        source_deck = db_instance.get_deck(source)
-        target_deck = db_instance.get_deck(target)
+        moved = db_instance.learning.move_flashcard(card_id, target, expected_version=1)
+        moved_card = db_instance.learning.get_flashcard(card_id)
+        source_deck = db_instance.learning.get_deck(source)
+        target_deck = db_instance.learning.get_deck(target)
 
         assert moved is True
         assert moved_card is not None
@@ -401,29 +402,29 @@ class TestFlashcardOperations:
         assert target_deck["card_count"] == 1
 
     def test_move_flashcard_rejects_missing_or_deleted_target_deck(self, db_instance):
-        source = db_instance.create_deck("Biology")
-        deleted_target = db_instance.create_deck("Chemistry")
-        card_id = db_instance.create_flashcard(
+        source = db_instance.learning.create_deck("Biology")
+        deleted_target = db_instance.learning.create_deck("Chemistry")
+        card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(source, "ATP", "Energy")
         )
-        db_instance.delete_deck(deleted_target, expected_version=1)
+        db_instance.learning.delete_deck(deleted_target, expected_version=1)
 
         with pytest.raises(InputError, match="Target deck .* not found"):
-            db_instance.move_flashcard(card_id, str(uuid.uuid4()), expected_version=1)
+            db_instance.learning.move_flashcard(card_id, str(uuid.uuid4()), expected_version=1)
 
         with pytest.raises(InputError, match="Target deck .* not found"):
-            db_instance.move_flashcard(card_id, deleted_target, expected_version=1)
+            db_instance.learning.move_flashcard(card_id, deleted_target, expected_version=1)
 
     def test_delete_flashcard_stale_version_raises_conflict_without_mutation(
         self, db_instance, sample_flashcard
     ):
-        deck_before = db_instance.get_deck(sample_flashcard["deck_id"])
+        deck_before = db_instance.learning.get_deck(sample_flashcard["deck_id"])
 
         with pytest.raises(ConflictError, match="Version mismatch deleting flashcard"):
-            db_instance.delete_flashcard(sample_flashcard["id"], expected_version=0)
+            db_instance.learning.delete_flashcard(sample_flashcard["id"], expected_version=0)
 
-        card_after = db_instance.get_flashcard(sample_flashcard["id"])
-        deck_after = db_instance.get_deck(sample_flashcard["deck_id"])
+        card_after = db_instance.learning.get_flashcard(sample_flashcard["id"])
+        deck_after = db_instance.learning.get_deck(sample_flashcard["deck_id"])
 
         assert deck_before is not None
         assert card_after is not None
@@ -434,18 +435,18 @@ class TestFlashcardOperations:
     def test_move_flashcard_stale_version_raises_conflict_without_mutation(
         self, db_instance
     ):
-        source = db_instance.create_deck("Biology")
-        target = db_instance.create_deck("Chemistry")
-        card_id = db_instance.create_flashcard(
+        source = db_instance.learning.create_deck("Biology")
+        target = db_instance.learning.create_deck("Chemistry")
+        card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(source, "ATP", "Energy")
         )
 
         with pytest.raises(ConflictError, match="Version mismatch moving flashcard"):
-            db_instance.move_flashcard(card_id, target, expected_version=0)
+            db_instance.learning.move_flashcard(card_id, target, expected_version=0)
 
-        moved_card = db_instance.get_flashcard(card_id)
-        source_deck = db_instance.get_deck(source)
-        target_deck = db_instance.get_deck(target)
+        moved_card = db_instance.learning.get_flashcard(card_id)
+        source_deck = db_instance.learning.get_deck(source)
+        target_deck = db_instance.learning.get_deck(target)
 
         assert moved_card is not None
         assert moved_card["deck_id"] == source
@@ -457,35 +458,35 @@ class TestFlashcardOperations:
     def test_delete_deck_tombstones_name_hides_children_and_allows_recreate(
         self, db_instance
     ):
-        deck_id = db_instance.create_deck("Biology")
-        card_id = db_instance.create_flashcard(
+        deck_id = db_instance.learning.create_deck("Biology")
+        card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(deck_id, "ATP", "Energy")
         )
 
-        deleted = db_instance.delete_deck(deck_id, expected_version=1)
-        replacement_deck_id = db_instance.create_deck("Biology")
+        deleted = db_instance.learning.delete_deck(deck_id, expected_version=1)
+        replacement_deck_id = db_instance.learning.create_deck("Biology")
 
         assert deleted is True
-        assert db_instance.get_deck(deck_id) is None
+        assert db_instance.learning.get_deck(deck_id) is None
         assert replacement_deck_id is not None
         assert replacement_deck_id != deck_id
-        assert db_instance.get_flashcard(card_id) is None
-        assert db_instance.list_flashcards(deck_id=deck_id, limit=10, offset=0) == []
-        assert db_instance.get_due_flashcards(deck_id=deck_id, limit=10) == []
+        assert db_instance.learning.get_flashcard(card_id) is None
+        assert db_instance.learning.list_flashcards(deck_id=deck_id, limit=10, offset=0) == []
+        assert db_instance.learning.get_due_flashcards(deck_id=deck_id, limit=10) == []
 
     def test_delete_deck_stale_version_raises_conflict_without_mutation(
         self, db_instance
     ):
-        deck_id = db_instance.create_deck("Biology")
-        card_id = db_instance.create_flashcard(
+        deck_id = db_instance.learning.create_deck("Biology")
+        card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(deck_id, "ATP", "Energy")
         )
 
         with pytest.raises(ConflictError, match="Version mismatch deleting deck"):
-            db_instance.delete_deck(deck_id, expected_version=0)
+            db_instance.learning.delete_deck(deck_id, expected_version=0)
 
-        deck = db_instance.get_deck(deck_id)
-        card = db_instance.get_flashcard(card_id)
+        deck = db_instance.learning.get_deck(deck_id)
+        card = db_instance.learning.get_flashcard(card_id)
 
         assert deck is not None
         assert deck["name"] == "Biology"
@@ -497,10 +498,10 @@ class TestFlashcardOperations:
     def test_delete_deck_renames_deleted_row_to_deterministic_tombstone(
         self, db_instance
     ):
-        deck_id = db_instance.create_deck("Biology")
-        db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+        deck_id = db_instance.learning.create_deck("Biology")
+        db_instance.learning.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
 
-        deleted = db_instance.delete_deck(deck_id, expected_version=1)
+        deleted = db_instance.learning.delete_deck(deck_id, expected_version=1)
 
         with db_instance.transaction() as cursor:
             cursor.execute(
@@ -517,8 +518,8 @@ class TestFlashcardOperations:
         assert deleted_row["card_count"] == 0
 
     def test_deleted_deck_visibility_filters_active_child_cards(self, db_instance):
-        deck_id = db_instance.create_deck("Biology")
-        card_id = db_instance.create_flashcard(
+        deck_id = db_instance.learning.create_deck("Biology")
+        card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(deck_id, "ATP", "Energy")
         )
 
@@ -533,9 +534,9 @@ class TestFlashcardOperations:
             )
             card_row = cursor.fetchone()
 
-        list_results = db_instance.list_flashcards(deck_id=deck_id, limit=10, offset=0)
-        due_results = db_instance.get_due_flashcards(deck_id=deck_id, limit=10)
-        visible_card = db_instance.get_flashcard(card_id)
+        list_results = db_instance.learning.list_flashcards(deck_id=deck_id, limit=10, offset=0)
+        due_results = db_instance.learning.get_due_flashcards(deck_id=deck_id, limit=10)
+        visible_card = db_instance.learning.get_flashcard(card_id)
 
         assert card_row is not None
         assert card_row["is_deleted"] == 0
@@ -549,14 +550,14 @@ class TestQuizOperations:
     """Tests for quiz CRUD and attempt flows."""
 
     def test_create_quiz_and_get_quiz(self, db_instance):
-        quiz_id = db_instance.create_quiz(
+        quiz_id = db_instance.learning.create_quiz(
             name="Geography Review",
             description="Capitals",
             time_limit_seconds=300,
             passing_score=70,
         )
 
-        quiz = db_instance.get_quiz(quiz_id)
+        quiz = db_instance.learning.get_quiz(quiz_id)
 
         assert quiz is not None
         assert quiz["id"] == quiz_id
@@ -565,10 +566,10 @@ class TestQuizOperations:
         assert quiz["time_limit_seconds"] == 300
 
     def test_list_quizzes_blank_search_behaves_like_list(self, db_instance):
-        first_id = db_instance.create_quiz(name="Geography Review")
-        second_id = db_instance.create_quiz(name="History Review")
+        first_id = db_instance.learning.create_quiz(name="Geography Review")
+        second_id = db_instance.learning.create_quiz(name="History Review")
 
-        listed = db_instance.list_quizzes(q="", limit=10, offset=0)
+        listed = db_instance.learning.list_quizzes(q="", limit=10, offset=0)
 
         listed_ids = {item["id"] for item in listed["items"]}
         assert first_id in listed_ids
@@ -576,8 +577,8 @@ class TestQuizOperations:
         assert listed["count"] >= 2
 
     def test_create_question_and_list_questions(self, db_instance):
-        quiz_id = db_instance.create_quiz(name="Geography Review")
-        question_id = db_instance.create_question(
+        quiz_id = db_instance.learning.create_quiz(name="Geography Review")
+        question_id = db_instance.learning.create_question(
             quiz_id=quiz_id,
             question_type="fill_blank",
             question_text="The capital of France is ____.",
@@ -586,8 +587,8 @@ class TestQuizOperations:
             points=2,
         )
 
-        question = db_instance.get_question(question_id)
-        questions = db_instance.list_questions(
+        question = db_instance.learning.get_question(question_id)
+        questions = db_instance.learning.list_questions(
             quiz_id, include_answers=True, limit=10, offset=0
         )
 
@@ -600,8 +601,8 @@ class TestQuizOperations:
         )
 
     def test_start_and_submit_quiz_attempt(self, db_instance):
-        quiz_id = db_instance.create_quiz(name="Geography Review")
-        question_id = db_instance.create_question(
+        quiz_id = db_instance.learning.create_quiz(name="Geography Review")
+        question_id = db_instance.learning.create_question(
             quiz_id=quiz_id,
             question_type="fill_blank",
             question_text="The capital of France is ____.",
@@ -610,8 +611,8 @@ class TestQuizOperations:
             points=2,
         )
 
-        started = db_instance.start_attempt(quiz_id)
-        submitted = db_instance.submit_attempt(
+        started = db_instance.learning.start_attempt(quiz_id)
+        submitted = db_instance.learning.submit_attempt(
             started["id"],
             [
                 {
@@ -621,8 +622,8 @@ class TestQuizOperations:
                 }
             ],
         )
-        listed = db_instance.list_attempts(quiz_id=quiz_id, limit=10, offset=0)
-        loaded = db_instance.get_attempt(
+        listed = db_instance.learning.list_attempts(quiz_id=quiz_id, limit=10, offset=0)
+        loaded = db_instance.learning.get_attempt(
             started["id"], include_questions=True, include_answers=True
         )
 
@@ -637,8 +638,8 @@ class TestQuizOperations:
         assert loaded["questions"][0]["id"] == question_id
 
     def test_delete_quiz_hides_quiz_and_questions_from_default_reads(self, db_instance):
-        quiz_id = db_instance.create_quiz(name="Geography Review")
-        question_id = db_instance.create_question(
+        quiz_id = db_instance.learning.create_quiz(name="Geography Review")
+        question_id = db_instance.learning.create_question(
             quiz_id=quiz_id,
             question_type="fill_blank",
             question_text="The capital of France is ____.",
@@ -647,21 +648,21 @@ class TestQuizOperations:
             points=2,
         )
 
-        deleted = db_instance.delete_quiz(quiz_id)
-        listed_quizzes = db_instance.list_quizzes(limit=10, offset=0)
-        listed_questions = db_instance.list_questions(
+        deleted = db_instance.learning.delete_quiz(quiz_id)
+        listed_quizzes = db_instance.learning.list_quizzes(limit=10, offset=0)
+        listed_questions = db_instance.learning.list_questions(
             quiz_id, include_answers=True, limit=10, offset=0
         )
 
         assert deleted is True
-        assert db_instance.get_quiz(quiz_id) is None
-        assert db_instance.get_question(question_id) is None
+        assert db_instance.learning.get_quiz(quiz_id) is None
+        assert db_instance.learning.get_question(question_id) is None
         assert quiz_id not in {item["id"] for item in listed_quizzes["items"]}
         assert listed_questions["count"] == 0
 
     def test_delete_question_recounts_quiz_and_removes_it_from_lists(self, db_instance):
-        quiz_id = db_instance.create_quiz(name="Geography Review")
-        first_question_id = db_instance.create_question(
+        quiz_id = db_instance.learning.create_quiz(name="Geography Review")
+        first_question_id = db_instance.learning.create_question(
             quiz_id=quiz_id,
             question_type="fill_blank",
             question_text="The capital of France is ____.",
@@ -670,7 +671,7 @@ class TestQuizOperations:
             points=2,
             order_index=0,
         )
-        second_question_id = db_instance.create_question(
+        second_question_id = db_instance.learning.create_question(
             quiz_id=quiz_id,
             question_type="fill_blank",
             question_text="The capital of Spain is ____.",
@@ -680,14 +681,14 @@ class TestQuizOperations:
             order_index=1,
         )
 
-        deleted = db_instance.delete_question(first_question_id)
-        quiz = db_instance.get_quiz(quiz_id)
-        listed_questions = db_instance.list_questions(
+        deleted = db_instance.learning.delete_question(first_question_id)
+        quiz = db_instance.learning.get_quiz(quiz_id)
+        listed_questions = db_instance.learning.list_questions(
             quiz_id, include_answers=True, limit=10, offset=0
         )
 
         assert deleted is True
-        assert db_instance.get_question(first_question_id) is None
+        assert db_instance.learning.get_question(first_question_id) is None
         assert quiz is not None
         assert quiz["total_questions"] == 1
         assert [item["id"] for item in listed_questions["items"]] == [
@@ -696,11 +697,11 @@ class TestQuizOperations:
 
     def test_list_decks_returns_non_deleted_decks_with_paging(self, db_instance):
         """Deck listing should power the flashcards deck selector without implicit defaults."""
-        first = db_instance.create_deck("Biology", "Cells")
-        second = db_instance.create_deck("Chemistry", "Atoms")
+        first = db_instance.learning.create_deck("Biology", "Cells")
+        second = db_instance.learning.create_deck("Chemistry", "Atoms")
 
-        page = db_instance.list_decks(limit=1, offset=0)
-        next_page = db_instance.list_decks(limit=1, offset=1)
+        page = db_instance.learning.list_decks(limit=1, offset=0)
+        next_page = db_instance.learning.list_decks(limit=1, offset=1)
 
         assert len(page) == 1
         assert page[0]["id"] in {first, second}
@@ -711,19 +712,19 @@ class TestQuizOperations:
         self, db_instance
     ):
         """Blank search should not invoke FTS-only semantics for deck scoped lists."""
-        biology = db_instance.create_deck("Biology", "Cells")
-        chemistry = db_instance.create_deck("Chemistry", "Atoms")
-        biology_card = db_instance.create_flashcard(
+        biology = db_instance.learning.create_deck("Biology", "Cells")
+        chemistry = db_instance.learning.create_deck("Chemistry", "Atoms")
+        biology_card = db_instance.learning.create_flashcard(
             create_flashcard_data(biology, "ATP", "Energy", "biology")
         )
-        db_instance.create_flashcard(
+        db_instance.learning.create_flashcard(
             create_flashcard_data(chemistry, "H2O", "Water", "chemistry")
         )
 
-        blank_query_results = db_instance.list_flashcards(
+        blank_query_results = db_instance.learning.list_flashcards(
             deck_id=biology, q="   ", limit=10, offset=0
         )
-        token_results = db_instance.list_flashcards(
+        token_results = db_instance.learning.list_flashcards(
             deck_id=biology, q="ATP", limit=10, offset=0
         )
 
@@ -735,17 +736,17 @@ class TestCountSeams:
     """Tests for the exact COUNT(*) seams the Library rail badges consume."""
 
     def test_counts_start_at_zero(self, db_instance):
-        assert db_instance.count_decks() == 0
-        assert db_instance.count_due_flashcards() == 0
-        assert db_instance.count_quizzes() == 0
+        assert db_instance.learning.count_decks() == 0
+        assert db_instance.learning.count_due_flashcards() == 0
+        assert db_instance.learning.count_quizzes() == 0
 
     def test_count_due_flashcards_and_count_decks_track_active_records_and_soft_delete(
         self, db_instance
     ):
-        deck_id = db_instance.create_deck("Biology")
-        db_instance.create_flashcard(create_flashcard_data(deck_id, "Q1", "A1"))
-        db_instance.create_flashcard(create_flashcard_data(deck_id, "Q2", "A2"))
-        suspended_card_id = db_instance.create_flashcard(
+        deck_id = db_instance.learning.create_deck("Biology")
+        db_instance.learning.create_flashcard(create_flashcard_data(deck_id, "Q1", "A1"))
+        db_instance.learning.create_flashcard(create_flashcard_data(deck_id, "Q2", "A2"))
+        suspended_card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(deck_id, "Q3", "A3")
         )
 
@@ -755,22 +756,22 @@ class TestCountSeams:
                 (suspended_card_id,),
             )
 
-        assert db_instance.count_decks() == 1
-        assert db_instance.count_due_flashcards() == 2
+        assert db_instance.learning.count_decks() == 1
+        assert db_instance.learning.count_due_flashcards() == 2
 
-        db_instance.delete_deck(deck_id, expected_version=1)
+        db_instance.learning.delete_deck(deck_id, expected_version=1)
 
-        assert db_instance.count_decks() == 0
-        assert db_instance.count_due_flashcards() == 0
+        assert db_instance.learning.count_decks() == 0
+        assert db_instance.learning.count_due_flashcards() == 0
 
     def test_count_quizzes_tracks_create_and_soft_delete(self, db_instance):
-        quiz_id = db_instance.create_quiz(name="Geography Review")
+        quiz_id = db_instance.learning.create_quiz(name="Geography Review")
 
-        assert db_instance.count_quizzes() == 1
+        assert db_instance.learning.count_quizzes() == 1
 
-        db_instance.delete_quiz(quiz_id)
+        db_instance.learning.delete_quiz(quiz_id)
 
-        assert db_instance.count_quizzes() == 0
+        assert db_instance.learning.count_quizzes() == 0
 
 
 class TestSpacedRepetition:
@@ -781,10 +782,10 @@ class TestSpacedRepetition:
         card_id = sample_flashcard["id"]
 
         # Review with rating 0
-        db_instance.update_flashcard_review(card_id, 0)
+        db_instance.learning.update_flashcard_review(card_id, 0)
 
         # Check updated values
-        card = db_instance.get_flashcard(card_id)
+        card = db_instance.learning.get_flashcard(card_id)
         assert card["repetitions"] == 0  # Reset to 0
         assert card["interval"] == 1  # Reset to 1 day
         assert card["last_review"] is not None
@@ -805,20 +806,20 @@ class TestSpacedRepetition:
         card_id = sample_flashcard["id"]
 
         # First review
-        db_instance.update_flashcard_review(card_id, 3)
-        card = db_instance.get_flashcard(card_id)
+        db_instance.learning.update_flashcard_review(card_id, 3)
+        card = db_instance.learning.get_flashcard(card_id)
         assert card["repetitions"] == 1
         assert card["interval"] == 1  # First interval
 
         # Second review
-        db_instance.update_flashcard_review(card_id, 3)
-        card = db_instance.get_flashcard(card_id)
+        db_instance.learning.update_flashcard_review(card_id, 3)
+        card = db_instance.learning.get_flashcard(card_id)
         assert card["repetitions"] == 2
         assert card["interval"] == 6  # Second interval
 
         # Third review
-        db_instance.update_flashcard_review(card_id, 3)
-        card = db_instance.get_flashcard(card_id)
+        db_instance.learning.update_flashcard_review(card_id, 3)
+        card = db_instance.learning.get_flashcard(card_id)
         assert card["repetitions"] == 3
         assert card["interval"] > 6  # Should be multiplied by ease factor
 
@@ -827,9 +828,9 @@ class TestSpacedRepetition:
         card_id = sample_flashcard["id"]
 
         # Review with perfect rating
-        db_instance.update_flashcard_review(card_id, 5)
+        db_instance.learning.update_flashcard_review(card_id, 5)
 
-        card = db_instance.get_flashcard(card_id)
+        card = db_instance.learning.get_flashcard(card_id)
         assert card["repetitions"] == 1
         assert card["interval"] == 1
         assert card["ease_factor"] > 2.5  # Should increase
@@ -840,38 +841,38 @@ class TestSpacedRepetition:
         initial_ease = 2.5
 
         # Rating 5 should increase ease factor
-        db_instance.update_flashcard_review(card_id, 5)
-        card = db_instance.get_flashcard(card_id)
+        db_instance.learning.update_flashcard_review(card_id, 5)
+        card = db_instance.learning.get_flashcard(card_id)
         assert card["ease_factor"] > initial_ease
 
         # Create another card for testing decrease
         card2_data = create_flashcard_data(
             sample_flashcard["deck_id"], "Test ease decrease", "Answer"
         )
-        card2_id = db_instance.create_flashcard(card2_data)
+        card2_id = db_instance.learning.create_flashcard(card2_data)
 
         # Rating 1 should decrease ease factor
-        db_instance.update_flashcard_review(card2_id, 1)
-        card2 = db_instance.get_flashcard(card2_id)
+        db_instance.learning.update_flashcard_review(card2_id, 1)
+        card2 = db_instance.learning.get_flashcard(card2_id)
         assert card2["ease_factor"] < initial_ease
         assert card2["ease_factor"] >= 1.3  # Should not go below minimum
 
     def test_invalid_rating(self, db_instance, sample_flashcard):
         """Test that invalid ratings raise an error."""
         with pytest.raises(InputError, match="Rating must be between 0 and 5"):
-            db_instance.update_flashcard_review(sample_flashcard["id"], -1)
+            db_instance.learning.update_flashcard_review(sample_flashcard["id"], -1)
 
         with pytest.raises(InputError, match="Rating must be between 0 and 5"):
-            db_instance.update_flashcard_review(sample_flashcard["id"], 6)
+            db_instance.learning.update_flashcard_review(sample_flashcard["id"], 6)
 
     def test_next_review_date_calculation(self, db_instance, sample_flashcard):
         """Test that next review date is calculated correctly."""
         card_id = sample_flashcard["id"]
 
         # Review the card
-        db_instance.update_flashcard_review(card_id, 4)
+        db_instance.learning.update_flashcard_review(card_id, 4)
 
-        card = db_instance.get_flashcard(card_id)
+        card = db_instance.learning.get_flashcard(card_id)
         assert card["next_review"] is not None, "next_review should be set after review"
 
         # Check if next_review is already a datetime object
@@ -904,7 +905,7 @@ class TestLearningPaths:
 
     def test_create_learning_path(self, db_instance):
         """Test creating a new learning path."""
-        path_id = db_instance.create_learning_path(
+        path_id = db_instance.learning.create_learning_path(
             "Data Science Fundamentals", "Learn the basics of data science"
         )
         assert path_id is not None
@@ -919,7 +920,7 @@ class TestLearningPaths:
             "content": "Variables are containers for storing data values.",
             "topic_order": 1,
         }
-        topic_id = db_instance.create_topic(topic_data)
+        topic_id = db_instance.learning.create_topic(topic_data)
 
         assert topic_id is not None
         assert isinstance(topic_id, str)
@@ -933,7 +934,7 @@ class TestLearningPaths:
             "title": "Chapter 1: Basics",
             "content": "Introduction chapter",
         }
-        parent_id = db_instance.create_topic(parent_data)
+        parent_id = db_instance.learning.create_topic(parent_data)
 
         # Create child topic
         child_data = {
@@ -942,7 +943,7 @@ class TestLearningPaths:
             "title": "1.1 Getting Started",
             "content": "First steps",
         }
-        child_id = db_instance.create_topic(child_data)
+        child_id = db_instance.learning.create_topic(child_data)
 
         assert child_id is not None
 
@@ -955,10 +956,10 @@ class TestLearningPaths:
     def test_update_topic_progress(self, db_instance, sample_learning_path):
         """Test updating topic progress."""
         topic_data = {"path_id": sample_learning_path, "title": "Test Topic"}
-        topic_id = db_instance.create_topic(topic_data)
+        topic_id = db_instance.learning.create_topic(topic_data)
 
         # Update progress to 50%
-        db_instance.update_topic_progress(topic_id, 0.5)
+        db_instance.learning.update_topic_progress(topic_id, 0.5)
 
         # Verify update
         with db_instance.transaction() as cursor:
@@ -970,7 +971,7 @@ class TestLearningPaths:
             assert result["status"] == "not_started"  # Status not changed
 
         # Update progress with status
-        db_instance.update_topic_progress(topic_id, 1.0, "completed")
+        db_instance.learning.update_topic_progress(topic_id, 1.0, "completed")
 
         with db_instance.transaction() as cursor:
             cursor.execute(
@@ -983,21 +984,21 @@ class TestLearningPaths:
     def test_invalid_progress_value(self, db_instance, sample_learning_path):
         """Test that invalid progress values raise an error."""
         topic_data = {"path_id": sample_learning_path, "title": "Test"}
-        topic_id = db_instance.create_topic(topic_data)
+        topic_id = db_instance.learning.create_topic(topic_data)
 
         with pytest.raises(InputError, match="Progress must be between 0 and 1"):
-            db_instance.update_topic_progress(topic_id, -0.1)
+            db_instance.learning.update_topic_progress(topic_id, -0.1)
 
         with pytest.raises(InputError, match="Progress must be between 0 and 1"):
-            db_instance.update_topic_progress(topic_id, 1.1)
+            db_instance.learning.update_topic_progress(topic_id, 1.1)
 
     def test_invalid_status_value(self, db_instance, sample_learning_path):
         """Test that invalid status values raise an error."""
         topic_data = {"path_id": sample_learning_path, "title": "Test"}
-        topic_id = db_instance.create_topic(topic_data)
+        topic_id = db_instance.learning.create_topic(topic_data)
 
         with pytest.raises(InputError, match="Invalid topic status"):
-            db_instance.update_topic_progress(topic_id, 0.5, "invalid_status")
+            db_instance.learning.update_topic_progress(topic_id, 0.5, "invalid_status")
 
 
 # NOTE (task-19042): the TestMindmaps class was removed with the write-only
@@ -1011,7 +1012,7 @@ class TestStudyStatistics:
 
     def test_get_study_stats_empty(self, db_instance):
         """Test getting stats from empty database."""
-        stats = db_instance.get_study_stats(days=30)
+        stats = db_instance.learning.get_study_stats(days=30)
 
         assert stats is not None
         assert "reviews" in stats
@@ -1026,25 +1027,25 @@ class TestStudyStatistics:
     def test_get_study_stats_with_data(self, db_instance, sample_deck):
         """Test getting stats with actual study data."""
         # Create and review some flashcards
-        card1_id = db_instance.create_flashcard(
+        card1_id = db_instance.learning.create_flashcard(
             create_flashcard_data(sample_deck, "Q1", "A1")
         )
-        card2_id = db_instance.create_flashcard(
+        card2_id = db_instance.learning.create_flashcard(
             create_flashcard_data(sample_deck, "Q2", "A2")
         )
 
         # Add some reviews
-        db_instance.update_flashcard_review(card1_id, 4)
-        db_instance.update_flashcard_review(card2_id, 3)
-        db_instance.update_flashcard_review(card1_id, 5)
+        db_instance.learning.update_flashcard_review(card1_id, 4)
+        db_instance.learning.update_flashcard_review(card2_id, 3)
+        db_instance.learning.update_flashcard_review(card1_id, 5)
 
         # Create a completed topic
-        path_id = db_instance.create_learning_path("Test Path")
-        topic_id = db_instance.create_topic({"path_id": path_id, "title": "Test Topic"})
-        db_instance.update_topic_progress(topic_id, 1.0, "completed")
+        path_id = db_instance.learning.create_learning_path("Test Path")
+        topic_id = db_instance.learning.create_topic({"path_id": path_id, "title": "Test Topic"})
+        db_instance.learning.update_topic_progress(topic_id, 1.0, "completed")
 
         # Get stats
-        stats = db_instance.get_study_stats(days=30)
+        stats = db_instance.learning.get_study_stats(days=30)
 
         assert stats["reviews"]["total_reviews"] == 3
         assert stats["reviews"]["avg_rating"] == pytest.approx(4.0)  # (4+3+5)/3
@@ -1053,19 +1054,19 @@ class TestStudyStatistics:
     def test_study_stats_date_filtering(self, db_instance, sample_deck):
         """Test that date filtering works correctly."""
         # Create a flashcard
-        card_id = db_instance.create_flashcard(
+        card_id = db_instance.learning.create_flashcard(
             create_flashcard_data(sample_deck, "Q", "A")
         )
 
         # Add a recent review
-        db_instance.update_flashcard_review(card_id, 4)
+        db_instance.learning.update_flashcard_review(card_id, 4)
 
         # Stats for last 30 days should include the review
-        stats_30 = db_instance.get_study_stats(days=30)
+        stats_30 = db_instance.learning.get_study_stats(days=30)
         assert stats_30["reviews"]["total_reviews"] == 1
 
         # Stats for 0 days should exclude it
-        stats_0 = db_instance.get_study_stats(days=0)
+        stats_0 = db_instance.learning.get_study_stats(days=0)
         assert stats_0["reviews"]["total_reviews"] == 0
 
 
@@ -1075,7 +1076,7 @@ class TestStudyIntegration:
     def test_full_study_workflow(self, db_instance):
         """Test a complete study workflow from deck creation to review."""
         # 1. Create a deck
-        deck_id = db_instance.create_deck("Integration Test Deck")
+        deck_id = db_instance.learning.create_deck("Integration Test Deck")
 
         # 2. Add multiple flashcards
         card_ids = []
@@ -1083,29 +1084,29 @@ class TestStudyIntegration:
             card_data = create_flashcard_data(
                 deck_id, f"Question {i + 1}", f"Answer {i + 1}", "integration test"
             )
-            card_id = db_instance.create_flashcard(card_data)
+            card_id = db_instance.learning.create_flashcard(card_data)
             card_ids.append(card_id)
 
         # 3. Get due cards
-        due_cards = db_instance.get_due_flashcards(deck_id=deck_id)
+        due_cards = db_instance.learning.get_due_flashcards(deck_id=deck_id)
         assert len(due_cards) == 5
 
         # 4. Review some cards
-        db_instance.update_flashcard_review(card_ids[0], 5)  # Perfect
-        db_instance.update_flashcard_review(card_ids[1], 3)  # Difficult
-        db_instance.update_flashcard_review(card_ids[2], 0)  # Forgot
+        db_instance.learning.update_flashcard_review(card_ids[0], 5)  # Perfect
+        db_instance.learning.update_flashcard_review(card_ids[1], 3)  # Difficult
+        db_instance.learning.update_flashcard_review(card_ids[2], 0)  # Forgot
 
         # 5. Check updated due cards
-        due_cards = db_instance.get_due_flashcards(deck_id=deck_id)
+        due_cards = db_instance.learning.get_due_flashcards(deck_id=deck_id)
         # Cards 3 and 4 haven't been reviewed yet
         assert len([c for c in due_cards if c["next_review"] is None]) == 2
 
         # 6. Search for cards
-        search_results = db_instance.search_flashcards("Question", deck_id=deck_id)
+        search_results = db_instance.learning.search_flashcards("Question", deck_id=deck_id)
         assert len(search_results) == 5
 
         # 7. Get statistics
-        stats = db_instance.get_study_stats()
+        stats = db_instance.learning.get_study_stats()
         assert stats["reviews"]["total_reviews"] == 3
         assert stats["reviews"]["avg_rating"] == pytest.approx(
             2.67, rel=0.01
@@ -1114,21 +1115,21 @@ class TestStudyIntegration:
     def test_learning_path_workflow(self, db_instance):
         """Test complete learning path workflow."""
         # 1. Create learning path
-        path_id = db_instance.create_learning_path(
+        path_id = db_instance.learning.create_learning_path(
             "Complete Python Course", "From zero to hero"
         )
 
         # 2. Create chapter topics
         chapter_ids = []
         for i in range(3):
-            topic_id = db_instance.create_topic(
+            topic_id = db_instance.learning.create_topic(
                 {"path_id": path_id, "title": f"Chapter {i + 1}", "topic_order": i}
             )
             chapter_ids.append(topic_id)
 
         # 3. Add subtopics to first chapter
         for i in range(3):
-            db_instance.create_topic(
+            db_instance.learning.create_topic(
                 {
                     "path_id": path_id,
                     "parent_id": chapter_ids[0],
@@ -1138,11 +1139,11 @@ class TestStudyIntegration:
             )
 
         # 4. Update progress on topics
-        db_instance.update_topic_progress(chapter_ids[0], 1.0, "completed")
-        db_instance.update_topic_progress(chapter_ids[1], 0.5, "in_progress")
+        db_instance.learning.update_topic_progress(chapter_ids[0], 1.0, "completed")
+        db_instance.learning.update_topic_progress(chapter_ids[1], 0.5, "in_progress")
 
         # 5. Get stats
-        stats = db_instance.get_study_stats()
+        stats = db_instance.learning.get_study_stats()
         assert stats["topics"]["topics_completed"] == 1
 
     def test_concurrent_operations(self, db_instance):
@@ -1151,7 +1152,7 @@ class TestStudyIntegration:
         import time
         import sqlite3
 
-        deck_id = db_instance.create_deck("Concurrent Test Deck")
+        deck_id = db_instance.learning.create_deck("Concurrent Test Deck")
         results = []
         errors = []
         lock = threading.Lock()
@@ -1168,7 +1169,7 @@ class TestStudyIntegration:
 
                 for attempt in range(max_retries):
                     try:
-                        card_id = db_instance.create_flashcard(card_data)
+                        card_id = db_instance.learning.create_flashcard(card_data)
                         with lock:
                             results.append(card_id)
                         break
@@ -1216,7 +1217,7 @@ class TestStudyProperties:
     def test_flashcard_properties(self, mem_db_instance, front, back, tags, card_type):
         """Test that any valid flashcard data can be created and retrieved."""
         # Create deck first with unique name using UUID
-        deck_id = mem_db_instance.create_deck(f"Property Test Deck {uuid.uuid4()}")
+        deck_id = mem_db_instance.learning.create_deck(f"Property Test Deck {uuid.uuid4()}")
 
         # Create flashcard
         card_data = {
@@ -1226,10 +1227,10 @@ class TestStudyProperties:
             "tags": tags,
             "type": card_type,
         }
-        card_id = mem_db_instance.create_flashcard(card_data)
+        card_id = mem_db_instance.learning.create_flashcard(card_data)
 
         # Retrieve and verify
-        retrieved = mem_db_instance.get_flashcard(card_id)
+        retrieved = mem_db_instance.learning.get_flashcard(card_id)
         assert retrieved["front"] == front
         assert retrieved["back"] == back
         assert retrieved["tags"] == tags
@@ -1240,14 +1241,14 @@ class TestStudyProperties:
     def test_spaced_repetition_properties(self, mem_db_instance, rating):
         """Test that any valid rating produces valid interval and ease factor."""
         # Setup with unique deck name
-        deck_id = mem_db_instance.create_deck(f"SR Test Deck {uuid.uuid4()}")
-        card_id = mem_db_instance.create_flashcard(create_flashcard_data(deck_id))
+        deck_id = mem_db_instance.learning.create_deck(f"SR Test Deck {uuid.uuid4()}")
+        card_id = mem_db_instance.learning.create_flashcard(create_flashcard_data(deck_id))
 
         # Review
-        mem_db_instance.update_flashcard_review(card_id, rating)
+        mem_db_instance.learning.update_flashcard_review(card_id, rating)
 
         # Verify invariants
-        card = mem_db_instance.get_flashcard(card_id)
+        card = mem_db_instance.learning.get_flashcard(card_id)
         assert card["interval"] >= 1
         assert card["ease_factor"] >= 1.3
         assert card["repetitions"] >= 0
@@ -1262,13 +1263,13 @@ class TestStudyProperties:
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_progress_properties(self, mem_db_instance, progress):
         """Test that any valid progress value can be set."""
-        path_id = mem_db_instance.create_learning_path("Progress Test")
-        topic_id = mem_db_instance.create_topic(
+        path_id = mem_db_instance.learning.create_learning_path("Progress Test")
+        topic_id = mem_db_instance.learning.create_topic(
             {"path_id": path_id, "title": "Test Topic"}
         )
 
         # Update progress
-        mem_db_instance.update_topic_progress(topic_id, progress)
+        mem_db_instance.learning.update_topic_progress(topic_id, progress)
 
         # Verify
         with mem_db_instance.transaction() as cursor:
@@ -1349,3 +1350,50 @@ class TestSchemaMigration:
             result = cursor.fetchone()
             assert result is not None
             assert result["version"] == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+
+
+class TestLearningRepositoryTransactions:
+    """TASK-36949.2: learning writes join CharactersRAGDB's own transaction."""
+
+    @staticmethod
+    def _committed_deck_names(db_path):
+        """Read decks through a second connection: it sees committed rows only."""
+        with contextlib.closing(sqlite3.connect(db_path)) as reader:
+            return {row[0] for row in reader.execute("SELECT name FROM decks")}
+
+    def test_repository_is_cached_and_bound_to_the_database(self, db_instance):
+        assert db_instance.learning is db_instance.learning
+        assert db_instance.learning.db is db_instance
+
+    def test_write_inside_outer_transaction_commits_with_it(self, db_instance, db_path):
+        with db_instance.transaction():
+            deck_id = db_instance.learning.create_deck("Joined")
+            assert "Joined" not in self._committed_deck_names(db_path)
+        assert "Joined" in self._committed_deck_names(db_path)
+        assert db_instance.learning.get_deck(deck_id)["name"] == "Joined"
+
+    def test_write_inside_outer_transaction_rolls_back_with_it(self, db_instance):
+        learning = db_instance.learning
+        deck_id = learning.create_deck("Kept")
+        card_ids = []
+        with pytest.raises(RuntimeError):
+            with db_instance.transaction():
+                learning.create_deck("Doomed")
+                card_ids.append(
+                    learning.create_flashcard(
+                        {"deck_id": deck_id, "front": "Q", "back": "A"}
+                    )
+                )
+                learning.update_flashcard_review(card_ids[0], 4)
+                raise RuntimeError("abort outer transaction")
+        assert learning.get_flashcard(card_ids[0]) is None
+        assert learning.get_deck(deck_id)["card_count"] == 0
+        assert [deck["name"] for deck in learning.list_decks()] == ["Kept"]
+        assert db_instance.managed_transaction_depth() == 0
+
+    def test_characters_rag_db_keeps_no_learning_members(self):
+        from tldw_chatbook.DB.learning_repository import LearningRepository
+
+        moved = {name for name in vars(LearningRepository) if not name.startswith("__")}
+        assert "create_deck" in moved and "_DUE_FLASHCARDS_SQL" in moved
+        assert sorted(moved & set(dir(CharactersRAGDB))) == []

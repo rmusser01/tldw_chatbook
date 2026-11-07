@@ -1,4 +1,4 @@
-"""Thin local study wrapper around ChaChaNotes_DB flashcard helpers."""
+"""Thin local study wrapper around the learning repository (`db.learning`)."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ class LocalStudyService:
         notification_app: Any = None,
     ):
         self.db = db
+        self.learning = None if db is None else db.learning
         self.notification_dispatch_service = notification_dispatch_service
         self.notification_app = notification_app
 
@@ -34,10 +35,10 @@ class LocalStudyService:
         self.notification_dispatch_service = notification_dispatch_service
         self.notification_app = notification_app
 
-    def _require_db(self) -> Any:
-        if self.db is None:
+    def _require_learning(self) -> Any:
+        if self.learning is None:
             raise ValueError("Local study backend is unavailable.")
-        return self.db
+        return self.learning
 
     def _dispatch_local_notification(
         self,
@@ -69,7 +70,7 @@ class LocalStudyService:
             return None
 
     def list_decks(self, *, limit: int = 100, offset: int = 0) -> Any:
-        return self._require_db().list_decks(limit=limit, offset=offset)
+        return self._require_learning().list_decks(limit=limit, offset=offset)
 
     def count_decks(self) -> int:
         """Count non-deleted local flashcard decks.
@@ -77,7 +78,7 @@ class LocalStudyService:
         Returns:
             The exact number of non-deleted local decks.
         """
-        return int(self._require_db().count_decks())
+        return int(self._require_learning().count_decks())
 
     def count_due_flashcards(self) -> int:
         """Count local flashcards due for review.
@@ -85,10 +86,10 @@ class LocalStudyService:
         Returns:
             The exact number of local flashcards due for review.
         """
-        return int(self._require_db().count_due_flashcards())
+        return int(self._require_learning().count_due_flashcards())
 
     def get_deck(self, deck_id: str) -> Any:
-        return self._require_db().get_deck(deck_id)
+        return self._require_learning().get_deck(deck_id)
 
     def create_deck(
         self,
@@ -98,8 +99,8 @@ class LocalStudyService:
         workspace_id: Optional[str] = None,
         scheduler_type: Optional[str] = None,
     ) -> Any:
-        deck_id = self._require_db().create_deck(name, description)
-        deck = self._require_db().get_deck(deck_id)
+        deck_id = self._require_learning().create_deck(name, description)
+        deck = self._require_learning().get_deck(deck_id)
         self._dispatch_local_notification(
             title="Local study deck created",
             message=f"Local study deck created: {deck.get('name') or name}",
@@ -138,7 +139,7 @@ class LocalStudyService:
             "description": description,
             "expected_version": expected_version,
         }
-        update_deck = self._require_db().update_deck
+        update_deck = self._require_learning().update_deck
         accepts_metadata = "metadata" in inspect.signature(
             update_deck
         ).parameters or any(
@@ -148,7 +149,7 @@ class LocalStudyService:
         if metadata and accepts_metadata:
             request["metadata"] = metadata
         update_deck(deck_id, **request)
-        return self._require_db().get_deck(deck_id)
+        return self._require_learning().get_deck(deck_id)
 
     def list_flashcards(
         self,
@@ -159,12 +160,12 @@ class LocalStudyService:
         offset: int = 0,
     ) -> Any:
         normalized_q = str(q or "").strip() or None
-        return self._require_db().list_flashcards(
+        return self._require_learning().list_flashcards(
             deck_id=deck_id, q=normalized_q, limit=limit, offset=offset
         )
 
     def get_flashcard(self, card_id: str) -> Any:
-        return self._require_db().get_flashcard(card_id)
+        return self._require_learning().get_flashcard(card_id)
 
     @staticmethod
     def _normalize_tags(tags: Any) -> list[str]:
@@ -198,7 +199,7 @@ class LocalStudyService:
             for key, value in {"notes": notes, "extra": extra}.items()
             if value not in {None, ""}
         }
-        card_id = self._require_db().create_flashcard(
+        card_id = self._require_learning().create_flashcard(
             {
                 "deck_id": deck_id,
                 "front": front,
@@ -208,7 +209,7 @@ class LocalStudyService:
                 "metadata": metadata or None,
             }
         )
-        return self._require_db().get_flashcard(card_id)
+        return self._require_learning().get_flashcard(card_id)
 
     def update_flashcard(
         self,
@@ -238,10 +239,10 @@ class LocalStudyService:
             }.items()
             if value is not None
         }
-        updated = self._require_db().update_flashcard(card_id, **request)
+        updated = self._require_learning().update_flashcard(card_id, **request)
         if not updated:
             return None
-        return self._require_db().get_flashcard(card_id)
+        return self._require_learning().get_flashcard(card_id)
 
     def create_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
         created: list[Any] = []
@@ -294,14 +295,14 @@ class LocalStudyService:
         target_deck_id: str,
         expected_version: Optional[int] = None,
     ) -> Any:
-        moved = self._require_db().move_flashcard(
+        moved = self._require_learning().move_flashcard(
             card_id,
             target_deck_id,
             expected_version=expected_version,
         )
         if not moved:
             return None
-        return self._require_db().get_flashcard(card_id)
+        return self._require_learning().get_flashcard(card_id)
 
     def reset_flashcard_scheduling(
         self,
@@ -309,25 +310,25 @@ class LocalStudyService:
         *,
         expected_version: Optional[int] = None,
     ) -> Any:
-        self._require_db().reset_flashcard_scheduling(
+        self._require_learning().reset_flashcard_scheduling(
             card_id, expected_version=expected_version
         )
-        return self._require_db().get_flashcard(card_id)
+        return self._require_learning().get_flashcard(card_id)
 
     def set_flashcard_tags(self, card_id: str, *, tags: list[str]) -> Any:
-        db = self._require_db()
-        set_tags = getattr(db, "set_flashcard_tags", None)
+        learning = self._require_learning()
+        set_tags = getattr(learning, "set_flashcard_tags", None)
         if callable(set_tags):
             set_tags(card_id, tags=tags)
         else:
-            db.update_flashcard(card_id, tags=tags)
-        return self._require_db().get_flashcard(card_id)
+            learning.update_flashcard(card_id, tags=tags)
+        return self._require_learning().get_flashcard(card_id)
 
     def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
-        db = self._require_db()
-        get_tags = getattr(db, "get_flashcard_tags", None)
+        learning = self._require_learning()
+        get_tags = getattr(learning, "get_flashcard_tags", None)
         if not callable(get_tags):
-            card = db.get_flashcard(card_id)
+            card = learning.get_flashcard(card_id)
             return {
                 "uuid": card_id,
                 "tags": self._normalize_tags((card or {}).get("tags")),
@@ -345,7 +346,9 @@ class LocalStudyService:
         q: Optional[str] = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        payload = self._require_db().list_flashcard_tag_suggestions(q=q, limit=limit)
+        payload = self._require_learning().list_flashcard_tag_suggestions(
+            q=q, limit=limit
+        )
         if isinstance(payload, Mapping):
             items = list(payload.get("items") or [])
         else:
@@ -759,7 +762,7 @@ class LocalStudyService:
         extra_template: Optional[str] = None,
         placeholder_definitions: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
-        template = self._require_db().create_flashcard_template(
+        template = self._require_learning().create_flashcard_template(
             name=name,
             model_type=model_type,
             front_template=front_template,
@@ -784,12 +787,14 @@ class LocalStudyService:
         self, *, limit: int = 100, offset: int = 0
     ) -> dict[str, Any]:
         return dict(
-            self._require_db().list_flashcard_templates(limit=limit, offset=offset)
+            self._require_learning().list_flashcard_templates(
+                limit=limit, offset=offset
+            )
             or {}
         )
 
     def get_flashcard_template(self, template_id: str) -> dict[str, Any] | None:
-        return self._require_db().get_flashcard_template(str(template_id))
+        return self._require_learning().get_flashcard_template(str(template_id))
 
     def update_flashcard_template(
         self,
@@ -804,7 +809,7 @@ class LocalStudyService:
         placeholder_definitions: Optional[list[dict[str, Any]]] = None,
         expected_version: Optional[int] = None,
     ) -> dict[str, Any] | None:
-        return self._require_db().update_flashcard_template(
+        return self._require_learning().update_flashcard_template(
             str(template_id),
             name=name,
             model_type=model_type,
@@ -820,7 +825,7 @@ class LocalStudyService:
         self, template_id: str, *, expected_version: int
     ) -> bool:
         deleted = bool(
-            self._require_db().delete_flashcard_template(
+            self._require_learning().delete_flashcard_template(
                 str(template_id),
                 expected_version=expected_version,
             )
@@ -842,7 +847,7 @@ class LocalStudyService:
         path = Path(file_path)
         content = path.read_bytes()
         mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        asset = self._require_db().create_flashcard_asset(
+        asset = self._require_learning().create_flashcard_asset(
             original_filename=path.name,
             mime_type=mime_type,
             content=content,
@@ -860,7 +865,7 @@ class LocalStudyService:
         return asset
 
     def get_flashcard_asset_content(self, asset_uuid: str) -> bytes | None:
-        return self._require_db().get_flashcard_asset_content(str(asset_uuid))
+        return self._require_learning().get_flashcard_asset_content(str(asset_uuid))
 
     def delete_flashcard(
         self,
@@ -870,7 +875,7 @@ class LocalStudyService:
         hard_delete: bool = False,
     ) -> bool:
         return bool(
-            self._require_db().delete_flashcard(
+            self._require_learning().delete_flashcard(
                 card_id,
                 expected_version=expected_version,
                 hard_delete=hard_delete,
@@ -885,7 +890,7 @@ class LocalStudyService:
         hard_delete: bool = False,
     ) -> bool:
         return bool(
-            self._require_db().delete_deck(
+            self._require_learning().delete_deck(
                 deck_id,
                 expected_version=expected_version,
                 hard_delete=hard_delete,
@@ -895,14 +900,17 @@ class LocalStudyService:
     def get_next_review_candidate(
         self, *, deck_id: Optional[str] = None
     ) -> dict[str, Any]:
-        cards = self._require_db().get_due_flashcards(deck_id=deck_id, limit=1)
+        cards = self._require_learning().get_due_flashcards(deck_id=deck_id, limit=1)
         if not cards:
             return {"card": None, "selection_reason": "none"}
         return {"card": cards[0], "selection_reason": "due"}
 
     def submit_flashcard_review(self, card_id: str, *, rating: int) -> dict[str, Any]:
-        self._require_db().update_flashcard_review(card_id, rating)
-        return {"card": self._require_db().get_flashcard(card_id), "rating": rating}
+        self._require_learning().update_flashcard_review(card_id, rating)
+        return {
+            "card": self._require_learning().get_flashcard(card_id),
+            "rating": rating,
+        }
 
     def end_review_session(self, review_session_id: int) -> None:
         return None
