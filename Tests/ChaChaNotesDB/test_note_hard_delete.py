@@ -550,7 +550,8 @@ def test_a_failed_purge_logs_the_note_id_and_none_of_its_text(tmp_path) -> None:
     lines = _error_lines(records, "deleting a note forever")
     assert len(lines) == 1, records
     assert f"note_id={seed.note_id}" in lines[0], lines
-    assert "IntegrityError" in lines[0], lines
+    # The file's convention (re-review 3 nit): ``exception_type=``.
+    assert "exception_type=IntegrityError" in lines[0], lines
     for word in ("Purge", _TITLE_TOKEN, _CONTENT_TOKEN, _KEYWORD_TOKEN, "alpha"):
         assert word not in lines[0], lines
 
