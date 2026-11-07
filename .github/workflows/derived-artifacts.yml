@@ -442,6 +442,7 @@ jobs:
             Tests/Chat/test_console_fork_transition_census.py \
             Tests/Chat/test_console_semantic_mutation_inventory.py \
             Tests/RAG/test_state_paths.py \
+            Tests/Audio/test_dictation_meter_import_contract.py \
             --timeout=180 \
             --tb=short
 

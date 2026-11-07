@@ -193,6 +193,16 @@ container-owned controls retain their normal route (TASK-36694; ADR-025/031).
 
 ## Dictation (dataflow)
 
+`Audio/dictation_service_lazy.py::LazyLiveDictationService._audio_callback`
+calculates the PCM16 meter with its stdlib `struct`/sum RMS implementation,
+normalized by 32768 and capped at 1. Empty or malformed PCM resets the meter to
+zero; chunk buffering, queue delivery and captured-byte accounting retain their
+existing behavior. The meter does not import NumPy, so loading the real Speech
+screen route does not initialize NumPy solely for this display calculation.
+Recording and transcription retain their existing optional dependencies and
+physical ownership contracts. `Tests/Audio/test_dictation_meter_import_contract.py`
+pins the fresh route's import attempts and actual callback levels/flow.
+
 1. The Console mic button starts a streaming dictation session (16 kHz mono PCM, bounded 60 s / 1.92 MiB).
 2. Provider resolution (`Chat/console_voice_input.py::resolve()`) returns unavailable only when no local provider is installed. It uses the configured provider (`[transcription] default_provider`, legacy `[STT_settings]` fallback) when installed; otherwise it selects the first installed provider in `LOCAL_PROVIDER_MODULES` declaration order. Replacing a configured provider emits `VoiceProviderOverridden`, which the Console reports once per app run with a warning toast naming both providers. At startup, `app.py` also records a WARNING `speech_stack_available` diagnostic naming both providers: status `fallback` when VAD is available, or `degraded-fallback` when VAD is missing. The `[dictation] model` override wins; non-faster-whisper providers get `model=None` so they never inherit a cross-provider model name (a real past 404 failure).
 3. Partials stream into the composer (`set_voice_partial`); spoken commands with the `[dictation] command_prefix` (default "computer") can send, insert new-lines, or stop.
