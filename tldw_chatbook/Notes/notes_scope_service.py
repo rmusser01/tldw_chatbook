@@ -160,8 +160,18 @@ class NotesScopeService:
         return self.sync_scope_service
 
     def _organization_profile_scope(
-        self, explicit: Optional[Mapping[str, Any]]
+        self,
+        explicit: Optional[Mapping[str, Any]],
+        *,
+        resolved_profile: Any = None,
     ) -> dict[str, Any] | None:
+        if resolved_profile is not None:
+            # TASK-34000.116: resolved once, before the caller's transactions
+            # (``resolve_local_note_keyword_profile``); nothing is read here.
+            if explicit is not None:
+                raise ValueError("Pass a Sync v2 profile or a resolved one, not both.")
+            scope = resolved_profile.scope
+            return None if scope is None else dict(scope)
         if self.organization_sync_service is None:
             return self._sync_v2_profile_scope(explicit)
         normalized = (
@@ -1135,18 +1145,25 @@ class NotesScopeService:
         keywords: Optional[Sequence[str]],
         sync_v2_profile: Optional[Mapping[str, Any]] = None,
         cursor: Any = None,
+        resolved_profile: Any = None,
     ) -> list[str]:
         normalized_keywords = self._normalize_keywords(keywords)
-        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        profile_scope = self._organization_profile_scope(
+            sync_v2_profile, resolved_profile=resolved_profile
+        )
         if self.organization_sync_service is not None and profile_scope is not None:
             notes_db_getter = getattr(self.local_notes_service, "notes_db", None)
             notes_db = notes_db_getter(user_id) if callable(notes_db_getter) else None
+            resolved: dict[str, Any] = {}
+            if resolved_profile is not None:
+                resolved["resolved_profile"] = resolved_profile
             result = self.organization_sync_service.sync_subject_keywords(
                 subject_type="note",
                 subject_id=str(note_id),
                 keywords=normalized_keywords,
                 notes_db=notes_db,
                 cursor=cursor,
+                **resolved,
                 **profile_scope,
             )
             if result is not None:
@@ -1201,6 +1218,7 @@ class NotesScopeService:
         keyword: str,
         remove: bool = False,
         cursor: Any = None,
+        resolved_profile: Any = None,
     ) -> bool:
         """Add or remove ONE keyword on one local note, keeping the rest.
 
@@ -1223,6 +1241,10 @@ class NotesScopeService:
             keyword: The one keyword to add or remove.
             remove: Remove ``keyword`` instead of adding it.
             cursor: The open Notes transaction's cursor, when there is one.
+            resolved_profile: A ``resolve_local_note_keyword_profile``
+                result (TASK-34000.116): the Sync v2 profile is then taken
+                from it, with no ``SyncStateRepository`` read. Omitted, it is
+                resolved here, as the editor's save resolves it.
 
         Returns:
             ``True`` when the note's keywords changed; ``False`` when it
@@ -1261,8 +1283,56 @@ class NotesScopeService:
                 else [*current, text]
             ),
             cursor=cursor,
+            resolved_profile=resolved_profile,
         )
         return True
+
+    def resolve_local_note_keyword_profile(self, *, user_id: Optional[str]) -> Any:
+        """Resolve the Sync v2 profile once for a run of keyword changes.
+
+        TASK-34000.116 (PR #3423 re-review N-1): the Library's bulk Add or
+        Remove keyword calls this before its per-note write transactions,
+        outside all of them, and passes the result to every
+        ``change_local_note_keyword`` as ``resolved_profile``. Each note then
+        makes no ``SyncStateRepository`` read while it holds the ChaChaNotes
+        write lock; before, each paid four (about 0.12 s), so the lock was
+        held for nearly the whole run.
+
+        The group's readiness is checked here once, so a group that is not
+        ready refuses the whole run before any note is written. Each change
+        still checks it again inside its own transaction, from the Notes
+        database's checkpoint row (no profile read), so a group that stops
+        being ready part-way refuses the notes after that point.
+
+        Args:
+            user_id: Local Notes user identity.
+
+        Returns:
+            The resolution to pass back, or ``None`` when no Notes
+            organization sync is wired (a change then reads no profile).
+
+        Raises:
+            ValueError: If ``user_id`` is missing, more than one local-first
+                profile needs explicit routing, or the Notes organization
+                group is not ready.
+        """
+        organization = self.organization_sync_service
+        if organization is None:
+            return None
+        local_user_id = self._require_user_id(user_id)
+        resolved = organization.resolve_profile()
+        if resolved.profile is not None:
+            notes_db_getter = getattr(self.local_notes_service, "notes_db", None)
+            notes_db = (
+                notes_db_getter(local_user_id) if callable(notes_db_getter) else None
+            )
+            owner = (
+                organization.for_notes_db(notes_db)
+                if notes_db is not None
+                else organization
+            )
+            owner.require_ready(resolved)
+        return resolved
 
     @staticmethod
     def _note_id(note: Mapping[str, Any]) -> str:
