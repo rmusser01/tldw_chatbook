@@ -7,7 +7,7 @@ This document describes the SQLite layer: the `BaseDB` infrastructure (private c
 | File | Role |
 | --- | --- |
 | `DB/base_db.py` | `BaseDB` ABC (path handling, `':memory:'`, client ids, private connections, vacuum, integrity check) plus process-wide machinery: `SQLiteConnectionQuiescenceRegistry`, quiescent connection/cursor wrappers, `_SemanticMutationAuthorization` + `register_semantic_mutation_guard` |
-| `DB/ChaChaNotes_DB.py` | `CharactersRAGDB` — conversations, messages, characters, notes, keywords, world books, learning tables, console policy columns. Schema version is defined by `_CURRENT_SCHEMA_VERSION` |
+| `DB/ChaChaNotes_DB.py` | `CharactersRAGDB` — conversations, messages, characters, notes, keywords, world books, learning tables (their queries live in `DB/learning_repository.py`, reached as `db.learning`), console policy columns. Schema version is defined by `_CURRENT_SCHEMA_VERSION` |
 | `DB/Client_Media_DB_v2.py` | `MediaDatabase` — media items, chunks, transcripts, document versions, chunking templates. Schema v9 |
 | `DB/migrations/chachanotes_vN_to_vN+1_*.sql` | File-backed ChaChaNotes migration steps (v16→v67+ present) |
 | `DB/store_kernel.py` | `SQLiteStoreKernel` mixin — the one held-connection/transaction implementation (ADR-353): autocommit held thread-local connections, 30s liveness probe, BEGIN IMMEDIATE `transaction()` with BaseException rollback, participants wiring. `RAG_Indexing_DB`, `Workspace_DB`, and `Guardian_DB` consume it; Guardian preserves admission rechecks around native connection setup; remaining stores migrate one per PR |

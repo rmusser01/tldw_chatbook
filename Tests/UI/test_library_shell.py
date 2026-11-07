@@ -19072,8 +19072,8 @@ async def test_library_shell_create_rail_flashcards_due_count_reads_in_memory_db
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     db = CharactersRAGDB(":memory:", client_id="test-client")
     try:
-        deck_id = db.create_deck("Biology")
-        db.create_flashcard(
+        deck_id = db.learning.create_deck("Biology")
+        db.learning.create_flashcard(
             {
                 "deck_id": deck_id,
                 "front": "ATP",

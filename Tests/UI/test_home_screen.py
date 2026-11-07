@@ -1345,8 +1345,8 @@ async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker()
     app = _build_test_app()
     db = CharactersRAGDB(":memory:", client_id="test-client")
     try:
-        deck_id = db.create_deck("Biology")
-        db.create_flashcard(
+        deck_id = db.learning.create_deck("Biology")
+        db.learning.create_flashcard(
             {
                 "deck_id": deck_id,
                 "front": "ATP",

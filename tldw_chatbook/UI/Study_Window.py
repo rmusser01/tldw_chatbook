@@ -85,7 +85,7 @@ class StructuredLearningWidget(Widget):
             # one) next to a disabled #topic-content TextArea whose
             # placeholder promised "Select a topic from the tree to view
             # content..." -- read as broken rather than intentionally empty.
-            # ChaChaNotes_DB's create_learning_path/create_topic are
+            # LearningRepository's create_learning_path/create_topic are
             # write-only (no list/get method exists for learning_paths or
             # topics anywhere), so a real browsing UI would be a feature
             # build, not a wiring fix (same call task-16195 made for the
