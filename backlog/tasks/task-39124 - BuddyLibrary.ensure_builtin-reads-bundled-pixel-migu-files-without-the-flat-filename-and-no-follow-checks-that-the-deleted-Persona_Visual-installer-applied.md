@@ -1,8 +1,10 @@
 ---
 id: TASK-39124
 title: "BuddyLibrary.ensure_builtin reads bundled pixel-migu files without the flat-filename and no-follow checks that the deleted Persona_Visual installer applied"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-07 02:03
+updated_date: 2026-11-07 06:10
 labels:
 - follow-up
 - security
@@ -43,3 +45,10 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 - [ ] #3 The ZIP-traversable seeding case and the installed-wheel packaging probe stay green
 - [ ] #4 The new tests run on a PR lane (never the fast PR contract), with three timings recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Restore the deleted installer's two tests against `BuddyLibrary.ensure_builtin`: a non-flat `assets.json` filename (`../escape.png`, an absolute path, `nested/escape.png`) and a symlinked resource leaf are refused before any read or publication, and leave no Buddy. Show them red on the current seeding path.
+2. In `ensure_builtin`, refuse any filename that is not a single flat name, and read each asset through `importlib.resources.as_file` + `load_persona_visual_asset` (no-follow leaf, byte count and sha256 checked), as the deleted installer did (`git show 0909623ad9^:tldw_chatbook/Persona_Visual/builtin_pixel_migu.py`).
+3. Keep the ZIP-traversable seeding case and the installed-wheel packaging probe green.
+4. No laned file covers Buddy seeding; list the file for the lanes stream.
