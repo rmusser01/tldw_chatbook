@@ -64,6 +64,27 @@ async def _until_fleet_auto_opened(pilot, console) -> None:
     )
 
 
+async def _until_painted(pilot, host, console, selector: str, *, scroll=True) -> None:
+    """Wait (10 s) until the compositor paints ``selector`` at its own region.
+
+    With ``scroll`` it scrolls the widget into view each try; without, it only
+    waits, so a test of the app's own reveal scroll still tests that scroll.
+    """
+    for _ in range(50):
+        if scroll:
+            await _scroll_into_view(pilot, console, selector)
+        else:
+            await pilot.pause(0.2)
+        widget = console.query_one(selector)
+        region = widget.region
+        try:
+            if host.get_widget_at(region.x + 1, region.y)[0] is widget:
+                return
+        except Exception:  # noqa: BLE001 - nothing painted there yet
+            pass
+    raise AssertionError(f"{selector} was never painted at its own region")
+
+
 async def _loaded(pilot, modal):
     for _ in range(80):
         if not modal.query_one(DataTable).disabled:
@@ -112,14 +133,25 @@ async def test_view_all_pages_to_old_child_and_drills_into_it(tmp_path, size):
                 if console.query("#console-inspector-section-agent-fleet-toggle"):
                     break
                 await pilot.pause(0.05)
-            await _scroll_into_view(
-                pilot, console, "#console-inspector-section-agent-fleet-toggle"
-            )
+            # The rail can still scroll after the auto-open's reveal; click
+            # only once the toggle is painted where it says it is.
+            await _until_painted(pilot, host, console, "#console-inspector-section-agent-fleet-toggle")
             # Expansion is a real click. Its own handler scrolls the new preview.
             assert await pilot.click("#console-inspector-section-agent-fleet-toggle")
             await pilot.pause()
             assert section.open
             assert len(section.query(ConsoleInspectorSectionRow)) == 4
+            # The expansion's own reveal scroll lands over a few refreshes.
+            try:
+                await _until_painted(
+                    pilot,
+                    host,
+                    console,
+                    "#console-inspector-section-agent-fleet-view-all",
+                    scroll=False,
+                )
+            except AssertionError:
+                pass  # the assertion below names what is painted instead
             tail = console.query_one(
                 "#console-inspector-section-agent-fleet-view-all", Button
             )
@@ -167,9 +199,12 @@ async def test_view_all_pages_to_old_child_and_drills_into_it(tmp_path, size):
             assert host.screen is console
             assert console._console_agent_drilldown_run_id == target
             await _scroll_into_view(pilot, console, "#console-agent-section-steps")
-            assert "This run:" in _painted_text(
-                host, console.query_one("#console-agent-section-steps")
-            )
+            steps = console.query_one("#console-agent-section-steps")
+            for _ in range(200):  # the drilled run's steps paint on a later sync
+                if "This run:" in _painted_text(host, steps):
+                    break
+                await pilot.pause(0.05)
+            assert "This run:" in _painted_text(host, steps)
     finally:
         db.close()
 
