@@ -1264,6 +1264,16 @@ class SyncStateRepository(BaseDB):
                 ).rowcount
         return removed
 
+    #: PR #3423 re-review 3 (m-3): the JSON path of the payload the push's
+    #: purge guard reads (``LocalFirstSyncService._guarded_payload``) --
+    #: ``$.payload`` when it is a non-empty object, else ``$.payload_clear``
+    #: -- so the heal below drops exactly the link upserts the guard holds.
+    _GUARDED_PAYLOAD_PATH_SQL = (
+        "(CASE WHEN json_type(envelope, '$.payload') = 'object' "
+        "AND json_extract(envelope, '$.payload') <> '{}' "
+        "THEN '$.payload' ELSE '$.payload_clear' END)"
+    )
+
     def discard_sync_v2_note_history(self, note_id: str) -> int:
         """Drop a note deleted for good from the outbox, keeping its tombstones.
 
@@ -1281,7 +1291,8 @@ class SyncStateRepository(BaseDB):
         ``notes.folder_link`` or note-subject ``notes.keyword_link`` upsert
         the organization drain already copied here is deleted, so no link to
         a note the server will not get is pushed; a link tombstone stays,
-        as the note's own delete does.
+        as the note's own delete does. The link is read from the payload the
+        push guard reads (``_GUARDED_PAYLOAD_PATH_SQL``, re-review 3 m-3).
 
         Args:
             note_id: The note just deleted for good.
@@ -1296,14 +1307,15 @@ class SyncStateRepository(BaseDB):
                 "AND json_extract(envelope, '$.operation') NOT IN ('delete', 'tombstone')",
                 (str(note_id),),
             ).rowcount
+            path = self._GUARDED_PAYLOAD_PATH_SQL
             links = conn.execute(
                 "DELETE FROM sync_v2_local_outbox "
                 "WHERE domain IN ('notes.folder_link', 'notes.keyword_link') "
                 "AND json_extract(envelope, '$.operation') = 'upsert' "
                 "AND (CASE WHEN domain = 'notes.folder_link' "
-                "THEN json_extract(envelope, '$.payload.note_id') "
-                "WHEN json_extract(envelope, '$.payload.subject_type') = 'note' "
-                "THEN json_extract(envelope, '$.payload.subject_id') END) = ?",
+                f"THEN json_extract(envelope, {path} || '.note_id') "
+                f"WHEN json_extract(envelope, {path} || '.subject_type') = 'note' "
+                f"THEN json_extract(envelope, {path} || '.subject_id') END) = ?",
                 (str(note_id),),
             ).rowcount
             return notes + links
