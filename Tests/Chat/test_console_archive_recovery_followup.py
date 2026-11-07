@@ -77,6 +77,7 @@ from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
 from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class FollowupGateway(RecoveryGateway):
@@ -252,6 +253,7 @@ async def native_followup(recovery_stores, tmp_path):
             else LibraryRagToolProvider(None)
         ),
     )
+    bind_app(controller, owner._app)  # host as built at construction (TASK-36947.4)
     owner.set_chat_controller(controller)
     controller._archive_recovery_runtime = recovery
     cards = []

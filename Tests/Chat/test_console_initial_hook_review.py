@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_runtime import (
     CONSOLE_SESSION_CLOSE_GRACE_SECONDS,
     ConsoleRuntime,
 )
+from Tests.Chat.console_controller_factory import bind_app, host_for_app
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 hook_file = _hook_file
@@ -50,6 +51,7 @@ async def review_runtime(hook_file):
         hook_permissions_accessor=runtime.ensure_hook_permissions,
     )
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     state = SimpleNamespace(
         runtime=runtime,
@@ -496,6 +498,7 @@ async def test_driver_cancelled_before_first_step_retires_exact_reservation(
                 store=ConsoleChatStore(),
                 provider_gateway=None,
                 hook_permissions_accessor=state.runtime.ensure_hook_permissions,
+                host=host_for_app(state.runtime._app),  # TASK-36947.4
             )
         )
     operation.task.cancel()
@@ -507,6 +510,7 @@ async def test_driver_cancelled_before_first_step_retires_exact_reservation(
         assert state.host.hook_review_retirements() == ()
         assert not waiter.done() and not state.owner.snapshot().ready
     finally:
+        bind_app(state.controller, state.runtime._app)  # host as built at construction (TASK-36947.4)
         state.runtime.set_chat_controller(state.controller)
         # No native body has started; retire a failed pre-entry RED for teardown.
         state.host.finish_hook_review_operation(

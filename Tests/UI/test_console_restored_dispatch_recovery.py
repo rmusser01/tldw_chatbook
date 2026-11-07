@@ -25,6 +25,7 @@ from tldw_chatbook.UI.Console_Modules.dispatch_recovery import (
     ConsoleDispatchRecoveryRegion,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def test_recovery_polling_does_not_rearm_an_unclaimed_duplicate_intent():
@@ -138,6 +139,7 @@ async def test_restored_recovery_can_discard_after_refusal(
             runtime = console._console_runtime()
             runtime.set_chat_store(store)
             runtime.set_provider_gateway(gateway)
+            bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
             runtime.set_chat_controller(controller)
             runtime.attach_view(console)
             store.set_session_draft(session_id, "next message")

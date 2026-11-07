@@ -4,6 +4,7 @@ import asyncio
 import threading
 
 import pytest
+from Tests.Chat.console_controller_factory import bound_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -475,7 +476,7 @@ async def test_goal_and_fleet_share_two_automatic_primaries_even_with_larger_tot
     )
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
     monkeypatch.setattr(type(controller), "max_parallel_runs", property(lambda _: 5))
-    controller.fleet_wake.wire(app=controller.app)
+    controller.fleet_wake.wire(app=bound_app(controller))
     task = co.start(goal.id)
     try:
         assert await asyncio.to_thread(entered.wait, 3)

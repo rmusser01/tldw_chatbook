@@ -112,6 +112,7 @@ from tldw_chatbook.Chat.message_metadata import MESSAGE_ORIGIN_HOOK
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.Chat.console_controller_factory import bind_app
 
 # TASK-38111: a send reaches hook admission (read_hooks_config_snapshot) and
 # the controller reads config elsewhere too, which the per-test
@@ -9647,7 +9648,7 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
     )
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
 
     provider = await controller._compose_mcp_provider()
 
@@ -9731,7 +9732,7 @@ async def test_agent_provider_composition_captures_one_named_profile_for_mcp_and
 ):
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
-    controller.app = SimpleNamespace(unified_mcp_service=object())
+    bind_app(controller, SimpleNamespace(unified_mcp_service=object()))
     captured = {}
 
     async def compose_mcp(*_args, **kwargs):
@@ -11782,7 +11783,7 @@ def test_personal_context_bootstrap_cannot_hold_the_send_open(monkeypatch):
         released.wait(30)
         return object()
 
-    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    bind_app(controller, SimpleNamespace(get_personal_context_service=never_returns))
     # The shipped ceiling; the test then patches it so the wedge is quick.
     assert controller_module.CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS == 10.0
     monkeypatch.setattr(
@@ -11827,7 +11828,7 @@ def test_expired_budget_warning_names_the_budget_value(monkeypatch):
         released.wait(30)
         return object()
 
-    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    bind_app(controller, SimpleNamespace(get_personal_context_service=never_returns))
     monkeypatch.setattr(
         controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
     )
@@ -11870,7 +11871,7 @@ def test_a_wedged_bootstrap_does_not_park_a_second_worker(monkeypatch):
         released.wait(30)
         return object()
 
-    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    bind_app(controller, SimpleNamespace(get_personal_context_service=never_returns))
     monkeypatch.setattr(
         controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
     )
@@ -11915,7 +11916,7 @@ def test_a_finished_bootstrap_clears_the_in_flight_guard(monkeypatch):
         calls.append(1)
         return service
 
-    controller.app = SimpleNamespace(get_personal_context_service=getter)
+    bind_app(controller, SimpleNamespace(get_personal_context_service=getter))
     monkeypatch.setattr(
         controller_module,
         "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
@@ -11950,7 +11951,7 @@ def test_a_cancel_before_the_worker_starts_reopens_the_in_flight_guard(monkeypat
         calls.append(1)
         return service
 
-    controller.app = SimpleNamespace(get_personal_context_service=getter)
+    bind_app(controller, SimpleNamespace(get_personal_context_service=getter))
     guard = threading.Event()
     monkeypatch.setattr(
         controller_module, "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT", guard
@@ -12001,7 +12002,7 @@ def test_a_raising_bootstrap_clears_the_in_flight_guard(monkeypatch):
     def boom():
         raise RuntimeError("no credential store")
 
-    controller.app = SimpleNamespace(get_personal_context_service=boom)
+    bind_app(controller, SimpleNamespace(get_personal_context_service=boom))
     monkeypatch.setattr(
         controller_module,
         "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
@@ -12016,7 +12017,7 @@ def test_personal_context_bootstrap_returns_its_service_within_budget(monkeypatc
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     service = object()
-    controller.app = SimpleNamespace(get_personal_context_service=lambda: service)
+    bind_app(controller, SimpleNamespace(get_personal_context_service=lambda: service))
     monkeypatch.setattr(
         controller_module,
         "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",

@@ -39,6 +39,7 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools import workspace_file_roots
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -136,7 +137,7 @@ async def _project_case(tmp_path, monkeypatch, *, native, automatic=1, access=0)
         agent_runtime_enabled=True,
         agent_bridge=bridge,
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=registry,
         chachanotes_db=db,
         library_rag_search_service=service,
@@ -148,7 +149,7 @@ async def _project_case(tmp_path, monkeypatch, *, native, automatic=1, access=0)
             is_session_approved=lambda *_args, **_kwargs: False,
             record_tool_decision=lambda *_args, **_kwargs: None,
         ),
-    )
+    ))
     capture = controller.resolve_runtime_turn_configuration_snapshot
 
     def configuration(owning_id):
@@ -319,7 +320,7 @@ async def test_automatic_evidence_provider_payload_allows_workspace_grounding():
         {"runtime_backend": "local", "results": [_row("needle body")]}
     )
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = _capture_app(service, "note-1")
+    bind_app(controller, _capture_app(service, "note-1"))
 
     result = await controller.submit_draft("Explain this project")
 
@@ -371,11 +372,11 @@ async def test_dispatch_retry_provider_payload_allows_workspace_grounding(tmp_pa
             base_url="http://127.0.0.1:9099",
             agent_runtime_enabled=False,
         )
-        controller.app = SimpleNamespace(
+        bind_app(controller, SimpleNamespace(
             library_rag_search_service=_RagService(
                 {"runtime_backend": "local", "results": [_row("needle body")]},
             )
-        )
+        ))
 
         result = await controller.retry_dispatch_recovery(session_id)
 

@@ -1,4 +1,5 @@
 """Bounded Stop admission through the existing queue owner."""
+from Tests.Chat.console_controller_factory import bound_app, update_app
 
 
 def test_user_work_and_chain_cap_prevent_continuation():
@@ -410,10 +411,10 @@ async def test_reviewed_plugin_drain_blocks_actual_stop_scheduler(
     installed = await case.install()
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 
-    case.controller.app.local_chat_conversation_service = ChatConversationService(
+    update_app(case.controller, local_chat_conversation_service=ChatConversationService(
         case.store.persistence.db
-    )
-    runtime = ConsoleRuntime(app=case.controller.app)
+    ))
+    runtime = ConsoleRuntime(app=bound_app(case.controller))
     runtime.set_chat_store(case.store)
     runtime.set_chat_controller(case.controller)
     marker, release = tmp_path / "stop-ready", tmp_path / "stop-release"
@@ -793,10 +794,10 @@ async def test_first_save_handoff_refuses_changed_authoritative_identity(
 
     case = native_console
     await case.install()
-    case.controller.app.local_chat_conversation_service = ChatConversationService(
+    update_app(case.controller, local_chat_conversation_service=ChatConversationService(
         case.store.persistence.db
-    )
-    runtime = ConsoleRuntime(app=case.controller.app)
+    ))
+    runtime = ConsoleRuntime(app=bound_app(case.controller))
     runtime.set_chat_store(case.store)
     runtime.set_chat_controller(case.controller)
     hook = command(

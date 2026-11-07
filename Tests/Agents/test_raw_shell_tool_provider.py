@@ -13,6 +13,7 @@ from tldw_chatbook.Agents.raw_shell_tool_provider import (
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
 from tldw_chatbook.Utils.input_validation import RawShellExecInput
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class _RuntimeProbe:
@@ -252,10 +253,10 @@ def test_console_raw_shell_resolution_captures_the_exact_named_profile(
 
     service = RecordingService()
     controller = object.__new__(ConsoleChatController)
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         unified_mcp_service=service,
         raw_cli_runtime=Runtime(),
-    )
+    ))
     controller._agent_bridge = None
     context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": True},

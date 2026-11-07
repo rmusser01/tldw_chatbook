@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from Tests.Chat.console_controller_factory import update_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -126,7 +127,7 @@ async def test_native_selected_source_reads_and_refusals(
     goal, _store, _session, controller, co, gateway, calls = build_goal_rig(
         (runs, persistence, registry, req), monkeypatch, provider
     )
-    controller.app.unified_mcp_service = _FakeService(state=ALLOW)
+    update_app(controller, unified_mcp_service=_FakeService(state=ALLOW))
     from tldw_chatbook.Tools import workspace_file_roots
 
     monkeypatch.setattr(workspace_file_roots, "_registry_factory", lambda: registry)

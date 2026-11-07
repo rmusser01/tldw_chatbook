@@ -12,6 +12,7 @@ from Tests.Chat.console_interrupt_test_bindings import (
     make_interrupt_host as InterruptRoundHost,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import CONSOLE_ATTENTION_ATTR
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class _App:
@@ -28,7 +29,7 @@ class _App:
 
 def _controller(app, *, attached: bool, pending: int = 0):
     controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
-    controller.app = app
+    bind_app(controller, app)
     # The badge re-reads the host's truth on the UI thread, so a test that
     # expects a count must have that many rounds registered.
     with controller._interrupt_host.lock:

@@ -18,6 +18,7 @@ import pytest
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class FakeApp:
@@ -46,7 +47,7 @@ def controller():
     """
     store = ConsoleChatStore()
     ctrl = ConsoleChatController(store=store, provider_gateway=object())
-    ctrl.app = FakeApp()
+    bind_app(ctrl, FakeApp())
     ctrl.mounted = []
     ctrl.set_pending_approval = ctrl.mounted.append
     ctrl.mcp_approval_timeout_seconds = lambda: 30.0
@@ -204,7 +205,7 @@ def _arm_install(ctrl, url, session_id, results, key):
 def install_controller():
     store = ConsoleChatStore()
     ctrl = ConsoleChatController(store=store, provider_gateway=object())
-    ctrl.app = FakeApp()
+    bind_app(ctrl, FakeApp())
     ctrl.mounted = []
     ctrl.set_pending_skill_install = ctrl.mounted.append
     ctrl.skill_install_confirm_timeout_seconds = lambda: 30.0
@@ -264,7 +265,7 @@ def _arm_script(ctrl, script, session_id, results, key):
 def script_controller():
     store = ConsoleChatStore()
     ctrl = ConsoleChatController(store=store, provider_gateway=object())
-    ctrl.app = FakeApp()
+    bind_app(ctrl, FakeApp())
     ctrl.mounted = []
     ctrl.set_pending_skill_script = ctrl.mounted.append
     ctrl.skill_script_confirm_timeout_seconds = lambda: 30.0

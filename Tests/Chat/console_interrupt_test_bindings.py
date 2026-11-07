@@ -4,6 +4,7 @@ No production module imports this helper. Absent fake dependencies stay None;
 real methods/globals are read at invocation. Native fixture aliases are retained.
 """
 
+from Tests.Chat.console_controller_factory import host_for_app
 from tldw_chatbook.Chat import console_chat_controller as ccc
 from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
@@ -186,7 +187,10 @@ def make_interrupt_host(seams):
         read_controller_announce_hidden_decision=lambda: getattr(
             seams, "announce_hidden_decision", None
         ),
-        read_controller_app=lambda: getattr(seams, "app", None),
+        # TASK-36947.4: a bound host, else one built over a fake's ``app``.
+        read_controller_host=lambda: getattr(seams, "_host", None)
+        or host_for_app(getattr(seams, "app", None))
+        or ccc._NO_HOST,
         read_controller_ask_user_timeout_seconds=lambda: getattr(
             seams, "ask_user_timeout_seconds", None
         ),

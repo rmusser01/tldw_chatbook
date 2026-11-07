@@ -6,6 +6,7 @@ import threading
 from dataclasses import replace
 
 import pytest
+from Tests.Chat.console_controller_factory import update_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -300,7 +301,7 @@ async def test_goal_binding_controls_actual_instructions_and_file_read_after_nav
             project_instructions_enabled=instructions_enabled
         ),
     )
-    controller.app.unified_mcp_service = _FakeService(state=ALLOW)
+    update_app(controller, unified_mcp_service=_FakeService(state=ALLOW))
     monkeypatch.setattr(
         "tldw_chatbook.Tools.workspace_file_roots._registry_factory", lambda: registry
     )
@@ -526,7 +527,7 @@ async def test_native_mcp_wrapper_preserves_refusal_and_uncertain_execution(
     goal, _store, _session, controller, coordinator, gateway, _calls = build_goal_rig(
         (runs, persistence, registry, req), monkeypatch, provider
     )
-    controller.app.unified_mcp_service = service
+    update_app(controller, unified_mcp_service=service)
     task = asyncio.create_task(coordinator.dispatch_once(goal.id))
     try:
         if failure == "outer_timeout":

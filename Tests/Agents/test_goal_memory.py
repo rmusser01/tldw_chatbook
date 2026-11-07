@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from Tests.Chat.console_controller_factory import update_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -185,7 +186,7 @@ async def test_repeated_real_fs_read_is_addressable_but_not_new_progress(
     import tldw_chatbook.Chat.console_chat_controller as controller_module
     from Tests.Chat.test_console_local_review_hook import ALLOW, _FakeService
 
-    controller.app.unified_mcp_service = _FakeService(state=ALLOW)
+    update_app(controller, unified_mcp_service=_FakeService(state=ALLOW))
     monkeypatch.setattr(
         "tldw_chatbook.Tools.workspace_file_roots._registry_factory", lambda: registry
     )

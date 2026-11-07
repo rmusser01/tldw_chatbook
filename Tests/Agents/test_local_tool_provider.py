@@ -53,6 +53,7 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -2342,7 +2343,7 @@ def test_console_local_callbacks_capture_the_exact_named_profile(tmp_path):
 
     service = RecordingService()
     controller = object.__new__(ConsoleChatController)
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
     context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": True},
         tool_policy_profile_id="research",

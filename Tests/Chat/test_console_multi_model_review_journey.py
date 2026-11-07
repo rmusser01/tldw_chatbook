@@ -22,6 +22,7 @@ from Tests.Chat.test_console_code_review_continuation import (
 from tldw_chatbook import config
 from tldw_chatbook.Agents.run_context import use_run_actor
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
+from Tests.Chat.console_controller_factory import bound_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -297,7 +298,7 @@ class ReviewRunObservation:
                     verdict in body
                     for verdict in ("confirmed", "refuted", "unresolved")
                 )
-        source_root = controller.app.workspace_registry_service.list_folder_bindings(
+        source_root = bound_app(controller).workspace_registry_service.list_folder_bindings(
             "review"
         )[0].locator
         assert (Path(source_root) / "main.py").read_text() == self.source
@@ -305,8 +306,8 @@ class ReviewRunObservation:
             ConsoleCodeReviewModal,
         )
 
-        assert isinstance(controller.app.screen, ConsoleCodeReviewModal)
-        assert controller.app.screen.is_mounted
+        assert isinstance(bound_app(controller).screen, ConsoleCodeReviewModal)
+        assert bound_app(controller).screen.is_mounted
         self.manifest.update(
             source_sha256=hashlib.sha256(self.source.encode()).hexdigest(),
             source_unchanged=True,

@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class _FakeApp:
@@ -47,7 +48,7 @@ async def test_confirm_round_trip_allow():
     controller, _ = _controller()
     received: list[dict | None] = []
     projected = threading.Event()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
 
     def _project(payload: dict | None) -> None:
         received.append(payload)
@@ -84,7 +85,7 @@ async def test_confirm_round_trip_allow():
 async def test_confirm_round_trip_deny():
     controller, _ = _controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_skill_install = received.append
 
     async def resolve_soon():
@@ -103,7 +104,7 @@ async def test_confirm_round_trip_deny():
 
 def test_confirm_timeout_denies():
     controller, _ = _controller()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_skill_install = lambda payload: None
     controller.skill_install_confirm_timeout_seconds = lambda: 0.05
     started = time.monotonic()
@@ -121,7 +122,7 @@ def test_confirm_no_app_denies_immediately():
     timeout, without any resolver thread ever being set up.
     """
     controller, _ = _controller()
-    assert controller.app is None  # no UI bridge wired at all
+    assert controller._host.call_from_thread is None  # no UI bridge wired at all
     started = time.monotonic()
     allowed = controller.request_skill_install_confirm("https://x/y")
     elapsed = time.monotonic() - started
@@ -137,7 +138,7 @@ def test_own_session_cancel_event_denies_the_round():
     identical test."""
     controller, store = _controller()
     session_b = store.ensure_session(title="B").id
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_skill_install = lambda payload: None
     controller.skill_install_confirm_timeout_seconds = lambda: 30.0
     cancel_event = threading.Event()
@@ -162,7 +163,7 @@ def test_unrelated_session_stop_does_not_deny():
     cancel`."""
     controller, store = _controller()
     owning = store.ensure_session(title="Owning").id
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_skill_install = lambda payload: None
     controller.skill_install_confirm_timeout_seconds = lambda: 30.0
 
@@ -187,7 +188,7 @@ def test_shutdown_denies_pending_confirm():
     -- switching context alone no longer does (AC#2), but shutdown must be
     unchanged (AC#4)."""
     controller, _ = _controller()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_skill_install = lambda payload: None
     controller.skill_install_confirm_timeout_seconds = lambda: 30.0
 
@@ -213,7 +214,7 @@ def test_request_skill_install_confirm_parks_for_a_non_active_session():
     background = store.create_session(title="Background").id
     store.switch_session(viewed)  # keep viewing the first session
     app = _FakeApp()
-    controller.app = app
+    bind_app(controller, app)
     mounted: list[dict | None] = []
     controller.set_pending_skill_install = mounted.append
     controller.park_pending_approval = lambda _session_id: pytest.fail(
@@ -263,7 +264,7 @@ def test_switch_session_no_longer_denies_a_pending_skill_install_confirm():
     owning_session = store.create_session(title="Owning").id
     other_session = store.create_session(title="Other").id
     store.switch_session(owning_session)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     controller.set_pending_skill_install = mounted.append
     controller.skill_install_confirm_timeout_seconds = lambda: 30.0
@@ -300,7 +301,7 @@ def test_resolve_pending_skill_install_ignores_a_stale_or_unknown_request_id():
     round pending -- mirrors `resolve_pending_skill_script`'s identical
     contract."""
     controller, _ = _controller()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_skill_install = lambda payload: None
     controller.skill_install_confirm_timeout_seconds = lambda: 30.0
     result: dict[str, bool] = {}
@@ -325,7 +326,7 @@ def test_resolve_pending_skill_install_ignores_a_stale_or_unknown_request_id():
 def test_resolve_pending_skill_install_with_no_request_id_is_dropped():
     """AC#3/#4: a resolve carrying no id at all must never auto-approve."""
     controller, _ = _controller()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_skill_install = lambda payload: None
     controller.skill_install_confirm_timeout_seconds = lambda: 30.0
     result: dict[str, bool] = {}
@@ -585,7 +586,7 @@ def test_confirm_zero_timeout_keeps_round_armed_for_late_decision():
     now stay armed and resolve on the user's decision."""
     controller, _ = _controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_skill_install = received.append
     controller.skill_install_confirm_timeout_seconds = lambda: 0.0
 

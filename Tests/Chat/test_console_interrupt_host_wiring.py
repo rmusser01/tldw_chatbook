@@ -14,6 +14,7 @@ import pytest
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_interrupt_rounds import KIND_SETTER_ATTRS
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def test_every_kind_has_a_setter_attribute_on_the_controller():
@@ -70,7 +71,7 @@ def test_approvals_register_the_permission_summary_as_the_after_remount_hook():
 def test_host_orders_custodied_decisions_without_reentering_its_lock(kind):
     controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
     session = controller.store.ensure_session()
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     host = controller._interrupt_host
     state = {"event": threading.Event(), "session_id": session.id}
     state["event"].set()
@@ -129,7 +130,7 @@ def test_hidden_skill_notice_uses_one_host_lock_and_retries_failed_delivery(kind
         if len(notices) == 1:
             raise RuntimeError("notification unavailable")
 
-    controller.app = SimpleNamespace(notify=notify)
+    bind_app(controller, SimpleNamespace(notify=notify))
     controller._interrupt_host.registries[kind]["exact"] = {
         "session_id": "owner",
         "decision_type": kind,
@@ -157,10 +158,10 @@ def test_hidden_skill_notice_uses_one_host_lock_and_retries_failed_delivery(kind
 def test_stable_router_does_not_suppress_detached_interrupt_bell():
     controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
     bells = []
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=lambda fn, *args: fn(*args),
         is_headless=False, bell=lambda: bells.append("bell"),
-    )
+    ))
     controller.set_pending_decision = lambda projection: False
     controller._interrupt_bell_enabled = lambda: True
     controller.on_pending_rounds_changed(1, "question", True)
@@ -175,6 +176,7 @@ def test_cached_hidden_view_cannot_start_an_answerable_clock():
     app = SimpleNamespace(screen=object())
     runtime = ConsoleRuntime(app)
     runtime.set_chat_store(controller.store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     projections = []
     view = SimpleNamespace(

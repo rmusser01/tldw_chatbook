@@ -17,6 +17,7 @@ from Tests.Chat.test_console_chat_create_integration import (
     child_new_chat_rig,
     real_db_controller,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 
 #: Event waits and worker joins share the existing bounded race-test deadline.
@@ -30,7 +31,7 @@ def make_controller():
     def _make() -> ConsoleChatController:
         store = ConsoleChatStore()
         controller = ConsoleChatController(store=store, provider_gateway=object())
-        controller.app = _FakeApp()
+        bind_app(controller, _FakeApp())
         controller.pending_chat_create_payloads = []
         controller.set_pending_chat_create = controller.pending_chat_create_payloads.append
         made.append(controller)
@@ -111,7 +112,7 @@ def test_remember_grants_session_scope(make_controller):
 
 def test_no_ui_fails_closed_immediately(make_controller):
     controller = make_controller()
-    controller.app = None
+    bind_app(controller, None)
     controller.set_pending_chat_create = None
     decision = controller.request_chat_create_confirm(_payload())
     assert decision == {"allow": False, "remember": False}
@@ -165,7 +166,7 @@ def real_db_confirm(tmp_path):
     persistence = ChatPersistenceService(db)
     store = ConsoleChatStore(persistence=persistence)
     controller = ConsoleChatController(store=store, provider_gateway=object())
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.pending_chat_create_payloads = []
     controller.set_pending_chat_create = controller.pending_chat_create_payloads.append
     try:

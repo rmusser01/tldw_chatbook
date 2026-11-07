@@ -67,6 +67,7 @@ from tldw_chatbook.Widgets.Console.console_staged_context import (
 from tldw_chatbook.Widgets.Console.console_staged_evidence_strip import (
     ConsoleStagedEvidenceStrip,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -623,6 +624,7 @@ def _staged_close_runtime():
     runtime = ConsoleRuntime(SimpleNamespace(app_config={}))
     runtime.set_chat_store(store)
     controller = ConsoleChatController(store=store, provider_gateway=SimpleNamespace())
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     return runtime, store, controller
 

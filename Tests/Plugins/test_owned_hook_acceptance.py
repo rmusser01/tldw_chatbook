@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from Tests.Chat.console_controller_factory import bind_app, bound_app, update_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -60,8 +61,8 @@ async def _wait(check):
 async def _runtime(rig):
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
-    runtime = ConsoleRuntime(app=rig.controller.app)
-    rig.controller.app.console_runtime = runtime
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
+    update_app(rig.controller, console_runtime=runtime)
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     try:
@@ -240,7 +241,7 @@ async def test_installed_required_effect_admission(
             await control.close()
         return
     if mode == "master_off":
-        rig.controller.app.app_config = {"hooks": {"enabled": False}}
+        update_app(rig.controller, app_config={"hooks": {"enabled": False}})
     accepted = []
     rig.controller.on_submission_accepted = lambda: accepted.append(rig.session.id)
     async with _runtime(rig) as runtime:
@@ -1139,7 +1140,7 @@ async def _installed_compaction_case(
     db, repository, controller, store, session, conversation, _ = (
         _real_selection_controller(tmp_path, "owned-compact")
     )
-    controller.app = native_console.controller.app
+    bind_app(controller, bound_app(native_console.controller))
     controller._skills_service = native_console.skills
     if owned_case is not None:
         from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
@@ -1151,14 +1152,12 @@ async def _installed_compaction_case(
             allow_untrusted_without_trust_service=True,
         )
         controller._skills_service = SkillsScopeService(local_service=local)
-        controller.app.local_skills_service = local
-        controller.app.skills_scope_service = controller._skills_service
-        controller.app.local_mcp_control_service = owned_case.local
-        controller.app.unified_mcp_service = owned_case.unified
+        update_app(controller, local_skills_service=local)
+        update_app(controller, skills_scope_service=controller._skills_service)
+        update_app(controller, local_mcp_control_service=owned_case.local)
+        update_app(controller, unified_mcp_service=owned_case.unified)
         loop = asyncio.get_running_loop()
-        controller.app.call_from_thread = (
-            lambda callback, *args: loop.call_soon_threadsafe(callback, *args)
-        )
+        update_app(controller, call_from_thread=lambda callback, *args: loop.call_soon_threadsafe(callback, *args))
         compose = controller._compose_mcp_provider
 
         async def connect_owned(*args, **kwargs):
@@ -1175,7 +1174,7 @@ async def _installed_compaction_case(
 
         monkeypatch.setattr(controller, "_compose_mcp_provider", connect_owned)
     controller._agent_runtime_enabled = False
-    runtime = ConsoleRuntime(app=controller.app)
+    runtime = ConsoleRuntime(app=bound_app(controller))
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
     payloads = []
@@ -1590,9 +1589,7 @@ async def test_installed_provisional_mcp_initialization(
         cards.append(payload) if payload else None
     )
     loop = asyncio.get_running_loop()
-    rig.controller.app.call_from_thread = (
-        lambda callback, *args: loop.call_soon_threadsafe(callback, *args)
-    )
+    update_app(rig.controller, call_from_thread=lambda callback, *args: loop.call_soon_threadsafe(callback, *args))
     payload = {
         "content": [],
         "structuredContent": {
@@ -1671,10 +1668,10 @@ async def test_installed_provisional_mcp_initialization(
                     allow_untrusted_without_trust_service=True,
                 )
                 rig.controller._skills_service = SkillsScopeService(local_service=local)
-                rig.controller.app.local_skills_service = local
-                rig.controller.app.skills_scope_service = rig.controller._skills_service
-                rig.controller.app.local_mcp_control_service = case.local
-                rig.controller.app.unified_mcp_service = case.unified
+                update_app(rig.controller, local_skills_service=local)
+                update_app(rig.controller, skills_scope_service=rig.controller._skills_service)
+                update_app(rig.controller, local_mcp_control_service=case.local)
+                update_app(rig.controller, unified_mcp_service=case.unified)
                 compose = rig.controller._compose_mcp_provider
 
                 async def explicit_connection(*args, **kwargs):

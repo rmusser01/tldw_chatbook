@@ -47,6 +47,7 @@ from tldw_chatbook.Chat.console_runtime import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.Chat.console_controller_factory import bind_app
 
 # The send path resolves provider/config snapshots in-body; keep the
 # collection-time profile (see Tests/conftest.py) instead of the per-test
@@ -143,7 +144,7 @@ def _armed_controller(db, gateway):
     )
     # The runtime assigns the app to the controller in set_chat_controller
     # (console_runtime.py: ``value.app = self._app``); mirror that wiring.
-    controller.app = app
+    bind_app(controller, app)
     # No workspace scope: a workspace-scoped durable turn would require the
     # workspace registry, which this hermetic rig does not own.
     session = store.ensure_session()

@@ -88,6 +88,7 @@ from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadat
 from tldw_chatbook.Widgets.Console.console_fork_chat_modal import ConsoleForkChatModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from Tests.Chat.console_controller_factory import bind_app
 
 
 async def _settle(pilot, predicate, *, label: str, attempts: int = 400) -> None:
@@ -572,7 +573,7 @@ async def test_console_chat_fork_complete_provider_free_journey(
             # ConsoleHarness mounts the production screen under the harness app;
             # the production controller therefore marshals through that live
             # Textual owner here, just as it marshals through TldwCli in-process.
-            controller.app = host
+            bind_app(controller, host)
             controller.mcp_approval_timeout_seconds = lambda: 30.0
             approval_task = asyncio.create_task(
                 asyncio.to_thread(

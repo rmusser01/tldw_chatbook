@@ -3,6 +3,7 @@
 import importlib
 
 import pytest
+from Tests.Chat.console_controller_factory import update_app
 
 pytestmark = pytest.mark.bootstrap_profile
 from textual.app import App
@@ -374,7 +375,7 @@ async def test_ro_first_rw_second_binding_refresh_launches_authorized_edit(
     _, store, _, controller, co, gateway, calls = build_goal_rig(
         stores, monkeypatch, provider
     )
-    controller.app.unified_mcp_service = _FakeService(state=ALLOW)
+    update_app(controller, unified_mcp_service=_FakeService(state=ALLOW))
     monkeypatch.setattr(
         "tldw_chatbook.Tools.workspace_file_roots._registry_factory", lambda: registry
     )

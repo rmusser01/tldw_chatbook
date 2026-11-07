@@ -749,7 +749,7 @@ def _prepare_surviving_child(controller, session_id):
     source.persisted_conversation_id = controller.store.persistence.create_conversation(
         conversation_title=source.title
     )
-    runs = controller.app._pending_close_runs
+    runs = controller._hooks_v2_runtime._app._pending_close_runs  # the owning app
     parent = runs.create_run(
         conversation_id=source.persisted_conversation_id,
         agent_kind="primary",

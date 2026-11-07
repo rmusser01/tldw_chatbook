@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.library_preparation import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -66,7 +67,7 @@ def _automatic_controller(tmp_path, service, *, timeout: float = 5.0):
     store.active_session_id = SESSION
     gateway = _StreamingFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
     controller._library_preparation_timeout = timeout
     return db, store, controller, gateway
 

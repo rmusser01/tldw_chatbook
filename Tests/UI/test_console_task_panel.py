@@ -28,6 +28,7 @@ from tldw_chatbook.Widgets.Console.console_task_panel import (
     ConsoleTaskPanel,
     render_task_lines,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def _tasks() -> list[dict[str, object]]:
@@ -207,7 +208,7 @@ def _wired_controller() -> tuple[ConsoleChatController, list[tuple[str | None, l
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=None)
     calls: list[tuple[str | None, list]] = []
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     controller.set_task_panel = lambda session_id, tasks: calls.append(
         (session_id, list(tasks))
     )

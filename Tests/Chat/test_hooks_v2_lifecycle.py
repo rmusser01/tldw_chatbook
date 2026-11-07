@@ -13,6 +13,7 @@ from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from tldw_chatbook.Agents.run_hooks import HookOutcome
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from Tests.Chat.console_controller_factory import bind_app, bound_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 hook_file = _hook_file
@@ -350,7 +351,7 @@ async def test_mixed_native_and_saved_session_end_survives_host_disposal(
             ]
         ),
     )
-    runtime = ConsoleRuntime(app=case.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(case.controller))
     runtime.set_chat_store(case.store)
     runtime.set_chat_controller(case.controller)
     permissions = runtime.ensure_hook_permissions()
@@ -930,7 +931,7 @@ async def test_hook_approval_uses_actual_retained_round_deadline_and_cancellatio
 
     controller, store = _build_controller()
     session = store.ensure_session()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     received = []
     policy = MCPInvocationPolicy(
         current=lambda: True,

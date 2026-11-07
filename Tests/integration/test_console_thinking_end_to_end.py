@@ -89,6 +89,7 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
+from Tests.Chat.console_controller_factory import bind_app
 
 VISIBLE_ANSWER = "VISIBLE-ANSWER-CANARY"
 DISPLAYABLE_THINKING = "DISPLAYABLE-THINKING-CANARY"
@@ -599,7 +600,7 @@ async def test_resumed_preparation_thinking_refusal_preserves_exact_owner(
     gateway = _DispositionGateway("displayable")
     service = _RagService(error=RuntimeError("pause before commit"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     try:
         first = await controller.submit_draft(

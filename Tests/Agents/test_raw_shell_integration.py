@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import RawCliRequest, RawCliResult
+from Tests.Chat.console_controller_factory import bind_app
 
 
 ASK = EffectiveToolState(state="ask", origin="global_default")
@@ -225,10 +226,10 @@ def test_controller_composes_raw_provider_only_while_all_live_gates_are_open(
         return None
 
     controller._agent_bridge = SimpleNamespace(raw_shell_progress_sink=progress_sink)
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         unified_mcp_service=_PermissionService(gates),
         raw_cli_runtime=runtime,
-    )
+    ))
     turn_context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": local},
         tool_policy_profile_id="default",

@@ -89,6 +89,7 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+from Tests.Chat.console_controller_factory import bind_app
 
 
 async def _settle(predicate, seconds: float = 5.0) -> bool:
@@ -516,6 +517,7 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
         controller.fleet_wake.wire(app=app)
         runtime = ConsoleRuntime(app)
         runtime.set_chat_store(store)
+        bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
         runtime.set_chat_controller(controller)
         screen_context_calls: list[str] = []
 

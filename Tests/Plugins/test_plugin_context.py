@@ -5,6 +5,7 @@ import pytest
 from Tests.Plugins.test_owned_mcp_tools import (
     shared_connection_case as _shared_connection_case,
 )
+from Tests.Chat.console_controller_factory import bound_app, update_app
 
 shared_connection_case = _shared_connection_case
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
@@ -112,8 +113,8 @@ async def test_owned_hook_and_plugin_rule_share_final_input(
         package,
         tuple(f"rule:style{i}" for i in range(4)) + ("hook:prepare",),
     )
-    runtime = ConsoleRuntime(app=rig.controller.app)
-    rig.controller.app.console_runtime = runtime
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
+    update_app(rig.controller, console_runtime=runtime)
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     try:
@@ -160,16 +161,16 @@ async def test_actual_console_composes_owned_mcp_hook_without_automatic_connecti
         allow_untrusted_without_trust_service=True,
     )
     rig.controller._skills_service = SkillsScopeService(local_service=local)
-    rig.controller.app.local_skills_service = local
-    rig.controller.app.skills_scope_service = rig.controller._skills_service
-    rig.controller.app.local_mcp_control_service = case.local
-    rig.controller.app.unified_mcp_service = case.unified
+    update_app(rig.controller, local_skills_service=local)
+    update_app(rig.controller, skills_scope_service=rig.controller._skills_service)
+    update_app(rig.controller, local_mcp_control_service=case.local)
+    update_app(rig.controller, unified_mcp_service=case.unified)
     monkeypatch.setattr(
         rig.controller,
         "request_mcp_approvals",
         lambda calls, **kw: {row.llm_name: "approve_once" for row in calls},
     )
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     observed, explicit_setup = [], False
@@ -254,7 +255,7 @@ async def test_failed_native_dependency_blocks_only_using_component(
     install = await install_components(
         rig.service, package, ("command:dependent", "command:independent", "hook:check")
     )
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     try:

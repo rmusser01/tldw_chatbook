@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_chat_store import (
 from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+from Tests.Chat.console_controller_factory import bind_app
 
 
 async def _reload_console(app):
@@ -51,7 +52,7 @@ async def _reload_console(app):
         agent_bridge=bridge,
         confirm_project_instruction_dispatch=lambda _: "proceed",
     )
-    controller.app = SimpleNamespace(workspace_registry_service=app.registry)
+    bind_app(controller, SimpleNamespace(workspace_registry_service=app.registry))
     app.store, app.session, app.controller = store, session, controller
     app.restart_factory()
 

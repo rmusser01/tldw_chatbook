@@ -41,6 +41,7 @@ from Tests.Chat.test_console_fleet_wake_safety import (
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def report(scenario, **measurements):
@@ -138,7 +139,7 @@ async def test_measure_other_conversation_delay_during_real_approval(tmp_path):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
     cards = []
     controller.set_pending_approval = cards.append
     controller.mcp_approval_timeout_seconds = lambda: 10.0

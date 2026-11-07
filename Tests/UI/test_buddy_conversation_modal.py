@@ -19,6 +19,7 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -61,7 +62,7 @@ class Harness(ConsolidatedCSSApp):
         self.controller = ConsoleChatController(
             store=self.store, provider_gateway=self.gateway
         )
-        self.controller.app = self
+        bind_app(self.controller, self)
         self.controller.on_submission_accepted = lambda: setattr(
             self.other, "draft", ""
         )

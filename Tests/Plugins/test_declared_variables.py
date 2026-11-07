@@ -9,6 +9,7 @@ import pytest
 from Tests.hooks_v2_process_support import child_argv
 from Tests.MCP.test_credential_bindings import MemoryCredentialBackend
 from Tests.Plugins.test_native_components import install_components
+from Tests.Chat.console_controller_factory import bound_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -725,13 +726,13 @@ async def test_console_capture_translates_only_exact_constraint_failure(
         with pytest.raises(
             RecoveryRequired, match="^plugin_constraint_verification_failed$"
         ):
-            capture_skill_context_maximum(rig.controller.app, "workspace-a")
+            capture_skill_context_maximum(bound_app(rig.controller), "workspace-a")
         with pytest.raises(
             RecoveryRequired, match="^plugin_constraint_verification_failed$"
         ):
             await rig.controller.capture_turn_configuration_snapshot(rig.session.id)
     else:
-        assert not capture_skill_context_maximum(rig.controller.app, "workspace-a")[
+        assert not capture_skill_context_maximum(bound_app(rig.controller), "workspace-a")[
             "available_skills"
         ]
         snapshot = await rig.controller.capture_turn_configuration_snapshot(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 import pytest
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 from Tests.Chat.test_console_context_compaction import (
@@ -22,7 +23,7 @@ from tldw_chatbook.Chat.console_interrupt_rounds import KIND_SETTER_ATTRS
 def test_interrupt_remount_reads_replaced_sink_and_controller_state(kind):
     controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
     session = controller.store.ensure_session()
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     host = controller._interrupt_host
     payload = {"round_id": "live", "session_id": session.id}
     host.park_round_payload(kind, "live", payload)

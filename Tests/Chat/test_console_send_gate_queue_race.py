@@ -60,6 +60,7 @@ from Tests.Chat.test_console_agent_bridge import (
 from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
 from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class _HoldingGateway:
@@ -175,6 +176,7 @@ async def test_console_session_close_cancels_raw_invocations_before_store_remova
 
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime._chat_store = store
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     try:
         await runtime.close_session(

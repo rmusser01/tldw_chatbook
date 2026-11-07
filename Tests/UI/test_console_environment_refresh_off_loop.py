@@ -44,6 +44,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     PrEnvState,
     TasksEnvState,
 )
+from Tests.Chat.console_controller_factory import update_app
 
 # Drives the real ChatScreen, controller, store and app: keep the
 # collection-time profile (the per-test redirect fails config admission).
@@ -242,9 +243,9 @@ async def test_the_narrow_root_read_equals_the_full_snapshots_roots(tmp_path):
         active = chat_controller.store.active_session_id
         own_workspace = chat_controller.store.session_workspace_id(active)
         asked: list = []
-        chat_controller.app.change_review_consent_service = _admitting_per_workspace(
+        update_app(chat_controller, change_review_consent_service=_admitting_per_workspace(
             root, asked
-        )
+        ))
 
         full = chat_controller.resolve_turn_execution_context(active).workspace_roots
         asked_by_full = list(asked)

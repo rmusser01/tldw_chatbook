@@ -12,6 +12,7 @@ from Tests.Chat.test_archive_recovery_operations import (
 )
 from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveRecoveryError
 from tldw_chatbook.Chat.archive_recovery.runtime import ArchiveRecoveryRuntime
+from Tests.Chat.console_controller_factory import bind_app
 
 # Native Windows profile admission precedes the fake gateway; this is a
 # bounded integration wait, not the archive service operation deadline.
@@ -255,6 +256,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
             else LibraryRagToolProvider(None)
         ),
     )
+    bind_app(controller, owner._app)  # host as built at construction (TASK-36947.4)
     owner.set_chat_controller(controller)
     controller._archive_recovery_runtime = recovery
     approval_ready = asyncio.Event()
@@ -780,6 +782,7 @@ async def test_console_terminal_session_close_revokes_recovery_state(recovery_st
     source = store.create_session(title="Source")
     controller = ConsoleChatController(store=store, provider_gateway=None)
     owner.set_chat_store(store)
+    bind_app(controller, owner._app)  # host as built at construction (TASK-36947.4)
     owner.set_chat_controller(controller)
     runtime = owner.ensure_archive_recovery()
     await runtime.search(source.id, {}, model_visible=False)

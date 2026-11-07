@@ -73,6 +73,7 @@ from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Workspaces.models import RuntimeBindingKind, RuntimeBindingStatus
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -352,18 +353,18 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
         run_active_for_workspace=lambda root: ("active", root),
     )
     screen._console_chat_controller = chat_controller
-    # The runtime binds its own app onto the controller it is handed.
-    monkeypatch.setattr(
-        chat_controller.app,
-        "change_review_consent_service",
+    # TASK-36947.4: the controller reads the consent service from its host.
+    bind_app(
+        chat_controller,
         SimpleNamespace(
-            admit_turn=lambda workspace_id: SimpleNamespace(
-                ready_roots=(roots, workspace_id),
-                ready_aliases=(),
-                skipped_roots=(),
+            change_review_consent_service=SimpleNamespace(
+                admit_turn=lambda workspace_id: SimpleNamespace(
+                    ready_roots=(roots, workspace_id),
+                    ready_aliases=(),
+                    skipped_roots=(),
+                )
             )
         ),
-        raising=False,
     )
     screen._ensure_console_chat_controller = lambda: chat_controller
     screen._ensure_console_agent_bridge = lambda: SimpleNamespace(
