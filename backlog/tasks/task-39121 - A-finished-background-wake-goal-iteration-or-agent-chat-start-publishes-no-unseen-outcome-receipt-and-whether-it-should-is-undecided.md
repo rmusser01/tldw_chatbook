@@ -1,13 +1,13 @@
 ---
 id: TASK-39121
 title: "A finished background wake, goal iteration or agent chat start publishes no unseen-outcome receipt, and whether it should is undecided"
-status: To Do
+status: Done
 created_date: 2026-11-07 02:03
+updated_date: 2026-11-07 02:21
 labels:
 - follow-up
 - console
 - agents
-- needs-owner-decision
 priority: medium
 references:
 - tldw_chatbook/Chat/console_chat_controller.py
@@ -36,7 +36,18 @@ Whether a background turn should leave an ordinary unseen receipt, and under whi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner decides whether a finished wake, goal iteration or agent chat start publishes an ordinary unseen receipt, and under which outcome id; the decision is recorded
-- [ ] #2 The behaviour matches the decision; if it changes, a test of a chat with a prior manual turn is red before the change
-- [ ] #3 An automatic turn never publishes under a manual turn's outcome id; the round-11 pin for that stays green
+- [x] #1 The owner decides whether a finished wake, goal iteration or agent chat start publishes an ordinary unseen receipt, and under which outcome id; the decision is recorded
+- [x] #2 The behaviour matches the decision; if it changes, a test of a chat with a prior manual turn is red before the change
+- [x] #3 An automatic turn never publishes under a manual turn's outcome id; the round-11 pin for that stays green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner decision (2026-11-06): "No receipt: keep today's behaviour — the ✓ and toast are the notice; the buddy's unseen pointer stays reserved for turns the user sent."
+
+Closed with no code change, because the decision keeps the behaviour that TASK-39044 settles (round-11 branch fu/r11-modals).
+- **AC#1:** the decision above.
+- **AC#2:** behaviour does not change, so no red-before test applies. On dev 2684e5453f an automatic turn has no preparation id and publishes no ordinary receipt (`console_chat_controller.py:23322-23323`, `:28610`). With TASK-39044 a finished wake gets its glyph and toast and still no receipt.
+- **AC#3:** TASK-39044's `_notify_submission_accepted` drops stale ordinary outcome ids for an automatic turn without a preparation. `Tests/UI/test_console_fleet_wake_ui_freshness.py::test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running` pins that the wake publishes no ordinary receipt (red before that change, per TASK-39044's notes). It lands with TASK-39044.
+<!-- SECTION:NOTES:END -->
