@@ -1846,3 +1846,82 @@ def test_the_default_recovery_summary_never_names_a_pasted_key(key):
     assert summary.startswith("Not written to disk")
     assert key.lower()[:12] not in summary.lower()
     assert defaults_module.format_console_endpoint_preview(key) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "typed", "sent"),
+    [
+        ("vllm", "localhost:8080", "http://localhost:8080"),
+        ("ollama", "127.0.0.1:8080", "http://127.0.0.1:8080"),
+        ("local_vllm", "[::1]:8080", "http://[::1]:8080"),
+        ("local_ollama", "localhost:8080", "http://localhost:8080"),
+        ("local_llamafile", "localhost:8080", "http://localhost:8080"),
+        ("strata", "localhost:8080", "http://localhost:8080"),
+        ("qwencloud", "localhost:8080/v1", "http://localhost:8080/v1"),
+    ],
+)
+async def test_a_schemeless_loopback_session_endpoint_reaches_the_adapter_with_http(
+    provider, typed, sent
+):
+    """TASK-39042 review C1: readiness took ``localhost:8080`` for every
+    URL-based provider, but the send passed it to the adapter as typed, and
+    requests raised ``InvalidSchema`` (QwenCloud was blocked at send)."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        persisted_endpoint_for_key,
+        provider_endpoint_key,
+    )
+
+    key = provider_endpoint_key(provider)
+    saved = persisted_endpoint_for_key(provider, key, typed)
+    calls: list[dict] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {key: saved, "model": "m", "api_key": "k"}}
+        },
+        environ={},
+        chat_api_call_fn=adapter,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider=provider, explicit_model="m", base_url=typed, streaming=False
+        )
+    )
+
+    assert resolution.ready, resolution.visible_copy
+    [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    assert calls[0]["api_base_url"] == sent
+
+
+def test_a_chat_settings_draft_with_a_schemeless_loopback_endpoint_restores():
+    """TASK-39042 review C1: the suspended-draft snapshot checked the session
+    endpoint with ``validate_url``, so a draft holding ``localhost:8080``
+    failed to restore and "Configure credential…" could not open."""
+    from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsDraftSnapshot,
+    )
+
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="vllm", model="m", base_url="localhost:8080"
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-base-url": "localhost:8080"},
+        provider_model_drafts={"vllm": "m"},
+        provider_base_url_drafts={"vllm": "localhost:8080"},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": True},
+    )
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+
+    assert restored is not None
+    assert restored.settings.base_url == "localhost:8080"

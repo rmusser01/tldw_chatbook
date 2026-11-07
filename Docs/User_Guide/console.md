@@ -789,8 +789,8 @@ An address typed without `http://` or `https://` is read as **s** reads it.
 `http://localhost:8080/v1/chat/completions`. Any other address typed without
 a scheme, such as `gpu-box.lan:8080`, reads "Invalid URL", for llama.cpp too.
 A value typed without a scheme and without a port is shown as "invalid
-endpoint" unless it is on this computer (`localhost`, `127.0.0.1`), because it
-could be a key pasted into the field.
+endpoint" unless it is on this computer (`localhost`, any `127.x.x.x` address
+or `[::1]`), because it could be a key pasted into the field.
 A Docker Compose service name, such as `http://kobold_cpp:5001` or
 `http://vllm/v1`, is an endpoint like any other: two different ones are
 different servers, so a chat on one that is not saved is blocked until you

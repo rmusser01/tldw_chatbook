@@ -112,6 +112,7 @@ from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     canonical_connection_identity,
     connection_probe_availability,
+    read_schemeless_loopback,
 )
 from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_BASE_URL_KEYS,
@@ -547,7 +548,9 @@ def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
     if settings.source not in CONSOLE_SESSION_SETTINGS_SOURCES:
         return False
     if settings.base_url is not None and settings.base_url.strip():
-        if not validate_url(settings.base_url):
+        # TASK-39042 review: a loopback endpoint typed without a scheme is
+        # read as http://, as readiness and the send read it.
+        if not validate_url(read_schemeless_loopback(settings.base_url)):
             return False
     for name, (minimum, maximum) in _SNAPSHOT_FLOAT_BOUNDS.items():
         value = getattr(settings, name)

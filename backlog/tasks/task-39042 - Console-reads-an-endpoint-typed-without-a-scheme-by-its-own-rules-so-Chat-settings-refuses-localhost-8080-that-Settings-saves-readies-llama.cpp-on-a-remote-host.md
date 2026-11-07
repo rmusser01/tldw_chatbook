@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 15:49
+updated_date: 2026-11-07 00:06
 labels:
 - follow-up
 - console
@@ -88,3 +88,16 @@ Console now reads an endpoint typed without a scheme by the endpoint contract's 
 - Docs: `Docs/User_Guide/console.md` (schemeless addresses, what Save endpoint & use model writes, when a value reads "invalid endpoint").
 
 Files: `tldw_chatbook/Chat/console_session_settings.py`, `tldw_chatbook/Chat/console_settings_defaults.py`, `tldw_chatbook/Chat/provider_setup_persistence.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Chat/test_console_settings_defaults.py`, `Docs/User_Guide/console.md`.
+
+Review r11g-rev1:
+- C1 (Critical): readiness took `localhost:8080` for every URL-based provider, but the send passed the typed text on. Only custom, custom_2 and the llama.cpp keys normalised it, so vLLM, Ollama, the local_* keys, Strata and PolyStrata reached the adapter as `api_base_url='localhost:8080'` (requests: `InvalidSchema`), and QwenCloud was blocked at send.
+  - One rule now: `read_schemeless_loopback` in `provider_endpoint_contract.py` adds `http://` to a loopback spelling typed without a scheme, checked with `is_exact_schemeless_host` on the parsed netloc, and leaves anything else unchanged.
+  - Readers: readiness (`_valid_base_url`, which refuses anything still schemeless), the send (`_effective_contract_endpoint`, under `effective_provider_endpoint`, and the gateway's QwenCloud branch), compare (`normalize_generic_endpoint_for_compare`, so a koboldcpp native endpoint typed without a scheme matches its saved form), the Chat settings draft snapshot (`_valid_snapshot_settings_mapping`, so "Configure credential…" opens), and QwenCloud's Discover (`_qwencloud_base_url`).
+  - The save now calls `persisted_endpoint_for_key` instead of repeating it.
+  - Discovery's `_parse_endpoint` keeps its own parse; it already checks the parsed netloc with `is_exact_schemeless_host`.
+- New tests in `Tests/Chat/test_local_server_discovery.py`:
+  - `test_a_schemeless_loopback_session_endpoint_reaches_the_adapter_with_http`: vllm, ollama, local_vllm (`[::1]`), local_ollama, local_llamafile, strata, qwencloud. It goes through `ConsoleProviderGateway.resolve_for_send` and `stream_chat` with a stub adapter.
+  - `test_a_chat_settings_draft_with_a_schemeless_loopback_endpoint_restores`.
+  - Red with the sources at the review head c19f090442 (run.sh, load about 90): 8 failed. Examples: `assert 'localhost:8080' == 'http://localhost:8080'`; QwenCloud "invalid API base URL setting"; and the snapshot refused its draft. Green after.
+  - aphrodite, oobabooga, tabbyapi and koboldcpp take no endpoint argument (their adapters read config); a probe showed them Ready with `http://` bases.
+- M4: `console.md` now names any `127.x.x.x` address and `[::1]` as on this computer.

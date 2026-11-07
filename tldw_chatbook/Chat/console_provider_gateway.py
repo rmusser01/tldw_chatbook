@@ -68,6 +68,9 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     provider_uses_endpoint,
     unsaved_endpoint_copy,
 )
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    read_schemeless_loopback,
+)
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     THINKING_OWNER_KEY,
@@ -4893,7 +4896,9 @@ class ConsoleProviderGateway:
                 ):
                     effective_base_url = qwencloud_configured_base_url
                 else:
-                    effective_base_url = normalize_qwencloud_base_url(selected_base_url)
+                    effective_base_url = normalize_qwencloud_base_url(
+                        read_schemeless_loopback(selected_base_url)  # TASK-39042
+                    )
             except ChatConfigurationError:
                 return self._blocked_resolution(
                     selection,

@@ -50,7 +50,7 @@ from tldw_chatbook.Chat.provider_catalog import (
 )
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     canonical_connection_identity,
-    is_exact_schemeless_host,
+    read_schemeless_loopback,
 )
 from tldw_chatbook.Chat.provider_readiness import (
     KEYLESS_PROVIDER_KEYS,
@@ -3200,13 +3200,12 @@ def unsaved_console_endpoint_warning(
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
+    # TASK-39042: the endpoint contract's scheme rule, the one the send reads
+    # (``effective_provider_endpoint``). Only a loopback spelling may omit
+    # the scheme; llama.cpp's normalizer had added http:// to a remote host.
+    base_url = read_schemeless_loopback(base_url)
     if "://" not in base_url:
-        # TASK-39042: the endpoint contract's scheme rule, as **s** reads it.
-        # Only a loopback spelling may omit the scheme (read as http://);
-        # llama.cpp's normalizer had added http:// to a remote host too.
-        if not is_exact_schemeless_host(base_url.split("/", 1)[0]):
-            return False
-        base_url = f"http://{base_url}"
+        return False
     try:
         candidate = (
             normalize_llamacpp_base_url(base_url)

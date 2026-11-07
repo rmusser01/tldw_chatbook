@@ -907,12 +907,8 @@ def build_provider_setup_mutation(
 
     endpoint = draft.endpoint.strip()
     if endpoint:
-        resolution = resolve_provider_endpoint(ownership.provider_key, endpoint)
-        persisted_endpoint = _persisted_endpoint_for_owner(
-            ownership.provider_key,
-            endpoint_key,
-            resolution.persisted_endpoint,
-            resolution.chat_url,
+        persisted_endpoint = persisted_endpoint_for_key(
+            ownership.provider_key, endpoint_key, endpoint
         )
         if persisted_endpoint is None:
             raise ValueError("Endpoint is invalid.")

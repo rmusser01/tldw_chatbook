@@ -28,6 +28,7 @@ from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     canonical_endpoint_host,
     connection_probe_availability,
     is_exact_schemeless_host,
+    read_schemeless_loopback,
     resolve_provider_endpoint,
 )
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
@@ -270,10 +271,9 @@ def _qwencloud_base_url(endpoint: str | None) -> str:
     Raises:
         QwenCloudBaseURLValidationError: If the URL is malformed or unsafe.
     """
-    raw = (endpoint or "").strip()
-    if raw and "://" not in raw and is_exact_schemeless_host(raw.split("/", 1)[0]):
-        endpoint = f"http://{raw}"
-    return normalize_qwencloud_base_url(endpoint)
+    return normalize_qwencloud_base_url(
+        endpoint if endpoint is None else read_schemeless_loopback(endpoint)
+    )
 
 
 def _is_structurally_safe_generic_endpoint(parsed: ParseResult) -> bool:

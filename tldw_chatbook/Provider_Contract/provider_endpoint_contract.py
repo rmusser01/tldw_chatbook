@@ -682,6 +682,30 @@ def is_exact_schemeless_host(netloc: str) -> bool:
     )
 
 
+def read_schemeless_loopback(endpoint: str) -> str:
+    """The endpoint with ``http://`` added when it is a loopback spelling typed
+    without a scheme, as the contract reads it; anything else unchanged.
+
+    TASK-39042: readiness, the Console send, the Chat settings draft check and
+    QwenCloud's Discover all read a schemeless endpoint through this one rule.
+
+    Args:
+        endpoint: The endpoint as typed or stored.
+
+    Returns:
+        ``http://<endpoint>`` for localhost, 127.0.0.1 or [::1] (with or
+        without a port) typed without a scheme, else ``endpoint`` itself.
+    """
+    raw = endpoint.strip()
+    if not raw or "://" in raw:
+        return endpoint
+    try:
+        netloc = urlsplit(f"http://{raw}").netloc
+    except ValueError:
+        return endpoint
+    return f"http://{raw}" if is_exact_schemeless_host(netloc) else endpoint
+
+
 def _drop_default_port(endpoint: str) -> str:
     parsed = urlsplit(endpoint)
     default_port = (parsed.scheme == "http" and parsed.port == 80) or (

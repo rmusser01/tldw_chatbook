@@ -10,6 +10,7 @@ from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
     canonical_endpoint_host,
+    read_schemeless_loopback,
     resolve_provider_endpoint,
 )
 
@@ -397,6 +398,7 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
     """
     if not str(url or "").strip():
         return ""
+    url = read_schemeless_loopback(str(url))  # TASK-39042: as the send reads it
     # TASK-38963 review: the contract's identity comes before the display
     # rule, so two different endpoints that display alike (``http://kobold``,
     # ``http://other``) never compare as the one sentinel.
@@ -410,7 +412,13 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
 
 
 def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
-    """Resolve endpoint forms only for adapters governed by the new contract."""
+    """Resolve endpoint forms only for adapters governed by the new contract.
+
+    Every provider reads a loopback endpoint typed without a scheme as
+    ``http://`` (TASK-39042 review: readiness took ``localhost:8080`` and the
+    adapter got it schemeless).
+    """
+    endpoint = read_schemeless_loopback(endpoint)
     if provider_key not in {"custom", "custom_2", "llama_cpp", "local_llamacpp"}:
         return endpoint
     resolution = resolve_provider_endpoint(provider_key, endpoint)
