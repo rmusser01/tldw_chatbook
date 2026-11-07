@@ -501,6 +501,122 @@ def test_app_unmount_retires_a_worker_thread_handle_of_each_store(
     assert left == []
 
 
+#: TASK-39117: kernel stores the app holds, by app attribute.
+_KERNEL_STORES = {
+    "workspace": ("local_workspace_db", "tldw_chatbook.DB.Workspace_DB", "WorkspaceDB"),
+    "library_collections": (
+        "local_library_collections_db",
+        "tldw_chatbook.DB.Library_Collections_DB",
+        "LibraryCollectionsDB",
+    ),
+    "notifications": (
+        "client_notifications_db",
+        "tldw_chatbook.Notifications.client_notifications_db",
+        "ClientNotificationsDB",
+    ),
+}
+
+
+@pytest.fixture()
+def kernel_store(request: pytest.FixtureRequest, tmp_path: Path):
+    import importlib
+
+    attribute, module, name = _KERNEL_STORES[request.param]
+    database = getattr(importlib.import_module(module), name)(
+        tmp_path / f"{request.param}.sqlite", "retention_client"
+    )
+    try:
+        yield attribute, database
+    finally:
+        database.close()
+
+
+@pytest.mark.parametrize("kernel_store", list(_KERNEL_STORES), indirect=True)
+def test_app_unmount_retires_a_worker_thread_handle_of_each_kernel_store(
+    kernel_store, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-39117: the Workspace, Library Collections and notifications stores
+    kept no registry, so the quit closed none of their handles, and one opened
+    on a pool thread outlived the app with its storage lease."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    attribute, db = kernel_store
+    kept = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kept")
+
+    def read() -> None:
+        with db.connection() as conn:
+            conn.execute("SELECT 1").fetchone()
+
+    async def quit_after_a_worker_read() -> tuple[list[str], list[str]]:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(kept)
+        await asyncio.to_thread(read)
+        opened = _lease_threads(db)
+        loop.set_default_executor(ThreadPoolExecutor(1, thread_name_prefix="quit"))
+        await _unmount_owner(monkeypatch, **{attribute: db}).on_unmount()
+        return opened, _lease_threads(db)
+
+    try:
+        opened, left = asyncio.run(quit_after_a_worker_read())
+    finally:
+        kept.shutdown(wait=True)
+
+    assert "kept_0" in opened
+    assert left == []
+
+
+@pytest.mark.parametrize("kernel_store", list(_KERNEL_STORES), indirect=True)
+async def test_app_unmount_kernel_store_close_never_aborts_a_straggler_write(
+    kernel_store,
+):
+    """TASK-39117: as for media, Dreams and Guardian, a worker writing across
+    the quit's idle close keeps its open transaction and commits it, and the
+    close returns at once."""
+    import threading
+    import time
+    from unittest.mock import Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+
+    attribute, db = kernel_store
+    with db.transaction() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS quit_probe (n TEXT NOT NULL)")
+    entered, release = threading.Event(), threading.Event()
+    outcome: list[str] = []
+
+    def straggler() -> None:
+        try:
+            with db.transaction() as conn:
+                conn.execute("INSERT INTO quit_probe (n) VALUES ('a')")
+                entered.set()
+                release.wait(20)
+                conn.execute("INSERT INTO quit_probe (n) VALUES ('b')")
+            outcome.append("committed")
+        except Exception as exc:  # noqa: BLE001 - the assertion reports it
+            outcome.append(f"{type(exc).__name__}: {exc}")
+            entered.set()
+        finally:
+            db.close()
+
+    writer = threading.Thread(target=straggler)
+    writer.start()
+    assert entered.wait(5)
+    owner = SimpleNamespace(**{attribute: db}, loguru_logger=Mock())
+    started = time.monotonic()
+    try:
+        await lifecycle_module.LifecycleMixin._close_main_databases(owner)
+        took = time.monotonic() - started
+    finally:
+        release.set()
+        writer.join(10)
+
+    assert (outcome, _rows(db, "quit_probe"), took < 1.0) == (
+        ["committed"],
+        2,
+        True,
+    ), took
+
+
 def _loop_gaps() -> tuple[list[float], asyncio.Task]:
     """Record the event loop's gaps between 20 ms ticks."""
     import time

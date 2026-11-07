@@ -39,8 +39,12 @@ from tldw_chatbook.Backup_Recovery.participants import (
     core_transaction,
     register_core_connection,
 )
-from tldw_chatbook.DB.base_db import registry_acquisition
+from tldw_chatbook.DB.base_db import (
+    registry_acquisition,
+    sqlite_connection_quiescence_registry,
+)
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.private_paths import lexical_path
 
 
 class SQLiteStoreKernel:
@@ -93,6 +97,19 @@ class SQLiteStoreKernel:
                 "_init_store_kernel() runs"
             )
         self._thread_local = threading.local()
+
+    def _join_connection_registry(self, db_path: object) -> None:
+        """Join the file's cross-thread registry for the quit's idle close.
+
+        TASK-39117 (TASK-39047's mechanism). A store that joins must open its
+        handles with ``check_same_thread=False``: that close is the one call
+        that crosses threads; each thread still uses only its own handle.
+        ``:memory:`` has no file to join.
+        """
+        if str(db_path) != ":memory:":
+            self._connection_quiescence = sqlite_connection_quiescence_registry(
+                str(lexical_path(db_path))
+            )
 
     def _open_connection(
         self, *, operation_deadline: float | None = None

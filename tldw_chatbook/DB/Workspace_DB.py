@@ -346,6 +346,7 @@ COMMIT;
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._init_store_kernel()
+        self._join_connection_registry(db_path)  # quit's idle close (TASK-39117)
         try:
             super().__init__(db_path, client_id)
         except BaseException:
@@ -356,7 +357,9 @@ COMMIT;
         self, *, operation_deadline: float | None = None
     ) -> sqlite3.Connection:
         """Open through BaseDB's db.base path (ADR-353 provenance section)."""
-        return BaseDB._get_connection(self, operation_deadline=operation_deadline)
+        return BaseDB._get_connection(
+            self, operation_deadline=operation_deadline, check_same_thread=False
+        )
 
     def _configure_connection(
         self, conn: sqlite3.Connection, *, operation_deadline: float | None = None

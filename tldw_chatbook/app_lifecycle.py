@@ -437,8 +437,9 @@ class LifecycleMixin:
     async def _close_main_databases(self) -> None:
         """Retire the main stores' handles at quit (TASK-38955, TASK-39047).
 
-        ChaChaNotes, media, Dreams and Guardian each close their handles on
-        every thread only if none is in use, so a straggler worker's write is
+        ChaChaNotes, media, Dreams, Guardian, and (TASK-39117) the Workspace,
+        Library Collections and notifications stores each close their handles
+        on every thread only if none is in use, so a straggler worker's write is
         never aborted; a busy store is left to close with the process. Each
         idle store then closes this thread's handle with its checkpoint wait
         bounded. In-memory stores keep their data. Failures never abort.
@@ -448,6 +449,9 @@ class LifecycleMixin:
             ("media_db", "Media"),
             ("dreams_db", "Dreams"),
             ("guardian_db", "Guardian"),
+            ("local_workspace_db", "Workspace"),
+            ("local_library_collections_db", "Library Collections"),
+            ("client_notifications_db", "Notifications"),
         ):
             db = getattr(self, name, None)
             if db is None or db.is_memory_db:

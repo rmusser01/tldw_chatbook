@@ -1,8 +1,10 @@
 ---
 id: TASK-39117
 title: "The Workspace, Library collections, Agent runs, RAG indexing and notifications stores are not closed idle at quit, so a worker thread's handle and storage lease can outlive the app"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-07 02:03
+updated_date: 2026-11-07 06:43
 labels:
 - follow-up
 - database
@@ -52,3 +54,10 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 - [ ] #2 Each store that leaks has no live lease on any thread after `on_unmount`, with a test per store that is red on dev
 - [ ] #3 A straggler's write is never aborted and the quit close stays inside its time bound; the TASK-38955 and TASK-39047 quit tests stay green by name
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Probe (AC#1): per store, open a handle on a kept pool thread, run the real `on_unmount` (`_unmount_owner`), and list the threads still holding a storage lease on the file.
+2. For the stores the app holds (`local_workspace_db`, `local_library_collections_db`, `client_notifications_db`): reuse TASK-39047's mechanism. Each joins its file's `SQLiteConnectionQuiescenceRegistry` (one kernel helper) and opens with `check_same_thread=False`, and `_close_main_databases` closes them idle after the four main stores.
+3. Tests in `Tests/DB/test_sync_log_retention.py` (already laned): a per-store pool-thread lease test (red on dev) and a per-store straggler-write test (red under the TASK-39047 control: both `close_if_idle` in-use checks removed). TASK-38955 and TASK-39047 quit tests stay green by name.
+4. Record what the probe found for AgentRuns, RAG indexing and the project index, which the quit does not hold.
