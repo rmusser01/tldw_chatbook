@@ -131,6 +131,7 @@ _GROUP_OWNERS = {
         "ui.themes",
         "runtime.source_state",
         "tamagotchi.config",
+        "citations.records_choice",
     ),
     "conversations": (
         "db.guardian",

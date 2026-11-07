@@ -917,7 +917,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7069,
+    # 2026-11-06, TASK-33620.8.3 (owner rule "expand limits, don't contort
+    # code"): 7069 -> 7078 (+9), both capture seams note an unrecorded Library
+    # reply with the turn's own session for the one-time records question.
+    "tldw_chatbook/Chat/console_runtime.py": 7078,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
@@ -966,7 +969,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-04, TASK-38686 (owner size waiver 2026-10-31): +1, the comment
     # on update_prompt_by_id's IMMEDIATE transaction.
     "tldw_chatbook/DB/Prompts_DB.py": 4674,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
-    "tldw_chatbook/Chat/citation_trace_repository.py": 4717,
+    # 2026-11-06, TASK-33620.8.3 (owner rule "expand limits, don't contort
+    # code"): 4717 -> 4724 (+7), set_canonical_writes_enabled applies the
+    # one-time citation-records answer to the live policy.
+    "tldw_chatbook/Chat/citation_trace_repository.py": 4724,
     # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
     # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
     # one-hop link-back on the Notes canvas). Owner rule "expand limits,

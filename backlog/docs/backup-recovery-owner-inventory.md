@@ -265,6 +265,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chat/attachment_core.py | process_attachment_bytes | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/chat_conversation_service.py | ChatConversationService._save_rag_context_store | write_text | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
 
+| tldw_chatbook/Chat/citation_records_choice.py | save_answer | write | 1 | qualified | citations.records_choice; settings-file raw source, atomic temporary publication (TASK-33620.8.3) |
 | tldw_chatbook/Chat/citation_trace_identity.py | KeyringCitationFingerprintKeyProvider.provision_key | set_password | 1 | unsupported | runtime.credentials; task14 |
 | tldw_chatbook/Chat/console_chat_store.py | ConsoleChatStore._persist_existing_message | to_json | 3 | memory | serialization-into-db.chachanotes.primary; no-independent-file |
 | tldw_chatbook/Chat/console_chat_store.py | ConsoleChatStore._persist_metadata_only | to_json | 2 | memory | serialization-into-db.chachanotes.primary; no-independent-file |
@@ -1358,6 +1359,7 @@ release startup holds. A read-only/copy ID grants no ordinary-writer bypass.
 | chat.dictionaries | data/chat_dicts, including all retained files and empty topology | `config.load_settings` and exact `Chat_Dictionary_Lib` parser/import/export/listing operations; actual core `chat_dictionaries.file_path` remains a required group when present. Source participants installed, runtime/capture validation pending; caller files never widen this root. |
 | chunking.templates | data/chunking_templates | `ChunkingTemplateManager._get_user_templates_dir`, `ChunkingTemplateManager.save_template`; participant pending. |
 | notes.templates | config-parent/note_templates.json | `Notes.template_store` effective config selector and shared RMW; actual CLI and `_import_template_files` worker use phase8 source lifetime; runtime composition pending. |
+| citations.records_choice | config-parent/citation_records_choice.json | `Chat.citation_records_choice` module source through the settings-file participant (`citation_records_choice` route): `load_answer` and `save_answer` (temporary then replace). The one-time citation-records answer (TASK-33620.8.3); config.toml is never rewritten for it. Settings group. |
 | chat.prompts | installed package/Chat/prompt_templates | `Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR`, `load_template`; inert internal definitions. |
 | generation.styles | data/image_generation_styles | `Media_Creation.generation_templates` installed template directory; participant pending. |
 | tokenizers.custom | canonical ~/.config/tldw_cli/tokenizers, exact installed tokenizer owner root | `Utils.custom_tokenizers.CustomTokenizerManager.__init__`, `install_tokenizer`, `save_mappings`; participant pending. No environment model-cache inference. |

@@ -1842,6 +1842,37 @@ async def capture_console_prepared_evidence_for_chat(
     )
 
 
+async def note_unrecorded_citation_evidence(
+    app: "TldwCli", result: Any, session_id: Any
+) -> None:
+    """Note a turn whose Library evidence went out with no citation record.
+
+    TASK-33620.8.3: when citation records are off (not a keyring problem), an
+    install still carrying the old shipped ``canonical_writes_enabled = false``
+    is asked once, after this turn's reply, whether to keep records. The
+    runtime calls this with the turn's own session after either capture.
+
+    Args:
+        app: Running app with the citation repository.
+        result: The capture's ``LocalRagContextResult``.
+        session_id: The turn's Console session.
+    """
+
+    if getattr(result, "citation_builder", None) is not None or not getattr(
+        result, "context", None
+    ):
+        return
+    try:
+        repository = app.citation_trace_repository
+    except AttributeError:
+        return
+    if getattr(repository, "fingerprint_key_state", None) != "writes_disabled":
+        return
+    from ...Chat.citation_records_choice import note_unrecorded_library_evidence
+
+    await note_unrecorded_library_evidence(repository, session_id)
+
+
 async def _capture_console_evidence_bundle(
     app: "TldwCli",
     bundle: EvidenceBundle,

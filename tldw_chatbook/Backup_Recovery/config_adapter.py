@@ -1102,6 +1102,11 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             location="config",
         ),
         _Definition(
+            "citations.records_choice",
+            leaf="citation_records_choice.json",
+            location="config",
+        ),
+        _Definition(
             "chat.prompts", leaf="Chat/prompt_templates", location="package", tree=True
         ),
         _Definition(

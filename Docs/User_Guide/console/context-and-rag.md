@@ -1185,7 +1185,8 @@ When citation records can't be saved, Chatbook sends the evidence without
 The model may still produce labels; these have no saved source map.
 This happens when no secure system keyring is
 available, or when records are turned off (`canonical_writes_enabled =
-false` under `[rag_citations]` in `config.toml`). A reply whose saved
+false` under `[rag_citations]` in `config.toml`, unless you answered
+**Keep records**; see Older installs below). A reply whose saved
 record can no longer be checked, for example because the keyring was
 reset, shows **Cited sources unavailable**. Its window says why and what to
 do next, such as unlocking or restoring the keyring and restarting
@@ -1197,11 +1198,26 @@ Two cases work differently for now:
 - **Temporary chats** aren't saved, so their replies have no citation
   records. A reply in a Temporary chat can still show `[S1]` labels, but no
   **Cited sources** button.
-- **Older installs** may keep citation records off. Chatbook writes its
-  default settings into `config.toml` when a profile is first set up, so a
-  profile set up before records were on by default can have
-  `canonical_writes_enabled = false` there. To turn records on, change it
-  to `true` under `[rag_citations]` and restart Chatbook.
+- **Older installs** are asked once. Chatbook writes its default settings
+  into `config.toml` when a profile is first set up, so a profile set up
+  before records were on by default can have `canonical_writes_enabled =
+  false` there. After the first reply in such a profile that used Library
+  evidence, Chatbook asks **Keep a record of which sources replies cite?**
+  **Keep records** turns records on from the next reply; **Don't keep**
+  leaves them off. No button is selected when the question opens, so typing
+  meant for the composer can't answer it. Escape closes it without an
+  answer, and Chatbook asks again after a restart.
+
+  Your answer is saved in `citation_records_choice.json` beside
+  `config.toml` and is backed up with your settings; `config.toml` itself
+  is not changed. To change the answer later, open the command palette and
+  choose **Console: Citation records…**. The answer only overrides that
+  `false`: `true`, or no setting, always means records are on. A profile
+  that already has citation records of its own is not asked, because its
+  `false` was set on purpose. Once you've chosen **Keep records**, `false` in
+  `config.toml` no longer turns records off; choose **Don't keep** from the
+  same palette entry instead. If your answer can't be saved, it
+  lasts only until Chatbook closes.
 
 Dim notices under the reply track verification: "Checking citations…",
 then "Citations repaired" or "Citations repaired · View original attempt"

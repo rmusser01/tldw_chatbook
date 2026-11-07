@@ -16933,7 +16933,10 @@ class ChatScreen(BaseAppScreen):
         repository_token: tuple[str, int, int, int] | None = None,
     ) -> None:
         """Discover citation footer counts off-loop and refresh current rows."""
-        from ..Console_Modules.citation_counts import read_citation_counts
+        from ..Console_Modules.citation_counts import (
+            ask_pending_records_question,
+            read_citation_counts,
+        )
 
         if repository_token is None:
             repository_token, current_repository = (
@@ -16959,6 +16962,7 @@ class ChatScreen(BaseAppScreen):
         if shown != {item for item in self._console_citation_counts.items() if item[1]}:
             self._console_transcript_sync_token = None  # past TASK-34958's gate
         await self._sync_native_console_chat_ui()
+        ask_pending_records_question(self, repository, signature[0])
 
     def _native_console_transcript_fingerprint(
         self, messages: list[Any]
