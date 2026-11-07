@@ -77,6 +77,7 @@ from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.startup_errors import private_path_repair_hint
 from tldw_chatbook.Utils.private_paths import (
@@ -6129,6 +6130,13 @@ def _apply_literal_mutation_unlocked(
     return set_any or deleted_any
 
 
+#: TASK-38987: a write makes ~10,000 GIL-releasing syscalls (storage admission
+#: and private-path checks), and beside a thread running Python each one waited
+#: out that thread's 5 ms switch interval (a 0.09 s save took 5.7-6.4 s).
+_CONFIG_WRITE_SWITCH_INTERVAL = 0.0001
+
+
+@switch_interval_at_most(_CONFIG_WRITE_SWITCH_INTERVAL)
 def _apply_literal_settings_transaction_locked(
     mutation_builder: Callable[
         [AtomicLiteralMutationSnapshot], LiteralSettingsMutation
