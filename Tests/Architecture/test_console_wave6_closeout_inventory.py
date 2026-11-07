@@ -36,7 +36,7 @@ _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
     "tldw_chatbook/UI/Screens/chat_screen.py"
 ]
 #: Re-pinned 2026-11-07 by TASK-36948.3 with the row's dated waiver raise.
-LIVE_RATCHET_BUDGET = (24_654, 742)
+LIVE_RATCHET_BUDGET = (24_660, 742)
 
 # Each tuple is (task base, delivered revision, base counts, delivered counts).
 TASK_DELIVERIES = (

@@ -16321,10 +16321,16 @@ class ChatScreen(BaseAppScreen):
         return state
 
     def has_unsaved_editor_state(self) -> bool:
-        """Whether the composer holds unsaved work; read-only (TASK-36948.3).
+        """Whether the Console holds unsaved composer work; read-only (TASK-36948.3).
 
-        Reads the controls directly: ``_console_composer_or_none`` memoizes,
-        while draft reconciliation writes back to sessions and clears stashes.
+        Covers the visible draft, the draft-switch snapshot taken when a
+        session switch begins, and the Enter capture's stash before its
+        callback takes custody. Reads the controls directly:
+        ``_console_composer_or_none`` memoizes, while draft reconciliation
+        writes back to sessions and clears stashes.
+
+        Returns:
+            True when any of them holds text, or the stash holds segments.
 
         Raises:
             TypeError: An unknown shape, so maintenance refuses, never "clean".
