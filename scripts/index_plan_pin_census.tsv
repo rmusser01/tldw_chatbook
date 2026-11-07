@@ -372,3 +372,13 @@ idx_console_mixin_attempt_assistant	plan-pinned	Tests/DB/test_console_prompt_mix
 idx_workflow_conversation	plan-pinned	Tests/DB/test_workflow_runs.py: production queries without sqlite_stat1; dropped-index controls
 idx_workflow_open_interval	plan-pinned	Tests/DB/test_workflow_runs.py: production queries without sqlite_stat1; dropped-index controls
 idx_workflow_task_phase	plan-pinned	Tests/DB/test_workflow_runs.py: production queries without sqlite_stat1; dropped-index controls
+
+# TASK-36510: v87 voice-promotion message-locator probes (SELECT 1 ... IN (?, ?)) without ANALYZE.
+idx_hook_continuation_receipts_assistant_message	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_hook_continuation_receipts_parent_message	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_machine_followup_receipts_assistant_message	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_machine_followup_receipts_parent_message	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_response_rule_assessments_message	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_response_rule_drafts_message	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_response_rule_fixtures_message	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_response_rule_validations_message	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
