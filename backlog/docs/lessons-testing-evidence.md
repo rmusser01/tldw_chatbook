@@ -25392,10 +25392,23 @@ handler (its sleeps grow to 100 ms), so the waiter keeps missing the gaps. A
 deferred writer that must upgrade gets SQLITE_BUSY without the handler at
 all.
 
+**Follow-up (same day, TASK-34000.116).** What fixed it was not bigger gaps.
+The bulk now resolves the Sync v2 profile once, before the loop, so no note
+reads another store while it holds the lock. Each hold fell from 136-152 ms to
+a median of 0.6-0.7 ms, and the whole loop from 6.9-7.5 s to 0.06 s for 50
+notes (17-19 s to 0.13-0.15 s for 120). An `add_conversation` started mid-run
+now gets in after 0.04-0.11 s. The gaps are still tiny: the lock is held for
+63-70% of the loop, because nothing else happens between notes. A mid-run
+`add_note` still failed at once in 5 of 6 runs. Its exposure window is now
+0.06-0.15 s instead of 7-18 s.
+
 **Rule.**
-- Per-item transactions help other writers only if the gaps between them are
-  real. The slow part of each item (here, reads of another store) has to run
-  outside the write transaction.
+- Per-item transactions help a waiting writer only when each item's hold is
+  short. Move the slow part of each item (here, reads of another store) out of
+  the write transaction, and out of the loop if it is the same for every item.
+  The busy-timeout writer then waits at most the short locked run. The gaps
+  between items stay tiny, so a deferred writer that must upgrade still fails
+  if it lands inside the run.
 - A gate at a commit boundary proves the lock is released there, not that
   anyone can get it. Also time a writer that arrives inside an item, and
   report both.
