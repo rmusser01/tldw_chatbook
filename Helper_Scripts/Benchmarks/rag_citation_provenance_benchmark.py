@@ -2117,6 +2117,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.baseline is not None:
                     baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
                     _validate_baseline_document(baseline)
+                # This CLI is its own composition root (TASK-36949.3).
+                from tldw_chatbook.Chat.console_semantic_revision import (
+                    install_semantic_coordination,
+                )
+
+                install_semantic_coordination()
                 result = asyncio.run(
                     run_benchmark(
                         mode=args.mode,

@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import Event
 from Tests.network_guard import install,blocked_attempts
 install()
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination;install_semantic_coordination()
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Canvas.repository import CanvasRepository
 from tldw_chatbook.DB.recovery_core import core_adapters

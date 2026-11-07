@@ -1168,7 +1168,10 @@ async def main() -> int:
     """Main entry point for running the MCP server."""
     from ..Utils.optional_deps import apply_config_eager_flags
 
+    from ..Chat.console_semantic_revision import install_semantic_coordination
+
     apply_config_eager_flags()
+    install_semantic_coordination()  # DB-layer port; composition root
     return await TldwMCPServer().run("stdio")
 
 

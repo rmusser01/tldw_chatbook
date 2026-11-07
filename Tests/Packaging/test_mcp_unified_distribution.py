@@ -177,8 +177,10 @@ print(json.dumps({
 """
 SEED_DATA = r"""
 from tldw_chatbook.config import CLI_APP_CLIENT_ID, get_chachanotes_db_path
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+install_semantic_coordination()  # bare library use is not a composition root
 database = CharactersRAGDB(get_chachanotes_db_path(), client_id=CLI_APP_CLIENT_ID)
 conversation_id = database.add_conversation({"id": "7", "title": "Artifact conversation"})
 assert conversation_id == "7"

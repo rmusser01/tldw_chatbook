@@ -21,6 +21,7 @@ from tldw_chatbook.Backup_Recovery import recovered_media as owner
 from tldw_chatbook.Backup_Recovery.chat_source_participants import build_persona_service
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import remove_message_from_conversation
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination;install_semantic_coordination()
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 from loguru import logger
 root=Path(os.environ['FIXTURE_ROOT'])
