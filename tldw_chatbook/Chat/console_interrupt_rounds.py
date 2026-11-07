@@ -55,9 +55,6 @@ from tldw_chatbook.Agents.approval_provenance import (
     approval_was_unanswered as approval_was_unanswered,  # noqa: PLC0414 - retained public seam
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
-from .console_local_review_hook import (
-    build_local_review_hook as build_local_review_hook,
-)
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_PENDING_APPROVAL_KIND,
     CONSOLE_PENDING_HOOK_REVIEW_KIND,
@@ -341,7 +338,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         read_controller__unpark_round_payload: Callable[[], Any],
         read_controller_add_pending_round: Callable[[], Any],
         read_controller_announce_hidden_decision: Callable[[], Any],
-        read_controller_app: Callable[[], Any],
+        read_controller_host: Callable[[], Any],
         read_controller_ask_user_timeout_seconds: Callable[[], Any],
         read_controller_chat_create_confirm_timeout_seconds: Callable[[], Any],
         read_controller_decision_monotonic_clock: Callable[[], Any],
@@ -564,7 +561,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         self.read_controller_announce_hidden_decision = (
             read_controller_announce_hidden_decision
         )
-        self.read_controller_app = read_controller_app
+        self.read_controller_host = read_controller_host
         self.read_controller_ask_user_timeout_seconds = (
             read_controller_ask_user_timeout_seconds
         )
@@ -960,8 +957,8 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 payload, only when a head was pushed (the approvals bridge
                 fires its permission summary here).
         """
-        app = self.read_controller_app()
-        if app is None or self._setter(kind) is None:
+        call_from_thread = self.read_controller_host().call_from_thread
+        if call_from_thread is None or self._setter(kind) is None:
             return
 
         def _apply() -> None:
@@ -980,7 +977,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             if hook is not None and isinstance(payload, dict):
                 hook(payload)
 
-        app.call_from_thread(_apply)
+        call_from_thread(_apply)
 
     def pending_total(self) -> int:
         """How many rounds of every kind are registered right now.
@@ -1292,7 +1289,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             if not retained_decision:
                 is_head = self.park_round_payload(kind, round_id, payload)
         try:
-            app = self.read_controller_app()
+            call_from_thread = self.read_controller_host().call_from_thread
             park_toast = self.read_controller_park_pending_approval()
             if hard_expired():
                 pass
@@ -1309,20 +1306,20 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     self.read_controller__marshal_pending_decision_projection()()
                 else:
                     setter = self._setter(kind)
-                    if app is not None and setter is not None:
-                        app.call_from_thread(setter, payload)
+                    if call_from_thread is not None and setter is not None:
+                        call_from_thread(setter, payload)
             elif announce_detached is not None and announce_detached():
                 with self.lock:
                     state["attention_announced"] = True
             elif self.view_visible is False:
                 self.announce_hidden_decisions()
             elif is_parked:
-                if app is not None and park_toast is not None:
-                    app.call_from_thread(park_toast, session_id)
+                if call_from_thread is not None and park_toast is not None:
+                    call_from_thread(park_toast, session_id)
             elif is_head:
                 setter = self._setter(kind)
-                if app is not None and setter is not None:
-                    app.call_from_thread(setter, payload)
+                if call_from_thread is not None and setter is not None:
+                    call_from_thread(setter, payload)
             self.refresh_decision_clocks()
             # A sweep can revoke and pop the round between registration and
             # here; a round that is no longer registered never announces
@@ -1448,8 +1445,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             session_id: The round's owning session, used only to name the
                 conversation in the notice.
         """
-        app = self.read_controller_app()
-        notify = getattr(app, "notify", None) if app is not None else None
+        notify = self.read_controller_host().notify
         if not callable(notify):
             return
         title = ""
@@ -1512,8 +1508,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             session_id: The round's owning session. It is routing context
                 only and is never interpolated into the notice.
         """
-        app = self.read_controller_app()
-        notify = getattr(app, "notify", None) if app is not None else None
+        notify = self.read_controller_host().notify
         if not callable(notify):
             return
         label = {
@@ -1711,7 +1706,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             A zero-arg callable returning the switch state, or ``None``
             when the app has no ``unified_mcp_service`` (nothing to honor).
         """
-        service = getattr(self.read_controller_app(), "unified_mcp_service", None)
+        service = self.read_controller_host().unified_mcp_service
         if service is None:
             return None
         getter = getattr(service, "get_kill_switch", None)
@@ -1976,10 +1971,10 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 cannot sit between payload delivery and the wait mark.
         """
         if (
-            self.read_controller_app() is not None
+            self.read_controller_host().call_from_thread is not None
             and self.read_controller_set_pending_approval() is not None
         ):
-            self.read_controller_app().call_from_thread(
+            self.read_controller_host().call_from_thread(
                 self.read_controller_set_pending_approval(), payload
             )
         if fire_summary and isinstance(payload, dict):
@@ -1995,7 +1990,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             payload: Proposed confirmation, or None to rederive the active head.
         """
         if (
-            self.read_controller_app() is None
+            self.read_controller_host().call_from_thread is None
             or self.read_controller_set_pending_chat_create() is None
         ):
             return
@@ -2030,13 +2025,13 @@ class InterruptRoundHost(InitialHookReviewMixin):
             # The UI owns Close/navigation; external sinks run outside locks.
             setter(payload)
 
-        self.read_controller_app().call_from_thread(_apply)
+        self.read_controller_host().call_from_thread(_apply)
 
     def _marshal_pending_decision_projection(self) -> None:
         """Worker-thread marshal of the active-session derived head."""
-        if self.read_controller_app() is None:
+        if self.read_controller_host().call_from_thread is None:
             return
-        self.read_controller_app().call_from_thread(
+        self.read_controller_host().call_from_thread(
             self.read_controller_project_pending_decision_for_active_session()
         )
 
@@ -2047,17 +2042,17 @@ class InterruptRoundHost(InitialHookReviewMixin):
             payload: The card payload to show, or None to hide the card.
         """
         if (
-            self.read_controller_app() is not None
+            self.read_controller_host().call_from_thread is not None
             and self.read_controller_set_pending_question() is not None
         ):
-            self.read_controller_app().call_from_thread(
+            self.read_controller_host().call_from_thread(
                 self.read_controller_set_pending_question(), payload
             )
 
     def _marshal_pending_skill_install(self, payload: dict[str, Any] | None) -> None:
         """WORKER THREAD: hand a skill-install confirm payload to the UI thread.
 
-        No-op when no UI bridge is wired (``self.app`` or
+        No-op when no UI bridge is wired (``call_from_thread`` or
         ``set_pending_skill_install`` is None).
 
         Args:
@@ -2065,10 +2060,10 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 dict to show, or None to clear/hide the card.
         """
         if (
-            self.read_controller_app() is not None
+            self.read_controller_host().call_from_thread is not None
             and self.read_controller_set_pending_skill_install() is not None
         ):
-            self.read_controller_app().call_from_thread(
+            self.read_controller_host().call_from_thread(
                 self.read_controller_set_pending_skill_install(), payload
             )
 
@@ -2079,10 +2074,10 @@ class InterruptRoundHost(InitialHookReviewMixin):
             payload: The pending confirm dict to show, or None to hide it.
         """
         if (
-            self.read_controller_app() is not None
+            self.read_controller_host().call_from_thread is not None
             and self.read_controller_set_pending_skill_script() is not None
         ):
-            self.read_controller_app().call_from_thread(
+            self.read_controller_host().call_from_thread(
                 self.read_controller_set_pending_skill_script(), payload
             )
 
@@ -2093,10 +2088,10 @@ class InterruptRoundHost(InitialHookReviewMixin):
             payload: The pending confirm dict to show, or None to hide it.
         """
         if (
-            self.read_controller_app() is not None
+            self.read_controller_host().call_from_thread is not None
             and self.read_controller_set_pending_worktree_merge() is not None
         ):
-            self.read_controller_app().call_from_thread(
+            self.read_controller_host().call_from_thread(
                 self.read_controller_set_pending_worktree_merge(), payload
             )
 
@@ -2114,10 +2109,10 @@ class InterruptRoundHost(InitialHookReviewMixin):
             tasks: Its full task list after the change.
         """
         if (
-            self.read_controller_app() is not None
+            self.read_controller_host().call_from_thread is not None
             and self.read_controller_set_task_panel() is not None
         ):
-            self.read_controller_app().call_from_thread(
+            self.read_controller_host().call_from_thread(
                 self.read_controller_set_task_panel(), session_id, tasks
             )
 
@@ -2401,9 +2396,9 @@ class InterruptRoundHost(InitialHookReviewMixin):
             text = summarize_pending_round(resolution, tail, info)
         except Exception:  # noqa: BLE001 -- advisory only
             text = None
-        if not text or self.read_controller_app() is None:
+        if not text or self.read_controller_host().call_from_thread is None:
             return
-        self.read_controller_app().call_from_thread(
+        self.read_controller_host().call_from_thread(
             self.read_controller__deliver_permission_summary(), round_id, payload, text
         )
 
@@ -2484,7 +2479,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         `MCPToolProvider._record_decision_safe` (the normal recording
         path) is never reached for these calls, since `run_agent_loop`
         cancels the whole turn before dispatching any of them. Reached via
-        `self.app.unified_mcp_service` (the same object
+        the host's `unified_mcp_service` (the same object
         `_compose_mcp_provider` built this run's `MCPToolProvider` from --
         see that method), never raises: a missing app/service, or the
         service lacking `record_tool_decision`, is a silent no-op, and any
@@ -2492,7 +2487,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         `MCPToolProvider._record_decision_safe`'s own never-raise
         contract.
         """
-        service = getattr(self.read_controller_app(), "unified_mcp_service", None)
+        service = self.read_controller_host().unified_mcp_service
         if service is None:
             return
         record = getattr(service, "record_tool_decision", None)
@@ -2602,11 +2597,11 @@ class InterruptRoundHost(InitialHookReviewMixin):
             session_id: The session whose head to push; None means the
                 store's active session.
         """
-        if self.read_controller_app() is None:
+        if self.read_controller_host().call_from_thread is None:
             return
 
         if self.read_controller_set_pending_decision() is not None:
-            self.read_controller_app().call_from_thread(
+            self.read_controller_host().call_from_thread(
                 self.read_controller_project_pending_decision_for_active_session()
             )
             return
@@ -2624,7 +2619,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             if isinstance(payload, dict):
                 self.read_controller__maybe_fire_permission_summary()(payload)
 
-        self.read_controller_app().call_from_thread(_apply)
+        self.read_controller_host().call_from_thread(_apply)
 
     def _remount_parked_chat_create(self, session_id: str) -> None:
         """Re-derive the mounted chat-create confirm card for ``session_id``.
@@ -3232,35 +3227,25 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 that want to specialise).
             raised: True for an arm, False for a teardown.
         """
-        app = self.read_controller_app()
-        if app is None:
+        controller_host = self.read_controller_host()
+        attention, marshal = controller_host.console_attention, controller_host.call_from_thread
+        if attention is None or not callable(marshal):
             return
         ring = (
             raised
             and total > 0
             and self.read_controller__interrupt_bell_enabled()()
             and self.read_controller__approval_view_is_detached()()
-            and not bool(getattr(app, "is_headless", False))
+            and not controller_host.is_headless()
         )
         host = self
 
         def _apply() -> None:
-            from tldw_chatbook.UI.Navigation.main_navigation import (
-                set_console_attention,
-            )
-
             # Re-read the total on the UI thread: two workers' updates may
             # be marshalled out of order, and the badge must show the
             # host's current truth, not whichever dispatch ran last.
-            current = host.pending_total() if host is not None else total
-            set_console_attention(app, current)
-            bell = getattr(app, "bell", None) if ring else None
-            if callable(bell):
-                bell()
+            attention(host.pending_total() if host is not None else total, ring)
 
-        marshal = getattr(app, "call_from_thread", None)
-        if not callable(marshal):
-            return
         try:
             marshal(_apply)
         except Exception:  # noqa: BLE001 -- attention is best-effort, never the round
@@ -3579,7 +3564,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 token.close()
             return {"allow": False, "remember": False}
         if (
-            self.read_controller_app() is None
+            self.read_controller_host().call_from_thread is None
             or self.read_controller_set_pending_chat_create() is None
         ):
             if record is not None:
@@ -3685,10 +3670,10 @@ class InterruptRoundHost(InitialHookReviewMixin):
         try:
             if is_parked:
                 if (
-                    self.read_controller_app() is not None
+                    self.read_controller_host().call_from_thread is not None
                     and self.read_controller_park_pending_approval() is not None
                 ):
-                    self.read_controller_app().call_from_thread(
+                    self.read_controller_host().call_from_thread(
                         self.read_controller_park_pending_approval(), session_id
                     )
             elif is_head:
@@ -3811,7 +3796,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         ``request_approvals``, so this runs on the agent bridge's
         background OS thread (the ``asyncio.to_thread`` call inside
         ``_run_agent_reply``) -- it must never touch a widget directly,
-        only through ``self.app.call_from_thread``.
+        only through the host's ``call_from_thread``.
 
         Builds a fresh ``threading.Event`` + shared decisions dict (stored
         under this round's own entry in ``_pending_approval_rounds``, keyed
@@ -3901,8 +3886,8 @@ class InterruptRoundHost(InitialHookReviewMixin):
             denied.unresolved_keys = frozenset(unique_keys)
             return denied
 
-        if self.read_controller_app() is None:
-            # Without an app there is no card or execution log. Keep the
+        if self.read_controller_host().call_from_thread is None:
+            # Without a host app there is no card or execution log. Keep the
             # unanswered metadata so review hooks never attribute a user Deny.
             return refuse_unanswered()
         event = self.read_global_threading().Event()
@@ -4233,7 +4218,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             True only on an explicit Allow; every other path (deny, cancel,
             stop, timeout, or no wired UI) returns False.
         """
-        if self.read_controller_app() is None or (
+        if self.read_controller_host().call_from_thread is None or (
             self.read_controller_set_pending_skill_install() is None
             and not self.has_retained_decision_target(session_id)
         ):
@@ -4340,7 +4325,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             ``{"allow": bool, "remember": bool}``. Every non-Allow path (deny,
             cancel, stop, timeout, no wired UI) returns ``allow=False``.
         """
-        if self.read_controller_app() is None or (
+        if self.read_controller_host().call_from_thread is None or (
             self.read_controller_set_pending_skill_script() is None
             and not self.has_retained_decision_target(session_id)
         ):
@@ -4447,7 +4432,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         )
         from tldw_chatbook.Chat.console_agent_bridge import format_question_marker
 
-        if self.read_controller_app() is None or (
+        if self.read_controller_host().call_from_thread is None or (
             self.read_controller_set_pending_question() is None
             and not self.has_retained_decision_target(session_id)
         ):
@@ -4622,7 +4607,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             non-Allow path (deny, cancel, stop, timeout, no wired UI)
             returns ``allow=False``.
         """
-        if self.read_controller_app() is None or (
+        if self.read_controller_host().call_from_thread is None or (
             self.read_controller_set_pending_worktree_merge() is None
             and not self.has_retained_decision_target(session_id)
         ):
@@ -5180,7 +5165,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
     def worktree_confirmation_enabled(self) -> bool:
         """Only the real disposable worktree surface enables new tool disclosure."""
         return (
-            self.read_controller_app() is not None
+            self.read_controller_host().call_from_thread is not None
             and self.read_controller_set_pending_worktree_merge() is not None
         )
 
@@ -6288,3 +6273,13 @@ _CONSOLE_PENDING_FACTS_READERS = tuple(
     )
     for method in (getattr(InterruptRoundHost, name),)
 )
+
+
+def apply_console_attention(app: Any, pending: int, ring: bool) -> None:
+    """UI THREAD: badge Console with ``pending`` rounds; ring the bell when asked."""
+    from tldw_chatbook.UI.Navigation.main_navigation import set_console_attention
+
+    set_console_attention(app, pending)
+    bell = getattr(app, "bell", None) if ring else None
+    if callable(bell):
+        bell()

@@ -158,6 +158,7 @@ tldw_chatbook.Chat.console_configuration_capture
 tldw_chatbook.Chat.console_context_compaction
 tldw_chatbook.Chat.console_context_policy
 tldw_chatbook.Chat.console_context_repository
+tldw_chatbook.Chat.console_controller_host
 tldw_chatbook.Chat.console_conversation_activation
 tldw_chatbook.Chat.console_conversation_hydration
 tldw_chatbook.Chat.console_cost_tracker
@@ -187,7 +188,6 @@ tldw_chatbook.Chat.console_library_policy
 tldw_chatbook.Chat.console_library_policy_coordinator
 tldw_chatbook.Chat.console_library_policy_repository
 tldw_chatbook.Chat.console_live_work
-tldw_chatbook.Chat.console_local_review_hook
 tldw_chatbook.Chat.console_memory_banner
 tldw_chatbook.Chat.console_message_actions
 tldw_chatbook.Chat.console_onboarding_state

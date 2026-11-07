@@ -1235,7 +1235,6 @@ def poll_source(self) -> dict | None:
         type(store) is not ConsoleChatStore
         or type(controller) is not ConsoleChatController
         or controller.store is not store
-        or controller.app is not app
         or runtime._app is not app
         or runtime._disposed
         or controller._disposed

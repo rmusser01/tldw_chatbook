@@ -216,11 +216,8 @@ def _ensure_launch_runtime(app: Any) -> Any:
         agent_runtime_enabled=_gate("agent_runtime"),
         skills_service=getattr(app, "skills_scope_service", None),
     )
-    # Deliberately NOT a view-hook slot: this is the APP, which outlives
-    # every view, and a headless approval round's `call_from_thread` bridge
-    # (and its app-wide toast) needs it. `ChatScreen` sets the same handle
-    # one line after its own construction call.
-    controller.app = app
+    # The runtime builds the controller's host over its own app (TASK-36947.4):
+    # a headless approval round's `call_from_thread` bridge and toast need it.
     return controller
 
 
