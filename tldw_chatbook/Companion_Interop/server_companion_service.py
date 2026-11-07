@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -15,8 +15,27 @@ if TYPE_CHECKING:
         CompanionGoalUpdate,
         CompanionPurgeRequest,
         CompanionRebuildRequest,
-        TLDWAPIClient,
     )
+
+
+class ServerCompanionClient(Protocol):
+    """Client methods ServerCompanionService calls (TASK-36953.1)."""
+
+    async def create_companion_activity(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_companion_check_in(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_companion_goal(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_companion_activity(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_companion_conversation_prompts(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def get_companion_knowledge(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_companion_reflection(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_companion_activity(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_companion_goals(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_companion_knowledge(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def purge_companion_data(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def rebuild_companion_data(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_companion_goal(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerCompanionService:
@@ -24,7 +43,7 @@ class ServerCompanionService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerCompanionClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -59,7 +78,7 @@ class ServerCompanionService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerCompanionClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:
