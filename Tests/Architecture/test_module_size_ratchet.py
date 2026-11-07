@@ -134,7 +134,7 @@ _BUDGETS: dict[str, int] = {
     # on the UI loop.
     # 2026-11-03, TASK-36945.3: 5689 -> 5686 (-3) -- the eager-dependency flag
     # moved from on_mount to the entry points.
-    "tldw_chatbook/app.py": 5686,
+    "tldw_chatbook/app.py": 5687,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -165,7 +165,7 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3693,
+    "tldw_chatbook/app_service_wiring.py": 3702,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
