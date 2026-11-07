@@ -8,8 +8,10 @@ composition root installs the port during startup.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -182,14 +184,28 @@ def _stop(*_args, **_kwargs):
     raise _StartupReached
 
 
-def _tldw_cli(monkeypatch, tmp_path):
-    # `tldw-cli` and `python -m tldw_chatbook` reach this through cli.main_cli_runner.
-    from tldw_chatbook import app_entry
-    from tldw_chatbook.Tools import workspace_file_roots
+def _entry(target):
+    """Resolve a pyproject console-script target (``module:function``)."""
+    module, function = target.split(":")
+    return getattr(importlib.import_module(module), function)
 
+
+TLDW_CLI = "tldw_chatbook.cli:main_cli_runner"  # also `python -m tldw_chatbook`
+TLDW_SERVE = "tldw_chatbook.Web_Server.serve:main"  # also `-m ...Web_Server.serve`
+
+
+def _tldw_cli(monkeypatch, tmp_path):
+    from tldw_chatbook import app_entry
+    from tldw_chatbook.Backup_Recovery import launcher
+    from tldw_chatbook.Tools import workspace_file_roots
+    from tldw_chatbook.Utils import startup_logging
+
+    monkeypatch.setattr(sys, "argv", ["tldw-cli"])
+    monkeypatch.setattr(startup_logging, "quiet_startup_stderr", lambda: None)
+    monkeypatch.setattr(launcher, "startup_unlock", lambda: None)
     monkeypatch.setattr(workspace_file_roots, "set_launch_cwd", lambda: None)
     monkeypatch.setattr(app_entry, "install_termination_handlers", _stop)
-    return app_entry.main_cli_runner
+    return _entry(TLDW_CLI)
 
 
 def _python_m_app(monkeypatch, tmp_path):
@@ -202,6 +218,14 @@ def _python_m_app(monkeypatch, tmp_path):
     return app_entry._run_module_main
 
 
+def _get_app(monkeypatch, tmp_path):
+    # `app_entry.get_app()`, the textual-serve app factory (not a console script).
+    from tldw_chatbook import app_entry
+
+    monkeypatch.setattr(app_entry, "_is_source_tree", _stop)
+    return app_entry.get_app
+
+
 def _tldw_serve(monkeypatch, tmp_path):
     from tldw_chatbook.Web_Server import serve
 
@@ -209,7 +233,7 @@ def _tldw_serve(monkeypatch, tmp_path):
     monkeypatch.setattr(serve, "apply_config_eager_flags", lambda: None)
     monkeypatch.setattr(serve, "check_web_server_available", lambda: True)
     monkeypatch.setattr(serve, "get_cli_setting", _stop)
-    return serve.main
+    return _entry(TLDW_SERVE)
 
 
 def _mobile_service(monkeypatch, tmp_path):
@@ -241,9 +265,24 @@ def _rag_backfill(monkeypatch, tmp_path):
     return lambda: backfill.main(["--types", "media"])
 
 
+#: (case, the pyproject console-script target it starts from, or None).
+ROOT_CASES = [
+    (_tldw_cli, TLDW_CLI),
+    (_python_m_app, None),
+    (_get_app, None),
+    (_tldw_serve, TLDW_SERVE),
+    (_mobile_service, None),
+    (_mcp_server, None),
+    (_rag_backfill, None),
+]
+
+#: Console scripts that are not composition roots: {script name: reason}.
+SCRIPT_EXEMPTIONS: dict[str, str] = {}
+
+
 @pytest.mark.parametrize(
     "root",
-    [_tldw_cli, _python_m_app, _tldw_serve, _mobile_service, _mcp_server, _rag_backfill],
+    [case for case, _target in ROOT_CASES],
     ids=lambda root: root.__name__.lstrip("_"),
 )
 def test_every_composition_root_installs_the_port_during_startup(
@@ -254,3 +293,16 @@ def test_every_composition_root_installs_the_port_during_startup(
     with pytest.raises(_StartupReached):
         start()
     assert port._factory is SemanticRevisionCoordinator
+
+
+def test_every_console_script_is_a_tested_root_or_exempt():
+    project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+    scripts = {**project.get("scripts", {}), **project.get("gui-scripts", {})}
+    tested = {target for _case, target in ROOT_CASES if target}
+    unaccounted = {
+        name: target
+        for name, target in scripts.items()
+        if target not in tested and name not in SCRIPT_EXEMPTIONS
+    }
+    assert not unaccounted, f"add a root case or an exemption: {unaccounted}"
+    assert set(SCRIPT_EXEMPTIONS) <= set(scripts), "stale exemption"
