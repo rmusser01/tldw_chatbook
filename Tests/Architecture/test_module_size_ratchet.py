@@ -990,7 +990,11 @@ _BUDGETS: dict[str, int] = {
     # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
     # a legacy/imported chat's missing Library-policy row (the safe
     # Never/Blocked default its turn ran under) instead of refusing it.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4239,
+    # 2026-11-06 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): 4239 -> 4245 (+6) -- the mix-in attempt
+    # save starts BEGIN IMMEDIATE, so a concurrent writer no longer refuses
+    # a turn with "database is locked".
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4245,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The
