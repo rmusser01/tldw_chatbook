@@ -55,9 +55,9 @@ def test_admitted_mcp_targets_and_authority_expose_controls(tmp_path, control):
 @pytest.mark.parametrize(
     "decision,route,action",
     [
-        ("approve_session", "MCP Tools", "Revoke"),
-        ("allow_matching", "MCP Tools", "Remove"),
-        ("always_allow", "MCP Permissions", ""),
+        ("approve_session", "Settings ▸ Tools & MCP ▸ Tools", "Revoke"),
+        ("allow_matching", "Settings ▸ Tools & MCP ▸ Tools", "Remove"),
+        ("always_allow", "Settings ▸ Tools & MCP ▸ Permissions", ""),
     ],
 )
 def test_scope_copy_names_the_actual_revocation_control(decision, route, action):
@@ -69,7 +69,7 @@ def test_scope_copy_names_the_actual_revocation_control(decision, route, action)
     ).rows[0]
     text = scope_copy(row, decision)
     assert route in text and action in text
-    assert "Settings" not in text
+    assert row.authority.revocation_label == "Settings ▸ Tools & MCP ▸ Permissions"
     if decision != "approve_session":
         assert "inherit" in text
 
@@ -115,3 +115,113 @@ def test_admitted_parameter_preview_exposes_surrogates_before_utf8_budget(tmp_pa
         if controller is not None:
             controller.store.persistence.db.close()
         loop.close()
+
+
+@pytest.mark.parametrize(
+    "control,escaped",
+    [
+        ("\n", "\\n"),
+        ("\r", "\\r"),
+        ("\x1b", "\\x1b"),
+        ("\u202e", "\\u202e"),
+        ("\u2028", "\\u2028"),
+        ("\u2029", "\\u2029"),
+    ],
+)
+def test_raw_metadata_display_exposes_controls_without_changing_request(
+    control, escaped
+):
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        _raw_shell_metadata,
+    )
+
+    entry = {
+        "arguments": {
+            "shell": "bash",
+            "initial_directory": "directory" + control + "Timeout: FORGED",
+            "timeout_seconds": 17,
+        }
+    }
+    original = deepcopy(entry)
+    text = _raw_shell_metadata(entry)
+    assert text == (
+        "Shell: bash\nDirectory: directory" + escaped + "Timeout: FORGED\n"
+        "Timeout: 17 seconds"
+    )
+    assert len(text.splitlines()) == 3
+    assert entry == original
+
+
+@pytest.mark.parametrize(
+    "tool_name,path_key",
+    [
+        ("read_file", "file_path"),
+        ("write_file", "file_path"),
+        ("list_directory", "directory_path"),
+    ],
+)
+def test_builtin_file_review_preserves_complete_shipping_path_target(
+    tmp_path, tool_name, path_key
+):
+    from types import SimpleNamespace
+
+    from Tests.Agents.test_builtin_tool_gate import _FakeService
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools.file_operation_tools import (
+        ListDirectoryTool,
+        ReadFileTool,
+        WriteFileTool,
+    )
+
+    tool = {
+        "read_file": ReadFileTool,
+        "write_file": WriteFileTool,
+        "list_directory": ListDirectoryTool,
+    }[tool_name]()
+    assert path_key in tool.parameters["required"]
+    target = "資料/" + "long-directory/" * 64 + "target\n\u202e終😀.md"
+    expected_target = "資料/" + "long-directory/" * 64 + "target\\n\\u202e終😀.md"
+    arguments = {"content": "private body " * 1000} if tool_name == "write_file" else {}
+    arguments[path_key] = target
+    original = deepcopy(arguments)
+    gate = BuiltinToolGate(
+        _FakeService(
+            payload={"profiles": {"default": {"global_default": "ask", "servers": {}}}}
+        )
+    )
+    pending_rows = []
+
+    def request(pending):
+        pending_rows.extend(pending)
+        return {"file-call": "deny"}
+
+    hook = build_tool_review_hook(
+        gate,
+        SimpleNamespace(
+            tool_for=lambda name: tool if name == tool_name else None,
+            sandbox_root=tmp_path,
+        ),
+        None,
+        request,
+    )
+    hook([ToolCall(tool_name, arguments, "file-call")], "file-target-review")
+    assert len(pending_rows) == 1
+    pending = pending_rows[0]
+    row = capture_approval_view(
+        pending_rows, round_id="round", session_id="chat", run_id="run", revision=1
+    ).rows[0]
+    assert row.targets == (expected_target,)
+    assert (
+        row.action_label
+        == {
+            "read_file": "Read file",
+            "write_file": "Write file",
+            "list_directory": "List directory",
+        }[tool_name]
+    )
+    assert row.authority.provider_kind == "builtin"
+    assert pending.effects == (("mutates_local",) if tool_name == "write_file" else ())
+    assert dict(row.argument_sets[0]) == pending.arguments == arguments == original
+    assert pending.options == ("approve_once", "approve_session", "deny")

@@ -117,7 +117,7 @@ def profile_authority(
         location_label,
         "profile",
         stamp_domain,
-        "MCP Permissions",
+        "Settings ▸ Tools & MCP ▸ Permissions",
         profile_id == "default",
     )
 
@@ -131,7 +131,17 @@ def _display_target(arguments: Mapping[str, object], provider_kind: str) -> str:
     if provider_kind == "virtual_cli" and isinstance(safe.get("argv"), (list, tuple)):
         tokens = [str(safe.get("command", "")), *(str(value) for value in safe["argv"])]
         return shlex.join(redact_args(tokens))
-    for key in ("path", "command", "url", "uri", "target", "destination", "filename"):
+    for key in (
+        "path",
+        "file_path",
+        "directory_path",
+        "command",
+        "url",
+        "uri",
+        "target",
+        "destination",
+        "filename",
+    ):
         if key in safe:
             return str(safe[key])
     text = display_literal(json.dumps(safe, ensure_ascii=False, default=str))
@@ -286,7 +296,8 @@ def scope_copy(row: ApprovalRowView, decision: str) -> str:
             )
         return (
             f"Until Chatbook exits: every call to this tool in profile {owner.profile_label}, "
-            "across chats using that exact profile. Revoke in MCP Tools: selected tool → Revoke."
+            "across chats using that exact profile. "
+            "Revoke in Settings ▸ Tools & MCP ▸ Tools: selected tool → Revoke."
         )
     scope = (
         f"Remember exactly the inputs of {calls}"
@@ -294,9 +305,9 @@ def scope_copy(row: ApprovalRowView, decision: str) -> str:
         else "Remember this tool"
     )
     route = (
-        "MCP Tools: selected tool → Remove the matching input rule"
+        "Settings ▸ Tools & MCP ▸ Tools: selected tool → Remove the matching input rule"
         if decision == "allow_matching"
-        else "MCP Permissions: change this tool’s policy"
+        else "Settings ▸ Tools & MCP ▸ Permissions: change this tool’s policy"
     )
     copy_text = f"{scope} in profile {owner.profile_label}. Revoke in {route}."
     if owner.inherits_default:

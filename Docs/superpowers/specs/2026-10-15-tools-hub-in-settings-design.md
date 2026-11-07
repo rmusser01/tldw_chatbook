@@ -321,7 +321,7 @@ otherwise Console's permission deep links silently land on Servers.
 
 The number 233 is also claimed by the served-web work: `ce8f2d6dcd` (2026-10-15,
 the earlier claim) "served web session persistence and device pairing", with
-ADR-234 (served mobile companion), ADR-235 (WebAuthn passkey login) and
+ADR-234 (served mobile companion), ADR-354 (WebAuthn passkey login) and
 ADR-236 (canvas relay message types) claimed on sibling branches. Renumber
 this ADR to the next free number — **≥ 237 as of 2026-10-16 midday; re-sweep
 all refs at merge time** — and update the spec, plan, task-35150, and the

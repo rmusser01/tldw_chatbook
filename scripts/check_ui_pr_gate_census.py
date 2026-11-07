@@ -887,6 +887,8 @@ MINIMUM_FILES = 1814
 MINIMUM_FILES = 1813
 # PR3036 resync: retain all 1813 current entries and append 4 approval contracts.
 MINIMUM_FILES = 1817
+# PR3036 whole-branch review: append two bounded literal-Details regressions.
+MINIMUM_FILES = 1819
 
 
 def read_census(path: Path) -> list[str]:

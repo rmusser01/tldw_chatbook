@@ -3,20 +3,21 @@ id: TASK-34569
 title: Qualify Console approval clarity and responsiveness
 status: In Progress
 assignee:
-- '@codex'
-created_date: 2026-10-06 06:42
-updated_date: 2026-10-16 00:48
+  - '@codex'
+created_date: '2026-10-06 06:42'
+updated_date: '2026-11-07 00:31'
 labels: []
 dependencies:
-- TASK-34564
-- TASK-34565
-- TASK-34566
-- TASK-34567
-- TASK-34568
+  - TASK-34564
+  - TASK-34565
+  - TASK-34566
+  - TASK-34567
+  - TASK-34568
 documentation:
-- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-- backlog/decisions/235-console-approval-interaction-and-feedback.md
-- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+  - >-
+    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+  - backlog/decisions/235-console-approval-interaction-and-feedback.md
+  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -75,8 +76,10 @@ Hosted83 fast-lane exact-pin continuation: reproduce the two actual queue-pressu
 Hosted83 markup guard continuation on1bc: retain actual scanner RED and exact card/scanner/census bindings; Root b8 static guard passes315notify/80button/59tooltip with542pins. Follow existing plain rich.text.Text convention: add one import and wrap the three whole interpolated label assignments (_sync_control_layout1,set_batch2) without changing labels, length arithmetic, alias names, actions, authority or budgets. No census regeneration/guard relaxation or new mirroredtest. Run real scanner GREEN, full scanner unit module and only actual affected count/layout/currentness controls; bind canonical artifacts if inputs require build. ADR required:no new; existingTASK1513 convention/ADR235 apply. Normal clean commit and unique152/134/97seal; preserve every historical negative and native/external AC.
 PR3036 resumed CI correction: reproduce the exact Rules Stop selectors on unchanged b1df and trace their command-worker ownership; strengthen the existing test with deterministic unrelated-worker cancellation, then await only the actual held learning command and retain strict helper cleanup/currentness/draft/nonactive-result checks. Verify the real Mermaid pinned public inputs and underlying failure without weakening hashes, redirects, URLs, or artifact checks; choose a bounded fix only from observed cause. ADR required: no. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md (existing; response-rule owner ADR232 also retained). Reason: CI qualification/test ownership correction within existing behavior, no new runtime boundary. Run targeted original/control/affected CI tests, preserve all prior evidence, independent narrow review, normal commit and lease push/fresh required PR CI. Keep draft/auto-merge off and native/Windows/timing AC open.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented captured-card guides and reproducible artwork with production theme fallback, destination-validation/bare-theme regressions, finite targeted launcher additions and final content-free receipts under Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/. New journeys connect painted consent/controller arbitration to real permission/cache owners and private SQLite using harmless external transport doubles (scope9/UI4). Existing stale-generation, disclosure, Details, FIFO/deadline and Alt+A composer cases are credited separately. Final targeted presentation18/feedback29/Details18/interaction21/artwork5/recorder16/bundle5 pass. Tokens7pass1existingfail, component13pass5existingfails with matching BASE messages; startup lazy imports2pass, optional-work wait fails identically on BASE. Owned root Ruff/format pass. Native/browser presented-frame observers unavailable, zero qualified samples, actual Windows local/virtual dispatch root-pin failures and complete transport visual matrix remain open. No freeze/speed claim or full sweep. ADR-235; all13 rulings/costs preserved; final independent review pending; In Progress, not Done.
 
@@ -95,3 +98,6 @@ Resumed CI correction (2026-10-15): hosted b1df UI Fast Lane 3 failed at the lea
 ## Renumbering provenance
 
 Originally TASK-34416 in the reviewed approval checkout. Renumbered to TASK-34569 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.
+
+2026-11-06 currentdev resync completed. All1748old census members/order retained plus6bounded contracts, floor1754; requiredlane/independentpins include realrelay cases andlimits unchanged. Full source review anddelta review have no remaining material findings. ActualWindows dispatch qualified with realowner/worker/sourceclosure andzeroegress. No fullsweep. Native/browser presentedframe timings0samples,100/200ms/40warm andphysicalmatrix remain mandatory; draft/auto-merge off pending explicit method approval and evidence. Existing ADR235/236 applies; no new authority. Evidence Docs/superpowers/qa/2026-11-06-console-approval-resync/README.md. Status remains In Progress.
+<!-- SECTION:NOTES:END -->

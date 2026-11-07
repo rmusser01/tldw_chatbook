@@ -48,7 +48,7 @@ import time
 import weakref
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar, copy_context
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from types import FunctionType, MethodType
 from typing import TYPE_CHECKING, Any
 
@@ -401,9 +401,9 @@ class MCPPendingCall:
     requires_individual_review: bool = False
     #: Original owner inputs, separate from safe display summaries.
     #: Display-only: excluded from repr/equality and all wire/persistence projections.
-    captured_arguments: Mapping[str, object] | None = field(default=None, repr=False, compare=False)
+    captured_arguments: Mapping[str, object] | None = dataclass_field(default=None, repr=False, compare=False)
     # Producer records an absent original invocation ID; never stamp authority.
-    legacy_observation_key: bool = field(default=False, compare=False, repr=False)
+    legacy_observation_key: bool = dataclass_field(default=False, compare=False, repr=False)
 
 
 def _has_non_text_content(value: Any) -> bool:

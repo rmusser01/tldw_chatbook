@@ -1,4 +1,4 @@
-// Chatbook served passkey login and registration (ADR-235).
+// Chatbook served passkey login and registration (ADR-354).
 // Loaded with defer by both the login page and the devices page. The
 // server renders its passkey buttons hidden and this file reveals them
 // only when the browser actually supports WebAuthn

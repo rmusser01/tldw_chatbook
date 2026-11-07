@@ -1,6 +1,7 @@
 """Queued approval gestures belong to the batch the user actually saw."""
 
 from copy import deepcopy
+import time
 from types import MethodType, SimpleNamespace
 from unittest.mock import Mock
 
@@ -12,6 +13,34 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     ApprovalActionButton,
     ChatApprovalCard,
 )
+
+
+async def _wait_for_actionable_card(card, pilot):
+    """Wait for actual mounted facts and enabled, laid-out decision controls."""
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        buttons = [button for button in card.query(Button) if button.display]
+        headers = list(card.query(".approval-row-header"))
+        if (
+            card._information_ready
+            and headers
+            and all(
+                header.region.width > 0 and header.region.height > 0
+                for header in headers
+            )
+            and buttons
+            and all(
+                not button.disabled
+                and button.region.width > 0
+                and button.region.height > 0
+                for button in buttons
+            )
+        ):
+            return
+    raise AssertionError(
+        "Approval facts and decision controls did not become actionable"
+    )
 
 
 def test_published_press_keeps_its_generation_after_button_changes(monkeypatch):
@@ -117,8 +146,13 @@ async def test_queued_toolbar_press_cannot_act_on_a_changed_batch(action, transi
         card = app.query_one(ChatApprovalCard)
         calls = _sample_calls()
         card.set_batch(calls, timeout_seconds=0, round_id="original")
-        await pilot.pause()
+        await _wait_for_actionable_card(card, pilot)
+        if action == "submit":
+            await pilot.click(card.query_one("#approval-more-options-batch", Button))
+            await pilot.pause()
         button = card.query_one(f"#approval-{action}", Button)
+        assert button.display and not button.disabled
+        assert button.region.width > 0 and button.region.height > 0
         # Button.press publishes asynchronously. Replace the batch before the
         # real public message bubbles to the card, without fabricating an event.
         button.press()
@@ -151,7 +185,7 @@ async def test_queued_repeated_submit_decides_the_batch_only_once(action):
     async with app.run_test() as pilot:
         card = app.query_one(ChatApprovalCard)
         card.set_batch([_sample_calls()[0]], timeout_seconds=0, round_id="one")
-        await pilot.pause()
+        await _wait_for_actionable_card(card, pilot)
         if action == "submit":
             await pilot.click(card.query_one(".approval-more-options", Button))
             await pilot.pause()
@@ -159,6 +193,11 @@ async def test_queued_repeated_submit_decides_the_batch_only_once(action):
             "#approval-submit" if action == "submit" else f".approval-row-{action}"
         )
         button = card.query_one(selector, Button)
+        assert card._information_ready and not button.disabled, (
+            card._information_ready,
+            button.disabled,
+            button.region,
+        )
         button.press()
         button.press()
         await pilot.pause()
@@ -174,7 +213,7 @@ async def test_unchanged_resync_keeps_a_queued_toolbar_action_valid(action):
         card = app.query_one(ChatApprovalCard)
         calls = _sample_calls()
         card.set_batch(calls, timeout_seconds=0, round_id="same")
-        await pilot.pause()
+        await _wait_for_actionable_card(card, pilot)
         if action == "submit":
             card.query_one("#approval-more-options-batch", Button).press()
             await pilot.pause()
@@ -204,7 +243,7 @@ async def test_submitted_round_stays_inert_but_a_fresh_round_can_submit():
         card = app.query_one(ChatApprovalCard)
         calls = [_sample_calls()[0]]
         card.set_batch(calls, timeout_seconds=0, round_id="first")
-        await pilot.pause()
+        await _wait_for_actionable_card(card, pilot)
         if not card.has_class("approval-options-open"):
             await pilot.click(card.query_one(".approval-more-options", Button))
             await pilot.pause()
@@ -224,7 +263,7 @@ async def test_submitted_round_stays_inert_but_a_fresh_round_can_submit():
         await pilot.pause()
         assert app.decided_round_ids == ["first"]
         card.set_batch(calls, timeout_seconds=0, round_id="second")
-        await pilot.pause()
+        await _wait_for_actionable_card(card, pilot)
         if not card.has_class("approval-options-open"):
             await pilot.click(card.query_one(".approval-more-options", Button))
             await pilot.pause()

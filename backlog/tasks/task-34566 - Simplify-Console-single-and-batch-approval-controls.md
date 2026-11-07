@@ -3,16 +3,17 @@ id: TASK-34566
 title: Simplify Console single and batch approval controls
 status: In Progress
 assignee:
-- '@codex'
-created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 22:38
+  - '@codex'
+created_date: '2026-10-06 06:41'
+updated_date: '2026-11-07 00:31'
 labels: []
 dependencies:
-- TASK-34565
+  - TASK-34565
 documentation:
-- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-- backlog/decisions/235-console-approval-interaction-and-feedback.md
-- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+  - >-
+    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+  - backlog/decisions/235-console-approval-interaction-and-feedback.md
+  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -65,8 +66,10 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 Review repair: hold real row/action mounts, reproduce enabled commits before facts, then gate single/bulk/staged commits and controls on current round/revision/generation mount+layout readiness without timers/sleeps or authority changes. Reject stale readiness and queued gestures. Preserve ephemeral choices/review/disclosure/page/scroll through the existing retained pending payload and shipping ChatTaskCards recreation, with fresh widget fences, clear on settlement/replacement, no retained card/worker/args/pages. Add actual recreation/held scheduling RED before production repair. ADR required:no new; existing ADR235.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented explicit single and counted bulk controls, deliberate raw review and exact complete maps, neutral Alt+A focus with Enter consumed, captured action/target/profile/location/scope, and token-governed responsive action layout. Independent review round1 fixes display redaction while preserving canonical originals, captured/reused path-precheck warnings, named broader Apply and complete mixed count/tool/scope summaries, complete distinguishing path/URL/command targets versus explicitly marked parameter excerpts, distinct narrow bulk actions, UTF8 and fenced Escape opener focus. Preserved all stale/replacement/clear/finishing/duplicate and denial/round assertions. Task3-added private artifacts removed from index only; local files retained. Durable QA/report: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-3/task-3-report.md. Targeted interaction20/presentation18/card32/ownership25 and focused captured painted checks pass; bundle/token and owned static checks pass. Exact BASE worker/first-open/governance failures, native timing and actual Windows virtual dispatch remain open. Subsequent reused metadata is inspected via an explicit Home gesture; no production scroll reset or initial-reused visibility claim. ADR-235 with150/161/031 applies. Status remains In Progress pending independent re-review and existing DoD limits.
 
@@ -81,3 +84,6 @@ Review repair: all committing controls and fast/bulk/staged seams wait for match
 ## Renumbering provenance
 
 Originally TASK-34413 in the reviewed approval checkout. Renumbered to TASK-34566 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.
+
+2026-11-06 resync preserves approved controls/current runtime and282existing tokenvalues; no token value change. Mounted lifecycle/geometry/interaction readiness fixtures corrected to await actual enabled geometry and retain stale-gesture/map assertions. Phone-origin settlement retires staged desktop cards; actual next-round queuedApply cannot commit. Physical geometry/theme/Inspect/timing qualification remains open. Existing ADR235/236 applies; no new authority. Evidence Docs/superpowers/qa/2026-11-06-console-approval-resync/README.md. Status remains In Progress.
+<!-- SECTION:NOTES:END -->

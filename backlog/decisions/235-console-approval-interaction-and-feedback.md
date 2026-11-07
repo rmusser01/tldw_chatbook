@@ -66,3 +66,11 @@ Current integration preserves ADR220 human-decision authority, all prior Goal/Pe
 Committing controls wait for the exact card generation's request rows and action controls to mount and complete a layout refresh. This is a local information-readiness fence, not a physical browser or native paint measurement. Teardown closes the existing Details preparation controller cooperatively and rejects late delivery without querying retiring DOM or restoring focus.
 
 The existing retained pending-round payload owns a scalar-only presentation record for its exact session/run/round/revision. Navigation saves choices, deliberate review, disclosures and page/scroll positions; a recreated card restores them behind fresh gesture and readiness fences. Settlement or replacement retires the record through the existing interrupt host. Captured arguments, prepared pages, widgets, callbacks and workers never enter this record; it neither grants access nor survives the pending round.
+
+## Served relay compatibility (2026-11-06)
+
+[ADR236](236-served-desktop-approval-relay.md) adds a second decision origin. Both phone and desktop route the exact round through the existing controller/host lock, cancellation/deadline arbitration and one settlement. A phone transport delivery acknowledgement is not an accepted verdict or a grant. Desktop staged choices and delayed callbacks retire when that round settles and cannot resolve its replacement. Feedback derives from settlement and actual grant/execution owners regardless of origin.
+
+The publisher retains the four existing safe call fields. Captured legal choices may only remove options from the producer inventory; they cannot introduce a grant. The phone therefore does not advertise independent exact-input choices that the same-tool stamp cannot honor. Original invocation/matching arguments and authorization checks are unchanged. Legacy publisher callers without captured presentation retain their existing wire behavior.
+
+The owner confirmed on2026-11-06 that native timing and actual Windows dispatch qualification remain mandatory before auto-merge. No headless/Pilot result substitutes for native/browser presented-frame timing or the40-warm-sample distributions.

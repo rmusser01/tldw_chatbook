@@ -3,17 +3,18 @@ id: TASK-34567
 title: Provide complete lazy Console approval details
 status: In Progress
 assignee:
-- '@codex'
-created_date: 2026-10-06 06:41
-updated_date: 2026-10-15 23:06
+  - '@codex'
+created_date: '2026-10-06 06:41'
+updated_date: '2026-11-07 00:31'
 labels: []
 dependencies:
-- TASK-34565
-- TASK-34566
+  - TASK-34565
+  - TASK-34566
 documentation:
-- Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
-- backlog/decisions/235-console-approval-interaction-and-feedback.md
-- Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
+  - >-
+    Docs/superpowers/specs/2026-10-05-console-approval-ux-and-responsiveness-design.md
+  - backlog/decisions/235-console-approval-interaction-and-feedback.md
+  - Docs/superpowers/plans/2026-10-05-console-approval-ux-and-responsiveness.md
 priority: high
 type: enhancement
 ---
@@ -60,8 +61,10 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 Review repair: hold real Details preparation and queue a page before actual card removal; RED must show private cancellation/identity remains live. Synchronously close/fence existing controller at actual card unmount, drop cache/capture/opener references without DOM queries/focus. Persist only bounded nonauthoritative reading position through existing pending-round presentation state; never retain pages/bodies/callbacks. Test actual removal/recreation, late delivery rejection and exact identity mismatch. ADR required:no new; existing ADR235/custody.
 Final two-correction review wave: reproduce a held real Details after-refresh scroll crossing close/reopen, page/row, round/revision, settlement and unmount; fence the callback with existing request cancellation/current identity, displayed/requested page, generation, state retirement and attached area. Preserve current nonzero restoration. ADR required: no new ADR; ADR235 already governs presentation currentness.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented snapshot-only lazy redacted Details with4096-character pages, two-page cache, cooperative cancellation and round/revision/generation/verdict-key/latest-page fences. Neutral Details focus and Escape preserve decisions/deadline; maximum raw command retains its primary viewport. Tokens/bundle retained. ADR235/090/150.
 Verification: Details15, argument28, row12, ownership25, interaction21, real Console4-variant journey1, tokens3, bundle5; owned Ruff/format and diff-check pass. Component preparation receipt is unqualified for native latency.
@@ -76,3 +79,6 @@ Final review currentness correction: queued Details scroll now revalidates the e
 ## Renumbering provenance
 
 Originally TASK-34414 in the reviewed approval checkout. Renumbered to TASK-34567 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.
+
+2026-11-06 review correction escapes Cf/Zl/Zp/Cs only in serialized JSON display chunks before bounded pagination; ordinaryUnicode, structuralnewlines, JSONmeaning/redaction/originals remain. Three joined-page parameters and actual mountedTextArea regression showed RED, then finalDetails24/privacy10 pass. No native/browser presentation timing orfullmatrixclaim. Existing ADR235/236 applies; no new authority. Evidence Docs/superpowers/qa/2026-11-06-console-approval-resync/README.md. Status remains In Progress.
+<!-- SECTION:NOTES:END -->

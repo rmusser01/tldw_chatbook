@@ -915,7 +915,7 @@ def test_device_label_from_user_agent_platform_and_browser_markers() -> None:
     assert serve._device_label_from_user_agent("") == "Unknown device"
 
 
-# --- Served passkeys (task 3, ADR-235) --------------------------------------
+# --- Served passkeys (task 3, ADR-354) --------------------------------------
 #
 # The ceremony builders mirror the in-process software authenticator from
 # Tests/Web_Server/test_webauthn_service.py (none-format attestation, ES256

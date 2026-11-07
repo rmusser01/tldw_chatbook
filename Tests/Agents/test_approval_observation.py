@@ -289,6 +289,7 @@ def test_nested_stamp_scope_restores_observation_owner_without_altering_stamps(k
     )
     owner._stamps_lock = threading.Lock()
     owner._stamps = {}
+    owner._index_call_stamps = {}
     owner._decisions_lock = threading.Lock()
     owner._stamped_decisions = {}
 
