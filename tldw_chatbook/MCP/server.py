@@ -590,32 +590,25 @@ class TldwMCPServer:
     def _init_databases(self):
         """Initialize database connections."""
         try:
+            from ..app_services import open_profile_storage
             from ..config import (
                 get_chachanotes_db_path,
                 get_media_db_path,
                 CLI_APP_CLIENT_ID,
-                load_console_library_migration_seed,
             )
-            from ..DB.ChaChaNotes_DB import CharactersRAGDB
-            from ..DB.Client_Media_DB_v2 import MediaDatabase
             from ..Notes.Notes_Library import NotesInteropService
 
-            # Initialize character/chat/notes database
-            self.chachanotes_db = CharactersRAGDB(
-                db_path=get_chachanotes_db_path(),
+            # The shared factory (ADR-250 section 6); main() closes it. The
+            # media DB uses the same resolver the rest of the app opens it
+            # through -- ``get_cli_setting("database", "media_db", ...)`` used
+            # to read a config key that was never declared (TASK-854).
+            self.storage = open_profile_storage(
                 client_id=CLI_APP_CLIENT_ID,
-                console_library_migration_seed=load_console_library_migration_seed(),
+                chachanotes=get_chachanotes_db_path(),
+                media=get_media_db_path(),
             )
-
-            # Initialize media database. Uses the same resolver the rest of
-            # the app opens the media DB through -- ``get_cli_setting("database",
-            # "media_db", ...)`` used to read a config key ("media_db") that
-            # was never declared anywhere; the real key is "media_db_path"
-            # and get_media_db_path() is its accessor (see TASK-854).
-            media_db_path = get_media_db_path()
-            self.media_db = MediaDatabase(
-                db_path=media_db_path, client_id=CLI_APP_CLIENT_ID
-            )
+            self.chachanotes_db = self.storage.chachanotes
+            self.media_db = self.storage.media
 
             # Initialize services. There is deliberately no
             # ``self.character_service`` here: this used to construct a
@@ -1169,7 +1162,11 @@ async def main() -> int:
     from ..Utils.optional_deps import apply_config_eager_flags
 
     apply_config_eager_flags()
-    return await TldwMCPServer().run("stdio")
+    server = TldwMCPServer()
+    try:
+        return await server.run("stdio")
+    finally:
+        server.storage.close()
 
 
 if __name__ == "__main__":

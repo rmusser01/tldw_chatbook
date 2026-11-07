@@ -88,10 +88,9 @@ from tldw_chatbook.Chat.console_conversation_hydration import (
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.app_services import ProfileStorage, open_profile_storage
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, get_media_transcripts
-from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
@@ -251,9 +250,8 @@ class _Engine:
     """The lazily constructed engine graph (all real, App-free)."""
 
     registry: LocalWorkspaceRegistryService
-    workspace_db: WorkspaceDB
+    storage: ProfileStorage
     store: ConsoleChatStore
-    agent_runs_db: AgentRunsDB
     bridge: ConsoleAgentBridge
     controller: ConsoleChatController
     app_context: HeadlessAppContext
@@ -376,8 +374,7 @@ class MobileChatService:
         self._media_db_path_override = (
             Path(media_db_path) if media_db_path is not None else None
         )
-        self._notes_db: CharactersRAGDB | None = None
-        self._media_db: MediaDatabase | None = None
+        self._reading_storage: ProfileStorage | None = None
         self._reading_dbs_lock = threading.Lock()
         # Desktop approval relay (ADR-236): set once ``attach_relay`` binds
         # the parent's canvas control broker; None keeps the relay inert
@@ -413,11 +410,16 @@ class MobileChatService:
     def _build_engine(self) -> None:
         """Construct the engine graph verbatim per the spike recipe."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
-        workspace_db = WorkspaceDB(
-            str(self._data_dir / "workspaces.db"), client_id="mobile-service"
+        # The isolated mobile files (ADR-234), opened with the shared options
+        # (ADR-250 section 6); shutdown() closes them.
+        storage = open_profile_storage(
+            client_id="mobile-service",
+            chachanotes=self._data_dir / "chat.db",
+            workspaces=self._data_dir / "workspaces.db",
+            agent_runs=self._data_dir / "runs.db",
         )
-        registry = LocalWorkspaceRegistryService(workspace_db)
-        chat_db = CharactersRAGDB(str(self._data_dir / "chat.db"), "mobile-service")
+        registry = LocalWorkspaceRegistryService(storage.workspaces)
+        chat_db = storage.chachanotes
         conversation_service = ChatConversationService(chat_db)
         store = ConsoleChatStore(
             persistence=ChatPersistenceService(
@@ -425,11 +427,8 @@ class MobileChatService:
                 workspace_registry=registry,
             )
         )
-        agent_runs_db = AgentRunsDB(
-            str(self._data_dir / "runs.db"), client_id="mobile-service"
-        )
         bridge = ConsoleAgentBridge(
-            agent_runs_db=agent_runs_db,
+            agent_runs_db=storage.agent_runs,
             store=store,
             provider_gateway=self._gateway,
         )
@@ -457,9 +456,8 @@ class MobileChatService:
         controller.set_pending_approval = self._on_pending_approval
         self._engine = _Engine(
             registry=registry,
-            workspace_db=workspace_db,
+            storage=storage,
             store=store,
-            agent_runs_db=agent_runs_db,
             bridge=bridge,
             controller=controller,
             app_context=app_context,
@@ -802,9 +800,10 @@ class MobileChatService:
         Paths resolve exactly as the app resolves them — the same config
         helpers ``app.py`` builds these databases from
         (``get_chachanotes_db_path`` / ``get_media_db_path``) — unless a
-        test-injected override was supplied. Opening runs each DB's schema
-        init/migration path (the constructors own that); this is the
-        established Phase 1b lazy-open-post-startup posture, and the reads
+        test-injected override was supplied. Opening goes through the shared
+        factory (ADR-250 section 6), so a not-yet-upgraded profile DB migrates
+        with the Console Library migration seed, as it does elsewhere; this is
+        the established Phase 1b lazy-open-post-startup posture, and the reads
         themselves are strictly read-only.
 
         Returns:
@@ -815,30 +814,28 @@ class MobileChatService:
         """
         if self._closed:
             raise RuntimeError("MobileChatService is shut down")
-        if self._notes_db is not None and self._media_db is not None:
-            return self._notes_db, self._media_db
-        with self._reading_dbs_lock:
-            if self._notes_db is None or self._media_db is None:
-                from tldw_chatbook.config import (
-                    get_chachanotes_db_path,
-                    get_media_db_path,
-                )
+        storage = self._reading_storage
+        if storage is None:
+            with self._reading_dbs_lock:
+                storage = self._reading_storage
+                if storage is None:
+                    from tldw_chatbook.config import (
+                        get_chachanotes_db_path,
+                        get_media_db_path,
+                    )
 
-                notes_path = (
-                    self._notes_db_path_override or get_chachanotes_db_path()
-                )
-                media_path = self._media_db_path_override or get_media_db_path()
-                if self._notes_db is None:
-                    self._notes_db = CharactersRAGDB(
-                        notes_path, client_id="mobile-service"
+                    notes_path = (
+                        self._notes_db_path_override or get_chachanotes_db_path()
                     )
-                    logger.info("mobile reading notes DB opened path=%s", notes_path)
-                if self._media_db is None:
-                    self._media_db = MediaDatabase(
-                        db_path=media_path, client_id="mobile-service"
+                    media_path = self._media_db_path_override or get_media_db_path()
+                    storage = open_profile_storage(
+                        client_id="mobile-service",
+                        chachanotes=notes_path,
+                        media=media_path,
                     )
-                    logger.info("mobile reading media DB opened path=%s", media_path)
-        return self._notes_db, self._media_db
+                    self._reading_storage = storage
+                    logger.info("mobile reading DBs opened")
+        return storage.chachanotes, storage.media
 
     def notes_page(self, *, page: int = 1, per_page: int = 50) -> dict[str, Any]:
         """List non-deleted notes newest-first with truncated previews.
@@ -1849,23 +1846,17 @@ class MobileChatService:
         """Stop the pump, stop every run, quiesce and close the databases.
 
         Idempotent. Mirrors the spike's teardown discipline:
-        ``controller.shutdown()`` (bounded at 10 s), store connection
-        quiesce + close, then ``AgentRunsDB.close()``. The reading DBs
-        (Phase 2b) close first — they may be open even when the engine
-        never was.
+        ``controller.shutdown()`` (bounded at 10 s), chat DB connection
+        quiesce, then ``ProfileStorage.close()`` for the engine's databases
+        (ADR-250 section 6). The reading DBs (Phase 2b) close first — they
+        may be open even when the engine never was.
         """
         if self._closed:
             return
         self._closed = True
-        for db, label in ((self._notes_db, "notes"), (self._media_db, "media")):
-            if db is None:
-                continue
-            try:
-                db.close()
-            except Exception:  # noqa: BLE001 - teardown must finish regardless
-                logger.exception("mobile reading %s DB close failed", label)
-        self._notes_db = None
-        self._media_db = None
+        if self._reading_storage is not None:
+            self._reading_storage.close()  # logs, never raises
+            self._reading_storage = None
         relay = self._relay_task
         if relay is not None:
             relay.cancel()
@@ -1897,21 +1888,9 @@ class MobileChatService:
         except Exception:  # noqa: BLE001 - teardown must finish regardless
             logger.exception("mobile controller shutdown failed")
         try:
-            db = getattr(getattr(engine.store, "persistence", None), "db", None)
-            if db is not None:
-                with db.quiesce_connections(timeout_seconds=5):
-                    pass
-                db.close()
+            with engine.storage.chachanotes.quiesce_connections(timeout_seconds=5):
+                pass
         except Exception:  # noqa: BLE001 - teardown must finish regardless
-            logger.exception("mobile store quiesce/close failed")
-        for closer in (
-            engine.agent_runs_db.close,
-            getattr(engine.workspace_db, "close", None),
-        ):
-            if closer is None:
-                continue
-            try:
-                closer()
-            except Exception:  # noqa: BLE001 - teardown must finish regardless
-                logger.exception("mobile database close failed")
+            logger.exception("mobile store quiesce failed")
+        engine.storage.close()  # logs, never raises
         logger.info("mobile engine shut down")

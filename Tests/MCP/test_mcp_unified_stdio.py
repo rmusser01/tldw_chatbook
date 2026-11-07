@@ -384,13 +384,28 @@ async def test_run_and_main_propagate_public_serve_stdio_status(
     with pytest.raises(NotImplementedError, match="Only stdio transport is supported"):
         await instance.run("http")
 
+    closed: list[str] = []
+
     class _Server:
+        # TASK-36947.7 (ADR-250 s6): main() closes the server's profile storage.
+        storage = SimpleNamespace(close=lambda: closed.append("storage"))
+
         async def run(self, transport: str) -> int:
             assert transport == "stdio"
             return 41
 
     monkeypatch.setattr(server_module, "TldwMCPServer", _Server)
     assert await server_module.main() == 41
+    assert closed == ["storage"]
+
+    class _FailingServer(_Server):
+        async def run(self, transport: str) -> int:
+            raise RuntimeError("serve failed")
+
+    monkeypatch.setattr(server_module, "TldwMCPServer", _FailingServer)
+    with pytest.raises(RuntimeError, match="serve failed"):
+        await server_module.main()
+    assert closed == ["storage", "storage"]
 
 
 def test_module_entrypoint_propagates_status_without_mutating_path_or_stdout(

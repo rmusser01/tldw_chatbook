@@ -5,11 +5,13 @@ once, after composition; that sets ``app.services`` from
 ``assemble_application_services``. The app attributes that composition assigns
 stay in place as aliases of the bundle's fields (ADR-250 section 4).
 
-Only the standard library is imported at module level (ADR-097 boot budget);
-every service type is a ``TYPE_CHECKING`` import.
+The roots outside the TUI (the standalone MCP server, the mobile service and the
+RAG backfill CLI) open their profile databases through ``open_profile_storage``
+and close them with ``ProfileStorage.close()`` (ADR-250 section 6, TASK-36947.7).
 
-ponytail: the shared factory ``open_profile_storage`` and ``ProfileStorage.close()``
-are added by the first PR that calls them (ADR-250 section 6, TASK-36947.7).
+Only the standard library is imported at module level (ADR-097 boot budget);
+every service type is a ``TYPE_CHECKING`` import, and each opener imports its
+database class.
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
     from .Actor_Packs.activation import ActorPackActivationService
     from .Actor_Packs.controller import ActorPackExportController
@@ -266,6 +270,140 @@ class ProfileStorage:
     prompts: PromptsDatabase | None = None
     workspaces: WorkspaceDB | None = None
     agent_runs: AgentRunsDB | None = None
+
+    def close(self) -> None:
+        """Close the calling thread's connection on each opened database.
+
+        A failure is logged by type name and never raised (ADR-250 section 5).
+        """
+        for database in (
+            self.chachanotes,
+            self.media,
+            self.prompts,
+            self.workspaces,
+            self.agent_runs,
+        ):
+            if database is None:
+                continue
+            try:
+                database.close()
+            except Exception as exc:  # noqa: BLE001 - teardown closes every database
+                from loguru import logger
+
+                logger.warning(
+                    "profile_storage_close_failed database={} error={}",
+                    type(database).__name__,
+                    type(exc).__name__,
+                )
+
+
+# The shared factory (ADR-250 section 6). The openers are the only code that
+# constructs these databases for the standalone MCP server, the mobile service
+# and the RAG backfill CLI; every other construction is pinned by the census in
+# Tests/Architecture/test_application_services_bundle.py (Q2).
+
+
+def open_chachanotes_db(
+    path: Path,
+    *,
+    client_id: str,
+    check_integrity: bool = False,
+    seed_builtin_content: bool = False,
+) -> CharactersRAGDB:
+    """Open ChaChaNotes; the Console Library migration seed is always passed."""
+    from .config import load_console_library_migration_seed
+    from .config import seed_builtin_content as seed_builtins
+    from .DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(
+        path,
+        client_id=client_id,
+        check_integrity_on_startup=check_integrity,
+        console_library_migration_seed=load_console_library_migration_seed(),
+    )
+    if seed_builtin_content:
+        seed_builtins(db)
+    return db
+
+
+def open_media_db(
+    path: Path, *, client_id: str, check_integrity: bool = False
+) -> MediaDatabase:
+    from .DB.Client_Media_DB_v2 import MediaDatabase
+
+    return MediaDatabase(
+        path, client_id=client_id, check_integrity_on_startup=check_integrity
+    )
+
+
+def open_prompts_db(
+    path: Path, *, client_id: str, check_integrity: bool = False
+) -> PromptsDatabase:
+    from .DB.Prompts_DB import PromptsDatabase
+
+    return PromptsDatabase(
+        path, client_id=client_id, check_integrity_on_startup=check_integrity
+    )
+
+
+def open_workspaces_db(path: Path, *, client_id: str) -> WorkspaceDB:
+    from .DB.Workspace_DB import WorkspaceDB
+
+    return WorkspaceDB(path, client_id=client_id)
+
+
+def open_agent_runs_db(path: Path, *, client_id: str) -> AgentRunsDB:
+    from .DB.AgentRuns_DB import AgentRunsDB
+
+    return AgentRunsDB(path, client_id=client_id)
+
+
+def open_profile_storage(
+    *,
+    client_id: str,
+    chachanotes: Path | None = None,
+    media: Path | None = None,
+    prompts: Path | None = None,
+    workspaces: Path | None = None,
+    agent_runs: Path | None = None,
+    seed_builtin_content: bool = False,
+    check_integrity: bool = False,
+) -> ProfileStorage:
+    """Open each database whose path is given, with the same options for every root.
+
+    The others stay ``None``. ``check_integrity`` reaches the databases that have
+    a startup integrity check (ChaChaNotes, Media, Prompts). Built-in content is
+    seeded only when ``seed_builtin_content`` is set; only the TUI sets it.
+
+    Raises:
+        Exception: Whatever an opener raised, after the databases already
+            opened have been closed.
+    """
+    opened: dict[str, Any] = {}
+    try:
+        if chachanotes is not None:
+            opened["chachanotes"] = open_chachanotes_db(
+                chachanotes,
+                client_id=client_id,
+                check_integrity=check_integrity,
+                seed_builtin_content=seed_builtin_content,
+            )
+        if media is not None:
+            opened["media"] = open_media_db(
+                media, client_id=client_id, check_integrity=check_integrity
+            )
+        if prompts is not None:
+            opened["prompts"] = open_prompts_db(
+                prompts, client_id=client_id, check_integrity=check_integrity
+            )
+        if workspaces is not None:
+            opened["workspaces"] = open_workspaces_db(workspaces, client_id=client_id)
+        if agent_runs is not None:
+            opened["agent_runs"] = open_agent_runs_db(agent_runs, client_id=client_id)
+    except BaseException:
+        ProfileStorage(**opened).close()
+        raise
+    return ProfileStorage(**opened)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1419,6 +1419,101 @@ async def test_library_detail_returns_row_with_transcript_and_none_for_unknown(
         media_db.close_connection()
 
 
+async def test_reading_path_migrates_a_legacy_notes_db_with_the_library_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-36947.7 (ADR-250 s6): the reading path opens through the shared
+    factory, so a not-yet-upgraded profile DB first opened there migrates with
+    the Console Library migration seed, as the other roots do. Before, it
+    migrated with automatic retrieval off whatever the user had set."""
+    import contextlib
+    import sqlite3
+
+    import tldw_chatbook.config as config
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+
+    notes_path = tmp_path / _NOTES_DB_NAME
+    with monkeypatch.context() as v47:
+        v47.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 47)
+        legacy = CharactersRAGDB(notes_path, client_id="v47-seed")
+        conversation_id = legacy.add_conversation({"title": "legacy", "character_id": 1})
+        legacy.close_connection()
+    monkeypatch.setattr(
+        config,
+        "load_console_library_migration_seed",
+        lambda *_a, **_k: ConsoleLibraryMigrationSeed(auto_retrieve_on_send=True),
+    )
+
+    service = _reading_service(tmp_path)
+    try:
+        assert service.notes_page()["items"] == []
+    finally:
+        await service.shutdown()
+
+    with contextlib.closing(sqlite3.connect(notes_path)) as connection:
+        policy = connection.execute(
+            "SELECT auto_retrieve_on_send FROM console_conversation_library_policy"
+            " WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    assert policy == (1,)
+
+
+def _holds_connection(db: Any) -> bool:
+    local = getattr(db, "_local", None) or db._thread_local
+    return getattr(local, "conn", None) is not None
+
+
+async def test_shutdown_closes_every_database_after_quiescing_the_chat_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-36947.7 (ADR-250 s6): shutdown closes the reading storage, then
+    stops the controller, quiesces the chat DB and closes the engine storage."""
+    from dataclasses import fields
+
+    from tldw_chatbook.app_services import ProfileStorage
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    events: list[str] = []
+    real_shutdown = ConsoleChatController.shutdown
+    real_quiesce = CharactersRAGDB.quiesce_connections
+    real_close = ProfileStorage.close
+
+    async def shutdown(self, *args, **kwargs):
+        events.append("controller")
+        return await real_shutdown(self, *args, **kwargs)
+
+    def quiesce(self, **kwargs):
+        events.append("quiesce")
+        return real_quiesce(self, **kwargs)
+
+    def close(self):
+        opened = [f.name for f in fields(self) if getattr(self, f.name) is not None]
+        events.append("close " + ",".join(opened))
+        real_close(self)
+
+    monkeypatch.setattr(ConsoleChatController, "shutdown", shutdown)
+    monkeypatch.setattr(CharactersRAGDB, "quiesce_connections", quiesce)
+    monkeypatch.setattr(ProfileStorage, "close", close)
+
+    service = _reading_service(tmp_path)
+    reading = service._ensure_reading_dbs()
+    assert service.workspace_registry is not None  # builds the engine
+    engine = service._engine.storage
+    databases = [*reading, engine.chachanotes, engine.workspaces, engine.agent_runs]
+    assert all(_holds_connection(db) for db in databases)
+
+    await asyncio.wait_for(service.shutdown(), timeout=15)
+
+    assert events == [
+        "close chachanotes,media",
+        "controller",
+        "quiesce",
+        "close chachanotes,workspaces,agent_runs",
+    ]
+    assert not any(_holds_connection(db) for db in databases)
+
+
 # ========================================================================= #
 # Desktop approval relay (Phase 2c, ADR-236): parent-side subscription      #
 # ========================================================================= #

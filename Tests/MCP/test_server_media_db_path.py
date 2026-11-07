@@ -94,6 +94,18 @@ def test_resolved_media_db_path_is_sensitive(monkeypatch):
     assert is_sensitive_path(Path(instance.media_db.db_path))
 
 
+def test_databases_come_from_the_shared_factory_and_close_with_it(monkeypatch):
+    """TASK-36947.7 (ADR-250 s6): the server's handles are its profile
+    storage's, so closing the storage (main() does) closes both."""
+    instance = _build_server_with_databases(monkeypatch)
+
+    assert instance.chachanotes_db is instance.storage.chachanotes
+    assert instance.media_db is instance.storage.media
+    instance.storage.close()
+    assert getattr(instance.chachanotes_db._local, "conn", None) is None
+    assert getattr(instance.media_db._local, "conn", None) is None
+
+
 def test_no_other_undeclared_database_config_keys():
     """AC #2: grep-based check that every ``get_cli_setting("database", ...)``
     call site in the codebase uses one of the declared ``*_db_path`` (or
