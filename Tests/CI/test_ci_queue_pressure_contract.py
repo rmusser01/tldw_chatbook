@@ -429,11 +429,8 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_worker_exclusive_group_inventory.py",
     # TASK-38989 review r10a-rev4: the forwarder's exception_type pins.
     "Tests/Persona_Buddy/test_controller_failure_logging.py",
-    "Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type",
     # TASK-39053: the backup owner inventory, red since it landed, now matches.
     "Tests/Architecture/test_backup_owner_inventory.py",
-    # TASK-39060: the persona-policy failure line, through the real forwarder.
-    "Tests/test_persistent_diagnostic_boundary.py::test_persona_policy_failure_forwards_only_its_error_class",
     # TASK-39060: whole, now that its persona/workspace boundary is green.
     "Tests/test_persistent_diagnostic_boundary.py",
     # TASK-39061: the shared log sanitizer.
