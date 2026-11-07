@@ -12,7 +12,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, swap_app_aliases
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -3185,14 +3185,16 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(
     # TASK-33620.8 (AC#4): evidence carries [S#] labels and a repair
     # contract only when a citation record can cover the reply, so this
     # canonical round trip needs a ready repository (key already loaded).
-    app.citation_trace_repository = CitationTraceRepository(
-        db,
-        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
-        identity_context=load_local_citation_identity_context(db),
-        fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+    swap_app_aliases(
+        app,
+        citation_trace_repository=CitationTraceRepository(
+            db,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=load_local_citation_identity_context(db),
+            fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+        ),
+        media_db=_ExistingMediaDBDouble("media-77"),
     )
-    app.media_db = _ExistingMediaDBDouble("media-77")
-    app._publish_application_services()  # capture reads the bundle
     captured = []
 
     async def capture(app_instance, launch, *, user_message):

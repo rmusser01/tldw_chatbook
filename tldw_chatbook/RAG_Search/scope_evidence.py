@@ -806,9 +806,13 @@ async def _authorize_local_results_for_prompt(
     workspace: "WorkspaceServices | None",
     normalized_results: Sequence[NormalizedLocalResult],
     *,
-    session: Any,
+    session_source: Callable[[], Any],
 ) -> _PromptAuthorizationResult:
-    """Re-read one request's authority and backing rows before markers."""
+    """Re-read one request's authority and backing rows before markers.
+
+    ``session_source`` is called inside the authority ``try``, so a failed
+    session lookup rejects every candidate like any other authority failure.
+    """
 
     if not normalized_results:
         return _PromptAuthorizationResult((), True)
@@ -816,7 +820,7 @@ async def _authorize_local_results_for_prompt(
         resolution = await resolve_scope_for_session(
             storage,
             workspace,
-            session,
+            session_source(),
             use_cache=False,
         )
         effective_scope = resolution.effective
@@ -873,7 +877,7 @@ async def authorize_local_results_for_prompt(
     workspace: "WorkspaceServices | None",
     normalized_results: Sequence[NormalizedLocalResult],
     *,
-    session: Any,
+    active_session: Callable[[], Any],
 ) -> Tuple[NormalizedLocalResult, ...]:
     """Re-read current authority and backing rows before assigning markers.
 
@@ -881,7 +885,8 @@ async def authorize_local_results_for_prompt(
         storage: The profile storage slice holding the local source databases.
         workspace: The workspace slice (its registry), or ``None``.
         normalized_results: Strict canonical candidates in retrieval order.
-        session: The Console session whose scope authorizes the candidates.
+        active_session: Returns the Console session whose scope authorizes
+            the candidates; called only for a non-empty candidate list.
 
     Returns:
         Current, authorized candidates in their original order. Any authority
@@ -892,7 +897,7 @@ async def authorize_local_results_for_prompt(
         storage,
         workspace,
         normalized_results,
-        session=session,
+        session_source=active_session,
     )
     return authorization.candidates
 
@@ -902,7 +907,7 @@ async def assemble_local_evidence_for_prompt(
     workspace: "WorkspaceServices | None",
     results: List[Any],
     *,
-    session: Any,
+    active_session: Callable[[], Any],
     max_length: int = 90,
 ) -> LocalEvidenceContext:
     """Opt in to strict normalization, fresh authorization, and formatting.
@@ -911,7 +916,8 @@ async def assemble_local_evidence_for_prompt(
         storage: The profile storage slice holding the local source databases.
         workspace: The workspace slice (its registry), or ``None``.
         results: Legacy pipeline result mappings or objects.
-        session: The Console session whose scope authorizes the candidates.
+        active_session: Returns the Console session whose scope authorizes
+            the candidates; called only for a non-empty candidate list.
         max_length: Maximum Unicode codepoints in the formatted context.
 
     Returns:
@@ -927,7 +933,7 @@ async def assemble_local_evidence_for_prompt(
         except LocalResultNormalizationError:
             continue
     authorized = await authorize_local_results_for_prompt(
-        storage, workspace, tuple(normalized), session=session
+        storage, workspace, tuple(normalized), active_session=active_session
     )
     return format_local_evidence_context(authorized, max_length=max_length)
 
@@ -1051,7 +1057,7 @@ async def capture_local_pipeline_results(
             storage,
             workspace,
             tuple(normalized),
-            session=request_session,
+            session_source=lambda: request_session,
         )
         if not authorization.completed:
             logger.warning(
@@ -1288,7 +1294,7 @@ async def _capture_console_evidence_bundle(
         storage,
         workspace,
         normalized,
-        session=request_session,
+        session_source=lambda: request_session,
     )
     if not authorization.completed:
         logger.warning(

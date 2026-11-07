@@ -963,7 +963,7 @@ Here's how to create a simple custom pipeline:
 ```python
 # my_custom_pipeline.py
 from typing import List, Dict, Any, Tuple
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+from tldw_chatbook.RAG_Search.pipeline_builder_simple import (
     perform_plain_rag_search,
     format_results_for_llm
 )
@@ -1037,7 +1037,7 @@ async def adaptive_research_pipeline(
     # Select strategy
     if is_question and word_count > 5:
         # Long question - use semantic search
-        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+        from tldw_chatbook.RAG_Search.pipeline_builder_simple import (
             perform_full_rag_pipeline
         )
         return await perform_full_rag_pipeline(
@@ -1048,7 +1048,7 @@ async def adaptive_research_pipeline(
     
     elif has_technical_terms:
         # Technical query - use hybrid search
-        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+        from tldw_chatbook.RAG_Search.pipeline_builder_simple import (
             perform_hybrid_rag_search
         )
         return await perform_hybrid_rag_search(
@@ -1086,7 +1086,7 @@ async def semantic_search_with_filtering(
     Semantic search with tag-based filtering.
     """
     # Call the base semantic pipeline
-    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+    from tldw_chatbook.RAG_Search.pipeline_builder_simple import (
         perform_full_rag_pipeline
     )
     
@@ -1158,7 +1158,7 @@ def with_caching(cache_ttl: int = 3600):
 # Use the decorator
 @with_caching(cache_ttl=1800)  # 30 minutes
 async def cached_semantic_search(*args, **kwargs):
-    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+    from tldw_chatbook.RAG_Search.pipeline_builder_simple import (
         perform_full_rag_pipeline
     )
     return await perform_full_rag_pipeline(*args, **kwargs)
@@ -1189,7 +1189,7 @@ async def ensemble_search_pipeline(
         weights = [1.0] * len(pipelines)
     
     # Import pipeline functions
-    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+    from tldw_chatbook.RAG_Search.pipeline_builder_simple import (
         perform_plain_rag_search,
         perform_full_rag_pipeline,
         perform_hybrid_rag_search

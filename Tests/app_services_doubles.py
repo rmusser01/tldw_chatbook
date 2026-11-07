@@ -7,8 +7,8 @@ that sets the old alias attributes (``media_db``, ``chachanotes_db``,
 Each slice reads the double's attributes when it is accessed, so a test may
 still assign them after building the double.
 
-A real ``TldwCli`` has a real bundle; a test that swaps one of its aliases calls
-``app._publish_application_services()`` afterwards instead.
+A real ``TldwCli`` has a real bundle; a test that swaps one of its aliases uses
+``Tests.UI.app_factory.swap_app_aliases`` instead, which re-publishes it.
 """
 
 from __future__ import annotations

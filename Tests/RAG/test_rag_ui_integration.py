@@ -9,7 +9,6 @@ This tests:
 4. Integration with chat messages
 """
 
-import asyncio
 from importlib.util import find_spec
 import sys
 from pathlib import Path
