@@ -113,10 +113,12 @@ tldw_chatbook.Library.library_local_rag_search_service	tldw_chatbook.UI.destinat
 tldw_chatbook.Library.library_prompts_state	tldw_chatbook.Widgets.Prompts.prompt_block_editor_state	top
 tldw_chatbook.Library.library_rag_answer_service	tldw_chatbook.UI.Views.RAGSearch.search_handoff	top
 tldw_chatbook.Library.library_rag_service	tldw_chatbook.UI.destination_recovery	top
+tldw_chatbook.MCP.server	tldw_chatbook.app_services	lazy
 tldw_chatbook.Personal_Context.interview_launch	tldw_chatbook.UI.Screens.profile_interview_screen	lazy
 tldw_chatbook.Petdex.review	tldw_chatbook.Widgets.Persona_Widgets.petdex_import_review	lazy
 tldw_chatbook.Petdex.review	tldw_chatbook.Widgets.enhanced_file_picker	lazy
 tldw_chatbook.Prompt_Management.prompt_improvement_models	tldw_chatbook.Widgets.Console.console_composer_bar	top
+tldw_chatbook.RAG_Search.backfill	tldw_chatbook.app_services	lazy
 tldw_chatbook.RAG_Search.pipeline_loader	tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events	lazy
 tldw_chatbook.RAG_Search.pipeline_loader	tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events	top
 tldw_chatbook.Scheduling.events	tldw_chatbook.Widgets.detail_value_row	top

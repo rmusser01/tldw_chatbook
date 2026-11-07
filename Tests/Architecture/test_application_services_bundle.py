@@ -10,6 +10,9 @@ last reader migrates (ADR-250 section 4). Three things are pinned here:
   through its alias, or is on the exclusion list below;
 * the module imports only the standard library at module level (ADR-097).
 
+The shared profile-storage factory is tested here too (ADR-250 section 6,
+TASK-36947.7), with the Q2 census of ad hoc profile-database constructions.
+
 Only literal names are scanned: dynamic names such as ``getattr(app, name)`` are
 out of reach by design (ADR-250 section 2).
 
@@ -334,6 +337,189 @@ def test_app_services_imports_only_the_standard_library_at_module_level() -> Non
             assert root == "__future__" or root in sys.stdlib_module_names, (
                 f"app_services.py imports {root!r} at module level (ADR-097)"
             )
+
+
+# ADR-250 Q2 (TASK-36947.7): constructions of the ProfileStorage database classes
+# outside the shared factory's openers, per file. The standalone MCP server, the
+# mobile service and the RAG backfill CLI have none. The counts only shrink: open
+# a profile database through ``app_services.open_profile_storage`` or an opener.
+_PROFILE_DB_CLASSES = frozenset(
+    {"CharactersRAGDB", "MediaDatabase", "PromptsDatabase", "WorkspaceDB", "AgentRunsDB"}
+)
+_OPENERS = frozenset(
+    {
+        "open_chachanotes_db",
+        "open_media_db",
+        "open_prompts_db",
+        "open_workspaces_db",
+        "open_agent_runs_db",
+    }
+)
+AD_HOC_PROFILE_DB_CONSTRUCTIONS = {
+    "Chat/console_runtime.py": 1,
+    "Chat/console_worktree_recovery.py": 2,
+    "Chat/document_generator.py": 1,
+    "Chatbooks/chatbook_creator.py": 8,
+    "Chatbooks/chatbook_importer.py": 9,
+    "Local_Ingestion/local_file_ingestion.py": 1,
+    "Notes/Notes_Library.py": 1,
+    "Prompt_Management/Prompts_Interop.py": 1,
+    "RAG_Search/pipeline_functions_simple.py": 1,
+    "Subscriptions/site_config_manager.py": 1,
+    "Tools/workspace_file_roots.py": 1,
+    "Widgets/settings_agents_panel.py": 1,
+    "Workspaces/change_retention.py": 1,
+    "app.py": 1,
+    "app_service_wiring.py": 1,
+    "config.py": 6,
+}
+
+
+def _ad_hoc_profile_db_constructions() -> dict[str, int]:
+    found: dict[str, int] = {}
+    for path in sorted(PACKAGE.rglob("*.py")):
+        rel = path.relative_to(PACKAGE).as_posix()
+        source = path.read_text(encoding="utf-8")
+        if not any(name in source for name in _PROFILE_DB_CLASSES):
+            continue  # an aliased import still names the class
+        tree = ast.parse(source)
+        names = _PROFILE_DB_CLASSES | {
+            alias.asname
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.name in _PROFILE_DB_CLASSES and alias.asname
+        }
+        allowed = {
+            id(node)
+            for fn in tree.body
+            if rel == "app_services.py"
+            and isinstance(fn, ast.FunctionDef)
+            and fn.name in _OPENERS
+            for node in ast.walk(fn)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and id(node) not in allowed:
+                func = node.func
+                if _receiver(func) in names:
+                    found[rel] = found.get(rel, 0) + 1
+    return found
+
+
+@pytest.mark.unit
+def test_no_new_ad_hoc_profile_database_construction() -> None:
+    found = _ad_hoc_profile_db_constructions()
+    grown = {
+        rel: count
+        for rel, count in found.items()
+        if count > AD_HOC_PROFILE_DB_CONSTRUCTIONS.get(rel, 0)
+    }
+    assert not grown, (
+        f"New ad hoc profile-database construction(s) {grown} (pinned "
+        f"{ {rel: AD_HOC_PROFILE_DB_CONSTRUCTIONS.get(rel, 0) for rel in grown} }). "
+        "Open it through app_services.open_profile_storage or one of its openers "
+        "(ADR-250 section 6, Q2)."
+    )
+    assert found == AD_HOC_PROFILE_DB_CONSTRUCTIONS, (
+        f"Constructions were removed: now {found}. Lower or delete their rows in "
+        "AD_HOC_PROFILE_DB_CONSTRUCTIONS; the census only shrinks."
+    )
+
+
+def _holds_connection(db) -> bool:
+    local = getattr(db, "_local", None) or db._thread_local
+    return getattr(local, "conn", None) is not None
+
+
+@pytest.mark.unit
+def test_open_profile_storage_opens_the_given_paths_and_closes_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tldw_chatbook.config as config
+    from tldw_chatbook.app_services import open_profile_storage
+
+    seeded: list[object] = []
+    monkeypatch.setattr(config, "seed_builtin_content", seeded.append)
+    storage = open_profile_storage(
+        client_id="factory-test",
+        chachanotes=tmp_path / "chachanotes.db",
+        media=tmp_path / "media.db",
+        prompts=tmp_path / "prompts.db",
+        workspaces=tmp_path / "workspaces.db",
+        agent_runs=tmp_path / "runs.db",
+    )
+    databases = [
+        storage.chachanotes,
+        storage.media,
+        storage.prompts,
+        storage.workspaces,
+        storage.agent_runs,
+    ]
+    assert seeded == []  # built-in content only when asked; only the TUI asks
+    assert all(_holds_connection(db) for db in databases)
+    storage.close()
+    assert not any(_holds_connection(db) for db in databases)
+
+    only = open_profile_storage(
+        client_id="factory-test",
+        chachanotes=tmp_path / "chachanotes.db",
+        seed_builtin_content=True,
+    )
+    assert seeded == [only.chachanotes]
+    assert (only.media, only.prompts, only.workspaces, only.agent_runs) == (None,) * 4
+    only.close()
+
+
+@pytest.mark.unit
+def test_open_profile_storage_closes_what_it_opened_when_one_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook import app_services
+
+    opened: list[object] = []
+    real_open = app_services.open_chachanotes_db
+
+    def recording_open(*args, **kwargs):
+        opened.append(real_open(*args, **kwargs))
+        return opened[-1]
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("media refused")
+
+    monkeypatch.setattr(app_services, "open_chachanotes_db", recording_open)
+    monkeypatch.setattr(app_services, "open_media_db", refuse)
+    with pytest.raises(RuntimeError, match="media refused"):
+        app_services.open_profile_storage(
+            client_id="factory-test",
+            chachanotes=tmp_path / "chachanotes.db",
+            media=tmp_path / "media.db",
+        )
+    assert len(opened) == 1
+    assert not _holds_connection(opened[0])
+
+
+@pytest.mark.unit
+def test_profile_storage_close_logs_failures_by_type_and_never_raises(
+    tmp_path: Path,
+) -> None:
+    from loguru import logger
+
+    from tldw_chatbook.app_services import ProfileStorage, open_profile_storage
+
+    class Broken:
+        def close(self) -> None:
+            raise OSError("secret-path")
+
+    media = open_profile_storage(client_id="factory-test", media=tmp_path / "m.db").media
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        ProfileStorage(chachanotes=Broken(), media=media).close()
+    finally:
+        logger.remove(sink)
+    assert not _holds_connection(media)  # one failure does not stop the others
+    assert any("database=Broken error=OSError" in m for m in messages), messages
+    assert not any("secret-path" in m for m in messages)
 
 
 pytestmark = [pytest.mark.bootstrap_profile]
