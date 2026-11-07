@@ -1,8 +1,10 @@
 ---
 id: TASK-39146
 title: "Cancelling a worker parked on an unshielded push_screen(..., wait_for_dismiss=True) cancels the dialog's result future, so the dialog's later close raises InvalidStateError and leaves it on the stack"
-status: To Do
+status: Done
+assignee: ['@claude']
 created_date: 2026-11-07 02:28
+updated_date: '2026-11-07 06:09'
 labels:
 - follow-up
 - ui
@@ -47,7 +49,28 @@ Found in round 11 of the 2026-10-23 burn-down, while checking a modals follow-up
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 For each of the 9 sites, cancelling its waiting worker and then closing the dialog raises nothing and leaves the dialog off the stack; a test is red on dev
-- [ ] #2 A guard fails when a new unshielded `push_screen(..., wait_for_dismiss=True)` await is added, shown red by a negative control
-- [ ] #3 The `personas_screen.py` comment states what holds under the pinned Textual version
+- [x] #1 For each of the 9 sites, cancelling its waiting worker and then closing the dialog raises nothing and leaves the dialog off the stack; a test is red on dev
+- [x] #2 A guard fails when a new unshielded `push_screen(..., wait_for_dismiss=True)` await is added, shown red by a negative control
+- [x] #3 The `personas_screen.py` comment states what holds under the pinned Textual version
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. The shared helper already exists: Textual's `App.push_screen_wait` awaits the same `push_screen(..., wait_for_dismiss=True)` future through `asyncio.shield` (170 call sites use it). Move the 9 bare awaits onto it; no new wrapper.
+2. One parametrized test drives each of the 9 sites in a worker (dialog classes swapped for a plain modal), cancels the worker while the dialog is open, then closes the dialog; red on base with `InvalidStateError`.
+3. Guard: an AST scan in `Tests/Architecture/test_worker_exclusive_group_inventory.py` (architecture-guards lane) fails on any `await <x>.push_screen(..., wait_for_dismiss=<not False>)`; a synthetic-source test pins the flagged forms, and the guard is shown red on base and under a reverted site.
+4. Rewrite the `personas_screen.py` `_io_dialog_active` comment for Textual 8.2.8.
+
+## Implementation Notes
+
+The shared helper is Textual's own `App.push_screen_wait`, which awaits the same `push_screen(..., wait_for_dismiss=True)` future through `asyncio.shield` and is already used at 170 sites. All 9 bare awaits now use it; no new wrapper was written.
+
+- **Sites.** `ChatbookExportManagementWindow._delete_selected`; `AudioBookGenerationWidget._import_from_notes_worker` and `_import_from_conversation_worker` (`STTS_Window.py`); `ChatbooksWindowImproved.action_create_chatbook`, `action_browse_templates` (both waits), `action_manage_exports`; `CCPCharacterHandler.handle_import`; `MediaViewerPanel._run_delete_confirmation`.
+- **Behaviour test.** `Tests/UI/test_cancelled_dialog_waits.py` drives each site in a worker (its dialog classes swapped for a plain `ModalScreen`; the subject is the wait), cancels the worker while the dialog is open, then closes it, and asserts the close raises nothing and the dialog leaves the stack. The template-wizard case answers the templates dialog first to reach the second wait. Before the fix all 9 cases failed with `InvalidStateError: invalid state` from `Screen.dismiss`; after it, 9 passed (5.2-5.6 s serial wall, 3 runs, load 26-37). Appended to the UI census tail.
+- **Guard.** `Tests/Architecture/test_worker_exclusive_group_inventory.py::test_no_unshielded_dismiss_waits` (architecture-guards lane) flags any `await <x>.push_screen(...)` whose `wait_for_dismiss` (keyword, or third positional) is not literal `False`. `confirmation_dialog.await_quit_prompt` keeps its future and waits with `asyncio.wait`, so it is not flagged. `test_unshielded_dismiss_wait_forms_are_flagged` pins the flagged and unflagged forms on synthetic source. Negative controls: the guard's scanner run over the base tree lists exactly the 9 sites; reverting `_delete_selected` to the bare await on head turned the guard red (`ChatbookExportManagementWindow.py:1093`), restored afterwards.
+- **Comment.** The `_io_dialog_active` comment in `personas_screen.py` now says what holds on Textual 8.2.8: `push_screen_wait` shields the future, so a cancelled worker's dialog stays open and closes cleanly, but nothing reads its answer, which is why a second request is still refused.
+- **Mock seams.** Three tests that faked `push_screen(..., wait_for_dismiss=...)` now fake `push_screen_wait` (`test_chatbook_action_recovery_tooltips.py`, `test_chatbook_management_server_jobs.py`, `test_ccp_handlers.py`). The tooltip test's fake app has no `push_screen` at all, so a bare wait would now fail it. The first two are plain tests that hit the local RecoveryRequired trap; both passed under a temporary `@private_profile_test` marker, which was then removed.
+
+**Runs.** Covering files (the new file, the three seam files, Chatbooks screen server actions, STTS import scope services, file-picker tooltips, tier-2 media guards, quit-flow choke point, worker-contract script tests): 432 passed, 20 failed on head; the same 20 fail on base 8b762b52fa with the same command (RecoveryRequired in the Chatbooks files, `test_display_messages_batches_mount`). `test_worker_exclusive_group_inventory.py`: 25 passed. The W003 wait census counts `push_screen_wait` and `wait_for_dismiss=True` alike, so its rows are unchanged.
+
+Files: the six product modules above, `UI/Screens/personas_screen.py`, the four test files, `Tests/Architecture/test_worker_exclusive_group_inventory.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

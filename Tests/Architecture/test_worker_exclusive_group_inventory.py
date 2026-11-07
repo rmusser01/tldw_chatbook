@@ -958,3 +958,69 @@ def test_raw_loader_in_an_ungrouped_or_uninventoried_body_is_flagged() -> None:
         assert "await self.load_tasks(...) is forbidden" in violations.get(
             "ScratchScreen._request_tasks_refresh._bypass", ""
         ), sibling_schedule
+
+
+# TASK-39146: a worker parked on a bare ``await app.push_screen(...,
+# wait_for_dismiss=True)`` cancels the dialog's result future when it is
+# cancelled (shutdown, or the exclusive restart this module is about), so the
+# dialog's later close raises ``InvalidStateError`` and leaves it on the stack.
+# ``App.push_screen_wait`` awaits the same future through ``asyncio.shield``.
+# ``confirmation_dialog.await_quit_prompt`` keeps the future and waits on it
+# with ``asyncio.wait``, which never cancels it, so it is not flagged.
+
+
+def _unshielded_dismiss_waits(tree: ast.AST) -> list[int]:
+    """Lines that directly await ``push_screen`` with ``wait_for_dismiss``."""
+    lines = []
+    for node in ast.walk(tree):
+        call = node.value if isinstance(node, ast.Await) else None
+        if not (isinstance(call, ast.Call) and _call_name(call) == "push_screen"):
+            continue
+        wait = _keyword(call, "wait_for_dismiss")
+        if wait is None and len(call.args) >= 3:
+            wait = call.args[2]
+        if wait is not None and not (
+            isinstance(wait, ast.Constant) and wait.value is False
+        ):
+            lines.append(node.lineno)
+    return lines
+
+
+def test_no_unshielded_dismiss_waits() -> None:
+    """No worker awaits a dialog's result future without a shield."""
+    sites = []
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "push_screen" not in source:
+            continue
+        relative = path.relative_to(PACKAGE_ROOT.parent)
+        sites += [
+            f"{relative}:{line}"
+            for line in _unshielded_dismiss_waits(ast.parse(source))
+        ]
+    assert not sites, (
+        "await push_screen(..., wait_for_dismiss=True) is cancelled with its "
+        "worker, and the dialog's later close then raises InvalidStateError "
+        "and stays on the stack. Use `await app.push_screen_wait(screen)`, "
+        "which shields the result future:\n" + "\n".join(sites)
+    )
+
+
+def test_unshielded_dismiss_wait_forms_are_flagged() -> None:
+    """Keyword and positional waits are flagged; shielded or no-wait ones are not."""
+    tree = ast.parse(
+        "async def f(app, s, cb):\n"
+        "    await app.push_screen(s, wait_for_dismiss=True)\n"
+        "    await self.app.push_screen(\n"
+        "        s,\n"
+        "        wait_for_dismiss=flag,\n"
+        "    )\n"
+        "    await app.push_screen(s, cb, True)\n"
+        "    await app.push_screen_wait(s)\n"
+        "    await asyncio.shield(app.push_screen(s, wait_for_dismiss=True))\n"
+        "    await app.push_screen(s)\n"
+        "    await app.push_screen(s, wait_for_dismiss=False)\n"
+        "    answer = app.push_screen(s, wait_for_dismiss=True)\n"
+        "    await asyncio.wait({answer})\n"
+    )
+    assert _unshielded_dismiss_waits(tree) == [2, 3, 7]
