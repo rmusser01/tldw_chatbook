@@ -911,6 +911,9 @@ MINIMUM_FILES = 1831
 # TASK-39120 (2026-11-07): append the Console Inspector section file at the
 # tail. The floor is the measured entry count.
 MINIMUM_FILES = 1832
+# TASK-38948 (2026-11-07): append the two 100 ms Send-feedback route nodes
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1834
 
 
 def read_census(path: Path) -> list[str]:
