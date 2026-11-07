@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from tldw_chatbook.runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
@@ -10,12 +10,50 @@ from tldw_chatbook.runtime_policy.bootstrap import (
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
 
+class ServerChatDictionaryClient(Protocol):
+    """Client methods ServerChatDictionaryService calls (TASK-36953.1)."""
+
+    async def add_chat_dictionary_entry(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def bulk_chat_dictionary_entry_operations(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def create_chat_dictionary(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_chat_dictionary(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_chat_dictionary_entry(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def export_chat_dictionary_json(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def export_chat_dictionary_markdown(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def get_chat_dictionary(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_chat_dictionary_statistics(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def get_chat_dictionary_version(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def import_chat_dictionary_json(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def import_chat_dictionary_markdown(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def list_chat_dictionaries(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_dictionary_activity(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_dictionary_entries(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_dictionary_versions(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def process_chat_dictionaries(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def reorder_chat_dictionary_entries(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def revert_chat_dictionary_version(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def update_chat_dictionary(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_chat_dictionary_entry(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
 class ServerChatDictionaryService:
     """Delegate chat dictionary/world-book operations to tldw_server."""
 
     def __init__(
         self,
-        client: Any | None = None,
+        client: ServerChatDictionaryClient | None = None,
         *,
         policy_enforcer: Any | None = None,
         client_provider: Any | None = None,
@@ -62,7 +100,7 @@ class ServerChatDictionaryService:
     ) -> "ServerChatDictionaryService":
         return cls(client_provider=provider, policy_enforcer=policy_enforcer)
 
-    def _require_client(self) -> Any:
+    def _require_client(self) -> ServerChatDictionaryClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:
