@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 @pytest.fixture
@@ -97,6 +98,7 @@ async def test_detach_inert_disposal_and_replacement_close_before_shutdown(setup
     store, bridge, controller = setup
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.set_agent_bridge(bridge)
     _, sender = sender_for(bridge, "c")

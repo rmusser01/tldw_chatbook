@@ -860,7 +860,7 @@ def _prepare_close_new_chat(controller, session_id, title):
             "status": "running",
         }
     bridge._live_primary_runs[source.persisted_conversation_id] = run
-    if not hasattr(bound_app(controller), "console_runtime"):
+    if getattr(controller, "_hooks_v2_runtime", None) is None:  # no runtime yet
         update_app(controller, app_config={})
         runtime = SimpleNamespace(_app=bound_app(controller))
         runtime._resolve_new_console_assistant = lambda workspace, settings: (

@@ -365,7 +365,7 @@ async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools
     main = threading.current_thread()
     seen = []
 
-    def key_for(app, workspace, binding, root):
+    def key_for(_service, workspace, binding, root):
         seen.append(threading.current_thread())
         return ProjectIndexKey(
             "data",
@@ -383,7 +383,8 @@ async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools
         )
     )
     monkeypatch.setattr(runtime, "get_project_index_service", lambda app: service)
-    monkeypatch.setattr(runtime, "project_index_key", key_for)
+    # TASK-36947.4: the preparation keys off the host-resolved service.
+    monkeypatch.setattr(runtime, "project_index_key_for_service", key_for)
     controller = object.__new__(ConsoleChatController)
     bind_app(controller, SimpleNamespace(
         workspace_registry_service=run.service, unified_mcp_service=None

@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.Chat.console_controller_factory import bind_app
 
 EARLIER = "Evidence staged before the send: ORCHID-7731."
 LATER = "Evidence staged for the NEXT message: HELIX-0042."
@@ -67,6 +68,7 @@ def _runtime(tmp_path: Path, *, ephemeral: bool):
         provider="llama_cpp",
         model="test-model",
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
     controller.prompt_history = PromptHistory(tmp_path / "history.jsonl")
     return runtime, store, controller, session.id
 

@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -213,6 +214,7 @@ def _runtime_owned(tmp_path: Path, *, gateway: _LiveProviderGateway | None = Non
         provider="openai",
         model=_MODEL,
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
     controller.prompt_history = PromptHistory(tmp_path / "history.jsonl")
     return db, store, controller, runtime, live_gateway
 

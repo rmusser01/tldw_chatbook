@@ -1031,6 +1031,7 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
     note_id = db.add_note(title="Lighthouse keeping notes", content=_EVIDENCE)
     library = _EvidenceLibrary(note_id)
     app.library_rag_search_service = library
+    app._publish_application_services()  # the controller reads the bundle (TASK-36947.4)
     requests: list[object] = []
     held_stream = gateway.stream_chat
 

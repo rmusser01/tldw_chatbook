@@ -313,6 +313,7 @@ async def test_runtime_applier_override_diagnostic_reports_only_ignored_keys(
         controller = runtime.ensure_chat_controller(
             store=ConsoleChatStore(), provider_gateway=object(), **kwargs
         )
+        bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
         assert (
             controller._chat_dictionary_applier.func is _apply_chat_dictionaries_for_app
         )

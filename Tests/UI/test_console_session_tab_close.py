@@ -32,6 +32,7 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button
 
+from Tests.Chat.console_controller_factory import update_app
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import (
     _build_test_app,
@@ -928,7 +929,7 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                     host, pilot, "#console-native-composer"
                 )
                 controller = console._ensure_console_chat_controller()
-                app.call_from_thread = host.call_from_thread
+                update_app(controller, call_from_thread=host.call_from_thread)  # live host (TASK-36947.4)
                 store = controller.store
                 keeper = store.active_session_id
                 assert _session_ids(store) == [keeper]
@@ -1069,7 +1070,7 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                     host, pilot, "#console-native-composer"
                 )
                 controller = console._ensure_console_chat_controller()
-                app.call_from_thread = host.call_from_thread
+                update_app(controller, call_from_thread=host.call_from_thread)  # live host (TASK-36947.4)
                 store = controller.store
                 keeper = store.active_session_id
                 doomed = controller.new_session(title="Pending decision")
@@ -1156,7 +1157,7 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
             controller = console._ensure_console_chat_controller()
-            app.call_from_thread = host.call_from_thread
+            update_app(controller, call_from_thread=host.call_from_thread)  # live host (TASK-36947.4)
             keeper = controller.store.active_session_id
             doomed = controller.new_session(title="Closing before confirmation")
             controller.switch_session(keeper)

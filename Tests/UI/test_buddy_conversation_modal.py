@@ -19,7 +19,7 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -70,6 +70,7 @@ class Harness(ConsolidatedCSSApp):
         self.controller._interrupt_host.POLL_SECONDS = 0.01
         self.console_runtime = ConsoleRuntime(self)
         self.console_runtime.set_chat_store(self.store)
+        bind_runtime_app(self.controller, self.console_runtime)
         self.console_runtime.set_chat_controller(self.controller)
 
     def compose(self) -> ComposeResult:

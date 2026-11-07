@@ -24,7 +24,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 mcp_sources = catalog_controls.mcp_sources
 local_root = catalog_controls.local_root
@@ -854,6 +854,7 @@ async def test_actual_queued_capture_rejects_replaced_controller_before_queue_or
             await catalog_controls._worker_entered(probe, task)
             assert probe.permission_calls[0][0] is case.permissions
             replacement = copy.copy(case.controller)
+            bind_runtime_app(replacement, runtime)
             runtime.set_chat_controller(replacement)
             probe.release.set()
             result = await task
@@ -874,6 +875,7 @@ async def test_actual_queued_capture_rejects_replaced_controller_before_queue_or
             )
         finally:
             await catalog_controls._settle(task, probe)
+            bind_runtime_app(case.controller, runtime)
             runtime.set_chat_controller(case.controller)
             await runtime.dispose(timeout_seconds=3)
 

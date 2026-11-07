@@ -40,7 +40,7 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnCustodyRequest,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 
 def test_view_hook_slot_keeps_canonical_model_and_historical_runtime_identity() -> None:
@@ -257,6 +257,7 @@ def _runtime_with(controller: ConsoleChatController, view: _View) -> ConsoleRunt
     """A runtime holding `controller`, attached to `view`."""
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(controller.store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     view.attachment_generation = runtime.attach_view(view)
     runtime.finish_view_reconciliation(view, view.attachment_generation)
@@ -1016,6 +1017,7 @@ async def test_dispose_shuts_the_controller_down_and_closes_the_gateway():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.attach_view(_View())
 
@@ -1044,6 +1046,7 @@ async def test_dispose_does_not_let_a_late_ensure_rebuild_the_runtime():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.attach_view(_View())
 
@@ -1097,6 +1100,7 @@ async def test_leaving_console_does_not_close_the_provider_gateway():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.attach_view(_View())
 

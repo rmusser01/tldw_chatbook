@@ -93,6 +93,7 @@ async def test_opener_passes_the_controllers_workspace_roots_to_the_screen(
             skipped_roots=(),
         )
     )
+    app._publish_application_services()  # the controller reads the bundle (TASK-36947.4)
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
@@ -138,6 +139,7 @@ async def test_opener_degrades_to_no_roots_when_the_controller_raises(
             skipped_roots=(),
         )
     )
+    app._publish_application_services()  # the controller reads the bundle (TASK-36947.4)
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]

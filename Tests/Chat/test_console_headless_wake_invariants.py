@@ -68,7 +68,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 
 async def _leave_console(rig) -> ConsoleRuntime:
@@ -804,6 +804,7 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
 
         runtime = ConsoleRuntime(app=app)
         runtime.set_chat_store(store)
+        bind_runtime_app(controller, runtime)
         runtime.set_chat_controller(controller)
         view = _mounted_view()
         generation = runtime.attach_view(view)

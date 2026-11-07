@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 _EARLY_POSTCOMMIT_EFFECTS = (
@@ -64,6 +65,7 @@ async def test_app_disposal_retires_live_postcommit_bodies_even_without_tasks(
     runtime = ConsoleRuntime(SimpleNamespace(persona_buddy_controller=None))
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     await runtime.dispose()
 
@@ -110,6 +112,7 @@ async def test_app_disposal_releases_only_its_frozen_evidence_lease(
     runtime = ConsoleRuntime(SimpleNamespace(persona_buddy_controller=None))
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     await runtime.dispose()
 
@@ -167,6 +170,7 @@ async def test_app_disposal_scrubs_content_when_evidence_release_raises(
     runtime = ConsoleRuntime(SimpleNamespace(persona_buddy_controller=None))
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     await runtime.dispose()
 

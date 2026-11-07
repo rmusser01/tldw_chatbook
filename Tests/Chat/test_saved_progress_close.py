@@ -10,6 +10,7 @@ from Tests.Chat.test_progress_wakes import progress_rig, reporter
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.fleet_messages import MessageError
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 @pytest.mark.asyncio
@@ -64,6 +65,7 @@ async def test_saved_native_close_fences_old_completion_and_new_saved_progress(
         runtime = ConsoleRuntime(app=None)
         runtime.set_chat_store(native)
         runtime.set_agent_bridge(bridge)
+        bind_runtime_app(controller, runtime)
         runtime.set_chat_controller(controller)
         revision = controller.lifecycle_impact(session_id=rig[4].id).revision
         await runtime.close_session(

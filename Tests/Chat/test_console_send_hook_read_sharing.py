@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -101,6 +102,7 @@ class _Rig:
         self.controller.prompt_history = PromptHistory(tmp_path / "history.jsonl")
         owned_console_databases(self.db, self.controller)
         self.runtime.set_chat_store(self.store)
+        bind_runtime_app(self.controller, self.runtime)
         self.runtime.set_chat_controller(self.controller)
         # Warm: the owner exists and the configured hook is approved.
         self.owner = self.runtime.ensure_hook_permissions()

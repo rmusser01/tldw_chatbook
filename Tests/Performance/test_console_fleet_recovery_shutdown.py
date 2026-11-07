@@ -13,6 +13,7 @@ import pytest
 
 from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 from Tests.private_profile import private_profile_test
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 @pytest.mark.asyncio
@@ -36,6 +37,7 @@ async def test_original_fleet_recovery_is_joined_before_shutdown(
     runtime = ConsoleRuntime(app, canvas_enabled_reader=lambda: False)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     wake = controller.fleet_wake
     ledger = database.automatic_work

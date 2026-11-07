@@ -14,7 +14,7 @@ from Tests.UI.test_plugins_browse import (
     settled,
     wait_for_plugin_prune,
 )
-from Tests.Chat.console_controller_factory import bound_app, update_app
+from Tests.Chat.console_controller_factory import bind_runtime_app, bound_app, update_app
 
 native_console = _native_console
 native_package = _native_package
@@ -2352,6 +2352,7 @@ async def test_confirmed_explicit_test_survives_close_during_child_prune(
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     update_app(rig.controller, console_runtime=runtime)
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     app = BrowseApp(rig)
     app.console_runtime = runtime

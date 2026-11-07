@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError
+from Tests.Chat.console_controller_factory import bind_app
 
 
 @pytest.fixture
@@ -44,6 +45,7 @@ def _controller(app, db):
         provider_gateway=object(),
         agent_bridge=SimpleNamespace(runs_db=db),
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
     return runtime, controller
 
 

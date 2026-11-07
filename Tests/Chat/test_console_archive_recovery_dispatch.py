@@ -12,7 +12,7 @@ from Tests.Chat.test_archive_recovery_operations import (
 )
 from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveRecoveryError
 from tldw_chatbook.Chat.archive_recovery.runtime import ArchiveRecoveryRuntime
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 # Native Windows profile admission precedes the fake gateway; this is a
 # bounded integration wait, not the archive service operation deadline.
@@ -918,6 +918,7 @@ async def test_first_queue_edit_initializes_recovery_for_the_existing_controller
     app, _, _ = recovery_stores
     owner = app.console_runtime = ConsoleRuntime(app)
     controller = SimpleNamespace()
+    bind_runtime_app(controller, owner)
     owner.set_chat_controller(controller)
     assert owner._archive_recovery is None
     editor = ConsolePromptQueueUIController.__new__(ConsolePromptQueueUIController)

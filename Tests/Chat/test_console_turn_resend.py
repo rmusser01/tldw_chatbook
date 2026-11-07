@@ -50,6 +50,7 @@ from tldw_chatbook.Chat.console_turn_resend import (
     resend_turn,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 # Drives the real controller and store (lessons-testing-evidence.md).
 pytestmark = pytest.mark.bootstrap_profile
@@ -1195,6 +1196,7 @@ async def test_resend_runs_granted_required_hooks_before_clear(
     _edit(hook_file, lambda section: section.update(handler=[handler]))
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(console.store)
+    bind_runtime_app(console.controller, runtime)
     runtime.set_chat_controller(console.controller)
     permissions = runtime.ensure_hook_permissions()
     console.controller._hook_permissions_accessor = lambda: permissions
@@ -1254,6 +1256,7 @@ async def test_resend_delivers_granted_hook_context_once(
     _edit(hook_file, lambda section: section.update(handler=[handler]))
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(console.store)
+    bind_runtime_app(console.controller, runtime)
     runtime.set_chat_controller(console.controller)
     permissions = runtime.ensure_hook_permissions()
     console.controller._hook_permissions_accessor = lambda: permissions
@@ -1311,6 +1314,7 @@ async def test_resend_hook_wait_retains_rows_and_retires_its_owner(
     _edit(hook_file, lambda section: section.update(handler=[handler]))
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(console.store)
+    bind_runtime_app(console.controller, runtime)
     runtime.set_chat_controller(console.controller)
     permissions = runtime.ensure_hook_permissions()
     console.controller._hook_permissions_accessor = lambda: permissions
@@ -1409,6 +1413,7 @@ async def test_runtime_bound_queued_retry_keeps_scheduled_hook_semantics(tmp_pat
         _edit(hook_file, lambda section: section.update(handler=handlers))
         runtime = ConsoleRuntime(app=None)
         runtime.set_chat_store(store)
+        bind_runtime_app(controller, runtime)
         runtime.set_chat_controller(controller)
         permissions = runtime.ensure_hook_permissions()
         controller._hook_permissions_accessor = lambda: permissions
