@@ -343,6 +343,7 @@ async def test_scope_resolution_retires_worker_and_preserves_main_owner(
         resolve_scope_for_session,
     )
     from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+    from Tests.app_services_doubles import with_alias_services
 
     db = WorkspaceDB(tmp_path / "workspaces.db")
     registry = LocalWorkspaceRegistryService(db)
@@ -350,7 +351,9 @@ async def test_scope_resolution_retires_worker_and_preserves_main_owner(
     borrowed = db._held_connection()
     try:
         result = await resolve_scope_for_session(
-            SimpleNamespace(workspace_registry_service=registry),
+            with_alias_services(
+                SimpleNamespace(workspace_registry_service=registry)
+            ),
             SimpleNamespace(workspace_id=workspace.workspace_id),
             use_cache=use_cache,
         )

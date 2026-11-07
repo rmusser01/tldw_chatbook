@@ -34,9 +34,7 @@ from tldw_chatbook.Chat.console_display_state import (
     console_staged_source_count,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
-    LocalRagContextResult,
-)
+from tldw_chatbook.RAG_Search.scope_evidence import LocalRagContextResult
 from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
 from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 from tldw_chatbook.Widgets.Console.console_staged_context import (

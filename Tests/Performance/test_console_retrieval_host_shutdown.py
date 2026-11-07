@@ -14,6 +14,7 @@ from textual.app import App
 from textual.screen import Screen
 from textual.worker import WorkerState
 
+from Tests.app_services_doubles import with_alias_services
 from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 from Tests.private_profile import private_profile_test
 
@@ -37,7 +38,7 @@ async def test_original_retrieval_worker_retires_before_host_drain(
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.DB import base_db
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
+    from tldw_chatbook.RAG_Search import scope_evidence
     from tldw_chatbook.UI.Console_Modules import retrieval
     from tldw_chatbook.UI.Console_Modules.view_workers import (
         capture_console_view_workers,
@@ -75,7 +76,7 @@ async def test_original_retrieval_worker_retires_before_host_drain(
             get_workspace_scope=lambda _workspace: later_scope_reads.append(True),
             db=None,
         )
-        reader = chat_rag_events._read_cached_conversation_scope_sync
+        reader = scope_evidence._read_cached_conversation_scope_sync
         original = (
             retrieval.ConsoleRetrievalController._resolve_console_effective_scope_state
         )
@@ -102,7 +103,7 @@ async def test_original_retrieval_worker_retires_before_host_drain(
     for subject, name in (
         (retrieval.ConsoleRetrievalController, original.__name__),
         (retrieval, "resolve_scope_for_session"),
-        (chat_rag_events, "_resolve_scope_with_current_ids"),
+        (scope_evidence, "_resolve_scope_with_current_ids"),
         (retrieval, "_run_dictionary_summary_off_thread"),
         (LocalChatDictionaryService, "summarize_active_dictionaries"),
         (_DictionaryJob, "_work"),
@@ -368,11 +369,13 @@ async def test_custom_workspace_scope_preserves_direct_cancellation(
         assert release.wait(10)
         return None  # noqa: PLR1711, RET501 - controlled native-boundary callback/double preserves original explicit None return
 
-    app = SimpleNamespace(
-        chachanotes_db=database,
-        workspace_registry_service=SimpleNamespace(
-            db=database, get_workspace_scope=read
-        ),
+    app = with_alias_services(
+        SimpleNamespace(
+            chachanotes_db=database,
+            workspace_registry_service=SimpleNamespace(
+                db=database, get_workspace_scope=read
+            ),
+        )
     )
     session = SimpleNamespace(persisted_conversation_id=None, workspace_id="custom")
     task = asyncio.create_task(
@@ -414,8 +417,10 @@ async def test_custom_scope_getter_failure_preserves_existing_error_boundary(
             accesses.append(True)
             raise LookupError("custom getter unavailable")
 
-    app = SimpleNamespace(
-        chachanotes_db=None, workspace_registry_service=CustomRegistry()
+    app = with_alias_services(
+        SimpleNamespace(
+            chachanotes_db=None, workspace_registry_service=CustomRegistry()
+        )
     )
     session = SimpleNamespace(persisted_conversation_id=None, workspace_id="custom")
     result = await resolve_scope_for_session(

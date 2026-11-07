@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+from Tests.app_services_doubles import AliasServices
 from tldw_chatbook.RAG_Search import semantic_availability as sa
 from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
@@ -664,6 +665,8 @@ class _MockWidget:
 
 class _ChatMockApp:
     """Minimal query_one/notify surface for get_rag_context_for_chat."""
+
+    services = property(AliasServices)
 
     def __init__(self, search_mode: str):
         self._widgets = {

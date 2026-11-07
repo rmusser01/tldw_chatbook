@@ -400,10 +400,14 @@ def _capture_app(service, *note_ids: str) -> SimpleNamespace:
         WorkspaceDB(":memory:", client_id="automatic-capture")
     )
     registry.ensure_default_workspace()  # the app does this at boot
-    return SimpleNamespace(
-        library_rag_search_service=service,
-        chachanotes_db=_ExistingNotesDouble(*note_ids),
-        workspace_registry_service=registry,
+    from Tests.app_services_doubles import with_alias_services
+
+    return with_alias_services(
+        SimpleNamespace(
+            library_rag_search_service=service,
+            chachanotes_db=_ExistingNotesDouble(*note_ids),
+            workspace_registry_service=registry,
+        )
     )
 
 
