@@ -89,37 +89,13 @@ presentation. Your summary text cannot mint that receipt. Each original keeps it
 attribution, coverage, structured findings and separate raw output. Console `u`
 reopens retained reports; explicit export/discard uses native reader controls.
 
-## Submission protocol for participants
+## Participant completion
 
-code_review_submit({"review_id":"RID","kind":"findings","records":[RECORD],
-"expected_revision":0,"submission_id":"unique-stable-id"}). expected_revision
-is the CALLER'S submission_revision from its source/report page or previous ack,
-not context-control revision. Chunks contain at most eight records; each complete
-UTF-8 JSON record is at most 8 KiB. Unknown fields/versions refuse. Findings use:
-{"schema_version":1,"local_key":"stable-local-key","title":"concrete defect",
-"locations":[{"source_ref":"REF","start_line":1,"end_line":2}],
-"trigger":"specific input/state","impact":"observable harm","evidence":
-[{"kind":"source","source_ref":"REF","start_line":1,"end_line":2,
-"digest":"CAPTURED_SHA256"}],"severity":"medium","uncertainty":"limits"}.
-Severity is critical/high/medium/low. Coverage is one record submitted as kind
-"coverage": {"schema_version":1,"inspected_refs":["REF"],"gaps":
-[{"reason":"stable-reason","source_ref":"REF"}],"empty_findings":false}.
-Seal intent with kind:"reviewer_complete" and ONE coverage record (not an empty
-record list). Replace REF and the example revision with actual captured values:
-```json
-{"review_id":"RID","kind":"reviewer_complete","records":[{"schema_version":1,"inspected_refs":["REF"],"gaps":[],"empty_findings":false}],"expected_revision":0,"submission_id":"completion-1"}
-```
-Actual terminal success and valid coverage are still required. Empty findings with complete successful
-coverage are valid; failed/cancelled/malformed/exhausted roles are incomplete.
-Coverage inspected_refs contains source-ref strings, never objects; notes is not
-an allowed field. On invalid_record, use the returned field/type errors and
-correct the rejected submission under the SAME submission_id. A new ID leaves
-the original rejection unresolved. Completion refuses while other rejected IDs
-remain; repair them and retry the SAME completion submission_id. An accepted
-completion is seal intent; actual terminal/capture receipts still govern sealing.
-On submission_revision_conflict, reread the caller's revision and retry the same
-unchanged records/submission_id ONCE with that revision; report another conflict.
-Another participant's append or raw capture is not a conflict for this stream.
+The host supplies each reviewer with its own submission schemas and completion
+brief. You are the coordinator: do not submit findings, coverage or reviewer_complete
+on a child's behalf. Accepted completion intent alone is not a sealed report;
+read the host summary after actual terminal settlement. Empty findings require
+complete successful coverage. Failed/cancelled/exhausted roles remain incomplete.
 
 ## Optional verification
 

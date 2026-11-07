@@ -136,3 +136,112 @@ def test_deepseek_choice_allowance_preserves_strict_shape(choice_change):
                 model="deepseek-chat",
                 streaming=False,
             )
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter"])
+def test_interrupted_empty_answer_preserves_finish_and_usage(streaming, finish_reason):
+    """Documented nullable content includes reasoning exhausting the output cap."""
+    usage = {
+        "prompt_tokens": 12,
+        "completion_tokens": 4096,
+        "total_tokens": 4108,
+        "completion_tokens_details": {"reasoning_tokens": 4096},
+    }
+    message = {
+        "role": "assistant",
+        "content": None,
+        "reasoning_content": "PRIVATE-THINKING-CANARY",
+    }
+    choice = {"index": 0, "logprobs": None, "finish_reason": finish_reason}
+    if streaming:
+        events = [
+            {"choices": [{**choice, "finish_reason": None, "delta": message}]},
+            {"choices": [{**choice, "delta": {}}], "usage": usage},
+        ]
+        response = _sse_stream_response(
+            (
+                "".join("data: " + json.dumps(event) + "\n\n" for event in events)
+                + "data: [DONE]\n\n"
+            ).encode()
+        )
+    else:
+        response = _nonstreaming_ok_response(
+            {"choices": [{**choice, "message": message}], "usage": usage}
+        )
+    with patch("requests.Session.post", return_value=response):
+        result = chat_api_call(
+            "deepseek",
+            messages_payload=[{"role": "user", "content": "Review"}],
+            api_key="fixture-key",
+            model="deepseek-flash",
+            streaming=streaming,
+            max_tokens=4096,
+        )
+        if streaming:
+            list(result)
+        else:
+            assert result["usage"] == usage
+        turn = result.terminal_turn
+        assert turn.text == "" and not turn.tool_calls
+        assert turn.finish_reason == finish_reason
+        assert turn.usage == usage
+    response.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "finish_reason,tool_calls",
+    [
+        ("stop", []),
+        ("tool_calls", []),
+        (
+            "length",
+            [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "code_review_submit", "arguments": '{"kind":'},
+                }
+            ],
+        ),
+        (
+            "length",
+            [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "code_review_submit", "arguments": "{}"},
+                }
+            ],
+        ),
+    ],
+)
+def test_empty_stop_and_interrupted_tool_calls_remain_refused(
+    finish_reason, tool_calls
+):
+    response = _nonstreaming_ok_response(
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": finish_reason,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": tool_calls,
+                    },
+                }
+            ]
+        }
+    )
+    with (
+        patch("requests.Session.post", return_value=response),
+        pytest.raises(ChatProviderError),
+    ):
+        chat_api_call(
+            "deepseek",
+            messages_payload=[{"role": "user", "content": "Review"}],
+            api_key="fixture-key",
+            model="deepseek-flash",
+            streaming=False,
+        )

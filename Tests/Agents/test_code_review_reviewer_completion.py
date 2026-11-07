@@ -164,3 +164,49 @@ def test_later_findings_preserve_completion_replay_but_cannot_use_stale_seal(
     slot = summary(c, prepared)["slots"][0]
     assert slot["report_status"] == "incomplete" and not slot["seal_receipt"]
     assert slot["submission_revision"] == 2 and not slot["rejected_submissions"]
+
+
+@pytest.mark.parametrize("review_id", [None, "unknown-review"])
+def test_repeated_completion_cannot_seal_without_successful_termination(
+    dispatch_case, review_id
+):
+    """Omission may bind; repeated calls still cannot replace native termination."""
+    c = dispatch_case
+
+    def complete():
+        args = {
+            "kind": "reviewer_complete",
+            "records": [coverage(c, c.prepared, empty=False)],
+            "expected_revision": 1,
+            "submission_id": "complete",
+        }
+        if review_id is not None:
+            args["review_id"] = review_id
+        return c.reply("code_review_submit", args)
+
+    c.run(
+        native=True,
+        inline=True,
+        child_script=[
+            lambda: c.reply("load_tools", {"ids": ["code_review:code_review_submit"]}),
+            lambda: c.reply(
+                "code_review_submit",
+                {
+                    "review_id": c.prepared.review_id,
+                    "kind": "findings",
+                    "records": [finding(c, c.prepared)],
+                    "expected_revision": 0,
+                    "submission_id": "finding",
+                },
+            ),
+            complete,
+            complete,
+            complete,
+        ],
+    )
+    slot = summary(c, c.prepared)["slots"][0]
+    assert slot["terminal_status"] == "stuck"
+    assert slot["submission_revision"] == (2 if review_id is None else 1)
+    assert (slot["coverage"] is not None) == (review_id is None)
+    assert not slot["rejected_submissions"]
+    assert slot["report_status"] == "incomplete" and slot["seal_receipt"] is None

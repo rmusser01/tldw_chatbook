@@ -1,0 +1,43 @@
+{
+  "id": "captured-deepseek-fixture",
+  "object": "chat.completion",
+  "created": 1,
+  "model": "deepseek-flash",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Inspect captured source.",
+        "reasoning_content": "",
+        "tool_calls": [
+          {
+            "index": 0,
+            "id": "call-source-list",
+            "type": "function",
+            "function": {
+              "name": "code_review_read",
+              "arguments": "{\"review_id\": \"review-fixture\", \"view\": \"source\", \"source_query\": {\"op\": \"list\", \"relative_dir\": \".\", \"side\": \"worktree\"}}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 2167,
+    "completion_tokens": 126,
+    "total_tokens": 2293,
+    "prompt_tokens_details": {
+      "cached_tokens": 1536
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 1536,
+    "prompt_cache_miss_tokens": 631
+  },
+  "system_fingerprint": "fixture"
+}

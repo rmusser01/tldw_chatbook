@@ -93,6 +93,12 @@ aggregate storage limits before implementation planning.
    `ReviewContext` binds source/preset snapshots, stage grants, child receipts,
    quota reservations, original finding index, private ID map and dispositions.
    Model arguments cannot mint role, stage, source or continuation authority.
+   A reviewer/verifier's read or submit may omit `review_id`: the adapter resolves
+   only its current authenticated host run binding, including grant, scope and
+   active-attempt checks. An explicit value is never replaced; primary calls
+   still require it. Child schemas describe this omission, and source instruction
+   targets use the same resolution before access. This removes a redundant model
+   echo without changing source permissions, accepted records or sealing.
 
 6. **Attribute actual execution.** The host assigns review/participant identity,
    records preset/guide versions and requested versus actual destinations, and
@@ -188,6 +194,18 @@ aggregate storage limits before implementation planning.
     other rejected IDs, terminal/capture receipts and all sealing checks remain
     mandatory. This repairs the V1 dead-end observed in TASK-35582's
     `continuation-final60` run without treating its changed verdicts as accepted.
+    TASK-39147 repairs the accepted-ID case observed on 2026-11-07: an exact replay
+    of the original accepted chunk clears only that ID's outstanding rejection,
+    retaining its original acknowledgment/revision and every accepted decision.
+    Conflicting or empty replacements remain refused. A charged host receipt is
+    required to clear the rejection; failed receipt publication retains it and
+    existing capture-failure sealing rules. Refusal feedback can return that
+    actor's stored original retry payload within existing tool/input limits;
+    oversized feedback explicitly reports `original_replay_exceeds_capacity`,
+    never truncated records. Readback rechecks the same live source permissions
+    and exclusions as report delivery, outside publication locks.
+    Outstanding rejections pin verifier history against reduction by replayed
+    acknowledgments. No permissions, terminal checks or usage limits change.
 
 13. **Bound accumulated model input, not only transport pages.** The primary
     coordinates from the host finding index, not concatenated original reports.
@@ -210,7 +228,11 @@ aggregate storage limits before implementation planning.
     pending checks are clear, submit verifier_complete at its revision and return
     after acceptance. Strict source-range refusals may include bounded captured
     line counts and a same-document no-range retry after authority/reference checks;
-    native and fenced model history preserve this feedback. Neither recovery nor
+    captured target sides also narrow bound-child query schemas. Invalid-side
+    refusals may return bounded valid choices after source authority checks, never
+    an automatic substitution between head/staged/worktree. The primary's schema
+    remains general because it can manage multiple captured targets.
+    Native and fenced model history preserve this feedback. Neither recovery nor
     completion guidance relaxes failure limits, terminal sealing or accounting.
     Batching grants no extra child, call, time or token budget.
     Complete model-bound response envelopes also fit the smaller positive runtime
@@ -592,3 +614,24 @@ accepted automatic continuations of a review already in progress.
 An approval denial ends a run's unstarted checks only when the denied call is the
 claimed check's own argv-exact `shell_exec`; an unrelated denied `shell_exec`
 leaves the claim pending.
+
+## Completion handoff repair (TASK-39147, 2026-11-07)
+
+Primary recipes contain coordinator operations only; participant submission
+instructions stay in the host-composed child task/tool guidance. After a verifier
+starts, the existing primary `report` view attaches each original's accepted
+`disposition` and the verifier's actual `verifier_report_status`. Missing decisions
+remain explicitly unresolved. Later originals outside the frozen verifier map
+retain their original with `gap=original_not_in_verification` and no fabricated
+disposition. The existing authorization, whole-record pagination,
+immutable cursor replay and source reauthorization apply; no verifier-only tool
+authority is granted to the primary. Fresh post-settlement pages are authoritative
+for handoff, while raw child prose remains separately available.
+
+Verifier history reduction retains bounded verdict counts from the authenticated
+same-attempt ledger, excludes undelivered host-generated gaps, and identifies them as that verifier's own accepted work. It
+does not restore private reasoning, expose reviewer identities, copy unbounded
+decision bodies or alter accepted records. Completion still needs accepted intent,
+complete mapping, capture and terminal receipts. This repairs the demonstrated
+primary/child instruction conflict and loss of accepted-work context without a
+new workflow engine or weaker sealing/accounting.

@@ -149,6 +149,15 @@ class SourceManifest:
     gaps: tuple[CoverageGap, ...]
     absent_sources: tuple[tuple[str, str], ...]
 
+    @property
+    def query_sides(self) -> tuple[str, ...]:
+        """Comparison sides available to discovery, including empty sides."""
+        if self.kind in ("pr", "commit_range"):
+            return tuple(side for side, _ in self.revisions)
+        return (
+            ("base", "head") if self.kind == "patch" else ("base", "staged", "worktree")
+        )
+
 
 @dataclass
 class _SourceState:
@@ -1151,15 +1160,11 @@ def query_review_source(
         if not _in_scope(path, state.manifest.scope):
             raise ReviewRefused("source_outside_scope")
         committed = state.manifest.kind in ("pr", "commit_range")
-        sides = (
-            set(dict(state.manifest.revisions))
-            if committed
-            else {"base", "head"}
-            if state.manifest.kind == "patch"
-            else {"base", "staged", "worktree"}
-        )
+        sides = state.manifest.query_sides
         if query.side not in sides:
-            raise ReviewRefused("invalid_source_side")
+            refused = ReviewRefused("invalid_source_side")
+            refused.allowed_sides = sides
+            raise refused
         try:
             reader = (
                 ReviewGitReader(root, sensitive_exclusions=exclusions)

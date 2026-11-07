@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## An empty rejection ledger does not identify a submission failure (TASK-39147, 2026-11-07)
+
+**Incident.** DeepSeek accepted findings, then three dispatched submissions failed
+and its review stopped without coverage or rejection entries. Its retained trace
+omitted arguments and errors. Offline native controls reproduced that same state
+with missing and unknown review IDs; valid completion sealed, while a contradictory
+completion recorded a rejection. The live symptom could not identify which path ran.
+
+**What to do.** Distinguish retained live facts from scripted lookalikes. Do not
+claim a provider/store fix from an empty ledger or HTTP success; identify the first
+refusal with appropriately scoped evidence, or state that its payload is unavailable.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
@@ -24803,3 +24815,16 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - For a timing window, act with the action itself (`screen.action_focus_previous()`) and plain `asyncio` polling, not `pilot.press`.
 - Pass a diagnostic as a callable (`message=lambda: ...`), so it reports the state at the timeout.
 - Show each case red on the buggy tree before trusting it green.
+
+## Review handoff needs an authorized structured read path (TASK-39147, 2026-11-07)
+
+A 60-request Console review sealed all three children, but the coordinator could
+not finish: its primary recipe instructed verifier-only calls, and its legal
+report API omitted accepted verdicts that the native UI already displayed. Haiku
+also denied its own submitted decisions after checkpoint projection removed the
+acknowledged rounds. Test guide examples against the receiving role's actual
+schema and test the primary's public readback, not only native UI expansion.
+Checkpoint summaries must distinguish the actor's accepted decisions from host
+capacity gaps. Those host failures explain missing context and illegal guidance;
+they do not prove why a model chose a particular false narrative. Evidence:
+`Docs/superpowers/qa/2026-11-07-review-completion-recovery/README.md`.

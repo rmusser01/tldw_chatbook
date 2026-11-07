@@ -171,14 +171,23 @@ both actual remaining input and the existing tool-result ceiling (including the
 native 16,000-character ceiling). Source pages use the same model estimator and a
 maximum 1,024-token evidence budget. Empty originals produce explicit zero coverage.
 
-`verifier_checkpoint` exposes accepted revision/cursors and pending opaque references
-only. `code_review_history.project_verifier_history` uses existing protocol round
+`verifier_checkpoint` exposes accepted revision/cursors, pending opaque references
+and bounded same-attempt verdict counts. `code_review_history.project_verifier_history` uses existing protocol round
 boundaries and continuation ownership; only acknowledged complete rounds can be
 replaced. System/task/guidance, unfinished tool pairs and private owner groups remain.
 This send-only projection works for one native or fenced child with run logs disabled;
 it changes neither the primary eviction gate nor the stored transcript. Settlement
 fills missing decisions with `verification_incomplete`; scratch failures still close
 the native stream and expansion retains an explicit unresolved fallback.
+
+Primary recipes contain only coordinator operations. Fresh primary `report` pages
+include each original's accepted `disposition` and `verifier_report_status` after
+V1 starts; pending decisions remain unresolved. The existing source authorization,
+whole-record paging and immutable cached pages still apply. The coordinator reads
+fresh post-settlement reports rather than replacing decisions from raw child prose
+or using verifier-only tools. Reduced verifier history explicitly attributes its
+accepted verdict counts to the same authenticated attempt; absence of removed
+tool rounds does not mean the verifier never performed that work.
 
 `code_review_read(view="checkpoint")` exposes current verifier protocol state
 through that same owner after each accepted disposition batch or history reduction. Cached batch pages retain their
@@ -189,13 +198,33 @@ same ID; completion refuses outstanding rejections. For disposition_conflict onl
 empty dispositions at the current revision explicitly withdraw that rejected ID
 through the ordinary atomic publish path. Accepted decisions remain immutable;
 failed retries retain the conflict's recovery eligibility. Fresh IDs, other
-rejection reasons and accepted-ID changes cannot use this path. The runtime preserves bounded
+rejection reasons and accepted-ID changes cannot use this path. The runtime supplies bounded
+replay guidance for `submission_conflict`: the same actor can replay the original
+accepted chunk unchanged to clear only that ID's rejection. The response includes
+the stored retry payload only when it fits existing result/input limits; otherwise
+it reports `original_replay_exceeds_capacity` without truncating records. Retained
+text readback reuses report source authorization, including current permissions and
+exclusions, with callbacks outside publication locks. The original acknowledgment,
+revision and decisions remain unchanged, and a charged host receipt records the
+repair. Unresolved rejections pin verifier history so replaying an old acknowledgment
+cannot remove another rejection's repair instructions. The runtime preserves bounded
 `code_review_submit` and `code_review_read` error details for the model while
-ordinary error rendering and body-free logs remain unchanged. Invalid source
+ordinary error rendering and body-free logs remain unchanged. Review identity
+omissions on bound child reads/submissions are resolved by
+`CodeReviewService.bound_review_id` from the live host binding, with the same
+adapter resolution before project-instruction path selection. Explicit IDs remain
+strict, primary calls still require an ID, and stale/revoked/unbound children gain
+no authority. Child schemas advertise the omission; the underlying wire models
+remain strict after resolution. Accepted records and receipts are unchanged.
+Invalid source
 ranges still refuse; after authority/reference checks their bounded feedback gives
 the captured line count and a same-document retry without a guessed range. Verifiers
-also receive a live-checkpoint hint. Once every unit has a disposition and pending
-checks are clear, guidance directs verifier_complete at that checkpoint revision,
+also receive a live-checkpoint hint. Child source-query schemas advertise only the
+captured target's comparison sides (working tree: base/staged/worktree; patch and
+committed comparisons: base/head). Invalid sides remain refused with bounded valid
+choices after source authority checks; no side is silently substituted. Once every
+unit has a disposition and pending checks are clear, guidance directs
+verifier_complete at that checkpoint revision,
 then return after acceptance. Failure limits, sealing and accounting are unchanged.
 
 Reviewer completion also validates `empty_findings` against that participant's

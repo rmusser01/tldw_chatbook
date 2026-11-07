@@ -148,8 +148,9 @@ def accepted_case(review_case):
 
 @pytest.mark.parametrize("native", [True, False])
 @pytest.mark.parametrize("recover", [False, True])
-def test_range_feedback_reaches_model_and_completes_without_relaxing_failure_guard(
-    accepted_case, native, recover
+@pytest.mark.parametrize("selection", ["range", "side"])
+def test_source_feedback_reaches_model_and_completes_without_relaxing_failure_guard(
+    accepted_case, native, recover, selection
 ):
     c, prepared, provider, records = case = accepted_case
     ref = resolve(provider, prepared.review_id)
@@ -176,19 +177,48 @@ def test_range_feedback_reaches_model_and_completes_without_relaxing_failure_gua
                 args["document_ref"] = base_ref
             elif not recover and step == 2:
                 args["source_query"] = None
+            if selection == "side":
+                query = [
+                    {"op": "list", "relative_dir": "."},
+                    {"op": "resolve", "relative_path": "main.py"},
+                    {"op": "search", "relative_dir": ".", "text": "captured"},
+                ][step if not recover else 0]
+                args = {
+                    "review_id": prepared.review_id,
+                    "view": "source",
+                    "source_query": {**query, "side": "head"},
+                }
         elif step == 1:
-            assert results[-1].error == "invalid_source_range"
-            assert results[-1].content, "Missing actionable source-range feedback"
+            assert results[-1].error == "invalid_source_" + selection
+            assert results[-1].content, "Missing actionable source feedback"
             assert any(
                 results[-1].content in row.get("content", "") for row in messages
             )
             feedback = json.loads(results[-1].content)
-            args = feedback["retry"]
+            if selection == "side":
+                assert feedback["allowed_sides"] == ["base", "staged", "worktree"]
+                args = {
+                    "review_id": prepared.review_id,
+                    "view": "source",
+                    "source_query": {
+                        "op": "list",
+                        "relative_dir": ".",
+                        "side": "worktree",
+                    },
+                }
+            else:
+                args = feedback["retry"]
         elif step == 2:
             assert results[-1].ok
             page = json.loads(results[-1].content)
-            assert page["text"] == "captured line\n" * 7 and page["cursor"] is None
-            args = feedback["checkpoint"]
+            if selection == "side":
+                assert page["records"] and all(
+                    row["side"] == "worktree" for row in page["records"]
+                )
+                args = {"review_id": prepared.review_id, "view": "checkpoint"}
+            else:
+                assert page["text"] == "captured line\n" * 7 and page["cursor"] is None
+                args = feedback["checkpoint"]
         elif step == 3:
             assert results[-1].ok
             page = json.loads(results[-1].content)

@@ -58,9 +58,8 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
 class DeepSeekFinishPolicy:
     """Validate DeepSeek finish and reasoning fields.
 
-    DeepSeek emits the standard OpenAI finish reasons; ``content_filter`` is
-    grouped with the terminal-text reasons so a filtered completion is a
-    classified terminal state.
+    Interrupted output can have no final text, including when reasoning uses
+    the token limit. Preserve its finish state and usage without accepting tools.
     """
 
     reasoning_disposition = "proprietary"
@@ -77,7 +76,7 @@ class DeepSeekFinishPolicy:
         if finish_reason == "tool_calls":
             if not has_calls:
                 raise HostedChatProtocolError("DeepSeek finish state is inconsistent.")
-        elif has_calls or not has_text:
+        elif has_calls or (finish_reason == "stop" and not has_text):
             raise HostedChatProtocolError("DeepSeek finish state is inconsistent.")
         return finish_reason  # type: ignore[return-value]
 
@@ -90,6 +89,25 @@ class DeepSeekFinishPolicy:
 
 
 _FINISH_POLICY = DeepSeekFinishPolicy()
+
+
+def _protocol_error(exc: HostedChatProtocolError) -> ChatProviderError:
+    # These validator messages contain only host-owned labels, never response values.
+    error = ChatProviderError(
+        provider="deepseek",
+        message=f"DeepSeek response validation failed: {exc}",
+        status_code=None,
+    )
+    error.provider_reason = str(exc)
+    return error
+
+
+class _DeepSeekLineStream(LegacyLineStream):
+    def __next__(self) -> str:
+        try:
+            return super().__next__()
+        except HostedChatProtocolError as exc:
+            raise _protocol_error(exc) from None
 
 
 class DeepSeekResponse(dict):
@@ -327,19 +345,13 @@ def chat_with_deepseek(
             # DeepSeek emits this documented choice field even when disabled.
             # Keep the allowance provider-scoped for both bodies and SSE.
             allowed_choice_keys=frozenset({"logprobs"}),
+            # DeepSeek also emits tool indices in whole-response bodies.
+            allowed_tool_call_keys=frozenset({"index"}),
         )
-    except HostedChatProtocolError:
-        duration = time.time() - start_time
-        _log_error_metrics(current_model, duration, exc=ChatProviderError(
-            provider="deepseek",
-            message="DeepSeek returned a malformed successful response.",
-            status_code=502,
-        ))
-        raise ChatProviderError(
-            provider="deepseek",
-            message="DeepSeek returned a malformed successful response.",
-            status_code=502,
-        ) from None
+    except HostedChatProtocolError as exc:
+        error = _protocol_error(exc)
+        _log_error_metrics(current_model, time.time() - start_time, exc=error)
+        raise error from None
     except (
         ChatAuthenticationError,
         ChatRateLimitError,
@@ -364,7 +376,7 @@ def chat_with_deepseek(
     )
 
     if isinstance(result, HostedChatStream):
-        return LegacyLineStream(result)
+        return _DeepSeekLineStream(result)
     if result.usage is not None:
         _log_usage_metrics(current_model, result.usage)
     return _deepseek_turn_response(result)
