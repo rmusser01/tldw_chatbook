@@ -8,7 +8,6 @@ updated_date: 2026-11-07 06:09
 labels:
 - follow-up
 - logging
-- needs-owner-decision
 priority: low
 references:
 - tldw_chatbook/Agents/persona_policy.py
@@ -62,7 +61,7 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 - Constant-prefix pin (`Tests/test_persistent_diagnostic_boundary.py`) and diagnostic inventory pin (`Tests/Architecture/test_persistent_diagnostic_inventory.py`, now `"Dropping a non-mapping policy rule": ()`, no runtime values).
 - Production diagnostic inventory: the drift was the one `persona_policy.py` row (2 calls, digest changed). `--statements` showed exactly one removed statement (the bound warning) and one added (`logger.warning("Dropping a non-mapping policy rule")`), a constant with no user content, secret, path or URL. Regenerated with `--write` after that review.
 
-**Covering run.** The three files above serially: 94 passed, 1 skipped (pre-existing skip on unfetchable TASK-15743 commits) in 354 s at load 25-44. All three are on the dreams-boundary "Run Dreams admission-sensitive contracts" step already; no lane change.
+**Covering run.** The three files above serially: 94 passed, 1 skipped (pre-existing skip on unfetchable TASK-15743 commits) in 354 s at load 25-44. `Tests/test_persistent_diagnostic_boundary.py` and `Tests/Persona_Buddy/test_controller_failure_logging.py` (where the new test and the tripwire row live) run on the architecture-guards "Run Architecture guard contracts" step; `Tests/Architecture/test_persistent_diagnostic_inventory.py` has one node on a PR lane, and preflight runs the inventory check. No lane change.
 
 **Files.** `tldw_chatbook/Agents/persona_policy.py`, `Tests/test_persistent_diagnostic_boundary.py`, `Tests/Persona_Buddy/test_controller_failure_logging.py`, `Tests/Architecture/test_persistent_diagnostic_inventory.py`, `Docs/security/production-diagnostic-inventory.json`.
 <!-- SECTION:NOTES:END -->

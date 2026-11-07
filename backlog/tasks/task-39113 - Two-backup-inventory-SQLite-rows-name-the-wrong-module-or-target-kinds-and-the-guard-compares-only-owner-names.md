@@ -54,7 +54,7 @@ A probe on round-11 branch fu/r11-backupinv, where TASK-39053 reconciles the nam
 
 **Red first.** Before the doc fix the extended test failed on exactly the two rows the task names: `notes.sync_state` (`('tldw_chatbook/Notes/note_import_receipts', '_PRIVATE_FILE')` vs `('tldw_chatbook/Notes/notes_device_state_store', '_PRIVATE_AND_READ_ONLY')`) and `notifications.event_state` (`_MEMORY` vs `_PRIVATE_OR_MEMORY`). Green after correcting both rows in `backlog/docs/backup-recovery-owner-inventory.md`.
 
-**Lane and time (AC#3).** The file stays on its two lanes (dreams-boundary "Run Dreams admission-sensitive contracts", and the backup-recovery qualification workflow); no lane pin changed. The node alone: 0.96 s serial (load 35-41). The whole file serially: 18 passed in 49.3 s at load 35-44. Step timings are in TASK-39110's notes (same step, measured once for this round's additions).
+**Lane and time (AC#3).** The file stays on its two lanes (architecture-guards "Run Architecture guard contracts", serial, and the backup-recovery qualification workflow); no lane pin changed. The node alone: 0.96 s serial (load 35-41). The whole file serially: 18 passed in 49.3 s at load 35-44. Step timings are in TASK-39110's notes (same step, measured once for this round's additions).
 
 **Files.** `Tests/Architecture/test_backup_owner_inventory.py`, `backlog/docs/backup-recovery-owner-inventory.md`.
 <!-- SECTION:NOTES:END -->
