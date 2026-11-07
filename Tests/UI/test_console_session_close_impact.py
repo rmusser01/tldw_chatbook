@@ -75,6 +75,59 @@ def _idle_lifecycle() -> ConsoleLifecycleImpact:
     )
 
 
+_SAVED = "saved-id"
+_SYSTEM = ConsoleMessageRole.SYSTEM
+_USER = ConsoleMessageRole.USER
+_ASSISTANT = ConsoleMessageRole.ASSISTANT
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected_unsaved_count"),
+    [
+        # A saved chat whose only unsaved row is a /help listing.
+        (((_USER, _SAVED), (_ASSISTANT, _SAVED), (_SYSTEM, None)), 0),
+        # Command output and notices alone, in a chat with nothing saved.
+        (((_SYSTEM, None), (_SYSTEM, None)), 0),
+        # Beside real unsaved messages, only the real ones count.
+        (((_USER, None), (_ASSISTANT, None), (_SYSTEM, None)), 2),
+        (((_SYSTEM, None), (_USER, None)), 1),
+    ],
+)
+def test_session_close_impact_leaves_console_command_and_notice_rows_out(
+    rows: tuple[tuple[ConsoleMessageRole, str | None], ...],
+    expected_unsaved_count: int,
+) -> None:
+    """TASK-33628.16, owner decision 2026-10-29: /help, /doctor and error
+    notices are Console's own SYSTEM rows; they are never loss."""
+    messages = [
+        ConsoleChatMessage(
+            role=role, content=f"row-{index}", persisted_message_id=persisted_id
+        )
+        for index, (role, persisted_id) in enumerate(rows)
+    ]
+    store = SimpleNamespace(
+        all_messages_for_session=lambda _session_id: messages,
+        sessions=lambda: (SimpleNamespace(id="session-1", pending_attachments=[]),),
+        session_draft=lambda _session_id: "",
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._chat_store_accessor = lambda: store
+    controller._composer_accessor = lambda: None
+    controller._ensure_console_chat_controller_fn = lambda: SimpleNamespace(
+        lifecycle_impact=lambda *, session_id: _idle_lifecycle(),
+        pending_round_kinds=lambda _session_id: frozenset(),
+    )
+    controller._console_runtime_accessor = lambda: SimpleNamespace(
+        recoveries_for_session=lambda _session_id: ()
+    )
+
+    impact = controller._session_close_impact("session-1")
+
+    assert impact is not None
+    assert impact.transcript_message_count == expected_unsaved_count
+    assert impact.has_loss_risk is bool(expected_unsaved_count)
+
+
 def test_session_close_impact_counts_parked_unsent_turns_as_loss() -> None:
     """TASK-33628.1 AC#3: a parked recovery alone is a reason to ask."""
     store = SimpleNamespace(
