@@ -4,7 +4,7 @@ title: "Response-rules Promote runs inside its confirmation dialog with the mana
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: '2026-11-06 17:26'
+updated_date: '2026-11-07 00:54'
 labels:
 - follow-up
 - bug
@@ -74,6 +74,21 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b on 2026-
 
 **Lane.** The Console P0 regression gate job, whose admission-sensitive step runs this file's other nodes, took 16.5-19.6 min of its 20 over the same recent PR runs, so the new manager node joins the UI census tail instead (shard 23 of 32 on this base, slowest recent run 13.6 min; the node is about 3 s a case). The real-key test is in the file TASK-38978 lanes.
 
+**Review r11m-rev1.** `test_promotion_previews_exact_pin_without_private_examples` and the `promote` case of `test_saved_edit_stays_selected_and_pinned_for_next_manager_action` counted fixed `pilot.pause()` calls after Confirm. The write now runs in the manager's worker, and the first one failed once at load 32 to 54. Both now wait, bounded (10 s), until the manager is back on top, not busy, and the binding exists. The second of them is in the Console P0 gate's argv.
+
 **Docs.** `Docs/User_Guide/index.md` (Ctrl+Q's still-working list now names promoting a response rule) and `backlog/docs/console-response-rules.md` (the Promote running state).
+
+**Verification after review r11m-rev1** (2026-11-07 UTC; the machine was shared, and the load is given for each run).
+- **Head.** 19 modal and fleet files under the scratch boot plugin, `-n 4`, load 20 to 80: 272 passed, 2 failed. The two failures are the inspector-section summary tests, which also fail on base.
+- **Base.** The same files: 234 passed and 17 failed, and then the run hung with idle workers. The watchdog killed it after 30 minutes, with about 20 tests unfinished. An earlier base attempt hung for more than 2 hours. Base still has the hangs these tasks fix.
+- `Tests/CI -n 4`: 1215 passed, 1 skipped.
+- Preflight passes.
+- Architecture and size ratchets: 216 passed.
+- Boot budget: 32 passed.
+- **Stress.** The new and changed nodes are 22 selectors, 45 tests, run at `-n 6` under the plugin, 3 runs per round:
+  - Round 1, load 65 to 104: 1 failed, 0 failed, 1 failed.
+  - Round 2, load 53 to 77: 2 failed, 1 failed, 0 failed.
+  - Each test-wait failure was fixed (bounded waits, a held-save precondition) or traced to the product re-sync above.
+  - Round 3, on the final head, load 42 to 61: 1 failed, 0 failed, 0 failed. The one failure is the freshness node's known "Mix-in attempt could not be saved" race, an automatic turn's mix-in anchor, which is reported as a follow-up.
 
 **Files.** `tldw_chatbook/Widgets/Console/response_rules_modal.py`, `Tests/UI/test_response_rules_modal.py`, `Tests/UI/test_app_quit_in_flight_modals.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/index.md`, `backlog/docs/console-response-rules.md`.

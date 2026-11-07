@@ -4,7 +4,7 @@ title: "Sixteen fleet-wake, goal-dispatch and fleet-history test nodes are red o
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: '2026-11-06 17:26'
+updated_date: '2026-11-07 00:54'
 labels:
 - follow-up
 - tests
@@ -109,6 +109,27 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 
 **Runs.** The 12 files (the task's 11, plus `test_console_inspector_section.py`), `-n 4`, under the scratch marker, load about 42: 123 passed, 2 failed. The base under the same command gave 17 failed and 107 passed. Both remaining failures (`test_summary_is_right_aligned_within_the_header_region_no_chevron`, `test_summary_sits_between_title_and_chevron_when_collapsible`) fail the same way on the base, in a different harness, and are outside this task. Plain (without the marker), the UI and fleet-wake Chat files still stop on TASK-38111's `RecoveryRequired` ("Hooks unavailable" for the Chat rigs); the marker stays until TASK-38111 lands. Eligibility covering set, 21 files: 9 failed and 509 passed on this branch, against 14 failed and 504 passed on the base, and every failure on this branch also failed on the base. Agent-rail covering set, 14 files: 14 failed and 289 passed, against 16 failed and 287 passed on the base. The one failure only this branch showed (`test_console_parallel_runs.py::test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit`, at load about 50) passed 2 of 2 alone, and passed on the base alone. Load-only flakes seen on this branch: `test_history_remains_reachable_after_a_childless_primary_run` (once in a 12-file run; 3 of 3 file runs and 2 of 2 alone green); goal-dispatch neighbours at load 35 (2 of 9 runs; 5 of 5 later); the freshness node at :174, "Mix-in attempt could not be saved" (2 of 6 at load 58).
 
+**Review r11m-rev1 fixes.**
+- **Defect A, superseded re-read.** A second config write while the re-keyed read was still running made that read land under a stale key. It then cleared the state, the next sync found no rows to carry, and the section reopened. The superseded branch still retires its state, as `test_historical_projection_rejects_changed_owner_and_captures_database` pins. For a same-owner supersession it now keeps the rows in `_console_historical_kept`, and the next re-key serves them. New case `test_a_config_write_keeps_a_collapsed_fleet_collapsed_with_its_rows[superseded]` holds `_derive_historical_snapshot` on its first re-keyed call, and that held call makes the second write just before it returns. It was red 3/3 on the previous head ("a config write re-opened the fleet section the user collapsed" twice, "the re-keyed read blanked the fleet rows" once) and is green after. The fleet auto-open wait is now 20 s, because the rows land on a worker that is slow under load.
+- **Re-sync after a superseded read.** In the stress runs a fleet read was sometimes superseded during setup, and the section then stayed empty ("rows=0 read=None"): no other sync was bound to ask again. The same-owner superseded branch now requests the coalesced fleet sync (`_request_console_agent_fleet_sync`, `call_after_refresh`), which re-keys and re-reads.
+- **Headless wake fires.** The test is seeded through the chat route, so returning through `_navigate("chat")` brings back the screen the turn ran in (`chat2 is chat`, fed0b7257a). Check (3) now waits, bounded, for the ledger stamp, which is the delivery's last durable step. Through the route, it was read before it landed.
+- **Wiring.** The test now runs one real tab sync before the mount's claim on every mount, through a claim deferred behind it. A regression no longer depends on a readiness worker winning the race. Negative control, with both gates removed (an unconditional view-clear): red 5/5.
+- **Load waits.** The expansion test now waits up to 10 s for the compositor to paint the tail at its own region, instead of one fixed 0.2 s pause, before asserting as before. It failed once in a file run at load 80-160. The safety test's two setup settles allow 15 s. The fleet auto-open wait allows 20 s.
+- **Defect B toast count.** The freshness node also asserts exactly one background toast (`_notify_console_run_outcome`, counted on the class before mount, so the screen's hook rebinding cannot route around it). It does not assert an ordinary receipt. A wake has no ordinary outcome id: `_notify_submission_accepted` sets `_ordinary_outcome_ids` only from a preparation id, and a wake's acceptance has no preparation. A probe at the terminal transition showed `ordinary=None`. So no ordinary receipt is published for a wake, on dev or here. Whether a wake should publish one is reported as an open question; it is not pinned either way.
+
 **Not laned.** No PR lane runs these files, and the criteria ask for none. They need TASK-38111 first.
+
+**Verification after review r11m-rev1** (2026-11-07 UTC; the machine was shared, and the load is given for each run).
+- **Head.** 19 modal and fleet files under the scratch boot plugin, `-n 4`, load 20 to 80: 272 passed, 2 failed. The two failures are the inspector-section summary tests, which also fail on base.
+- **Base.** The same files: 234 passed and 17 failed, and then the run hung with idle workers. The watchdog killed it after 30 minutes, with about 20 tests unfinished. An earlier base attempt hung for more than 2 hours. Base still has the hangs these tasks fix.
+- `Tests/CI -n 4`: 1215 passed, 1 skipped.
+- Preflight passes.
+- Architecture and size ratchets: 216 passed.
+- Boot budget: 32 passed.
+- **Stress.** The new and changed nodes are 22 selectors, 45 tests, run at `-n 6` under the plugin, 3 runs per round:
+  - Round 1, load 65 to 104: 1 failed, 0 failed, 1 failed.
+  - Round 2, load 53 to 77: 2 failed, 1 failed, 0 failed.
+  - Each test-wait failure was fixed (bounded waits, a held-save precondition) or traced to the product re-sync above.
+  - Round 3, on the final head, load 42 to 61: 1 failed, 0 failed, 0 failed. The one failure is the freshness node's known "Mix-in attempt could not be saved" race, an automatic turn's mix-in anchor, which is reported as a follow-up.
 
 **Files.** `tldw_chatbook/UI/Console_Modules/agent.py`, `tldw_chatbook/Chat/console_prompt_queue_coordinator.py`; tests in `Tests/Chat/` (`test_console_fleet_wake_staleness.py`, `test_console_goal_dispatch.py`, `test_console_headless_wake_invariants.py`, `test_fleet_wake_retry.py`, `test_console_fleet_wake_safety.py`) and `Tests/UI/` (`test_console_fleet_history_navigation.py`, `test_console_inspector_section.py`, `test_console_fleet_wake_wiring.py`, `test_console_headless_wake_fires.py`, `test_console_launch_wake.py`, `test_console_automatic_work_pause.py`).

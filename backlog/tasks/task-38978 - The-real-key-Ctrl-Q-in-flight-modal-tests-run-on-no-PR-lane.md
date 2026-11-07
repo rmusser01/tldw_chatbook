@@ -4,7 +4,7 @@ title: "The real-key Ctrl+Q in-flight modal tests run on no PR lane"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: '2026-11-06 17:26'
+updated_date: '2026-11-07 00:54'
 labels:
 - follow-up
 - ci
@@ -54,13 +54,26 @@ TASK-33622.15 and TASK-33622.17 (both Done) only noted that the file was off the
 
 ## Implementation Notes
 
-**Approach.** `Tests/UI/test_app_quit_in_flight_modals.py` joins the UI census as one whole-file entry at the tail, `MINIMUM_FILES` goes to the new entry count (1751 on this base, with TASK-38979's file and TASK-38980's node appended beside it), and the checker's TASK-33622.15 comment now says the file runs in the lane (`test_console_video_picker_cancel.py` is still out). No workflow file changed: the UI Fast Lane reads the census.
+**Approach.** `Tests/UI/test_app_quit_in_flight_modals.py` joins the UI census at the tail as one entry per test (see the shard note), `MINIMUM_FILES` goes to the new entry count (1796 on this base, with TASK-38979's and TASK-38980's entries appended beside it), and the checker's TASK-33622.15 comment now says the file runs in the lane (`test_console_video_picker_cancel.py` is still out). No workflow file changed: the UI Fast Lane reads the census.
 
 **Qualification (AC#2), `pytest -p no:xdist --timeout=180`, serial.**
 - Base, the read-only fu-base-r11 worktree (16 tests, with TASK-38747's three): 3 of 3, 115.2 s, 125.0 s and 118.6 s at load averages 16.0-30.2.
 - This branch (17 tests, with TASK-38980's Promote test): 3 of 3, 135.0 s, 118.4 s and 126.6 s at load 26.9-47.5.
 - The filing measured 47.8 s for 13 tests at load 5.8. The machine was shared with other agents this round, and local wall time scales with load.
 
-**Shard (AC#3).** By the census's round-robin deal (`entries[index::32]`) the file is shard 21 of 32 on this base. That shard's slowest job over the 7 completed shard runs read from 8 recent PR runs (42150847285 to 42191565464, read-only `gh run view --json jobs`) was 13.5 min. One census file measured both ways ran 12.1 s in a CI shard log and 10.5 s here at load 31, so CI runs at about the speed of a moderately loaded local run. At the filing's 47.8 s for 13 tests (about 1.1 min for 17), the shard ends near 14.6 min, 5.4 min under the 20-minute cap. The whole shard, run locally serially with the lane's flags, passed: 223 passed in 892 s at load 32. Other round-11 branches also append at the tail, so a rebase moves the file to another shard, which the coordinator should re-check.
+**Shard (AC#3), after review r11m-rev1.** The first cut was one whole-file entry, which put about a minute on shard 21. Its slowest recent run is 13.5 min, so the margin under 15 min rested on an estimate of the file's CI time: the reviewer's calibration put it at 1.3-3.5 min, not 1.1. The file is now 17 entries, one per test, appended at the tail. They are dealt round-robin over consecutive shards, so no shard takes more than one or two of them, and the restack can move them without loading one shard. Per-entry serial times with `--timeout=180`, measured at load about 70 (a few times what a quiet machine shows): test_ctrl_q_waits_for_a_fork_that_is_committing 19.3 s; test_ctrl_q_waits_for_a_capture_policy_change_being_applied 18.7 s; test_ctrl_q_waits_for_a_trace_privacy_change_being_applied 24.8 s; test_ctrl_q_waits_for_a_project_skills_import 19.7 s; test_ctrl_q_waits_for_a_message_delete_and_its_undo 18.8 s; test_a_stuck_operation_still_lets_a_repeated_ctrl_q_quit 19.5 s; test_a_fork_that_finishes_under_the_quit_question_closes_after_wait 17.1 s; test_ctrl_q_over_the_video_save_picker_asks_before_discarding_it 21.1 s; test_ctrl_q_over_the_video_replace_confirmation_asks_first 23.1 s; test_ctrl_q_while_the_interview_discard_runs_waits_then_quits 19.7 s; test_a_failed_interview_discard_lets_ctrl_q_ask_again 16.6 s; test_an_interview_discard_finishing_while_covered_still_closes_it 18.4 s; test_an_interview_discard_finishing_under_the_quit_question_closes_after_wait 14.8 s; test_ctrl_q_waits_for_a_goal_that_is_starting 13.5 s; test_ctrl_q_waits_for_portrait_regions_being_saved 17.9 s; test_ctrl_q_waits_for_a_rule_test_then_asks_before_discarding_edits 22.2 s; test_ctrl_q_waits_for_a_confirmed_rule_promote_being_written 20.2 s. The CI time of these entries is still estimated, not measured: no CI run has executed them yet. One census file measured both ways ran 12.1 s in a CI shard log and 10.5 s here at load 31. Every entry collects: the 48 TASK-38978, TASK-38979 and TASK-38980 entries collect 51 tests. On the base before the split, whole shards 21 and 22 passed locally (223 passed in 892 s and 169 passed in 872 s, at load 32).
+
+**Verification after review r11m-rev1** (2026-11-07 UTC; the machine was shared, and the load is given for each run).
+- **Head.** 19 modal and fleet files under the scratch boot plugin, `-n 4`, load 20 to 80: 272 passed, 2 failed. The two failures are the inspector-section summary tests, which also fail on base.
+- **Base.** The same files: 234 passed and 17 failed, and then the run hung with idle workers. The watchdog killed it after 30 minutes, with about 20 tests unfinished. An earlier base attempt hung for more than 2 hours. Base still has the hangs these tasks fix.
+- `Tests/CI -n 4`: 1215 passed, 1 skipped.
+- Preflight passes.
+- Architecture and size ratchets: 216 passed.
+- Boot budget: 32 passed.
+- **Stress.** The new and changed nodes are 22 selectors, 45 tests, run at `-n 6` under the plugin, 3 runs per round:
+  - Round 1, load 65 to 104: 1 failed, 0 failed, 1 failed.
+  - Round 2, load 53 to 77: 2 failed, 1 failed, 0 failed.
+  - Each test-wait failure was fixed (bounded waits, a held-save precondition) or traced to the product re-sync above.
+  - Round 3, on the final head, load 42 to 61: 1 failed, 0 failed, 0 failed. The one failure is the freshness node's known "Mix-in attempt could not be saved" race, an automatic turn's mix-in anchor, which is reported as a follow-up.
 
 **Files.** `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
