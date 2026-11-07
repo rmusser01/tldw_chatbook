@@ -35,7 +35,8 @@ FINAL_CLOSEOUT_COUNTS = (17_037, 564)
 _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
     "tldw_chatbook/UI/Screens/chat_screen.py"
 ]
-LIVE_RATCHET_BUDGET = (24_616, 741)
+#: Re-pinned 2026-11-07 by TASK-36948.3 with the row's dated waiver raise.
+LIVE_RATCHET_BUDGET = (24_654, 742)
 
 # Each tuple is (task base, delivered revision, base counts, delivered counts).
 TASK_DELIVERIES = (

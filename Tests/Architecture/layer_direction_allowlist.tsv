@@ -8,7 +8,6 @@ tldw_chatbook.Backup_Recovery.staging	tldw_chatbook.Widgets.Tamagotchi.recovery	
 tldw_chatbook.Backup_Recovery.unsaved_editors	tldw_chatbook.UI.Screens.library_screen	lazy
 tldw_chatbook.Backup_Recovery.unsaved_editors	tldw_chatbook.UI.Screens.settings_storage_defaults	lazy
 tldw_chatbook.Backup_Recovery.unsaved_editors	tldw_chatbook.UI.Speech.speech_playback_mixin	lazy
-tldw_chatbook.Backup_Recovery.unsaved_editors	tldw_chatbook.Widgets.Console.console_composer_bar	lazy
 tldw_chatbook.Backup_Recovery.unsaved_editors	tldw_chatbook.Widgets.Persona_Widgets.personas_state	lazy
 tldw_chatbook.Backup_Recovery.visual_identity_participants	tldw_chatbook.UI.Screens.personas_screen	lazy
 tldw_chatbook.Canvas.web_auth	tldw_chatbook.Web_Server.session_store	top

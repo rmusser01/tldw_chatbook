@@ -303,3 +303,28 @@ def test_registration_table_is_built_once_not_per_connection_access(tmp_path):
         assert table[LibraryCollectionsDB] == "db.library_collections"
     finally:
         db.close()
+
+
+def test_unsaved_editor_probe_reads_no_chat_screen_private_state():
+    """TASK-36948.3: ChatScreen answers for its own unsaved work. The probe's
+    ChatScreen branch reads no private attribute, and the module names none of
+    the screen's private draft state."""
+    tree = ast.parse((PACKAGE / "Backup_Recovery" / "unsaved_editors.py").read_text(encoding="utf-8"))
+    branches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and any(isinstance(n, ast.Constant) and n.value == "ChatScreen" for n in ast.walk(node.test))
+    ]
+    assert len(branches) == 1
+    reads = [
+        ast.unparse(node)
+        for stmt in branches[0].body
+        for node in ast.walk(stmt)
+        if isinstance(node, ast.Attribute) and _private(node.attr)
+    ]
+    assert reads == []
+    named = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    named |= {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)}
+    private = {"_session", "_console_draft_switch_snapshot", "_console_pending_send", "_ConsolePendingSend"}
+    assert named & private == set()

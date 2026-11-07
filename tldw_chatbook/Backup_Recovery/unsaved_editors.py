@@ -570,36 +570,9 @@ def _editor(owner: object) -> list[UnsavedEditor]:
     dirty = False
     label = "Editor"
     if _exact(owner, "UI.Screens.chat_screen", "ChatScreen"):
-        label = "Console composer"
-        # Read the controls directly: the normal composer accessor memoizes,
-        # while draft reconciliation writes back to sessions and clears stashes.
-        from tldw_chatbook.Widgets.Console.console_composer_bar import (
-            ConsoleComposerBar,
-        )
-
-        composers = list(owner.query(ConsoleComposerBar))
-        if len(composers) != 1 or type(composers[0]) is not ConsoleComposerBar:
-            raise TypeError("unknown mounted composer")
-        dirty = _text(composers[0].draft_text())
-        snapshot = owner._session._console_draft_switch_snapshot
-        if snapshot is not None:
-            if type(snapshot) is not tuple or len(snapshot) != 3:
-                raise TypeError("unknown draft transition")
-            dirty = _text(snapshot[1]) or dirty
-        # Enter retains a typed capture until its callback takes custody. The
-        # composer keeps the draft until accepted work owns it; there is no
-        # separate screen-owned inflight stash in the installed send path.
-        pending = owner._console_pending_send
-        if pending is not None:
-            if not _exact(pending, "UI.Screens.chat_screen", "_ConsolePendingSend"):
-                raise TypeError("unknown pending send")
-            stash = pending.stash
-            if stash is not None and not _exact(
-                stash, "Widgets.Console.console_composer_bar", "ConsoleDraftStash"
-            ):
-                raise TypeError("unknown draft stash")
-            if stash is not None:
-                dirty = _text(stash.text) or bool(stash.segments) or dirty
+        # The screen reads its composer, switch snapshot and send capture
+        # without reconciling them, and raises TypeError on an unknown shape.
+        label, dirty = "Console composer", owner.has_unsaved_editor_state()
     elif _exact(owner, "Widgets.Console.console_composer_bar", "ConsoleComposerBar"):
         label, dirty = "Console composer", _text(owner.draft_text())
     elif _exact(owner, "UI.Screens.library_screen", "LibraryScreen"):
