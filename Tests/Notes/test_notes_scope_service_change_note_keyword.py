@@ -10,6 +10,12 @@ Real stores throughout: a ``CharactersRAGDB`` behind the real
 ``NotesInteropService``, and for Sync v2 a real ``SyncStateRepository`` wired
 by the app's own ``_wire_notes_sync_services``. The mounted bulk arms are in
 ``Tests/UI/test_library_notes_bulk_keyword_sync_v2.py``.
+
+TASK-34000.116: ``resolve_local_note_keyword_profile`` resolves the Sync v2
+profile once, and checks its group's readiness, for a run of changes that pass
+it back as ``resolved_profile``; those changes read no profile at all. The
+default (no resolution passed) still resolves per change, as the editor's save
+does.
 """
 
 from __future__ import annotations
@@ -49,7 +55,9 @@ class _Profile:
         self.note_id = self.db.add_note("Trip Oslo", "itinerary")
         self.db.link_note_to_keyword(self.note_id, self.db.add_keyword("planning"))
 
-    def change(self, keyword: str, *, remove: bool = False) -> bool:
+    def change(
+        self, keyword: str, *, remove: bool = False, **resolved: object
+    ) -> bool:
         with self.interop.note_transaction(USER) as cursor:
             return self.service.change_local_note_keyword(
                 user_id=USER,
@@ -57,7 +65,21 @@ class _Profile:
                 keyword=keyword,
                 remove=remove,
                 cursor=cursor,
+                **resolved,
             )
+
+    def count_profile_reads(self) -> list[str]:
+        """Record every ``SyncStateRepository`` profile read, by name."""
+        reads: list[str] = []
+        for name in ("list_sync_v2_profile_states", "get_sync_v2_profile_state"):
+            method = getattr(self.state, name)
+
+            def counted(*args, _name=name, _method=method, **kwargs):
+                reads.append(_name)
+                return _method(*args, **kwargs)
+
+            setattr(self.state, name, counted)
+        return reads
 
     def keywords(self) -> list[str]:
         return sorted(
@@ -76,7 +98,9 @@ class _Profile:
         ]
 
     def wire_sync_v2(self, tmp_path: Path, *, ready: bool = True) -> None:
-        state = SyncStateRepository(tmp_path / "sync-state.sqlite3", client_id="kw")
+        state = self.state = SyncStateRepository(
+            tmp_path / "sync-state.sqlite3", client_id="kw"
+        )
         state.set_sync_v2_profile_state(
             server_profile_id=SERVER,
             authenticated_principal_id=None,
@@ -178,3 +202,81 @@ def test_the_policy_gate_refuses_before_anything_is_read_or_written(
     assert asked == ["notes.update.local"]
     assert profile.keywords() == ["planning"]
     assert profile.db.get_keyword_by_text("travel") is None
+
+
+def test_a_resolved_profile_spares_every_change_its_profile_reads(tmp_path) -> None:
+    profile = _Profile(tmp_path)
+    profile.wire_sync_v2(tmp_path)
+    reads = profile.count_profile_reads()
+
+    # The default path, the editor's: each change resolves the profile itself.
+    assert profile.change("travel") is True
+    per_change = len(reads)
+    assert per_change > 0, reads
+
+    reads.clear()
+    resolved = profile.service.resolve_local_note_keyword_profile(user_id=USER)
+    once = len(reads)
+    assert once > 0, reads
+    reads.clear()
+    assert profile.change("travel", remove=True, resolved_profile=resolved) is True
+    assert profile.change("food", resolved_profile=resolved) is True
+    assert profile.change("food", remove=True, resolved_profile=resolved) is True
+    assert reads == []
+    # The same intents as the default path records.
+    assert profile.intents() == [
+        ("notes.keyword", "upsert"),
+        ("notes.keyword_link", "upsert"),
+        ("notes.keyword_link", "tombstone"),
+        ("notes.keyword", "upsert"),
+        ("notes.keyword_link", "upsert"),
+        ("notes.keyword_link", "tombstone"),
+    ]
+    assert profile.keywords() == ["planning"]
+
+
+def test_resolving_for_a_group_that_is_not_ready_refuses_before_any_write(
+    tmp_path,
+) -> None:
+    profile = _Profile(tmp_path)
+    profile.wire_sync_v2(tmp_path, ready=False)
+
+    with pytest.raises(ValueError, match="not ready"):
+        profile.service.resolve_local_note_keyword_profile(user_id=USER)
+    assert profile.keywords() == ["planning"]
+    assert profile.intents() == []
+
+
+def test_a_group_that_stops_being_ready_mid_run_refuses_without_a_profile_read(
+    tmp_path,
+) -> None:
+    profile = _Profile(tmp_path)
+    profile.wire_sync_v2(tmp_path)
+    resolved = profile.service.resolve_local_note_keyword_profile(user_id=USER)
+    reads = profile.count_profile_reads()
+    assert profile.change("travel", resolved_profile=resolved) is True
+    with profile.db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE notes_organization_sync_checkpoints SET local_state = "
+            "'pulling' WHERE server_profile_id = ? AND dataset_id = ?",
+            (SERVER, DATASET),
+        )
+
+    # Each change re-checks readiness from the Notes database's checkpoint
+    # row inside its own transaction.
+    with pytest.raises(ValueError, match="not ready"):
+        profile.change("food", resolved_profile=resolved)
+    assert reads == []
+    assert profile.keywords() == ["planning", "travel"]
+    assert [domain for domain, _ in profile.intents()] == [
+        "notes.keyword",
+        "notes.keyword_link",
+    ]
+
+
+def test_without_sync_v2_wiring_there_is_nothing_to_resolve(tmp_path) -> None:
+    profile = _Profile(tmp_path)
+
+    assert profile.service.resolve_local_note_keyword_profile(user_id=USER) is None
+    assert profile.change("travel") is True
+    assert profile.keywords() == ["planning", "travel"]
