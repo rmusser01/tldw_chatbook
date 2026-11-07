@@ -648,7 +648,7 @@ class TldwMCPServer:
             )
 
             logger.info("Databases initialized successfully")
-        except Exception:
+        except BaseException:  # as the other two post-factory guards: Ctrl-C closes too
             if storage is not None:
                 storage.close()  # opened before a later step failed
             logger.bind(operation="initialize_standalone_mcp_databases").error(
