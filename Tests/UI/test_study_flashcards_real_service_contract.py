@@ -437,3 +437,41 @@ async def test_real_service_workspace_scope_lists_and_creates_through_real_signa
 
         created = [call for call in client.calls if call[0] == "create_flashcard"]
         assert len(created) == 1 and created[0][1]["deck_id"] == 8
+
+
+# --- TASK-36949.2 review M-2: the dashboard's no-scope-service fallback -------
+
+
+@pytest.mark.asyncio
+async def test_dashboard_without_scope_services_reads_the_learning_repository():
+    """With no scope services wired, the Study dashboard reads ``db.learning``.
+
+    Every branch of that fallback swallows its error into a debug log, so a
+    wrong attribute there renders 0 due cards and empty recents instead of
+    failing: assert the rows it read, not merely that it ran. Unmounted, over
+    a real in-memory ``CharactersRAGDB``.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(":memory:", "study-dashboard-fallback")
+    try:
+        learning = db.learning
+        deck_id = learning.create_deck("Fallback Biology")
+        learning.create_flashcard(
+            {"deck_id": deck_id, "front": "Unit of life?", "back": "The cell"}
+        )
+        learning.create_quiz("Fallback Drill")
+        screen = StudyScreen(
+            app_instance=SimpleNamespace(
+                chachanotes_db=db, current_runtime_backend="local"
+            )
+        )
+        await screen._refresh_dashboard_snapshot()
+    finally:
+        db.close_connection()
+
+    assert screen._dashboard_due_count == 1
+    assert screen._recent_deck_titles == ["Fallback Biology"]
+    assert screen._recent_quiz_titles == ["Fallback Drill"]
