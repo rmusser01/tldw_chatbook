@@ -757,6 +757,43 @@ async def test_a_redelivered_drain_cannot_double_deliver(tmp_path, request):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row(
+    tmp_path, request
+):
+    """TASK-39119: a wake writes no USER row, so the chat's last USER row is an
+    earlier turn's. The wake anchored its mix-in attempt there, and when that
+    row was not saved yet the turn was blocked ("Mix-in attempt could not be
+    saved; response was not sent.") and never reached the provider. The save
+    is held back here by never persisting the row."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        earlier = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="An earlier question",
+            persist=False,
+        )
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+        assert await _settle(lambda: gateway.payloads), (
+            "the wake never reached the provider: "
+            f"{controller.run_state_for(session.id)!r}"
+        )
+        anchors = chacha.get_connection().execute(
+            "SELECT user_message_id FROM console_prompt_mixin_attempts"
+        ).fetchall()
+        assert anchors == [], f"the wake recorded mix-in attempts: {anchors}"
+        assert earlier.id not in str(gateway.payloads[0][-1])
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path, request):
     """Refusal direction of notification dedupe: the provider blocks the first
     attempt -> no notice row, pending + mark retained; the retry

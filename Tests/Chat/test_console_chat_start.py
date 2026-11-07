@@ -645,6 +645,17 @@ async def test_native_start_uses_both_receipts_and_literal_machine_request(
         assert metadata["origin"] == "agent_chat_start"
         assert metadata["agent_chat_start"]["attempt_id"] == "native-start"
         assert committed_receipts[0].agent_chat_start_attempt_id == "native-start"
+        # TASK-39119: a chat start writes its own opening USER row, and its
+        # mix-in attempt anchors there, never to an earlier turn's row.
+        anchors = {
+            row[0]
+            for row in store.persistence.db.get_connection().execute(
+                "SELECT user_message_id FROM console_prompt_mixin_attempts "
+                "WHERE conversation_id=?",
+                (conversation,),
+            )
+        }
+        assert anchors == {user["id"]}, (anchors, user["id"])
         assert any(
             row["sender"] == "assistant" and row["content"] == "target answer"
             for row in rows

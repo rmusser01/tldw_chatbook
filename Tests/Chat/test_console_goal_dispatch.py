@@ -94,9 +94,8 @@ async def test_goal_native_dispatch_is_automatic_fresh_and_returns_exact_native_
     goal, store, session, _controller, coordinator, gateway, calls = build_goal_rig(
         stores, monkeypatch
     )
-    # A saved earlier turn, as production transcripts are: since 7970fbcada a
-    # turn's mix-in attempt anchors to the last USER row and refuses one that
-    # is not in the database (TASK-39044).
+    # A saved earlier turn, as production transcripts are (TASK-39044). Its
+    # unsaved twin is the TASK-39119 test below.
     store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,
@@ -118,6 +117,38 @@ async def test_goal_native_dispatch_is_automatic_fresh_and_returns_exact_native_
         assert any(
             getattr(m.metadata, "origin", None) == "goal_iteration" for m in rows
         )
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_turn(
+    stores, monkeypatch
+):
+    """TASK-39119: a goal iteration writes no USER row, so the chat's last
+    USER row is an earlier turn's. The iteration anchored its mix-in attempt
+    there and was blocked while that row was unsaved, held back here by
+    never persisting it."""
+    goal, store, session, _controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="OLD PRIVATE TRANSCRIPT",
+        persist=False,
+    )
+    try:
+        result = await coordinator.dispatch_once(goal.id)
+        assert result.native_run_id and result.outcome.status == "done", result
+        assert len(calls) == 1
+        anchors = (
+            stores[1]
+            .db.get_connection()
+            .execute("SELECT user_message_id FROM console_prompt_mixin_attempts")
+            .fetchall()
+        )
+        assert anchors == [], f"the goal iteration recorded mix-in attempts: {anchors}"
     finally:
         await gateway.aclose()
 
