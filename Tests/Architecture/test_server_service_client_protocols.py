@@ -13,13 +13,16 @@ and whatever is bound from one of these: a plain, annotated or walrus
 assignment (or a same-length tuple assignment) to a name or to ``self.<attr>``;
 an argument to a same-module function or method, followed by position or
 keyword to its parameter whatever that parameter is called; or the result of a
-same-module function that returns it. A use is an attribute read on the client
-or ``getattr(<client>, name)``. Comparing or truth-testing the client is
-allowed. A client expression anywhere else fails as unresolved: handed to
-another module's function, stored in a subscript or another object's
-attribute, put in a list, dict or unpaired tuple, used as an operand of
-``or``/``and`` or a ternary branch, iterated with ``for`` or entered with
-``with``.
+same-module function that returns it. An attribute bound to the client, or a
+``@property``/``@cached_property`` that returns it, is the client when read on
+any object, directly or as ``getattr(x, "<attr>")``. A use is an attribute
+read on the client or ``getattr(<client>, name)``. Comparing or truth-testing
+the client, or passing it first to ``getattr``/``hasattr``/``callable``/
+``isinstance``, is allowed. A client expression anywhere else fails as
+unresolved: handed to another module's function, passed as a ``getattr``
+default, stored in a subscript or another object's attribute, put in a list,
+dict or unpaired tuple, used as an operand of ``or``/``and`` or a ternary
+branch, iterated with ``for`` or entered with ``with``.
 
 A non-literal ``getattr`` name fails closed: it must resolve to string
 literals through module-level string constants (a name the whole module
@@ -144,8 +147,18 @@ class ClientScan:
             if isinstance(t, ast.Name) and stores[t.id] == 1
         }
         self.names = {"client"}  # names bound to the client
-        self.attrs = {"client"}  # self.<attr> bound to the client
+        self.attrs = {"client"}  # attributes bound to the client, read on any object
         self.returners = {"_require_client"}  # functions that return the client
+        self.properties = {
+            f.name
+            for fns in self.functions.values()
+            for f in fns
+            if any(
+                getattr(d, "id", getattr(d, "attr", None))
+                in {"property", "cached_property"}
+                for d in f.decorator_list
+            )
+        }
         self.unresolved: set[str] = set()
         while self._bind_once():
             pass
@@ -158,10 +171,16 @@ class ClientScan:
     def is_client(self, node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
             return node.id in self.names
+        # A client attribute or a client-returning property, on any receiver
+        # (an over-approximation, so it fails closed).
+        client_attrs = self.attrs | (self.returners & self.properties)
         if isinstance(node, ast.Attribute):
-            return node.attr in self.attrs and _is_self(node.value)
+            return node.attr in client_attrs
         if isinstance(node, ast.Call):
             func = node.func
+            if getattr(func, "id", None) == "getattr" and len(node.args) >= 2:
+                name = node.args[1]  # getattr(x, "client"[, default])
+                return _is_str(name) and name.value in client_attrs
             return getattr(func, "attr", getattr(func, "id", None)) in self.returners
         return isinstance(node, ast.NamedExpr) and self.is_client(node.value)
 
@@ -307,6 +326,10 @@ class ClientScan:
         if isinstance(parent, ast.Attribute | ast.Return | ast.keyword | ast.Compare):
             return True  # a use, a returner, a hand-off, an identity/None check
         if isinstance(parent, ast.Call):
+            if getattr(parent.func, "id", None) in INTROSPECTION:
+                # Inspected as the first argument (getattr(client, name)); as a
+                # getattr default the client would escape untracked.
+                return bool(parent.args) and node is parent.args[0]
             return node is not parent.func  # a hand-off; calling the client is not
         if isinstance(parent, ast.Assign | ast.AnnAssign | ast.NamedExpr):
             return node is parent.value  # _bind binds it or reports the target
