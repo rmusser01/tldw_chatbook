@@ -15905,6 +15905,7 @@ class ChatScreen(BaseAppScreen):
             self._video._drain_pending_console_videos()
             self._stop_console_transcript_sync_timer()
             self._fleet._stop_console_fleet_survivor_tick()
+            self._agent.release_historical_presentation()
             self._context_spend._stop_console_cost_ttl_timer()
             self._stop_console_environment_poll_timer()
             self._stop_console_credential_poll_timer()

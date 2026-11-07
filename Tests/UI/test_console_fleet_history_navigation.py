@@ -403,11 +403,11 @@ async def test_a_config_write_keeps_a_collapsed_fleet_collapsed_with_its_rows(
                     await held["worker"].wait()
             finally:
                 release.set()
-            await pilot.pause()
-            console._sync_console_agent_section()
+            # No explicit sync from here: after a superseded read only the
+            # coalesced fleet sync it requests can re-key and read again.
             await pilot.pause()
             assert section.rows, "the re-keyed read blanked the fleet rows"
-            for _ in range(100):
+            for _ in range(200):
                 state = console._agent._console_historical_read
                 if (
                     state is not None

@@ -1964,7 +1964,7 @@ class ConsoleAgentController:
         """
         bridge = self._ensure_console_agent_bridge()
         if bridge is None:
-            self._console_historical_read = None
+            self.release_historical_presentation()
             return ()
         conversation_id = self._current_console_rail_conversation_id() or ""
         if not conversation_id:
@@ -1974,7 +1974,7 @@ class ConsoleAgentController:
                 or state["key"]
                 != self._historical_presentation_key(bridge, conversation_id)
             ):
-                self._console_historical_read = None
+                self.release_historical_presentation()
             return ()
         fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
         handles = fleet_snapshot(conversation_id) if fleet_snapshot is not None else []
@@ -2594,6 +2594,11 @@ class ConsoleAgentController:
             )
         return self._console_subagent_counts_cache
 
+    def release_historical_presentation(self) -> None:
+        """Drop the historical read and the rows kept for its re-key (TASK-39044)."""
+        self._console_historical_read = None
+        self._console_historical_kept = None
+
     @staticmethod
     def _historical_owner(key: tuple) -> tuple:
         """The key's owner and chat fields: all but the config and live status."""
@@ -2692,7 +2697,7 @@ class ConsoleAgentController:
             or type(database) is not AgentRunsDB
             or database.is_memory_db
         ):
-            self._console_historical_read = None
+            self.release_historical_presentation()
             return bridge.historical_snapshot(conversation_id)
         key = self._historical_presentation_key(bridge, conversation_id)
         state = self._console_historical_read
@@ -2790,8 +2795,9 @@ class ConsoleAgentController:
                 ):
                     if self._console_historical_read is state:
                         self._console_historical_read = None
-                        # A config write landed during this read: the next
-                        # re-key still shows these rows (TASK-39044).
+                        # The key moved during this read (a config write, or
+                        # a live or child status change): the next re-key
+                        # still shows these rows (TASK-39044).
                         if same_owner and self._historical_owner(
                             state["key"]
                         ) == self._historical_owner(current_key):
@@ -2810,7 +2816,7 @@ class ConsoleAgentController:
                 state["value"] = value
             except asyncio.CancelledError:
                 if self._console_historical_read is state:
-                    self._console_historical_read = None
+                    self.release_historical_presentation()
                 raise
             except Exception:  # noqa: BLE001 - failed historical reads remain retryable.
                 return
