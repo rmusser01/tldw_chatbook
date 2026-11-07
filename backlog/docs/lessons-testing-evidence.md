@@ -112,6 +112,22 @@ The fixed test still failed open. It kept the string literals bound to the name 
 
 **What to do.** When a change makes a process-wide registration mandatory, list the child programs that reach the guarded call: AST-scan `Tests/**/*.py` string constants that import `tldw_chatbook` and name the guarded methods, plus non-test scripts under `Tests/`, `Helper_Scripts/` and `scripts/` that tests run with `subprocess`. Then run those tests; do not judge them by reading. A child is safe when it imports something that registers the provider before its first guarded call, and that varies by module: here `Chat.chat_persistence_service` loaded the coordinator, while `Chat.console_chat_store`, `Chat.chat_conversation_service` and constructing `TldwCli()` did not.
 
+## Removing an injected `controller.app` hides three kinds of test patch (TASK-36947.4, 2026-11-07)
+
+**Incident.** TASK-36947.4 replaced the Console controller's settable `self.app` with a host built at construction. A mechanical rewrite turned every `controller.app = fake` into a construction-equivalent binding, and the first full Console run still had 156 new failures. They fell into three groups:
+- **Late patches across function boundaries.** A rig bound the fake, and the test then replaced `app.notify` or `app.unified_mcp_service`. A same-function scan for late patches did not see them.
+- **Indirect injection.** `ConsoleRuntime.set_chat_controller` had also assigned `controller.app = self._app`. Tests that handed a self-built controller to a runtime relied on that silently, and nothing in those tests mentions `.app`.
+- **Real apps.** These tests patched service aliases before mounting. The production host reads `app.services`, which composition had built before those patches.
+
+The run also exposed controller reads under names that a `controller.app` grep misses: moved methods that take the controller as `self`, and `preparation_owner`.
+
+**What to do.** When an injected, lazily read attribute becomes a construction-time dependency:
+- Give tests a helper that keeps the old lazy reads. Here, `bind_app` reads the fake on every access.
+- Stand in for each indirect injection site explicitly (`bind_runtime_app`).
+- Republish the bundle after pre-mount alias patches.
+
+Find the remaining failures by comparing failing test ids against base, not by counts: locally both base and head fail about 1,100 Console tests from the RecoveryRequired trap.
+
 ## A test server's sleeping handler is paid in full when `async with server` exits (TASK-38965, 2026-11-06)
 
 **Incident.** `test_real_tls_stalls_are_timeouts_not_plain_http[handshake-stall]` took 32.5 s, although its probe gave up after 0.5 s. Its `asyncio.start_server` handler read once and then slept 30 s to "never answer". Since Python 3.12, `Server.wait_closed()` (which `async with server` calls on exit) waits until every connection is closed; it does not wait for handlers. Over plain TCP, the handshake-stall case, `StreamReaderProtocol.eof_received` returns True, so a connection the client has closed stays half-open until the handler calls `writer.close()`, and this handler did that only after its sleep. That was 32 s of every PR's serial dreams-boundary step. Over TLS, `eof_received` returns False and the client's EOF closes the transport, so the sibling tls-read-timeout case (2.6 s) let the server exit while its handler still slept. Review r10e-rev1 measured both with the old handler on Python 3.12.11: the TLS server exited at 0.52 s, and the plain-TCP server was still waiting after 4 s.
