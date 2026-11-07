@@ -25,6 +25,41 @@ def test_service_constructor_is_passive_and_rejects_untrusted_audit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_service_offload_dispatches_the_owned_named_operation(
+    tmp_path, monkeypatch
+):
+    import functools
+    from types import MethodType
+
+    from Tests.Agents.test_workflow_run_service import _history_persistence
+    from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
+
+    with closing(AgentRunsDB(tmp_path / "dispatch.db")) as db:
+        snapshot = planned(db, tmp_path)
+        service = WorkflowRunService(db, _history_persistence(tmp_path))
+        original = service.get
+        entered = []
+
+        @functools.wraps(original)
+        def wrapped(self, *args, **kwargs):
+            entered.append(True)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(service, "get", MethodType(wrapped, service))
+        assert await service.call(service.get, snapshot.id) == snapshot
+        assert entered == [True]
+
+        @functools.wraps(original)
+        def unrelated(self, *args, **kwargs):
+            pytest.fail("an unregistered callback received owned storage")
+
+        assert (
+            await service.call(MethodType(unrelated, service), snapshot.id) == snapshot
+        )
+        assert entered == [True, True]
+
+
+@pytest.mark.asyncio
 async def test_finite_cancelled_workflow_callback_keeps_actual_db_owner_until_drain(
     tmp_path,
     monkeypatch,
@@ -209,16 +244,21 @@ async def test_actual_startup_owner_projects_workflows_once_before_ready(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "closed,opaque,replaced_root",
+    "closed,opaque,replaced_root,legacy_closed",
     [
-        (False, False, False),
-        (True, False, False),
-        (True, True, False),
-        (True, False, True),
+        (False, False, False, False),
+        (False, True, False, False),
+        (False, False, True, False),
+        (False, False, "symlink", False),
+        (True, False, False, False),
+        (True, True, False, False),
+        (True, False, True, False),
+        (False, False, False, True),
+        (False, True, False, True),
     ],
 )
-async def test_startup_protects_actual_unknown_work_even_after_review_close(
-    tmp_path, monkeypatch, closed, opaque, replaced_root
+async def test_startup_scopes_historical_protection_and_reconciliation_releases_it(
+    tmp_path, monkeypatch, closed, opaque, replaced_root, legacy_closed
 ):
     import json
 
@@ -278,6 +318,14 @@ async def test_startup_protects_actual_unknown_work_even_after_review_close(
             expected_control_revision=snapshot.control_revision,
             decision=WorkflowExecutionRecovery(reason="acknowledged_unknown"),
         )
+    if legacy_closed:
+        db.automatic_work.recover(current_owner_id="intermediate")
+        # This is the post-upgrade state: old closed history has no review marker.
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET status='closed' WHERE id=?", (snapshot.id,)
+            )
+        assert service.get(snapshot.id).accounting.uncertain
     controller = SimpleNamespace(
         _agent_bridge=SimpleNamespace(runs_db=db),
         store=SimpleNamespace(persistence=persistence, sessions=list),
@@ -288,7 +336,12 @@ async def test_startup_protects_actual_unknown_work_even_after_review_close(
     wake._recovery_projection = runtime._project_workflow_recovery
     if replaced_root:
         root.rename(tmp_path / "old-project")
-        root.mkdir()
+        if replaced_root == "symlink":
+            target = tmp_path / "unrelated-target"
+            target.mkdir()
+            root.symlink_to(target, target_is_directory=True)
+        else:
+            root.mkdir()
     try:
         assert not runtime.worktree_activity.recovery_blockers(
             WorktreeFootprint(opaque=True)
@@ -297,23 +350,40 @@ async def test_startup_protects_actual_unknown_work_even_after_review_close(
         assert await wake.wait_for_recovery()
         chain = capture_directory_chain(root)
         footprint = WorktreeFootprint(
-            reads=(WorktreeScope(root / "source.py", False, chain),)
+            reads=(WorktreeScope(chain.canonical_root / "source.py", False, chain),)
         )
-        assert runtime.worktree_activity.recovery_blockers(footprint) == (snapshot.id,)
+        blocked = not closed and not replaced_root
+        assert runtime.worktree_activity.recovery_blockers(footprint) == (
+            (snapshot.id,) if blocked else ()
+        )
         with runtime.worktree_activity.prelaunch(footprint=footprint) as claim:
-            assert claim is None
+            assert (claim is None) is blocked
         unrelated = tmp_path / "scratch"
         unrelated.mkdir()
         scratch = WorktreeFootprint(
             writes=(WorktreeScope(unrelated, True, capture_directory_chain(unrelated)),)
         )
         with runtime.worktree_activity.prelaunch(footprint=scratch) as claim:
-            assert (claim is None) is (opaque or replaced_root)
+            assert claim is not None
         assert db.list_runs(snapshot.request.conversation_id) == []
         assert runtime.execution_capacity.snapshot().executions == ()
         assert service.get(snapshot.id).status == (
-            "closed" if closed else "recovery_required"
+            "closed" if closed or legacy_closed else "recovery_required"
         )
+        if not closed:
+            live_service = runtime.ensure_workflow_service()
+            before = await live_service.call(live_service.get, snapshot.id)
+            resolved = await live_service.call(
+                live_service.resolve_recovery,
+                snapshot.id,
+                expected_control_revision=before.control_revision,
+                decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
+            )
+            assert resolved.status == "closed"
+            assert resolved.accounting == before.accounting
+            assert runtime.worktree_activity.recovery_blockers(footprint) == ()
+            with runtime.worktree_activity.prelaunch(footprint=footprint) as claim:
+                assert claim is not None
     finally:
         wake.dispose()
         await wake.drain_recovery()

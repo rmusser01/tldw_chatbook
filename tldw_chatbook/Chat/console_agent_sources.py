@@ -298,13 +298,13 @@ class _AgentSources:
             yield
 
     def bind_writer(self, writer):
-        from tldw_chatbook.Agents.run_log import _RUN_LOG_PATH_WRITER_ORIGINAL
+        from tldw_chatbook.Agents.run_log import RunLogWriter
 
         if self.writer is not None:
             raise RuntimeError("original agent writer already selected")
         self.writer = writer
         self.writer_state = (
-            _RUN_LOG_PATH_WRITER_ORIGINAL,
+            RunLogWriter,
             writer._dir_name,
             writer._access_scope,
             writer._on_bound,
@@ -325,8 +325,7 @@ class _AgentSources:
             raise RuntimeError("original agent log binding changed")
 
     def _check_writer(self, writer):
-        record, directory, scope, on_bound = self.writer_state
-        writer_class, methods = record
+        writer_class, directory, scope, on_bound = self.writer_state
         if (
             writer is not self.writer
             or inspect.getattr_static(writer, "_console_storage_source", None)
@@ -336,12 +335,6 @@ class _AgentSources:
             or writer._dir_name != directory
             or writer._access_scope is not scope
             or writer._on_bound is not on_bound
-            or not all(
-                inspect.getattr_static(writer, name, None) is callback
-                and callback.__code__ is code
-                and callback.__defaults__ is defaults
-                for name, callback, code, defaults in methods
-            )
             or writer.log_dir != (self.bound[1] if self.bound is not None else None)
         ):
             raise RuntimeError("original agent log writer changed")
@@ -381,29 +374,10 @@ def console_writer_source(writer: object) -> _AgentSources | None:
     return source
 
 
-from .console_ordinary_tree import _function_record as _record_source_function
-from .console_ordinary_tree import _function_unchanged, _OrdinaryTurn
-
-_NATIVE_RETAINED_SOURCE_STACK = (
-    _record_source_function(_retained_source_stack),
-    _record_source_function(_retained_source_stack.__wrapped__),
-    _record_source_function(_OrdinaryTurn.retain_source_scope),
-    _record_source_function(_OrdinaryTurn.retain_source_scope.__wrapped__),
-)
-
-
 def _original_retained_source_stack(tree, databases):
-    records = _NATIVE_RETAINED_SOURCE_STACK
-    if (
-        type(tree) is not _OrdinaryTurn
-        or globals().get("_retained_source_stack") is not records[0][0]
-        or getattr(_retained_source_stack, "__wrapped__", None) is not records[1][0]
-        or inspect.getattr_static(tree, "retain_source_scope", None)
-        is not records[2][0]
-        or inspect.getattr_static(_OrdinaryTurn, "retain_source_scope", None)
-        is not records[2][0]
-        or getattr(records[2][0], "__wrapped__", None) is not records[3][0]
-        or not all(_function_unchanged(record) for record in records)
-    ):
-        raise RuntimeError("original source retention changed")
+    """Retain the actual originating tree through native storage scope return."""
+    from .console_ordinary_tree import _OrdinaryTurn
+
+    if not isinstance(tree, _OrdinaryTurn):
+        raise TypeError("original source retention changed")
     return _retained_source_stack(tree, databases)

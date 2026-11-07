@@ -88,7 +88,11 @@ def test_registry_rechecks_workflow_revocation_before_provider_effect(monkeypatc
     monkeypatch.setattr(
         automatic_work_runtime,
         "current_automatic_work",
-        lambda: SimpleNamespace(goal=None, workflow=object(), check=refused),
+        lambda: SimpleNamespace(
+            goal=None,
+            workflow=SimpleNamespace(attempt=SimpleNamespace(purpose="execution")),
+            check=refused,
+        ),
     )
     with pytest.raises(RuntimeError, match="workflow_authority_changed"):
         registry.invoke_by_name("t0", {})

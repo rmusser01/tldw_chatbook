@@ -21,6 +21,8 @@ class ConsolePreparationRead:
     task: asyncio.Task[Any] = field(repr=False)
     session_id: str | None
     retired: asyncio.Future[None] = field(repr=False)
+    callback_returned: bool = False
+    result: Any = field(default=None, repr=False)
     _producer: asyncio.Future[Any] | None = field(default=None, repr=False)
     _observers: tuple[set[ConsolePreparationRead], ...] = field(default=(), repr=False)
 
@@ -108,8 +110,8 @@ def _current_task():
         return None
 
 
-def preparation_source_for(creator: object) -> object | None:
-    """Return pure captured sources only inside this exact worker invocation."""
+def preparation_read_for(creator: object) -> ConsolePreparationRead | None:
+    """Return the registered read only inside its owning worker invocation."""
     binding = _source_binding.get()
     if (
         binding is None
@@ -120,7 +122,13 @@ def preparation_source_for(creator: object) -> object | None:
         or binding.task is not _current_task()
     ):
         return None
-    return binding.read.source
+    return binding.read
+
+
+def preparation_source_for(creator: object) -> object | None:
+    """Return captured sources only inside their owning worker invocation."""
+    read = preparation_read_for(creator)
+    return read.source if read is not None else None
 
 
 async def run_preparation_read[Result](
@@ -183,9 +191,10 @@ async def run_preparation_read[Result](
         try:
             with _preparation_handoffs():
                 require_current()
-                result = callback()
+                read.result = callback()
+                read.callback_returned = True
                 require_current()
-                return result
+                return read.result
         except StopIteration as error:
             # asyncio Futures cannot transport StopIteration; convert inside
             # the worker before its physical outcome crosses to the coroutine.
@@ -290,46 +299,3 @@ async def await_finite_read[_Result](
         if not worker.cancelled():
             worker.exception()
         raise
-
-
-# Original finite read producers and concrete fields used by planning retirement.
-from inspect import getattr_static as _read_getattr_static
-
-_NATIVE_PLANNING_READ_RETURN = (
-    ConsolePreparationRead,
-    _HookSourceBinding,
-    _source_binding,
-    tuple(
-        (
-            function,
-            function.__code__,
-            function.__defaults__,
-            function.__kwdefaults__,
-            tuple((function.__kwdefaults__ or {}).items()),
-            function.__closure__,
-            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-        )
-        for function in (
-            run_preparation_read,
-            _retire,
-            ConsolePreparationRead.__init__,
-            _HookSourceBinding.__init__,
-        )
-    ),
-    tuple(
-        (
-            owner,
-            tuple(
-                (name, _read_getattr_static(owner, name))
-                for name in (
-                    "__getattribute__",
-                    "__setattr__",
-                    "__new__",
-                    "__init__",
-                    *owner.__slots__,
-                )
-            ),
-        )
-        for owner in (ConsolePreparationRead, _HookSourceBinding)
-    ),
-)

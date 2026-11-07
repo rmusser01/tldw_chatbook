@@ -227,7 +227,7 @@ async def test_original_native_child_and_durable_settlement_own_finalization(
     assert h.db.get_run(receipt.run_id)["agent_kind"] == "subagent"
     with pytest.raises(ValueError, match="checkpoint_missing"):
         await prepared.close()
-    assert not native.turn_lifeline.loop.is_closed()
+    assert prepared in h.runtime._workflow_preparations
     result = WorkflowTaskResult(
         workflow_id=h.workflow.id,
         attempt_id=receipt.attempt_id,
@@ -239,7 +239,7 @@ async def test_original_native_child_and_durable_settlement_own_finalization(
     await h.service.call(h.service.checkpoint_task, result, drained=True)
     await prepared.close()
     await prepared.close()
-    assert native.turn_lifeline.loop.is_closed()
+    assert prepared not in h.runtime._workflow_preparations
     assert h.bridge.live_primary_run_id(h.conversation_id) is None
     assert not h.gateway._loop_clients
 
@@ -267,7 +267,7 @@ async def test_duplicate_and_detached_preparation_preserve_original_resources(
             )
         assert prepared.authorization._native_preparation == [original]
         assert original.service is prepared.native.service
-        assert not prepared.native.turn_lifeline.loop.is_closed()
+        assert prepared in h.runtime._workflow_preparations
         h.runtime._agent_bridge = None
         with pytest.raises(PermissionError, match="source changed"):
             prepared.authorization.check_preparation()
@@ -367,7 +367,7 @@ async def test_cancelled_finite_read_retains_root_and_drains_before_delivery(
     assert not h.runtime._preparation_reads
     assert not h.controller._preparation_reads
     assert h.runtime.execution_capacity.snapshot().executions == ()
-    assert resources[0].native.turn_lifeline.loop.is_closed()
+    assert resources[0] not in h.runtime._workflow_preparations
     with h.runtime.worktree_activity.prelaunch(footprint=write) as claim:
         assert claim is not None
     assert not h.calls
@@ -470,7 +470,7 @@ async def test_required_seed_is_never_replaced_by_parent_or_silently_shrunk(
     assert not h.db.list_runs(h.conversation_id)
     prepared = h.phase._task_scopes["task-1"]._bridge_preparation[0]
     assert prepared._closed
-    assert prepared.native.turn_lifeline.loop.is_closed()
+    assert prepared not in h.runtime._workflow_preparations
 
 
 async def test_preparation_wait_has_no_task_claim_and_retries_after_actual_release(
@@ -615,7 +615,8 @@ async def test_native_client_cleanup_keeps_original_resources_until_actual_drain
         assert not drained.is_set()
         with pytest.raises(PermissionError, match="not drained"):
             await prepared.close()
-        assert not prepared.native.turn_lifeline.loop.is_closed()
+        assert receipt.owner.is_admitted
+        assert prepared in h.runtime._workflow_preparations
     finally:
         release.set()
     assert await asyncio.to_thread(drained.wait, 5)
@@ -666,14 +667,17 @@ async def test_runtime_shutdown_drains_preparation_and_original_finalizer(
     try:
         await asyncio.sleep(0)
         assert not shutdown.done()
-        assert not captured[0].native.turn_lifeline.loop.is_closed()
+        assert captured[0] in h.runtime._workflow_preparations
     finally:
         release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
     await asyncio.wait_for(shutdown, 5)
-    assert captured[0]._closed
-    assert captured[0].native.turn_lifeline.loop.is_closed()
+    assert captured[0]._closed, [
+        (read.scopes_returned, read.body_error, read.wrapper_error)
+        for read in captured[0]._finite_reads
+    ]
+    assert captured[0] not in h.runtime._workflow_preparations
     assert not h.runtime._preparation_reads
     assert not h.calls
 
@@ -790,15 +794,14 @@ async def test_closing_original_finalizer_excludes_even_prechecked_native_launch
     )
     finalizing, release_finalizer = threading.Event(), threading.Event()
     checked, release_launch = threading.Event(), threading.Event()
-    lifeline_type = type(prepared.native.turn_lifeline)
-    shutdown = lifeline_type.shutdown
+    lifetime = prepared._lifetime
+    finish = lifetime.__exit__
     check = prepared.native.service._check_workflow_launch_authorization
 
-    def hold_finalizer(lifeline):
-        if lifeline is prepared.native.turn_lifeline:
-            finalizing.set()
-            assert release_finalizer.wait(5)
-        shutdown(lifeline)
+    def hold_finalizer(*args):
+        finalizing.set()
+        assert release_finalizer.wait(5)
+        return finish(*args)
 
     def hold_after_initial_check(authorization):
         check(authorization)
@@ -806,7 +809,7 @@ async def test_closing_original_finalizer_excludes_even_prechecked_native_launch
             checked.set()
             assert release_launch.wait(5)
 
-    monkeypatch.setattr(lifeline_type, "shutdown", hold_finalizer)
+    monkeypatch.setattr(lifetime, "__exit__", hold_finalizer)
     if checked_before_close:
         monkeypatch.setattr(
             prepared.native.service,
@@ -842,7 +845,7 @@ async def test_closing_original_finalizer_excludes_even_prechecked_native_launch
                 await asyncio.to_thread(thread.join, 5)
                 assert not thread.is_alive()
     assert prepared._closed
-    assert prepared.native.turn_lifeline.loop.is_closed()
+    assert prepared not in h.runtime._workflow_preparations
 
 
 async def test_refused_premature_close_keeps_admitted_child_authorized(
@@ -890,7 +893,7 @@ async def test_refused_premature_close_keeps_admitted_child_authorized(
             await pending
         assert not prepared._closing
         assert not prepared._closed
-        assert not prepared.native.turn_lifeline.loop.is_closed()
+        assert receipt.owner.is_admitted
     finally:
         release_close.set()
         release_provider.set()
@@ -907,15 +910,14 @@ async def test_failed_original_finalizer_never_reopens_native_launch(
     prepared = await h.bridge._prepare_workflow_reply(
         phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
     )
-    lifeline_type = type(prepared.native.turn_lifeline)
-    shutdown = lifeline_type.shutdown
+    lifetime = prepared._lifetime
+    finish = lifetime.__exit__
 
-    def fail_after_shutdown(lifeline):
-        shutdown(lifeline)
-        if lifeline is prepared.native.turn_lifeline:
-            raise RuntimeError("native finalizer failed")
+    def fail_after_shutdown(*args):
+        finish(*args)
+        raise RuntimeError("native finalizer failed")
 
-    monkeypatch.setattr(lifeline_type, "shutdown", fail_after_shutdown)
+    monkeypatch.setattr(lifetime, "__exit__", fail_after_shutdown)
     with pytest.raises(RuntimeError, match="native finalizer failed"):
         await prepared.close()
     receipt = None
@@ -930,7 +932,7 @@ async def test_failed_original_finalizer_never_reopens_native_launch(
                 await asyncio.to_thread(thread.join, 5)
                 assert not thread.is_alive()
     assert not prepared._closed
-    assert prepared.native.turn_lifeline.loop.is_closed()
+    assert prepared._closing
     assert not prepared.authorization._native_launch
     assert not h.calls
     assert not h.db.list_runs(h.conversation_id)

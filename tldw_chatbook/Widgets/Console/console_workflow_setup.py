@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import fields
+from functools import partial
 from typing import ClassVar
 from uuid import uuid4
 
@@ -232,7 +233,14 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
         self._sending = True
         event.button.disabled = True
         self.query_one("#workflow-notice").update("Preparing the plan…")
-        self.run_worker(self._submit(setup, self._safe_mount_generation))
+        try:
+            self.run_worker(partial(self._submit, setup, self._safe_mount_generation))
+        except WORKFLOW_VIEW_ERRORS as error:
+            self._sending = False
+            event.button.disabled = False
+            self.query_one("#workflow-notice").update(
+                workflow_view_error("Prepare plan", error)
+            )
 
     async def _submit(self, setup, generation):
         try:

@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import contextlib
-import inspect
 import os
 import threading
-import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, fields
@@ -20,13 +17,12 @@ from tldw_chatbook.Agents.automatic_work_budget import (
 )
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 
-from .console_ordinary_tree import _function_record, _function_unchanged
-
 if TYPE_CHECKING:
     import asyncio
 
     from tldw_chatbook.Agents.workflow_models import (
         WorkflowDecision,
+        WorkflowExecutionRecovery,
         WorkflowRequest,
         WorkflowRuntimeSnapshot,
         WorkflowSetup,
@@ -35,8 +31,6 @@ if TYPE_CHECKING:
 
 _KEY = object()
 _CONFIG_IDENTITY = config.current_config_identity
-_CONFIG_IDENTITY_CODE = _CONFIG_IDENTITY.__code__
-_CLOCKS = (time.time, time.monotonic)
 _POLICY_ENV = ("TLDW_AGENTS_WORKFLOW_RUNS_ENABLED",) + tuple(
     "TLDW_AGENTS_MAX_WORKFLOW_" + item.name.upper()
     for item in fields(AutomaticWorkLimits)
@@ -44,57 +38,20 @@ _POLICY_ENV = ("TLDW_AGENTS_WORKFLOW_RUNS_ENABLED",) + tuple(
 
 
 def _policy_identity():
-    if (
-        config.current_config_identity is not _CONFIG_IDENTITY
-        or _CONFIG_IDENTITY.__code__ is not _CONFIG_IDENTITY_CODE
-    ):
-        raise AutomaticWorkRefused("workflow_policy_source_changed")
-    return _CONFIG_IDENTITY(), tuple(os.environ.get(name) for name in _POLICY_ENV)
+    return config.current_config_identity(), tuple(
+        os.environ.get(name) for name in _POLICY_ENV
+    )
 
 
 def _native_fence_sources(phase, ledger):
-    """Inspect only the finite definition-time native producer/receiver records."""
-    from tldw_chatbook.DB.automatic_work import (
-        _WORKFLOW_NATIVE_RECORDS,
-        AutomaticWorkLedger,
-    )
+    from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
 
-    # Check the metadata checker itself without invoking a replacement first.
-    original = _FUNCTION_CHECK
-    if (
-        _function_unchanged is not original[0]
-        or _function_unchanged.__code__ is not original[1]
-        or _function_unchanged.__defaults__ is not original[2]
-        or _function_unchanged.__kwdefaults__ is not original[3]
-        or _function_unchanged.__closure__ is not original[5]
+    if not isinstance(phase, WorkflowPhaseAuthorization) or not isinstance(
+        ledger, AutomaticWorkLedger
     ):
-        raise AutomaticWorkRefused("workflow_original_fence_producer_required")
-    if (
-        type(phase) is not WorkflowPhaseAuthorization
-        or type(ledger) is not AutomaticWorkLedger
-    ):
-        raise AutomaticWorkRefused("workflow_original_fence_producer_required")
-    for cls, instance, records in (
-        (WorkflowPhaseAuthorization, phase, _PHASE_NATIVE_RECORDS),
-        (AutomaticWorkLedger, ledger, _WORKFLOW_NATIVE_RECORDS),
-    ):
-        for name, method, functions in records:
-            if (
-                vars(cls).get(name) is not method
-                or name in vars(instance)
-                or any(not _function_unchanged(record) for record in functions)
-                or len(functions) == 2
-                and vars(method).get("__wrapped__") is not functions[1][0]
-            ):
-                raise AutomaticWorkRefused("workflow_original_fence_producer_required")
-    if any(
-        globals().get(name) is not record[0] or not _function_unchanged(record)
-        for name, record in _LOCAL_NATIVE_RECORDS
-    ):
-        raise AutomaticWorkRefused("workflow_original_fence_producer_required")
-    if not _function_unchanged(_CONFIG_NATIVE_RECORD):
-        raise AutomaticWorkRefused("workflow_policy_source_changed")
-    return _WORKFLOW_NATIVE_RECORDS
+        raise AutomaticWorkRefused("workflow_native_fence_required")
+    if phase._ledger is not ledger:
+        raise AutomaticWorkRefused("workflow_database_changed")
 
 
 @dataclass(frozen=True)
@@ -109,66 +66,16 @@ class _WorkflowFence:
 
 
 def _fence_connection(fence, ledger):
-    """Consume only the exact active original invocation, without source I/O."""
-    if (
-        _native_fence_sources is not _NATIVE_SOURCE_CHECK[0]
-        or _native_fence_sources.__code__ is not _NATIVE_SOURCE_CHECK[1]
-    ):
-        raise AutomaticWorkRefused("workflow_original_fence_producer_required")
-    if type(fence) is not _WorkflowFence:
+    """Use only the phase's active, thread-bound connection and current policy."""
+    if not isinstance(fence, _WorkflowFence):
         raise AutomaticWorkRefused("workflow_native_fence_changed")
-    receivers = _native_fence_sources(fence.phase, ledger)
-    # Only the closed original call chain may consume this one operation.
-    caller = inspect.currentframe().f_back
-    control, commit = _PHASE_PRODUCERS
-    producer = (
-        commit
-        if fence.operation == "child_commit"
-        else control
-        if fence.operation == "control"
-        else None
-    )
-    allowed = {record[1] for _name, _method, records in receivers for record in records}
-    allowed.update(_CONTEXT_CODES)
-    allowed.add(_FENCE_BODY_CODE)
-    first = caller
-    for _ in range(10):
-        if caller is None:
-            break
-        if caller.f_code is producer:
-            if caller.f_locals.get("self") is not fence.phase:
-                break
-            break
-        if caller.f_code not in allowed:
-            break
-        if caller.f_code not in _CONTEXT_CODES and (
-            caller.f_locals.get("self") is not fence.phase
-            and caller.f_locals.get("self") is not ledger
-        ):
-            break
-        caller = caller.f_back
+    _native_fence_sources(fence.phase, ledger)
     if (
-        caller is None
-        or caller.f_code is not producer
-        or caller.f_locals.get("self") is not fence.phase
-        or first.f_code
-        not in {
-            record[1] for _name, _method, records in receivers for record in records
-        }
-        | {_FENCE_BODY_CODE}
-        or fence.operation == "control"
-        and first.f_code not in (_FENCE_BODY_CODE, receivers[0][2][-1][1])
-    ):
-        raise AutomaticWorkRefused("workflow_native_fence_operation_changed")
-    if (
-        type(fence) is not _WorkflowFence
-        or fence.key is not _KEY
+        fence.key is not _KEY
         or fence.phase._active_fence is not fence
-        or fence.phase._ledger is not ledger
         or fence.thread is not threading.current_thread()
         or getattr(ledger._db._thread_local, "conn", None) is not fence.connection
-        or (ledger._wall_clock, ledger._monotonic_clock) != _CLOCKS
-        or (time.time, time.monotonic) != _CLOCKS
+        or fence.operation not in {"child_commit", "control"}
         or fence.policy != _policy_identity()
     ):
         raise AutomaticWorkRefused("workflow_native_fence_changed")
@@ -289,39 +196,56 @@ class WorkflowPhaseAuthorization:
             )
 
     @contextmanager
-    def _fence(self, operation):
+    def _fence(self, operation, *, _launch=None, _control=None):
         from tldw_chatbook.Agents.activation import execution
 
-        caller = inspect.currentframe().f_back.f_back
-        if (
-            _native_fence_sources is not _NATIVE_SOURCE_CHECK[0]
-            or _native_fence_sources.__code__ is not _NATIVE_SOURCE_CHECK[1]
-        ):
-            raise AutomaticWorkRefused("workflow_original_fence_producer_required")
-        _native_fence_sources(self, self._ledger)
-        producer = (
-            _PHASE_PRODUCERS[1]
-            if operation == "child_commit"
-            else _PHASE_PRODUCERS[0]
-            if operation == "control"
-            else None
-        )
-        if (
-            producer is None
-            or caller is None
-            or caller.f_code is not producer
-            or caller.f_locals.get("self") is not self
-        ):
-            raise AutomaticWorkRefused("workflow_original_fence_producer_required")
+        if operation not in {"child_commit", "control"}:
+            raise AutomaticWorkRefused("workflow_native_fence_operation_changed")
         self._check_owner()
+        if operation == "control":
+            from tldw_chatbook.Agents.workflow_models import WorkflowDecision
+
+            if not (
+                self.attempt.purpose == "planning"
+                and type(_control) is int
+                and _control > 0
+                or self.attempt.purpose == "execution"
+                and type(_control) is WorkflowDecision
+                and _control.workflow_id == self.attempt.workflow_id
+                and _control.plan_revision == self.attempt.revision_id
+                and _control.phase_id == self.attempt.phase_id
+                and _control.action in {"pause", "stop"}
+            ):
+                raise AutomaticWorkRefused("workflow_native_control_required")
+        if operation == "child_commit":
+            from tldw_chatbook.Agents.agent_service import AgentService
+            from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+            if _launch is None:
+                raise AutomaticWorkRefused("workflow_native_commit_required")
+            task, owner, activity, service = _launch
+            if (
+                not isinstance(service, AgentService)
+                or current_execution_owner() is not owner
+                or self._task_scopes.get(task.task.id) is not task
+                or task.phase is not self
+                or task._native_dispatch != [service]
+                or service._workflow_authorization is not task
+                or service._automatic_work is not self.context
+                or service.db is not self._ledger._db
+                or service.runtime_capacity is not owner.capacity
+            ):
+                raise AutomaticWorkRefused("workflow_native_commit_required")
+            task._check_sources()
+            task._runtime.worktree_activity.validate_claim(
+                activity, owner=owner, footprint=task.physical_footprint
+            )
         before = _policy_identity()
         if operation == "child_commit":
             self._ledger._workflow_enabled()
         limits = AutomaticWorkLimits.from_settings("workflow_phase")
         if before != _policy_identity():
             raise AutomaticWorkRefused("workflow_policy_source_changed")
-        if (self._ledger._wall_clock, self._ledger._monotonic_clock) != _CLOCKS:
-            raise AutomaticWorkRefused("workflow_native_clock_required")
         with execution(self._ledger), self._ledger._db.connection() as conn:
             fence = _WorkflowFence(
                 self, conn, limits, before, threading.current_thread(), operation, _KEY
@@ -337,41 +261,9 @@ class WorkflowPhaseAuthorization:
                     self._active_fence = None
 
     def _commit_task_launch(self, task, owner, activity, service):
-        from tldw_chatbook.Agents.agent_service import (
-            _WORKFLOW_NATIVE_RECORDS,
-            AgentService,
-        )
-        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
-
-        if (
-            _native_fence_sources is not _NATIVE_SOURCE_CHECK[0]
-            or _native_fence_sources.__code__ is not _NATIVE_SOURCE_CHECK[1]
-        ):
-            raise AutomaticWorkRefused("workflow_original_fence_producer_required")
-        _native_fence_sources(self, self._ledger)
-        name, method, records = _WORKFLOW_NATIVE_RECORDS[0]
-        if (
-            type(service) is not AgentService
-            or vars(AgentService).get(name) is not method
-            or name in vars(service)
-            or any(not _function_unchanged(record) for record in records)
-        ):
-            raise AutomaticWorkRefused("workflow_native_commit_required")
-        caller = inspect.currentframe().f_back
-        if (
-            caller.f_code is not records[0][1]
-            or caller.f_locals.get("self") is not service
-            or caller.f_locals.get("workflow_task_authorization") is not task
-            or current_execution_owner() is not owner
-            or self._task_scopes.get(task.task.id) is not task
-            or task._native_dispatch != [service]
-        ):
-            raise AutomaticWorkRefused("workflow_native_commit_required")
-        task._check_sources()
-        task._runtime.worktree_activity.validate_claim(
-            activity, owner=owner, footprint=task.physical_footprint
-        )
-        with self._fence("child_commit") as fence:
+        with self._fence(
+            "child_commit", _launch=(task, owner, activity, service)
+        ) as fence:
             if self._retired or task.claim.id in self._committed_tasks:
                 raise AutomaticWorkRefused("child_already_launched")
             committed = self._ledger.commit(
@@ -426,7 +318,7 @@ class WorkflowPhaseAuthorization:
             if self.attempt.purpose != "planning" or expected_control_revision is None:
                 raise ValueError("workflow_control_identity_conflict")
             store = self._ledger._db.workflow_runs
-            with self._fence("control") as fence:
+            with self._fence("control", _control=expected_control_revision) as fence:
                 if self._retired:
                     raise AutomaticWorkRefused("workflow_authority_changed")
                 with self._ledger.transaction(_native=fence) as conn:
@@ -462,7 +354,7 @@ class WorkflowPhaseAuthorization:
             raise ValueError("workflow_control_identity_conflict")
         payload = decision.canonical_json()
         store = self._ledger._db.workflow_runs
-        with self._fence("control") as fence:
+        with self._fence("control", _control=decision) as fence:
             if self._retired:
                 raise AutomaticWorkRefused("workflow_authority_changed")
             with self._ledger.transaction(_native=fence) as conn:
@@ -616,7 +508,8 @@ def _check_remaining_unused(read, service, phase):
     runtime.worktree_activity.validate_opaque_claim(read.claim, owner=read.owner)
     if not any(
         record.source is read
-        and record.callback is read.terminal_callback
+        and read.terminal_read_return is not None
+        and record is read.terminal_read_return[0]
         and record.task is read.issuing
         for record in runtime._preparation_reads
     ):
@@ -687,70 +580,39 @@ def _accept_workflow_phase(
     return WorkflowPhaseAuthorization(controller, accepted, _key=_KEY, _session=session)
 
 
-def _workflow_read_sources():
-    from . import console_preparation_reads as native
-
-    read_class, binding_class, binding_slot, functions, classes = (
-        native._NATIVE_PLANNING_READ_RETURN
-    )
-    if (
-        native.ConsolePreparationRead is not read_class
-        or native._HookSourceBinding is not binding_class
-        or native._source_binding is not binding_slot
-        or native.run_preparation_read is not functions[0][0]
-        or native._retire is not functions[1][0]
-        or any(not _function_unchanged(record) for record in functions)
-        or any(
-            inspect.getattr_static(owner, name) is not descriptor
-            for owner, descriptors in classes
-            for name, descriptor in descriptors
-        )
-    ):
-        raise PermissionError("original workflow reader changed")
-    return read_class, binding_class, binding_slot
-
-
-def _capture_workflow_read(controller, source, callback, issuing):
+def _capture_workflow_read(controller, source, issuing):
     import asyncio
 
-    read_class, binding_class, binding_slot = _workflow_read_sources()
-    binding = binding_slot.get()
+    from .console_preparation_reads import preparation_read_for
+
+    read = preparation_read_for(controller)
     if (
-        type(binding) is not binding_class
-        or not binding.active
-        or binding.process != os.getpid()
-        or binding.thread is not threading.current_thread()
-        or binding.task is not None
-        or type(binding.read) is not read_class
-        or binding.read.creator is not controller
-        or binding.read.source is not source
-        or binding.read.callback is not callback
-        or binding.read.task is not issuing
-        or type(binding.read._producer) is not asyncio.Future
-        or type(binding.read.retired) is not asyncio.Future
+        read is None
+        or read.source is not source
+        or read.task is not issuing
+        or not isinstance(read._producer, asyncio.Future)
+        or not isinstance(read.retired, asyncio.Future)
+        or read.retired.done()
     ):
-        raise PermissionError("original workflow read required")
-    read = binding.read
-    return read, read._producer, read.retired, callback
+        raise PermissionError("active owned workflow read required")
+    return read, read._producer, read.retired
 
 
 def _prove_workflow_read(proof, controller, source, issuing):
     import asyncio
 
-    _workflow_read_sources()
     if proof is None:
         raise RuntimeError("original workflow read return missing")
-    read, producer, retired, callback = proof
+    read, producer, retired = proof
     if (
         read.creator is not controller
         or read.source is not source
-        or read.callback is not callback
         or read.task is not issuing
         or read._producer is not producer
         or read.retired is not retired
         or not asyncio.Future.done(producer)
         or asyncio.Future.cancelled(producer)
-        or asyncio.Future.exception(producer) is not None
+        or not read.callback_returned
         or not asyncio.Future.done(retired)
         or asyncio.Future.cancelled(retired)
         or asyncio.Future.result(retired) is not None
@@ -889,7 +751,7 @@ async def _accept_remaining_workflow_phase(
             cell.host_returned = True
 
     def read():
-        cell.read_return = _capture_workflow_read(controller, cell, read, issuing)
+        cell.read_return = _capture_workflow_read(controller, cell, issuing)
         owner = operation = claim = None
         try:
             with (
@@ -1037,7 +899,7 @@ async def _accept_remaining_workflow_phase(
 
             def settle_unused():
                 cell.terminal_read_return = _capture_workflow_read(
-                    controller, cell, settle_unused, issuing
+                    controller, cell, issuing
                 )
                 with (
                     _remaining_storage_return(databases),
@@ -1114,87 +976,33 @@ async def _accept_remaining_workflow_phase(
         return cell.phase
 
 
-_ACCEPTANCE_RECORD = _function_record(_accept_remaining_workflow_phase)
-
-
-# Captured beside the definitions, never from a phase's current mutable methods.
-_FUNCTION_CHECK = _function_record(_function_unchanged)
-_CONFIG_NATIVE_RECORD = _function_record(_CONFIG_IDENTITY)
-_PHASE_NATIVE_RECORDS = tuple(
-    (
-        name,
-        method,
-        tuple(
-            _function_record(function)
-            for function in (
-                method,
-                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
-            )
-        ),
-    )
-    for name in ("_fence", "_control", "_commit_task_launch", "_check_owner")
-    for method in (vars(WorkflowPhaseAuthorization)[name],)
-)
-_LOCAL_NATIVE_RECORDS = tuple(
-    (name, _function_record(globals()[name]))
-    for name in (
-        "_native_fence_sources",
-        "_fence_connection",
-        "_policy_identity",
-        "_live_owner",
-    )
-)
-_NATIVE_SOURCE_CHECK = _LOCAL_NATIVE_RECORDS[0][1]
-_PHASE_PRODUCERS = (
-    _PHASE_NATIVE_RECORDS[1][2][0][1],
-    _PHASE_NATIVE_RECORDS[2][2][0][1],
-)
-_FENCE_BODY_CODE = _PHASE_NATIVE_RECORDS[0][2][-1][1]
-_CONTEXT_CODES = (
-    contextlib._GeneratorContextManager.__enter__.__code__,
-    contextlib._GeneratorContextManager.__exit__.__code__,
-)
-
-
 def _planning_driver_source(coordinator, run, *, entered=False):
     import asyncio
 
-    original, code, *_rest = _COORDINATOR_PLAN_RECORD
+    _metadata_source(coordinator)
     if (
-        type(coordinator) is not _COORDINATOR_CLASS
-        or inspect.getattr_static(coordinator, "_plan") is not original
-        or not _function_unchanged(_COORDINATOR_PLAN_RECORD)
-        or coordinator.runtime._workflow_coordinator is not coordinator
-        or coordinator._runs.get(run.workflow_id) is not run
+        coordinator._runs.get(run.workflow_id) is not run
         or run.prepared is None
         or run.prepared.phase is not run.phase
         or run.prepared.controller is not coordinator.controller
         or run.prepared.service is not coordinator.service
+        or entered
+        and asyncio.current_task() is not run.driver
     ):
-        raise PermissionError("original workflow planning driver changed")
-    if entered:
-        task = asyncio.current_task()
-        coroutine = task.get_coro() if task is not None else None
-        frame = getattr(coroutine, "cr_frame", None)
-        if (
-            task is not run.driver
-            or getattr(coroutine, "cr_code", None) is not code
-            or frame is None
-            or frame.f_locals.get("self") is not coordinator
-            or frame.f_locals.get("run") is not run
-        ):
-            raise PermissionError("original workflow planning task required")
-    return original
+        raise PermissionError("workflow planning owner changed")
+    return coordinator._plan
 
 
 def _metadata_source(coordinator):
-    """Reject replacement of the original passive metadata producers."""
-    if type(coordinator) is not _COORDINATOR_CLASS or any(
-        inspect.getattr_static(coordinator, name) is not records[0][0]
-        or any(not _function_unchanged(record) for record in records)
-        for name, records in _METADATA_COORDINATOR_RECORDS
+    """Validate the runtime resources behind passive coordinator reads."""
+    if (
+        not isinstance(coordinator, ConsoleWorkflowCoordinator)
+        or coordinator.runtime._workflow_coordinator is not coordinator
+        or coordinator.runtime._workflow_service is not coordinator.service
+        or coordinator.runtime.chat_controller is not coordinator.controller
+        or coordinator.controller._agent_bridge is not coordinator.runtime.agent_bridge
     ):
-        raise PermissionError("original workflow metadata helper changed")
+        raise PermissionError("workflow coordinator resources changed")
 
 
 def _metadata_publication_return(coordinator, run, cell):
@@ -1214,7 +1022,6 @@ def _metadata_publication_return(coordinator, run, cell):
         or asyncio.Future.cancelled(cell.disposed)
         or asyncio.Future.result(cell.disposed) is not True
         or cell.body_error is not None
-        or cell.producer_error is not None
         or cell.source_error is not None
     ):
         raise RuntimeError("original workflow publication return unproven")
@@ -1229,37 +1036,10 @@ def _metadata_publication_return(coordinator, run, cell):
 
 
 def _execution_release_source(coordinator, binding, *, released=False):
-    """Recheck the original execution's finite, host-owned release receivers."""
+    """Validate the actual execution driver and its retained admission slots."""
     import asyncio
 
-    from . import console_chat_store as store_source
-    from . import console_fleet_wake as wake_source
-
-    check = _FUNCTION_CHECK
-    if (
-        _function_unchanged is not check[0]
-        or check[0].__code__ is not check[1]
-        or check[0].__defaults__ is not check[2]
-        or check[0].__kwdefaults__ is not check[3]
-        or check[0].__closure__ is not check[5]
-    ):
-        raise PermissionError("original workflow release checker changed")
-    if (
-        type(coordinator) is not _COORDINATOR_CLASS
-        or any(
-            globals().get(name) is not record[0] or not _function_unchanged(record)
-            for name, record in _EXECUTION_RELEASE_FUNCTIONS
-        )
-        or any(
-            inspect.getattr_static(coordinator, name) is not record[0]
-            or inspect.getattr_static(_COORDINATOR_CLASS, name) is not record[0]
-            or not _function_unchanged(record)
-            for name, record in _EXECUTION_RELEASE_METHODS
-        )
-        or wake_source._workflow_wake_source is not _EXECUTION_WAKE_SOURCE[0]
-        or not _function_unchanged(_EXECUTION_WAKE_SOURCE)
-    ):
-        raise PermissionError("original workflow release source changed")
+    _metadata_source(coordinator)
     (
         original,
         run,
@@ -1283,20 +1063,9 @@ def _execution_release_source(coordinator, binding, *, released=False):
         or asyncio.get_running_loop() is not loop
         or asyncio.current_task() is not issuing
         or run.driver is not issuing
-        or issuing.get_coro().cr_code is not _EXECUTION_RELEASE_METHODS[0][1][1]
         or run.phase is not phase
         or phase.attempt.purpose != "execution"
-        or runtime._chat_controller is not controller
-        or runtime._workflow_coordinator is not coordinator
-        or controller.app.console_runtime is not runtime
         or controller.store is not store
-        or store_source.ConsoleChatStore is not _EXECUTION_STORE_CLASS
-        or type(store) is not _EXECUTION_STORE_CLASS
-        or inspect.getattr_static(store, "release_received_turn")
-        is not _EXECUTION_RECEIVED_RELEASE[0]
-        or inspect.getattr_static(_EXECUTION_STORE_CLASS, "release_received_turn")
-        is not _EXECUTION_RECEIVED_RELEASE[0]
-        or not _function_unchanged(_EXECUTION_RECEIVED_RELEASE)
         or controller._fleet_wake is not wake
         or wake._controller is not controller
         or wake._registry_lock is not registry_lock
@@ -1309,8 +1078,7 @@ def _execution_release_source(coordinator, binding, *, released=False):
             else coordinator._runs.get(run.workflow_id) is not run
         )
     ):
-        raise PermissionError("original workflow release receiver changed")
-    _EXECUTION_WAKE_SOURCE[0](wake)
+        raise PermissionError("workflow execution release owner changed")
 
 
 @dataclass(eq=False)
@@ -1394,7 +1162,6 @@ def _quiescence_source(cell):
     if type(cell) is not _QUIESCENCE_CLASS:
         raise PermissionError("original workflow accounting record required")
     coordinator, run, phase = cell.coordinator, cell.run, cell.phase
-    _workflow_read_sources()
     if (
         type(cell) is not _QUIESCENCE_CLASS
         or type(coordinator) is not _COORDINATOR_CLASS
@@ -1407,19 +1174,9 @@ def _quiescence_source(cell):
         or coordinator.runtime.chat_controller is not coordinator.controller
         or phase._controller is not coordinator.controller
         or phase._ledger is not coordinator.service.db.automatic_work
-        or (phase._ledger._wall_clock, phase._ledger._monotonic_clock) != _CLOCKS
         or run.driver is not cell.issuing
         or run.control_unknown
         or run.status == "recovery_required"
-        or any(
-            globals().get(name) is not record[0] or not _function_unchanged(record)
-            for name, record in _QUIESCENCE_FUNCTIONS
-        )
-        or any(
-            inspect.getattr_static(coordinator, name) is not record[0]
-            or not _function_unchanged(record)
-            for name, record in _QUIESCENCE_COORDINATOR_RECORDS
-        )
         or len(run.preparation_returns) != len(cell.preparations)
         or any(a is not b for a, b in zip(run.preparation_returns, cell.preparations))
         or len(run.waves) != len(cell.waves)
@@ -1427,12 +1184,6 @@ def _quiescence_source(cell):
     ):
         raise AutomaticWorkRefused("workflow_quiescence_source_changed")
     _native_fence_sources(phase, phase._ledger)
-    if any(
-        getattr(_quiescence_wave, name) is not record[0]
-        or not _function_unchanged(record)
-        for name, record in _QUIESCENCE_WAVE
-    ):
-        raise PermissionError("original workflow wave receiver changed")
     _quiescence_wave._workflow_wave_sources()
     for saved in cell.preparations:
         item, auth, native, frame, configuration, source, lifetime, scope, reads = saved
@@ -1450,11 +1201,6 @@ def _quiescence_source(cell):
             or item._finite_reads is not reads
             or not item._closed
             and item._source_scope is not scope
-            or any(
-                inspect.getattr_static(item, name, None) is not descriptor
-                or any(not _function_unchanged(record) for record in records)
-                for name, descriptor, records in preparation._PLANNING_PREPARATION_METHODS
-            )
         ):
             raise AutomaticWorkRefused("workflow_quiescence_preparation_changed")
         item._execution_return_source()
@@ -1507,16 +1253,10 @@ def _quiescence_physical(cell):
 def _quiescence_receiving(cell, ledger, mode):
     """Accept the exact original accounting callback in its actual native read."""
     _quiescence_source(cell)
-    caller = inspect.currentframe().f_back.f_back
     if (
-        caller is None
-        or caller.f_code is not _QUIESCENCE_CALLBACK_CODE
-        or caller.f_locals.get("cell") is not cell
-        or cell.phase._ledger is not ledger
+        cell.phase._ledger is not ledger
         or cell.mode != mode
-        or _capture_workflow_read(
-            cell.coordinator.controller, cell, cell.callback, cell.issuing
-        )
+        or _capture_workflow_read(cell.coordinator.controller, cell, cell.issuing)
         != cell.proof
     ):
         raise PermissionError("original workflow accounting callback required")
@@ -1530,18 +1270,6 @@ def _quiescence_evidence(
     from tldw_chatbook.Agents import automatic_work_runtime as automatic
     from tldw_chatbook.Agents import workflow_task_scope as tasks
 
-    if (
-        automatic.current_automatic_work is not _QUIESCENCE_CONTEXT[0][0]
-        or not _function_unchanged(_QUIESCENCE_CONTEXT[0])
-        or automatic._CURRENT is not _QUIESCENCE_CONTEXT[1]
-        or automatic.AutomaticWorkContext is not AutomaticWorkContext
-        or any(not _function_unchanged(record) for record in _QUIESCENCE_CONTEXT[2])
-        or tasks.current_task_authorization is not _QUIESCENCE_TASK[0][0]
-        or not _function_unchanged(_QUIESCENCE_TASK[0])
-        or tasks._CURRENT is not _QUIESCENCE_TASK[1]
-        or tasks.WorkflowTaskAuthorization is not _QUIESCENCE_TASK[2]
-    ):
-        return False
     phase = None
     if context is not None:
         if type(context) is not _WorkflowMetadataRead or context.run is None:
@@ -1558,7 +1286,7 @@ def _quiescence_evidence(
             or context.disposed.done()
             or context.proof
             != _capture_workflow_read(
-                coordinator.controller, coordinator, context.proof[3], context.issuing
+                coordinator.controller, coordinator, context.issuing
             )
         ):
             return False
@@ -1614,9 +1342,7 @@ def _quiescence_evidence(
             return False
         if (
             cell.mode != "idle"
-            and _capture_workflow_read(
-                cell.coordinator.controller, cell, cell.callback, cell.issuing
-            )
+            and _capture_workflow_read(cell.coordinator.controller, cell, cell.issuing)
             != cell.proof
         ):
             return False
@@ -1717,7 +1443,6 @@ class ConsoleWorkflowCoordinator:
 
         def original_sources():
             _metadata_source(self)
-            _workflow_read_sources()
             if (
                 type(self) is not _COORDINATOR_CLASS
                 or controller.app.console_runtime is not runtime
@@ -1734,11 +1459,6 @@ class ConsoleWorkflowCoordinator:
                 or service.persistence is not persistence
                 or persistence.workspace_registry is not registry
                 or _guard.captured_sources(bridge) != sources
-                or any(
-                    inspect.getattr_static(service, name) is not records[0][0]
-                    or any(not _function_unchanged(record) for record in records)
-                    for name, records in _METADATA_SERVICE_RECORDS
-                )
                 or self._metadata_cells.get(cell) is not future
                 or cell.disposed is not future
                 or cell.issuing is not issuing
@@ -1781,7 +1501,7 @@ class ConsoleWorkflowCoordinator:
                 original_sources()
 
         def invoke():
-            cell.proof = _capture_workflow_read(controller, self, invoke, issuing)
+            cell.proof = _capture_workflow_read(controller, self, issuing)
             with _remaining_storage_return((database, persistence.db, registry.db)):
                 guarded_read()
 
@@ -1826,7 +1546,7 @@ class ConsoleWorkflowCoordinator:
                 ):
                     cell.producer_error = asyncio.Future.exception(producer)
             try:
-                if cell.proof is None or cell.proof[3] is not invoke:
+                if cell.proof is None:
                     raise RuntimeError("original metadata read missing")
                 _prove_workflow_read(cell.proof, controller, self, issuing)
                 original_sources()
@@ -1985,8 +1705,6 @@ class ConsoleWorkflowCoordinator:
         """Check the original pending command without granting it admission."""
         import asyncio
 
-        from . import console_workflow_preparation as native
-
         if (
             type(self) is not _COORDINATOR_CLASS
             or type(run) is not _WorkflowRun
@@ -1995,15 +1713,7 @@ class ConsoleWorkflowCoordinator:
             or self.controller.app.console_runtime is not self.runtime
             or self.runtime.chat_controller is not self.controller
             or self.runtime._workflow_service is not self.service
-            or native.prepare_workflow_planning is not native._PLANNING_ENTRY_RECORD[0]
-            or not _function_unchanged(native._PLANNING_ENTRY_RECORD)
-            or any(
-                inspect.getattr_static(self, name) is not record[0]
-                or not _function_unchanged(record)
-                for name, record in _PENDING_PLANNING_RECORDS
-            )
             or run.issuing is None
-            or run.issuing.get_coro().cr_code not in _PLANNING_COMMAND_CODES
             or not any(
                 task is run.issuing for _identity, task in self._commands.values()
             )
@@ -2191,7 +1901,7 @@ class ConsoleWorkflowCoordinator:
             try:
                 driver = _planning_driver_source(self, run)
                 run.driver = asyncio.create_task(
-                    driver(self, run), name="native-workflow-planning"
+                    driver(run), name="native-workflow-planning"
                 )
             except BaseException:
                 run.status = "recovery_required"
@@ -2221,17 +1931,9 @@ class ConsoleWorkflowCoordinator:
         released_notification = None
 
         def release_source():
-            record = planning_source._PLANNING_RELEASE_SOURCE
-            if (
-                planning_source._planning_release_source is not record[0]
-                or record[0].__code__ is not record[1]
-                or record[0].__defaults__ is not record[2]
-                or record[0].__kwdefaults__ is not record[3]
-                or tuple((record[0].__kwdefaults__ or {}).items()) != record[4]
-                or record[0].__closure__ is not record[5]
-            ):
-                raise PermissionError("original planning release helper changed")
-            record[0](prepared, prepared._planning_release_binding)
+            planning_source._planning_release_source(
+                prepared, prepared._planning_release_binding
+            )
 
         try:
             _planning_driver_source(self, run, entered=True)
@@ -2312,6 +2014,7 @@ class ConsoleWorkflowCoordinator:
                 run.workflow_id, _terminal_run=run if ready_to_release else None
             )
             if ready_to_release:
+                cancellation = publication.caller_error or cancellation
                 _metadata_publication_return(self, run, publication)
                 if (
                     self._runs.get(run.workflow_id) is not run
@@ -2319,7 +2022,6 @@ class ConsoleWorkflowCoordinator:
                     or run.status == "recovery_required"
                 ):
                     raise RuntimeError("workflow original publication return unproven")
-                cancellation = publication.caller_error or cancellation
                 popped_run = self._runs.pop(run.workflow_id)
                 if popped_run is not run:
                     raise RuntimeError("original planning run did not return")
@@ -2346,6 +2048,11 @@ class ConsoleWorkflowCoordinator:
                     raise cancellation from error
                 raise
         if cancellation is not None:
+            if (
+                run.final_metadata is not None
+                and run.final_metadata.producer_error is not None
+            ):
+                raise cancellation from run.final_metadata.producer_error
             raise cancellation
 
     def _retain_final_metadata(self, run, error):
@@ -2406,15 +2113,7 @@ class ConsoleWorkflowCoordinator:
                 decision=decision,
             )
             self._runs[run.workflow_id] = run
-            producer = _ACCEPTANCE_RECORD[0]
             try:
-                if (
-                    _accept_remaining_workflow_phase is not producer
-                    or not _function_unchanged(_ACCEPTANCE_RECORD)
-                ):
-                    raise PermissionError(
-                        "original workflow acceptance producer changed"
-                    )
                 phase = await _accept_remaining_workflow_phase(
                     self.controller,
                     decision,
@@ -2427,11 +2126,7 @@ class ConsoleWorkflowCoordinator:
             except BaseException as error:
                 # No effect precedes cell association in this exact producer.
                 # Missing handles AFTER association never count as retirement.
-                early = (
-                    run.acceptance is None
-                    and _accept_remaining_workflow_phase is producer
-                    and _function_unchanged(_ACCEPTANCE_RECORD)
-                )
+                early = run.acceptance is None
                 if early or self._acceptance_returned(run, refusal=error):
                     if run.control is None:
                         self._release_admission(run)
@@ -2479,10 +2174,6 @@ class ConsoleWorkflowCoordinator:
             and cell.body_error is refusal
             and not cell.preparation_entered
         ):
-            if _accept_remaining_workflow_phase is not _ACCEPTANCE_RECORD[
-                0
-            ] or not _function_unchanged(_ACCEPTANCE_RECORD):
-                return False
             try:
                 _prove_workflow_read(
                     cell.read_return, self.controller, cell, run.issuing
@@ -2606,6 +2297,7 @@ class ConsoleWorkflowCoordinator:
             self.runtime.execution_capacity,
             self.runtime.worktree_activity,
         )
+        activity._prune_recovery()
         observed = capacity.snapshot()
         if observed.closed or self.runtime._workflow_closing:
             raise PermissionError("workflow runtime closed")
@@ -2614,7 +2306,8 @@ class ConsoleWorkflowCoordinator:
             fleet = item.authorization._native_preparation[0].fleet
             with fleet._lock:
                 if fleet._fenced:
-                    raise PermissionError("workflow fleet fenced")
+                    run.control = "stop"
+                    return []  # No launch occurred; return the unused native preparations.
                 fleet_ready = (
                     len(fleet._live_ids) + fleets.get(fleet, 0) < fleet.max_live
                 )
@@ -2663,19 +2356,9 @@ class ConsoleWorkflowCoordinator:
 
         from . import console_preparation_reads as native
 
-        caller = inspect.currentframe().f_back
         if (
             mode not in {"quiesce", "resume", "cleanup"}
             or asyncio.current_task() is not run.driver
-            or caller is None
-            or caller.f_code is not _QUIESCENCE_COORDINATOR_RECORDS[1][1][1]
-            or caller.f_locals.get("run") is not run
-            or caller.f_locals.get("self") is not self
-            or any(
-                inspect.getattr_static(self, name) is not record[0]
-                or not _function_unchanged(record)
-                for name, record in _QUIESCENCE_COORDINATOR_RECORDS
-            )
         ):
             raise PermissionError("original accounting driver required")
         phase = run.phase
@@ -2730,9 +2413,7 @@ class ConsoleWorkflowCoordinator:
                 )
 
         def invoke():
-            cell.proof = _capture_workflow_read(
-                self.controller, cell, invoke, cell.issuing
-            )
+            cell.proof = _capture_workflow_read(self.controller, cell, cell.issuing)
             with _remaining_storage_return(
                 (
                     self.service.db,
@@ -2806,17 +2487,7 @@ class ConsoleWorkflowCoordinator:
                 wake._registry_lock,
                 wake._loop,
             )
-            source = _EXECUTION_RELEASE_SOURCE
-            if (
-                _execution_release_source is not source[0]
-                or source[0].__code__ is not source[1]
-                or source[0].__defaults__ is not source[2]
-                or source[0].__kwdefaults__ is not source[3]
-                or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
-                or source[0].__closure__ is not source[5]
-            ):
-                raise PermissionError("original workflow release source changed")
-            source[0](self, release_binding)
+            _execution_release_source(self, release_binding)
             snapshot = await self.service.call(self.service.get, run.workflow_id)
             definition = next(
                 p
@@ -2838,6 +2509,7 @@ class ConsoleWorkflowCoordinator:
                 # Native finite preparation uses OPAQUE custody. Observe its
                 # existing admission gate before entering, without claiming it.
                 activity = self.runtime.worktree_activity
+                activity._prune_recovery()
                 with activity._lock:
                     busy = bool(
                         activity._claims
@@ -2885,6 +2557,8 @@ class ConsoleWorkflowCoordinator:
                     run,
                     [run.preparations[t.id] for t in ready if t.id in run.preparations],
                 )
+                if run.control is not None:
+                    break
                 if not selected:
                     await self._accounting(run, "quiesce")
                     if run.control is not None or run.wake.is_set():
@@ -2901,15 +2575,6 @@ class ConsoleWorkflowCoordinator:
                     await run.wake.wait()
                     continue
                 await self._accounting(run, "resume")
-                if (
-                    any(
-                        getattr(_quiescence_wave, name) is not record[0]
-                        or not _function_unchanged(record)
-                        for name, record in _QUIESCENCE_WAVE
-                    )
-                    or run_workflow_wave is not _quiescence_wave.run_workflow_wave
-                ):
-                    raise PermissionError("original workflow wave receiver changed")
                 wave = await run_workflow_wave(run.phase, selected, _retain_waits=True)
                 run.waves.append(_quiescence_wave._workflow_wave_return(wave))
                 for item in wave.unlaunched:
@@ -2953,19 +2618,9 @@ class ConsoleWorkflowCoordinator:
             run.status = None
             _metadata_source(self)
             publication = await self._publish(run.workflow_id, _terminal_run=run)
-            source = _EXECUTION_RELEASE_SOURCE
-            if (
-                _execution_release_source is not source[0]
-                or source[0].__code__ is not source[1]
-                or source[0].__defaults__ is not source[2]
-                or source[0].__kwdefaults__ is not source[3]
-                or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
-                or source[0].__closure__ is not source[5]
-            ):
-                raise PermissionError("original workflow release source changed")
-            source[0](self, release_binding)
+            cancellation = publication.caller_error or cancellation
+            _execution_release_source(self, release_binding)
             _metadata_publication_return(self, run, publication)
-            cancellation = publication.caller_error
             released_notification = self._release(run, release_binding, publication)
         except BaseException as error:  # noqa: BLE001 - physical failure cannot retry or shed original custody.
             self._retain_final_metadata(run, error)
@@ -2985,17 +2640,7 @@ class ConsoleWorkflowCoordinator:
                             )
         if released_notification is not None:
             try:
-                source = _EXECUTION_RELEASE_SOURCE
-                if (
-                    _execution_release_source is not source[0]
-                    or source[0].__code__ is not source[1]
-                    or source[0].__defaults__ is not source[2]
-                    or source[0].__kwdefaults__ is not source[3]
-                    or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
-                    or source[0].__closure__ is not source[5]
-                ):
-                    raise PermissionError("original workflow release source changed")
-                source[0](self, released_notification, released=True)
+                _execution_release_source(self, released_notification, released=True)
                 self._notify_execution_release(released_notification)
             except BaseException as error:
                 logger.exception("Native workflow returned; wake notification failed")
@@ -3009,27 +2654,8 @@ class ConsoleWorkflowCoordinator:
             raise cancellation
 
     def _release(self, run, binding, publication):
-        source = _EXECUTION_RELEASE_SOURCE
-        if (
-            _execution_release_source is not source[0]
-            or source[0].__code__ is not source[1]
-            or source[0].__defaults__ is not source[2]
-            or source[0].__kwdefaults__ is not source[3]
-            or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
-            or source[0].__closure__ is not source[5]
-        ):
-            raise PermissionError("original workflow release source changed")
-        source[0](self, binding)
-        caller = inspect.currentframe().f_back
-        if (
-            caller.f_code is not _EXECUTION_RELEASE_METHODS[0][1][1]
-            or caller.f_locals.get("self") is not self
-            or caller.f_locals.get("run") is not run
-            or caller.f_locals.get("release_binding") is not binding
-            or caller.f_locals.get("publication") is not publication
-            or binding[1] is not run
-            or not run.phase._retired
-        ):
+        _execution_release_source(self, binding)
+        if binding[1] is not run or not run.phase._retired:
             raise PermissionError("original workflow release invocation required")
         _metadata_publication_return(self, run, publication)
         if run.control_unknown or run.status == "recovery_required":
@@ -3053,24 +2679,7 @@ class ConsoleWorkflowCoordinator:
         return binding
 
     def _notify_execution_release(self, binding):
-        source = _EXECUTION_RELEASE_SOURCE
-        if (
-            _execution_release_source is not source[0]
-            or source[0].__code__ is not source[1]
-            or source[0].__defaults__ is not source[2]
-            or source[0].__kwdefaults__ is not source[3]
-            or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
-            or source[0].__closure__ is not source[5]
-        ):
-            raise PermissionError("original workflow release source changed")
-        source[0](self, binding, released=True)
-        caller = inspect.currentframe().f_back
-        if (
-            caller.f_code is not _EXECUTION_RELEASE_METHODS[0][1][1]
-            or caller.f_locals.get("self") is not self
-            or caller.f_locals.get("released_notification") is not binding
-        ):
-            raise PermissionError("original workflow notification invocation required")
+        _execution_release_source(self, binding, released=True)
         runtime, wake, registry_lock = binding[5], binding[8], binding[11]
         with registry_lock:
             if wake._registry_lock is not registry_lock:
@@ -3110,28 +2719,7 @@ class ConsoleWorkflowCoordinator:
             raise PermissionError("workflow original control pending")
         control_return = run.control_return = asyncio.Event()
 
-        def read_sources():
-            read_class, binding_class, binding_slot, functions, classes = (
-                native._NATIVE_PLANNING_READ_RETURN
-            )
-            if (
-                native.ConsolePreparationRead is not read_class
-                or native._HookSourceBinding is not binding_class
-                or native._source_binding is not binding_slot
-                or native.run_preparation_read is not functions[0][0]
-                or native._retire is not functions[1][0]
-                or any(not _function_unchanged(record) for record in functions)
-                or any(
-                    inspect.getattr_static(owner, name) is not descriptor
-                    for owner, descriptors in classes
-                    for name, descriptor in descriptors
-                )
-            ):
-                raise PermissionError("original workflow control reader changed")
-            return read_class, binding_class, binding_slot
-
         def current():
-            read_sources()
             if (
                 controller.app.console_runtime is not runtime
                 or runtime._workflow_coordinator is not self
@@ -3158,25 +2746,7 @@ class ConsoleWorkflowCoordinator:
                 )
 
         def invoke():
-            read_class, binding_class, binding_slot = read_sources()
-            binding = binding_slot.get()
-            if (
-                type(binding) is not binding_class
-                or not binding.active
-                or binding.process != os.getpid()
-                or binding.thread is not threading.current_thread()
-                or binding.task is not None
-                or type(binding.read) is not read_class
-                or binding.read.creator is not controller
-                or binding.read.source is not phase
-                or binding.read.callback is not invoke
-                or binding.read.task is not issuing
-                or type(binding.read._producer) is not asyncio.Future
-                or type(binding.read.retired) is not asyncio.Future
-            ):
-                raise PermissionError("original workflow control read required")
-            read = binding.read
-            run.control_read = (read, read._producer, read.retired, invoke)
+            run.control_read = _capture_workflow_read(controller, phase, issuing)
             with _remaining_storage_return(databases):
                 result = controlled()
             returned.append(result)
@@ -3199,12 +2769,10 @@ class ConsoleWorkflowCoordinator:
             current()
             if run.control_read is None or not returned:
                 raise RuntimeError("workflow control worker return unproven")
-            read, producer, retired, callback = run.control_read
+            read, producer, retired = run.control_read
             if (
                 read.creator is not controller
                 or read.source is not phase
-                or read.callback is not callback
-                or callback is not invoke
                 or read.task is not issuing
                 or read._producer is not producer
                 or read.retired is not retired
@@ -3328,6 +2896,66 @@ class ConsoleWorkflowCoordinator:
             ("resume", command_id), (workflow_id, expected_control_revision), resume
         )
 
+    async def reconcile(
+        self,
+        workflow_id: str,
+        *,
+        expected_control_revision: int,
+        decision: WorkflowExecutionRecovery,
+        command_id: str,
+    ) -> WorkflowSnapshot:
+        """Record explicit review of interrupted history after native work retires."""
+
+        async def reconcile():
+            revision = expected_control_revision
+            run = self._runs.get(workflow_id)
+            if run is not None:
+                if run.prepared is None or run.driver is None or not run.driver.done():
+                    raise ValueError("workflow_resources_still_live")
+                run.prepared.planning_recovery_return()
+                if run.prepared._planning_recovery_snapshot is None:
+                    recorded = await run.prepared.record_planning_recovery(
+                        expected_control_revision=revision
+                    )
+                    revision = recorded.control_revision
+            await self.service.call(
+                self.service.resolve_recovery,
+                workflow_id,
+                expected_control_revision=revision,
+                decision=decision,
+            )
+            if run is not None:
+                run.prepared.planning_recovery_return()
+                if self._runs.get(workflow_id) is not run:
+                    raise ValueError("workflow_runtime_changed")
+                self._runs.pop(workflow_id)
+            await self._publish(workflow_id)
+            return await self.get(workflow_id)
+
+        return await self._command(
+            ("reconcile", command_id),
+            (workflow_id, expected_control_revision, decision.canonical_json()),
+            reconcile,
+        )
+
+    async def remove_results(
+        self, workflow_id: str, *, expected_control_revision: int, command_id: str
+    ) -> WorkflowSnapshot:
+        """Remove terminal payloads through the existing owned history service."""
+
+        async def remove():
+            await self.service.call(
+                self.service.remove_payloads,
+                workflow_id,
+                expected_control_revision=expected_control_revision,
+            )
+            await self._publish(workflow_id)
+            return await self.get(workflow_id)
+
+        return await self._command(
+            ("remove", command_id), (workflow_id, expected_control_revision), remove
+        )
+
     async def revise(
         self,
         workflow_id: str,
@@ -3396,7 +3024,7 @@ class ConsoleWorkflowCoordinator:
             try:
                 driver = _planning_driver_source(self, run)
                 run.driver = asyncio.create_task(
-                    driver(self, run), name="native-workflow-repair"
+                    driver(run), name="native-workflow-repair"
                 )
             except BaseException:
                 run.status = "recovery_required"
@@ -3454,6 +3082,15 @@ class ConsoleWorkflowCoordinator:
                 task.exception()
         for run in tuple(self._runs.values()):
             if (
+                run.prepared is not None
+                and run.driver is not None
+                and run.driver.done()
+                and run.prepared._planning_recovery_return is not None
+            ):
+                run.prepared.planning_recovery_return()
+                self._runs.pop(run.workflow_id)
+                continue  # Durable unreviewed history survives runtime disposal.
+            if (
                 run not in self._pending_planning
                 and run.phase is None
                 and self._acceptance_returned(run)
@@ -3484,120 +3121,6 @@ class ConsoleWorkflowCoordinator:
 
 from . import console_workflow_wave as _quiescence_wave
 
-_QUIESCENCE_WAVE = tuple(
-    (name, _function_record(getattr(_quiescence_wave, name)))
-    for name in ("run_workflow_wave", "_workflow_wave_sources", "_workflow_wave_return")
-)
 _COORDINATOR_CLASS = ConsoleWorkflowCoordinator
 _QUIESCENCE_CLASS = _WorkflowQuiescence
-_QUIESCENCE_FUNCTIONS = tuple(
-    (name, _function_record(globals()[name]))
-    for name in (
-        "_quiescence_source",
-        "_quiescence_physical",
-        "_quiescence_receiving",
-        "_quiescence_evidence",
-    )
-)
-_QUIESCENCE_COORDINATOR_RECORDS = tuple(
-    (name, _function_record(getattr(ConsoleWorkflowCoordinator, name)))
-    for name in ("_accounting", "_execute")
-)
-_QUIESCENCE_CALLBACK_CODE = next(
-    code
-    for code in ConsoleWorkflowCoordinator._accounting.__code__.co_consts
-    if inspect.iscode(code) and code.co_name == "operation"
-)
-from tldw_chatbook.Agents import automatic_work_runtime as _quiescence_context
-from tldw_chatbook.Agents import workflow_task_scope as _quiescence_task
-
-_QUIESCENCE_CONTEXT = (
-    _function_record(_quiescence_context.current_automatic_work),
-    _quiescence_context._CURRENT,
-    tuple(
-        _function_record(method)
-        for method in (
-            AutomaticWorkContext.scope,
-            AutomaticWorkContext.scope.__wrapped__,
-        )
-    ),
-)
-_QUIESCENCE_TASK = (
-    _function_record(_quiescence_task.current_task_authorization),
-    _quiescence_task._CURRENT,
-    _quiescence_task.WorkflowTaskAuthorization,
-)
-_COORDINATOR_PLAN_RECORD = _function_record(ConsoleWorkflowCoordinator._plan)
-_PENDING_PLANNING_RECORDS = tuple(
-    (name, _function_record(getattr(ConsoleWorkflowCoordinator, name)))
-    for name in (
-        "start",
-        "revise",
-        "_pending_planning_source",
-        "_planning_identity",
-        "_planning_unused_return",
-        "_release_pending_planning",
-        "_pending_planning_control",
-    )
-)
-_PLANNING_COMMAND_CODES = tuple(
-    code
-    for name in ("start", "revise")
-    for code in getattr(ConsoleWorkflowCoordinator, name).__code__.co_consts
-    if inspect.iscode(code) and code.co_name in {"accept", "revise"}
-)
-
-# Metadata readers are named original passive service methods, not capabilities.
-from tldw_chatbook.Agents.workflow_run_service import (
-    WorkflowRunService as _MetadataService,
-)
-
-_METADATA_SERVICE_RECORDS = tuple(
-    (
-        name,
-        (
-            _function_record(getattr(_MetadataService, name)),
-            _function_record(getattr(_MetadataService, name).__wrapped__),
-        ),
-    )
-    for name in ("get", "runtime_snapshot")
-)
-
 _METADATA_CELL_CLASS = _WorkflowMetadataRead
-_METADATA_COORDINATOR_RECORDS = tuple(
-    (
-        name,
-        tuple(
-            _function_record(method)
-            for method in (
-                (
-                    getattr(ConsoleWorkflowCoordinator, name),
-                    getattr(ConsoleWorkflowCoordinator, name).__wrapped__,
-                )
-                if name == "_metadata"
-                else (getattr(ConsoleWorkflowCoordinator, name),)
-            )
-        ),
-    )
-    for name in ("_metadata", "_publish", "get", "_metadata_lower_bound")
-)
-
-from .console_chat_store import ConsoleChatStore as _EXECUTION_STORE_CLASS
-from .console_fleet_wake import _WORKFLOW_WAKE_SOURCE as _EXECUTION_WAKE_SOURCE
-
-_EXECUTION_RECEIVED_RELEASE = _function_record(
-    _EXECUTION_STORE_CLASS.release_received_turn
-)
-_EXECUTION_RELEASE_SOURCE = _function_record(_execution_release_source)
-_EXECUTION_RELEASE_FUNCTIONS = tuple(
-    (name, _function_record(globals()[name]))
-    for name in (
-        "_execution_release_source",
-        "_metadata_publication_return",
-        "_metadata_source",
-    )
-)
-_EXECUTION_RELEASE_METHODS = tuple(
-    (name, _function_record(getattr(ConsoleWorkflowCoordinator, name)))
-    for name in ("_execute", "_release", "_notify_execution_release")
-)

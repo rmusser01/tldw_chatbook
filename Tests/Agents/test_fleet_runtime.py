@@ -4159,7 +4159,9 @@ def test_isolated_child_writes_only_to_selected_repository_worktree(
             api_endpoint="llama_cpp",
         )
         join_fleet_children(service)
-        assert outcome.status == RUN_DONE
+        assert outcome.status == RUN_DONE, [
+            (step.kind, step.summary, step.result) for step in outcome.steps
+        ]
         created = next(iter(service._agent_worktrees.values()))
         assert (created.worktree_path / "child.txt").read_text() == "child work"
         assert not (git_repo / "child.txt").exists()
@@ -4462,7 +4464,9 @@ def test_real_child_creation_is_durable_before_its_first_write(db, reopen_db, gi
             config=ISO_CFG,
             api_endpoint="llama_cpp",
         )
-        assert outcome.status == RUN_DONE
+        assert outcome.status == RUN_DONE, [
+            (step.kind, step.summary, step.result) for step in outcome.steps
+        ]
         child = _child_row(db)
         reopened = reopen_db(client_id="reopened-gated")
         repository = AgentWorktreeRepository(reopened)

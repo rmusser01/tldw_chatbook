@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
@@ -117,14 +115,6 @@ class _WorkflowWave:
 
     def snapshot_returned(self, reservation, kind, ticket):
         """Called after the actual operation finish and native source scopes return."""
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
         _workflow_wave_sources(self)
         if (
             reservation is not self.reservation
@@ -184,25 +174,12 @@ class _WorkflowWave:
 
         self.loop.call_soon_threadsafe(deliver)
 
-    def _release(self):
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
+    def _release(self, *, _unused=False):
         _workflow_wave_sources(self)
-        caller = sys._getframe(1)
         if (
             self.closed
             or self.unproven_launches
             or asyncio.current_task() is not self.driver
-            or self.driver.get_coro() is not self._driver_coroutine
-            or self._driver_coroutine.cr_code is not _WAVE_RUN_CODE
-            or caller.f_code not in {_WAVE_RUN_CODE, _WAVE_OPEN_CODE}
-            or caller.f_locals.get("self") is not self
             or self.runtime._workflow_waves.get(self) is not self
         ):
             raise PermissionError("original workflow wave release required")
@@ -240,7 +217,7 @@ class _WorkflowWave:
                     or read.body_error is not None
                 ):
                     raise PermissionError("original workflow close read unproven")
-        if self.reservation is not None and caller.f_code is _WAVE_RUN_CODE:
+        if self.reservation is not None and not _unused:
             if self.anchor is None:
                 if self.reservation.completion is not ChangeReviewCompletion.CANCELLED:
                     raise PermissionError("original unused workflow window required")
@@ -266,14 +243,6 @@ class _WorkflowWave:
                 item._terminal_configuration_return = returned, read, records
                 item._execution_configuration_return()
         # All original callouts returned; enrollment protects them until now.
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
         _workflow_wave_sources(self)
         if self.runtime._workflow_waves.get(self) is not self:
             raise PermissionError("original workflow wave registration changed")
@@ -414,15 +383,24 @@ class _WorkflowWave:
             return source, footprint
 
         reads, read_index = first._finite_reads, len(first._finite_reads)
-        captured = await first._read(capture)
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
+        try:
+            captured = await first._read(capture)
+        except _WorkflowChildWait as error:
+            if first._finite_reads is not reads or len(reads) != read_index + 1:
+                raise
+            read = reads[read_index]
+            first._finite_read_return(read)
+            if (
+                not read.positive
+                or read.body_error is not error
+                or read.wrapper_error is not None
+                or read.owner is not None
+                or read.claim is not None
+                or read.operation is not None
+                or self.source is not None
+            ):
+                raise
+            return _WaveOpenRefusal(error, self.retain_waits)
         _workflow_wave_sources(self)
         if first._finite_reads is not reads or len(reads) != read_index + 1:
             raise PermissionError("original workflow capture reader changed")
@@ -441,13 +419,6 @@ class _WorkflowWave:
             or captured[0].issuer is not self.coordinator._native
             or captured[0].workflow_wave is not self
             or captured[0].bridge is not self.bridge
-            or dict(
-                zip(
-                    read.callback.__code__.co_freevars,
-                    (cell.cell_contents for cell in read.callback.__closure__ or ()),
-                )
-            ).get("callback")
-            is not capture
         ):
             raise PermissionError("original workflow capture return unproven")
         captured_source, footprint = captured
@@ -493,21 +464,10 @@ class _WorkflowWave:
             if self.reservation is not None:
                 self.coordinator.cancel(self.reservation)
             for item in self.prepared:
-                closing = item.close()
+                closing = item.close(_wave=self)
                 await closing
-            if (
-                _workflow_wave_sources is not _WAVE_SOURCE[0]
-                or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-                or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-                or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-                or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-            ):
-                raise PermissionError("original workflow helper source changed")
             _workflow_wave_sources(self)
-            release = _WAVE_RELEASE_METHOD[0]
-            if inspect.getattr_static(self, "_release") is not release:
-                raise PermissionError("original workflow release source changed")
-            self._release_return = release(self)
+            self._release_return = self._release(_unused=True)
             raise PermissionError("workflow window admission refused")
         from tldw_chatbook.DB.workflow_runs import _WindowUnpublished
 
@@ -527,21 +487,10 @@ class _WorkflowWave:
                 self.reservation, self.source, publication
             )
             for item in self.prepared:
-                closing = item.close(_unpublished=publication)
+                closing = item.close(_unpublished=publication, _wave=self)
                 await closing
-            if (
-                _workflow_wave_sources is not _WAVE_SOURCE[0]
-                or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-                or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-                or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-                or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-            ):
-                raise PermissionError("original workflow helper source changed")
             _workflow_wave_sources(self)
-            release = _WAVE_RELEASE_METHOD[0]
-            if inspect.getattr_static(self, "_release") is not release:
-                raise PermissionError("original workflow release source changed")
-            self._release_return = release(self)
+            self._release_return = self._release(_unused=True)
             raise publication.error
         baseline = await asyncio.shield(self.baseline_return)
         roots = tuple(str(root) for root in self.reservation._handle.roots)
@@ -561,71 +510,33 @@ class _WorkflowWave:
         if baseline is not ChangeReviewCompletion.OBSERVED:
             self.coordinator.cancel(self.reservation)
             for item in self.prepared:
-                closing = item.close()
+                closing = item.close(_wave=self)
                 await closing
             await run_owned_db_call(
                 self.service.db,
                 self.service.db.workflow_runs.unused_change_window,
                 self.reservation.id,
             )
-            if (
-                _workflow_wave_sources is not _WAVE_SOURCE[0]
-                or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-                or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-                or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-                or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-            ):
-                raise PermissionError("original workflow helper source changed")
             _workflow_wave_sources(self)
-            release = _WAVE_RELEASE_METHOD[0]
-            if inspect.getattr_static(self, "_release") is not release:
-                raise PermissionError("original workflow release source changed")
-            self._release_return = release(self)
+            self._release_return = self._release(_unused=True)
             raise PermissionError("workflow baseline unavailable")
 
     async def _launch(self, item):
-        from tldw_chatbook.Agents.agent_service import (
-            _WF_LAUNCH_SOURCE,
-            _workflow_launch_sources,
-            _WorkflowLaunchReturn,
-        )
+        from tldw_chatbook.Agents.agent_service import _WorkflowLaunchReturn
 
-        from .console_ordinary_tree import _function_record
-
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
-        _workflow_wave_sources(self)
-        issuing = asyncio.current_task()
-        invocation = sys._getframe()
+        self._check_enrollment(item)
         unused = []
         unused_returned = False
 
         def launch():
-            source = (self, item, issuing, invocation, worker, launch)
             with (
                 owned_goal_storage(self.service),
                 self.phase.context.scope(),
                 execution(self.bridge),
                 item.activate_source(),
             ):
-                if (
-                    _workflow_launch_sources is not _WF_LAUNCH_SOURCE[0]
-                    or _workflow_launch_sources.__code__ is not _WF_LAUNCH_SOURCE[1]
-                    or _workflow_launch_sources.__defaults__ is not _WF_LAUNCH_SOURCE[2]
-                    or _workflow_launch_sources.__kwdefaults__
-                    is not _WF_LAUNCH_SOURCE[3]
-                    or _workflow_launch_sources.__closure__ is not _WF_LAUNCH_SOURCE[5]
-                ):
-                    raise PermissionError("original workflow helper source changed")
-                _workflow_launch_sources(item.native.service)
-                if self.stopping.is_set():
-                    result = PermissionError("workflow wave cancelled before child")
+                if self.stopping.is_set() or item.should_cancel():
+                    result = PermissionError("workflow native source changed")
                     unused.append(result)
                 else:
                     result = item.native.service._workflow_launch_result(
@@ -634,40 +545,25 @@ class _WorkflowWave:
                         should_cancel=lambda: (
                             self.stopping.is_set() or item.should_cancel()
                         ),
+                        _wave=self,
                     )
                     if result.receipt is not None:
                         self.service.bind_native_receipt(
                             item.authorization, result.receipt
                         )
-            # source remains an actual local association through the worker's return.
-            if source[0] is not self:
-                raise PermissionError("original workflow worker changed")
             return result
 
-        worker = asyncio.to_thread(launch)
-        worker_frame = worker.cr_frame  # noqa: F841 - retained by the original invocation frame
-        launch_record = _function_record(launch)  # noqa: F841 - same producer checks this frame local
         try:
-            result = await worker
-            if (
-                _workflow_wave_sources is not _WAVE_SOURCE[0]
-                or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-                or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-                or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-                or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-            ):
-                raise PermissionError("original workflow helper source changed")
+            result = await asyncio.to_thread(launch)
             _workflow_wave_sources(self)
             if unused:
                 if len(unused) != 1 or result is not unused[0]:
-                    raise PermissionError("original unused workflow worker required")
-                # A real original no-entry worker returned; no launch marker exists.
+                    raise PermissionError("workflow no-entry result changed")
                 unused_returned = True
                 raise result
-            if type(result) is not _WorkflowLaunchReturn:
-                raise PermissionError("original workflow worker result required")
+            if not isinstance(result, _WorkflowLaunchReturn):
+                raise PermissionError("native workflow launch result required")
             if not result.known:
-                self.unproven_launches.add(item)
                 raise result.error
             item.native.service._finish_workflow_launch(result)
         except BaseException:
@@ -696,7 +592,7 @@ class _WorkflowWave:
         if not await asyncio.shield(drained):
             raise PermissionError("workflow native drain unproven")
         if receipt.failure == "no_run":
-            closing = item.close()
+            closing = item.close(_wave=self)
             await closing
             return
         row = await run_owned_db_call(
@@ -722,36 +618,18 @@ class _WorkflowWave:
             handoff=body,
         )
         await self.service.call(self.service.checkpoint_task, result, drained=True)
-        closing = item.close()
+        closing = item.close(_wave=self)
         await closing
 
     async def run(self):
         """Launch a fixed eligible set; close E at its first actual quiescent gap."""
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
         _workflow_wave_sources(self)
         opening = self._open()
         waiting = await opening
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
         _workflow_wave_sources(self)
         if waiting is not None:
             if (
                 type(waiting) is not _WaveOpenRefusal
-                or opening.cr_code is not _WAVE_OPEN_CODE
-                or opening.cr_frame is not None
                 or asyncio.current_task() is not self.driver
                 or waiting.source is not self.source
                 or waiting.footprint is not self.wait_footprint
@@ -781,21 +659,10 @@ class _WorkflowWave:
                 self.unlaunched.update((item, waiting.error) for item in self.prepared)
             else:
                 for item in self.prepared:
-                    closing = item.close()
+                    closing = item.close(_wave=self)
                     await closing
-            if (
-                _workflow_wave_sources is not _WAVE_SOURCE[0]
-                or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-                or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-                or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-                or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-            ):
-                raise PermissionError("original workflow helper source changed")
             _workflow_wave_sources(self)
-            release = _WAVE_RELEASE_METHOD[0]
-            if inspect.getattr_static(self, "_release") is not release:
-                raise PermissionError("original workflow release source changed")
-            self._release_return = release(self)
+            self._release_return = self._release()
             if not waiting.retain:
                 raise waiting.error
             return self.reservation
@@ -821,7 +688,7 @@ class _WorkflowWave:
             if not any(item is admitted for admitted, _receipt in self.receipts) and (
                 not self.retain_waits or item not in self.unlaunched
             ):
-                closing = item.close()
+                closing = item.close(_wave=self)
                 await closing
         if not self.capture_enabled:
             pass
@@ -843,19 +710,8 @@ class _WorkflowWave:
                 ChangeReviewCompletion.DISCLOSED_FAILURE,
             }:
                 raise PermissionError("workflow E required publication unresolved")
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
         _workflow_wave_sources(self)
-        release = _WAVE_RELEASE_METHOD[0]
-        if inspect.getattr_static(self, "_release") is not release:
-            raise PermissionError("original workflow release source changed")
-        self._release_return = release(self)
+        self._release_return = self._release()
         for result in launches:
             if isinstance(result, BaseException):
                 raise result
@@ -866,24 +722,8 @@ class _WorkflowWave:
 
 async def run_workflow_wave(phase, prepared, *, _retain_waits=False):
     """Private complete-wave consumer for the existing accepted phase owner."""
-    if (
-        _workflow_wave_sources is not _WAVE_SOURCE[0]
-        or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-        or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-        or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-        or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
     _workflow_wave_sources()
     wave = _WorkflowWave(phase, prepared, retain_waits=_retain_waits)
-    if (
-        _workflow_wave_sources is not _WAVE_SOURCE[0]
-        or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-        or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-        or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-        or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
     _workflow_wave_sources(wave)
     if wave.runtime._workflow_closing:
         raise PermissionError("workflow admission is closing")
@@ -945,14 +785,6 @@ async def run_workflow_wave(phase, prepared, *, _retain_waits=False):
             except BaseException:  # noqa: BLE001 - original driver result retains failure custody
                 break
         result = wave.driver.result()
-        if (
-            _workflow_wave_sources is not _WAVE_SOURCE[0]
-            or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-            or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-            or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-            or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
         _workflow_wave_sources(wave)
         if _retain_waits:
             for item in wave.unlaunched:
@@ -981,330 +813,58 @@ async def run_workflow_wave(phase, prepared, *, _retain_waits=False):
         pass
 
 
-def _workflow_launch_association(prepared, caller):
-    """Observe this actual original worker, never reconstruct it from an ID."""
-    if prepared is None or caller.f_code is not _WAVE_WORKER_CODE:
-        raise PermissionError("original workflow launch worker required")
-    source = caller.f_locals.get("source")
-    if type(source) is not tuple or len(source) != 6:
-        raise PermissionError("original workflow launch closure required")
-    wave, item, issuing, invocation, worker, launch = source
-    if item is not prepared:
-        raise PermissionError("original workflow launch member changed")
-    driver = wave.driver
-    run_frame = driver.get_coro().cr_frame if driver is not None else None
-    group = run_frame.f_locals.get("launch_group") if run_frame is not None else None
-    association = (
-        wave,
-        item,
-        issuing,
-        invocation,
-        worker,
-        invocation.f_locals.get("worker_frame"),
-        launch,
-        invocation.f_locals.get("launch_record"),
-        driver,
-        run_frame,
-        group,
-        caller,
-    )
-    if (
-        _workflow_launch_association_current is not _WAVE_ASSOCIATION_CURRENT_SOURCE[0]
-        or _workflow_launch_association_current.__code__
-        is not _WAVE_ASSOCIATION_CURRENT_SOURCE[1]
-        or _workflow_launch_association_current.__defaults__
-        is not _WAVE_ASSOCIATION_CURRENT_SOURCE[2]
-        or _workflow_launch_association_current.__kwdefaults__
-        is not _WAVE_ASSOCIATION_CURRENT_SOURCE[3]
-        or _workflow_launch_association_current.__closure__
-        is not _WAVE_ASSOCIATION_CURRENT_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
-    _workflow_launch_association_current(association)
-    return association
-
-
-def _workflow_launch_association_current(association):
-    from .console_ordinary_tree import _function_unchanged
-
-    if type(association) is not tuple or len(association) != 12:
-        raise PermissionError("original workflow launch association required")
-    (
-        wave,
-        item,
-        issuing,
-        invocation,
-        worker,
-        worker_frame,
-        launch,
-        record,
-        driver,
-        run_frame,
-        group,
-        caller,
-    ) = association
-    if (
-        _workflow_wave_sources is not _WAVE_SOURCE[0]
-        or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-        or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-        or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-        or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
-    _workflow_wave_sources(wave)
-    if (
-        wave.driver is not driver
-        or driver is None
-        or driver.get_coro().cr_code is not _WAVE_RUN_CODE
-        or driver.get_coro().cr_frame is not run_frame
-        or run_frame is None
-        or run_frame.f_locals.get("self") is not wave
-        or run_frame.f_locals.get("launch_group") is not group
-        or type(group) is not _WAVE_GATHER_CLASS
-        or not any(child is issuing for child in group._children)
-        or type(issuing) is not _WAVE_TASK_CLASS
-        or issuing.get_coro().cr_code is not _WAVE_LAUNCH_CODE
-        or issuing.get_coro().cr_frame is not invocation
-        or invocation.f_locals.get("self") is not wave
-        or invocation.f_locals.get("item") is not item
-        or invocation.f_locals.get("issuing") is not issuing
-        or invocation.f_locals.get("worker") is not worker
-        or invocation.f_locals.get("worker_frame") is not worker_frame
-        or invocation.f_locals.get("launch") is not launch
-        or worker.cr_code is not _WAVE_TO_THREAD_CODE
-        or worker_frame is None
-        or worker_frame.f_code is not _WAVE_TO_THREAD_CODE
-        or worker_frame.f_locals.get("func") is not launch
-        or type(record) is not tuple
-        or record[0] is not launch
-        or not _function_unchanged(record)
-        or caller.f_code is not _WAVE_WORKER_CODE
-        or type(caller.f_locals.get("source")) is not tuple
-        or len(caller.f_locals["source"]) != 6
-        or any(
-            a is not b
-            for a, b in zip(
-                caller.f_locals["source"],
-                (wave, item, issuing, invocation, worker, launch),
-            )
-        )
-        or item._wave is not wave
-        or item.phase is not wave.phase
-        or item.runtime is not wave.runtime
-        or wave.runtime._workflow_waves.get(wave) is not wave
-        or not any(member is item for member in wave.prepared)
-    ):
-        raise PermissionError("original workflow launch association changed")
-
-
-def _workflow_launch_received(association, result, caller):
-    if (
-        _workflow_launch_association_current is not _WAVE_ASSOCIATION_CURRENT_SOURCE[0]
-        or _workflow_launch_association_current.__code__
-        is not _WAVE_ASSOCIATION_CURRENT_SOURCE[1]
-        or _workflow_launch_association_current.__defaults__
-        is not _WAVE_ASSOCIATION_CURRENT_SOURCE[2]
-        or _workflow_launch_association_current.__kwdefaults__
-        is not _WAVE_ASSOCIATION_CURRENT_SOURCE[3]
-        or _workflow_launch_association_current.__closure__
-        is not _WAVE_ASSOCIATION_CURRENT_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
-    _workflow_launch_association_current(association)
-    wave, item, issuing, invocation, worker = association[:5]
-    if (
-        caller is not invocation
-        or asyncio.current_task() is not issuing
-        or caller.f_locals.get("result") is not result
-        or worker.cr_frame is not None
-        or result.entry.wave is not wave
-        or result.entry.preparation is not item
-        or result.entry.association is not association
-    ):
-        raise PermissionError("original workflow worker return required")
-
-
-def _workflow_close_association(item, close_frame, caller):
-    wave = item._wave
+def _workflow_close_association(item, wave):
+    """Retain only the actual enrolled wave and prepared member."""
+    if item._wave is not wave:
+        raise PermissionError("workflow close wave changed")
     if wave is None:
         return None
-    if (
-        _workflow_wave_sources is not _WAVE_SOURCE[0]
-        or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-        or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-        or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-        or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
-    _workflow_wave_sources(wave)
-    task = asyncio.current_task()
-    driver = wave.driver
-    run_frame = driver.get_coro().cr_frame if driver is not None else None
-    closing = caller.f_locals.get("closing")
-    if (
-        closing is None
-        or closing.cr_frame is not close_frame
-        or caller.f_locals.get("self") is not wave
-        or not any(member is item for member in wave.prepared)
-        or caller.f_locals.get("item") is not item
-        or run_frame is None
-        or run_frame.f_locals.get("self") is not wave
-    ):
-        raise PermissionError("original wave close invocation required")
-    if caller.f_code in {_WAVE_RUN_CODE, _WAVE_OPEN_CODE}:
-        if task is not driver:
-            raise PermissionError("original wave close driver required")
-        group = receipt = None
-    elif caller.f_code is _WAVE_SETTLE_CODE:
-        group = run_frame.f_locals.get("settle_group")
-        receipt = caller.f_locals.get("receipt")
-        if (
-            type(group) is not _WAVE_GATHER_CLASS
-            or not any(child is task for child in group._children)
-            or task.get_coro().cr_frame is not caller
-            or not any(p is item and r is receipt for p, r in wave.receipts)
-        ):
-            raise PermissionError("original wave settlement close required")
-    else:
-        raise PermissionError("original wave close caller required")
-    return (
-        wave,
-        item,
-        task,
-        closing,
-        close_frame,
-        caller,
-        driver,
-        run_frame,
-        group,
-        receipt,
-    )
+    association = wave, item
+    _workflow_close_current(association)
+    return association
 
 
 def _workflow_close_current(association):
     if association is None:
         return
-    (
-        wave,
-        item,
-        task,
-        closing,
-        close_frame,
-        caller,
-        driver,
-        run_frame,
-        group,
-        receipt,
-    ) = association
-    if (
-        _workflow_wave_sources is not _WAVE_SOURCE[0]
-        or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-        or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-        or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-        or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
+    wave, item = association
     _workflow_wave_sources(wave)
     if (
         item._wave is not wave
-        or wave.driver is not driver
-        or driver.get_coro().cr_frame is not run_frame
+        or item.phase is not wave.phase
+        or wave.closed
         or wave.runtime._workflow_waves.get(wave) is not wave
-        or closing.cr_frame is not close_frame
-        or caller.f_locals.get("closing") is not closing
-        or caller.f_locals.get("self") is not wave
-        or group is None
-        and task is not driver
-        or group is not None
-        and (
-            run_frame.f_locals.get("settle_group") is not group
-            or not any(child is task for child in group._children)
-            or task.get_coro().cr_frame is not caller
-            or caller.f_locals.get("receipt") is not receipt
-        )
+        or not any(member is item for member in wave.prepared)
     ):
-        raise PermissionError("original wave close association changed")
+        raise PermissionError("workflow close enrollment changed")
 
 
 def _workflow_wave_sources(wave=None):
-    """Check the original native producers without treating a result as authority."""
-    from tldw_chatbook.Workspaces import change_review_finalization as finalization
-    from tldw_chatbook.Workspaces import change_review_ownership as native
-
-    from .console_ordinary_tree import _function_record, _function_unchanged
-    from .console_workflow_preparation import _PLANNING_PREPARATION_METHODS
-
+    """Validate the runtime resources owned by this registered native wave."""
+    if wave is None:
+        return
     if (
-        _function_record is not _WAVE_RECORDER[0]
-        or _function_record.__code__ is not _WAVE_RECORDER[1]
-        or _function_record.__defaults__ is not _WAVE_RECORDER[2]
-        or _function_record.__kwdefaults__ is not _WAVE_RECORDER[3]
-        or _function_record.__closure__ is not _WAVE_RECORDER[5]
-        or _function_unchanged is not _WAVE_CHECKER[0]
-        or _function_unchanged.__code__ is not _WAVE_CHECKER[1]
-        or _function_unchanged.__defaults__ is not _WAVE_CHECKER[2]
-        or _function_unchanged.__kwdefaults__ is not _WAVE_CHECKER[3]
-        or _function_unchanged.__closure__ is not _WAVE_CHECKER[5]
-        or asyncio.Task is not _WAVE_TASK_CLASS
-        or asyncio.tasks._GatheringFuture is not _WAVE_GATHER_CLASS
+        not isinstance(wave, _WorkflowWave)
+        or wave.runtime.chat_controller is not wave.phase._controller
+        or wave.phase._controller._agent_bridge is not wave.bridge
+        or wave.runtime._workflow_service is not wave.service
         or any(
-            vars(module).get(name) is not record[0] or not _function_unchanged(record)
-            for module, name, record in _WAVE_ASYNC_FUNCTIONS
+            item.runtime is not wave.runtime
+            or item.phase is not wave.phase
+            or item.service is not wave.service
+            for item in wave.prepared
         )
-        or _WaveOpenRefusal is not _WAVE_OPEN_RESULT_CLASS
-        or any(not _function_unchanged(record) for record in _WAVE_OPEN_RESULT_METHODS)
-        or native._NativeSnapshotIssuer is not _WAVE_ISSUER_CLASS
-        or _WorkflowWave is not _WAVE_CLASS
-        or native._SnapshotTicket is not _TICKET_CLASS
-        or native._SnapshotSource is not _SnapshotSource
-        or finalization.ChangeReviewReservation is not ChangeReviewReservation
-        or any(
-            globals().get(name) is not record[0] or not _function_unchanged(record)
-            for name, record in _WAVE_FUNCTIONS
-        )
-        or wave is not None
+        or wave.coordinator is not None
         and (
-            type(wave) is not _WAVE_CLASS
-            or wave.coordinator is not None
-            and (
-                type(wave.coordinator._native) is not _WAVE_ISSUER_CLASS
-                or wave.coordinator._native.runtime is not wave.runtime
-                or wave.coordinator._native.coordinator is not wave.coordinator
-                or inspect.getattr_static(wave.coordinator._native, "capture", None)
-                is not _WAVE_CAPTURE_METHOD[0]
-            )
-            or any(
-                inspect.getattr_static(item, name, None) is not descriptor
-                or any(not _function_unchanged(record) for record in records)
-                for item in wave.prepared
-                for name, descriptor, records in _PLANNING_PREPARATION_METHODS
-            )
-        )
-        or inspect.getattr_static(_WAVE_ISSUER_CLASS, "capture", None)
-        is not _WAVE_CAPTURE_METHOD[0]
-        or not _function_unchanged(_WAVE_CAPTURE_METHOD)
-        or any(
-            inspect.getattr_static(target, name, None) is not descriptor
-            or any(not _function_unchanged(record) for record in records)
-            or target is _WAVE_CLASS
-            and wave is not None
-            and inspect.getattr_static(wave, name, None) is not descriptor
-            for target, name, descriptor, records in _WAVE_METHODS
+            wave.coordinator._native.runtime is not wave.runtime
+            or wave.coordinator._native.coordinator is not wave.coordinator
         )
     ):
-        raise PermissionError("original workflow wave source changed")
+        raise PermissionError("workflow wave resources changed")
 
 
 def _workflow_wave_release_return(wave, prepared):
     """Prove original release callouts, without certifying driver success."""
-    if (
-        _workflow_wave_sources is not _WAVE_SOURCE[0]
-        or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-        or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-        or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-        or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
     _workflow_wave_sources(wave)
     returned = wave._release_return
     current = (
@@ -1326,9 +886,6 @@ def _workflow_wave_release_return(wave, prepared):
         or wave in wave.runtime._workflow_waves
         or wave.driver is None
         or not wave.driver.done()
-        or wave.driver.get_coro() is not wave._driver_coroutine
-        or wave._driver_coroutine.cr_code is not _WAVE_RUN_CODE
-        or wave._driver_coroutine.cr_frame is not None
         or wave.unproven_launches
         or prepared._wave is not wave
         or any(
@@ -1368,30 +925,8 @@ def _workflow_wave_release_return(wave, prepared):
 def _workflow_wave_return(wave, saved=None):
     """Retain/recheck the actual original wave's finite positive returns."""
     from . import console_workflow_preparation as preparation
-    from .console_ordinary_tree import _function_unchanged
 
-    if (
-        _workflow_wave_sources is not _WAVE_SOURCE[0]
-        or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-        or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-        or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-        or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
-
-    if (
-        _workflow_wave_sources is not _WAVE_SOURCE[0]
-        or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-        or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-        or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-        or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-    ):
-        raise PermissionError("original workflow helper source changed")
     _workflow_wave_sources(wave)
-    if preparation._finite_owner_return is not preparation._FINITE_OWNER_CHECK[
-        0
-    ] or not _function_unchanged(preparation._FINITE_OWNER_CHECK):
-        raise PermissionError("original workflow wave owner source changed")
     current = (
         wave,
         wave.driver,
@@ -1417,7 +952,6 @@ def _workflow_wave_return(wave, saved=None):
         or not wave.driver.done()
         or wave.driver.cancelled()
         or wave.driver.exception() is not None
-        or wave.driver.get_coro().cr_code is not _WAVE_RUN_CODE
         or wave in wave.runtime._workflow_waves
         or wave.unproven_launches
     ):
@@ -1430,16 +964,6 @@ def _workflow_wave_return(wave, saved=None):
         if (
             type(ticket) is not _TICKET_CLASS
             or type(source) is not _SnapshotSource
-            or any(
-                inspect.getattr_static(instance, name, None) is not descriptor
-                for target, name, descriptor, _records in _WAVE_METHODS
-                for candidate, instance in (
-                    (_TICKET_CLASS, ticket),
-                    (_SnapshotSource, source),
-                    (ChangeReviewReservation, wave.reservation),
-                )
-                if target is candidate
-            )
             or ticket.source is not source
             or source is not wave.source
             or ticket.owner is not owner
@@ -1499,110 +1023,11 @@ def _workflow_wave_return(wave, saved=None):
     return current if saved is None else saved
 
 
-from tldw_chatbook.Workspaces.change_review_finalization import ChangeReviewReservation
 from tldw_chatbook.Workspaces.change_review_ownership import (
     _SnapshotSource,
     _SnapshotTicket,
 )
 
-from .console_ordinary_tree import _function_record as _wave_function_record
-
-_WAVE_CLASS = _WorkflowWave
 _TICKET_CLASS = _SnapshotTicket
-_WAVE_RUN_CODE = _WorkflowWave.run.__code__
-_WAVE_FUNCTIONS = tuple(
-    (name, _wave_function_record(globals()[name]))
-    for name in (
-        "run_workflow_wave",
-        "_workflow_wave_sources",
-        "_workflow_wave_return",
-        "_workflow_wave_release_return",
-        "_workflow_launch_association",
-        "_workflow_launch_association_current",
-        "_workflow_launch_received",
-        "_workflow_close_association",
-        "_workflow_close_current",
-    )
-)
-_WAVE_METHODS = tuple(
-    (
-        target,
-        name,
-        descriptor,
-        tuple(
-            _wave_function_record(function)
-            for function in (
-                (descriptor.fget,)
-                if isinstance(descriptor, property)
-                else (
-                    descriptor,
-                    *(
-                        [descriptor.__wrapped__]
-                        if hasattr(descriptor, "__wrapped__")
-                        else []
-                    ),
-                )
-            )
-        ),
-    )
-    for target in (
-        _WAVE_CLASS,
-        _SnapshotTicket,
-        _SnapshotSource,
-        ChangeReviewReservation,
-    )
-    for name, descriptor in vars(target).items()
-    if inspect.isfunction(descriptor) or isinstance(descriptor, property)
-)
-
-_WAVE_LAUNCH_CODE = _WorkflowWave._launch.__code__
-_WAVE_OPEN_CODE = _WorkflowWave._open.__code__
-_WAVE_SETTLE_CODE = _WorkflowWave._settle.__code__
-_WAVE_WORKER_CODE = next(
-    code
-    for code in _WAVE_LAUNCH_CODE.co_consts
-    if isinstance(code, type(_WAVE_LAUNCH_CODE)) and code.co_name == "launch"
-)
-_WAVE_TO_THREAD_CODE = asyncio.to_thread.__code__
-_WAVE_GATHER_CLASS = asyncio.tasks._GatheringFuture
-_WAVE_TASK_CLASS = asyncio.Task
-_WAVE_ASYNC_FUNCTIONS = tuple(
-    (module, name, _wave_function_record(vars(module)[name]))
-    for module, names in (
-        (asyncio, ("to_thread", "gather")),
-        (asyncio.threads, ("to_thread",)),
-        (asyncio.tasks, ("gather",)),
-    )
-    for name in names
-)
-
-from .console_ordinary_tree import _function_unchanged as _wave_unchanged
-
-_WAVE_CHECKER = _wave_function_record(_wave_unchanged)
-
-_WAVE_SOURCE = dict(_WAVE_FUNCTIONS)["_workflow_wave_sources"]
-_WAVE_ASSOCIATION_SOURCE = dict(_WAVE_FUNCTIONS)["_workflow_launch_association"]
-_WAVE_ASSOCIATION_CURRENT_SOURCE = dict(_WAVE_FUNCTIONS)[
-    "_workflow_launch_association_current"
-]
-_WAVE_RECEIVED_SOURCE = dict(_WAVE_FUNCTIONS)["_workflow_launch_received"]
-_WAVE_CLOSE_SOURCE = dict(_WAVE_FUNCTIONS)["_workflow_close_association"]
-_WAVE_CLOSE_CURRENT_SOURCE = dict(_WAVE_FUNCTIONS)["_workflow_close_current"]
-
-_WAVE_RECORDER = _wave_function_record(_wave_function_record)
-_WAVE_RELEASE_METHOD = _wave_function_record(_WorkflowWave._release)
-_WAVE_RELEASE_RETURN_SOURCE = dict(_WAVE_FUNCTIONS)["_workflow_wave_release_return"]
 
 from _thread import LockType as _WAVE_LOCK_CLASS
-
-from tldw_chatbook.Workspaces.change_review_ownership import (
-    _NativeSnapshotIssuer as _WAVE_ISSUER_CLASS,
-)
-
-_WAVE_CAPTURE_METHOD = _wave_function_record(_WAVE_ISSUER_CLASS.capture)
-_WAVE_OPEN_RESULT_CLASS = _WaveOpenRefusal
-_WAVE_OPEN_RESULT_METHODS = tuple(
-    _wave_function_record(method)
-    for method in vars(_WaveOpenRefusal).values()
-    if inspect.isfunction(method)
-)

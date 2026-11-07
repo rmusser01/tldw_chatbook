@@ -33,7 +33,7 @@ def test_original_committed_child_control_and_required_wave_return(tmp_path, mod
 
 
 @pytest.mark.parametrize(
-    "mode", ["remaining-prepared-stale", "remaining-shutdown", "replaced-producer"]
+    "mode", ["remaining-prepared-stale", "remaining-shutdown", "unregistered-control"]
 )
 def test_remaining_acceptance_review_boundaries(tmp_path, mode):
     _run(

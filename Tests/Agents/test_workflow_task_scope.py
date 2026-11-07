@@ -14,6 +14,7 @@ from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.execution_capacity import WorkOrigin
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+from tldw_chatbook.Agents.workflow_task_scope import check_current_task_call
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -344,6 +345,9 @@ def test_runtime_effect_callback_cannot_escape_task(task_host, name, args):
         fork_chat=callback,
     )
     deps.run_skill_script = callback
+    deps.validate_tool_call = lambda call: check_current_task_call(
+        call, registry=host.registry
+    )
     with (
         host.phase.context.scope(),
         host.authorization.scope(),
@@ -592,6 +596,9 @@ def test_skill_provider_cannot_create_unregistered_child(task_host):
             ModelTurn(text="done"),
         ],
         invoke=lambda call: effects.append(call) or ToolResult(ok=True),
+    )
+    deps.validate_tool_call = lambda call: check_current_task_call(
+        call, registry=host.registry
     )
     with (
         host.phase.context.scope(),
@@ -1019,6 +1026,9 @@ def test_outside_call_cannot_trigger_lazy_instruction_reads_or_review(task_host)
         discovered.extend(calls) or ToolBatchPreparation("proceed")
     )
     deps.review_tool_calls = lambda calls: reviewed.extend(calls) or {}
+    deps.validate_tool_call = lambda call: check_current_task_call(
+        call, registry=host.registry
+    )
     with (
         host.phase.context.scope(),
         host.authorization.scope(),

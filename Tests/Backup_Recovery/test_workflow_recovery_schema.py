@@ -75,7 +75,7 @@ def test_workflow_archive_rejects_hybrid_or_cross_owned_rows(tmp_path, damage):
         elif damage == "extra_column":
             conn.execute("ALTER TABLE workflow_runs ADD COLUMN extra TEXT")
         elif damage == "wrong_stamp":
-            conn.execute("DELETE FROM schema_version WHERE version=29")
+            conn.execute("DELETE FROM schema_version WHERE version=30")
         elif damage == "bad_request":
             conn.execute("DROP TRIGGER workflow_launch_immutable")
             conn.execute("UPDATE workflow_runs SET request_json='{}'")
@@ -130,7 +130,7 @@ def test_staging_v24_migration_uses_installed_allowlist(tmp_path):
     assert validate_candidate(owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            29,
+            30,
         )
         assert conn.execute(
             "SELECT result FROM agent_runs WHERE id='legacy'"
@@ -355,3 +355,40 @@ def test_repair_migration_authorizer_keeps_unrelated_actions_denied():
             conn.execute(
                 "CREATE TRIGGER workflow_repair_input_immutable BEFORE UPDATE ON workflow_phase_attempts BEGIN SELECT 1; END"
             )
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_workflow_statistics_preserve_exact_schema_validation_and_upgrade(
+    tmp_path, legacy
+):
+    path = tmp_path / "analyzed.db"
+    if legacy:
+        from Tests.DB.test_workflow_runs_migration import v24
+
+        v24(path)
+    else:
+        with closing(AgentRunsDB(path)) as db:
+            saved_result(db, tmp_path)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("ANALYZE")
+        conn.commit()
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"
+        ).fetchone()
+    before = path.read_bytes()
+    assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+    assert path.read_bytes() == before
+    assert owner().validate(path) == ()
+    assert validate_candidate(owner(), path, Event(), migrate=True) == ()
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
+            30,
+        )
+        conn.execute("PRAGMA writable_schema=ON")
+        conn.execute(
+            "UPDATE sqlite_schema SET sql='CREATE TABLE sqlite_stat1(tbl,idx,stat,unapproved)' WHERE name='sqlite_stat1'"
+        )
+        conn.commit()
+    before_damage = path.read_bytes()
+    assert validate_candidate(owner(), path, Event(), migrate=False)
+    assert path.read_bytes() == before_damage

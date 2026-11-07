@@ -175,6 +175,7 @@ class ChangeReviewConsentService:
         self._registry = registry
         self._initialize_root = initialize_root or _default_root_initializer
         self._capability_reader = capability_reader or _default_capability_reader
+        self._custom_capability_reader = capability_reader is not None
         self._lock = RLock()
         self._queue: Queue[_InitializationWork] = Queue(maxsize=queue_capacity)
         self._readiness: dict[tuple[str, str], _ReadinessEntry] = {}

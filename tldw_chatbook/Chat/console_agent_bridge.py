@@ -12681,34 +12681,3 @@ _CHANGE_REVIEW_MARKER_HELPER_SOURCE = (
 
 # Original collision view is part of ordinary catalog identity, not a new owner.
 _NATIVE_ORDINARY_COLLISION_PROVIDER = _CollisionFilteredMCPProvider
-_NATIVE_ORDINARY_COLLISION_METHODS = tuple(
-    (name, value)
-    for name, value in vars(_CollisionFilteredMCPProvider).items()
-    if callable(value)
-)
-
-
-# Planning consumes these original producers and their actual return facts.
-from .console_ordinary_tree import _function_record as _planning_function_record
-
-_NATIVE_PLANNING_TRANSPORT = tuple(
-    (
-        owner,
-        name,
-        method,
-        tuple(
-            _planning_function_record(function)
-            for function in (
-                method,
-                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
-            )
-        ),
-    )
-    for owner, names in (
-        (ConsoleAgentBridge, ("_prepare_native_reply",)),
-        (_ModelCallLifeline, ("__init__", "start", "shutdown", "_run", "_cleanup")),
-        (_StreamingModelAdapter, ("chat_call", "_chat_call_impl")),
-    )
-    for name in names
-    for method in (vars(owner)[name],)
-)

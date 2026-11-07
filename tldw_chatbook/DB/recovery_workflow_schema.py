@@ -110,6 +110,21 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
 
     if (
         connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        >= 30
+    ):
+        for reviewed, revision, status in connection.execute(
+            "SELECT recovery_reviewed_revision,control_revision,status FROM workflow_runs"
+        ):
+            if (
+                type(reviewed) is not int
+                or not 0 <= reviewed <= revision
+                or reviewed
+                and status not in {"closed", "removed"}
+            ):
+                return ("invalid_workflow_recovery_review",)
+
+    if (
+        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
         >= 29
     ):
         for digest, purpose, revision in connection.execute(
@@ -551,3 +566,32 @@ def workflow_repair_input_catalog(catalog):
                 "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
+
+
+WORKFLOW_RECOVERY_REVIEW_MIGRATION = (
+    "ALTER TABLE workflow_runs ADD COLUMN recovery_reviewed_revision INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recovery_reviewed_revision)='integer' AND recovery_reviewed_revision>=0 AND recovery_reviewed_revision<=control_revision AND (recovery_reviewed_revision=0 OR status IN ('closed','removed')))",
+    "CREATE TRIGGER workflow_recovery_review_immutable\nBEFORE UPDATE OF recovery_reviewed_revision ON workflow_runs\nWHEN OLD.recovery_reviewed_revision>0 AND NEW.recovery_reviewed_revision!=OLD.recovery_reviewed_revision\nBEGIN SELECT RAISE(ABORT, 'workflow recovery review is immutable'); END",
+    "INSERT INTO schema_version(version) VALUES (30)",
+)
+
+
+def workflow_recovery_review_catalog(catalog):
+    """Append fixed v30 DDL without opening SQLite while importing declarations."""
+    import re
+
+    column = WORKFLOW_RECOVERY_REVIEW_MIGRATION[0].partition(" ADD COLUMN ")[2]
+    objects = [
+        sql[:-1] + ", " + column + ")"
+        if sql.startswith("CREATE TABLE workflow_runs (")
+        else sql
+        for sql in catalog
+    ]
+    objects.append(WORKFLOW_RECOVERY_REVIEW_MIGRATION[1])
+    return tuple(
+        sorted(
+            objects,
+            key=lambda sql: re.match(
+                r'CREATE (?:UNIQUE )?(TABLE|INDEX|TRIGGER|VIEW) ["`]?([^\s"`(]+)', sql
+            ).groups(),
+        )
+    )

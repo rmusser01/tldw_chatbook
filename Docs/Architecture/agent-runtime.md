@@ -20,6 +20,11 @@ This document describes the agent execution loop: the pure control loop in `Agen
 
 - `call_model`, `invoke_tool`, `spawn`, `find_tools`, `load_schemas`, `should_cancel`, `clock`, `sleep`;
 - `review_tool_calls` (the batch approval seam) and `guard_tool_calls` (restriction-only, runs **before** approval exemptions; exceptions deny the whole batch);
+- `validate_tool_call` — repeatable fail-closed restriction before preparation,
+  after hook mutation and at final dispatch, including runtime-intercepted tools.
+  AgentService injects the current task/registry check. The pure loop imports no
+  workflow policy. Keep it separate from the once-per-batch guard, which can run
+  effectful legacy PreToolUse hooks; refused candidates do not reach those hooks.
 - `is_tool_call_preauthorized`, `before_tool_dispatch`, `post_tool_call`;
 - `prepare_tool_calls` — project-instruction whole-batch preparation (see [console-file-authority.md](./console-file-authority.md));
 - skill runtime tools (`read_skill_file` / `install_skill` / `run_skill_script`);
@@ -328,350 +333,187 @@ scripted journeys do not close those gates.
 
 `LoopDeps.acknowledge_provider_continuation` is optional and runs only after the existing projected persistence callback returns successfully. It receives the exact original/projected event pair and, for a finished call, its capped model-facing result. The Console adapter retains only current-batch projection provenance. The callback does not replace persistence, signing, transitions or tool-side-effect barriers; a failed or missing acknowledgment issues no usable trace custody. Ordinary and Capture Off callers leave it unset. Managed envelopes remain the store finalizer's responsibility, and raw event bodies never enter generic event serialization or provider kwargs through this seam.
 
-## Native workflow admission (ADR-285)
+## Native phase workflows (ADR-285 / ADR-356)
+
+The rebuild is tracked by [TASK-39147](../../backlog/tasks/task-39147%20-%20Rebuild-PR3411-native-phase-orchestration-on-existing-runtime.md)
+and [ADR-356](../../backlog/decisions/356-native-phase-orchestration-runtime-ownership.md).
+The approved product remains read-only planning, explicit initial and each-phase
+approval, implementation, verification, independent review and final report in one
+selected writable local Workspace binding. Workflows default to disabled.
+
+`ConsoleRuntime.ensure_workflow_coordinator` owns one lazy
+`Chat/console_workflow_runs.py::ConsoleWorkflowCoordinator`. Its commands compose
+native preparation, AgentService execution and owned storage; it has no separate
+agent executor. `start` preserves the immutable request and actual planner/target
+selection. `approve`, `pause`, `stop`, `resume` and `revise` check the displayed
+control revision. Command identities deduplicate delivery. Generic Console submit
+cannot impersonate `ConsoleSubmissionOrigin.WORKFLOW_PHASE`.
 
 `AutomaticWorkLimits.from_settings("workflow_phase")` uses independent `[agents]`
-ceilings: eight accepted phases (including planning), twelve task launches,
-32 model calls, 500000 budget tokens, 8192 output tokens per call and 900 cumulative
-active seconds. `workflow_runs_enabled` defaults false. Canonical Settings exposes
-these through Console behavior drafts and atomic Save/Revert. Zero refuses admission;
-saved ceilings intersect live settings without replenishing counters.
+ceilings: eight accepted phases including planning, twelve child launches, 32 model
+calls, 500000 budget tokens, 8192 output tokens per call and 900 cumulative active
+seconds. Saved ceilings intersect current settings without replenishing counters.
+Zero refuses admission. Canonical Settings owns Save/Revert of these values.
 
-`Chat/console_workflow_runs.py::_accept_workflow_phase` validates native owner,
-session, conversation, database and recovered-content activation, then issues
-private custody only to the caller that wins FULL acceptance. Stored IDs never
-reconstruct custody. `AutomaticWorkContext` and the final tool registry invocation
-recheck that custody/control revision. `ConsoleSubmissionOrigin.WORKFLOW_PHASE`
-refuses generic controller submission; the app-owned
-`ConsoleWorkflowCoordinator` uses the native planning and phase-wave producers.
-Workflow work never falls through to manual or fleet policy.
+### Native admission and return
 
-`claim_workflow_task` returns a stable `reservation_id` and `launch_run_id`.
-The native AgentService launch must pass the reservation as
-`automatic_child_reservation` and the run identity as `requested_run_id` (or bind
-the same precreated run). Its existing commit is the exactly-once launch fence.
-`bind_workflow_task_run` records that exact native run; repeated claims are lookups,
-not permission to launch again. `ConsoleWorkflowCoordinator` and the native
-phase-wave producer compose these claims with the existing physical owners;
-the passive reservation APIs alone grant no scheduling authority.
+`_accept_workflow_phase` checks the actual startup owner, session, conversation,
+database and FULL acceptance. Saved IDs and history never recreate live custody.
+`workflow_task_scope.py` narrows the existing catalog and runtime tools. The
+injected `LoopDeps.validate_tool_call` and final provider invocation repeat current
+phase/task/run/owner/claim, revision, tool, root and exclusion checks after hook
+mutations and permission waits. An Allow does not widen the approved task.
 
-Task preparation is now exposed by
-`Agents/workflow_task_scope.py::_prepare_workflow_task`. It retains one private
-authorization per claimed task on the original phase. `AgentService._run_owned`
-accepts that authorization and the already acquired activity claim alongside the
-existing child reservation/requested run ID. `_run_one` binds it at the native
-owner/run-row seam and filters both catalog and runtime schemas. The final tool
-thread carries the same custody; actual dispatch checks the live phase, task,
-run, owner and activity claim after permission waits. No workflow scheduling is
-enabled by these preparation/binding APIs.
+`AgentService._compose_native_child` and `_launch_prepared_child_result` are the
+shared native child lifecycle. Ordinary inline/threaded spawn retains its existing
+behavior. Workflow preparation registers the actual service, first-request plan,
+task authorization and wave. Launch retains the same task reservation and requested
+run identity through the native allowance commit. Complete file claims precede
+child capacity. Known no-dispatch waits return transient resources and retry the
+same preparation; uncertain start or cleanup never replays automatically.
+A `Thread.start` error after actual worker entry keeps capacity and charges.
 
-`AgentService._compose_native_child` and `_launch_prepared_child` now hold the
-existing native child composition and fleet launch/settlement tail. Ordinary
-spawn retains its quota and inline branch; retained continuation enters the same
-launch tail. Startup instruction snapshots, writer, routing, cancellation and
-fleet bookkeeping are captured for the child rather than borrowed from a later
-turn.
+`console_workflow_preparation.py` retains native clients, source/storage scopes
+and finite preparation reads. `ConsolePreparationRead` exposes the actual read,
+producer future, retirement future and callback outcome. Cancellation waits for
+that producer and scope return before delivery. Resource registrations, current
+Task/thread, actual owners and positive drain establish return; no function,
+code/default/closure identity, caller-frame or descriptor attestation grants it.
+A callback exception can return resources normally. A failed scope exit or finish
+keeps the owner/claim protected even if the callback itself returned.
 
-The private `_prepare_workflow_child` consumes the bridge's actual
-`ConsoleFirstRequestPlan`, target reference and fully wired service, checking
-the original task/phase, database, registry and runtime. Its frozen preparation
-lives on that original task authorization. Each workflow task owns one native
-service; another preparation or later `run_turn` cannot replace its tree state.
-The earlier direct `_run_owned` workflow seam also seals this ownership and
-retains its supported no-log path. Task8B's private Console preparation consumer
-now supplies the real bridge result (see [console.md](./console.md#shared-native-preparation-adr-285));
-the finite phase-wave consumer supplies snapshot ownership, and the public
-`ConsoleWorkflowCoordinator` owns scheduling through those original producers.
-The preparation seams alone grant no scheduling authority.
-Preparation detaches the task-only native message seed, including bounded
-required inputs/handoffs, and requires the approved instruction row exactly
-once. It never borrows the parent chat or silently truncates mandatory context;
-The shared producer constructs that seed from Task7-validated results.
+Planning owns one received-turn slot and native primary token. It reads the
+selected system/project context and task-only required input seed without
+constructing optional tool services. It never borrows the parent conversation or
+silently truncates mandatory input. An unused transactional refusal releases its
+slots only after the finite read returned and actual admission rows are unchanged.
+A changed or unreadable admission return remains protected. Successful planning
+publishes the bounded plan/accounting under its control-revision CAS before
+retirement; it launches no execution tasks.
 
-`launch_workflow_task` acquires the complete activity footprint before native
-child capacity and passes the **same** task reservation and run ID through the
-shared launcher. The original authorization captures separate host-only reads
-from the actual freshness collector's metadata: task inputs and direct dependency
-inputs, outputs, verifier inputs/wrappers and saved native shell references.
-Directory sources cover recursive collection. Shell references must still match
-the native resolved bash executable; wrappers remain inside the selected binding.
-These scopes never expand model tools or paths. Final freshness validation runs
-under the complete claim and actual child owner, after checking current source
-identities and exclusions, before any child row or allowance commit. A known
-predispatch refusal drains that finite owner and settles its claim while retaining
-the original unconsumed reservation. `_run_owned` still owns the final allowance commit and
-`_run_one` still binds the actual owner/run. Concurrent duplicate launch claims
-refuse before touching rows, capacity or clients; completed duplicate delivery
-returns the same `WorkflowChildReceipt`. Capacity/activity waits keep original
-preparation and reserved allowance available; uncertain dispatch never replays
-automatically. The internal host caller catches `_WorkflowChildWait` (a
-`PermissionError` subtype, with `worktree_activity` or `fleet_capacity` reason)
-and native `CapacityRefused` separately from terminal launch refusal. A fleet
-wait with no reserved handle unwinds transient owner/activity without finalizing
-the pending task log; retry uses the same authorization and native request. Physical
-drain alone does not settle the required task-result journal. The receipt keeps
-the original activity claim, including a client-setup failure before run binding,
-so the coordinator can settle that exact claim after durable result capture.
-A parentless task uses its actual child identity for optional native logs and creates no invented
-supervisor or peer sender. Its task-owned writer reuses native manifest/final
-flush after model scope and row settlement, once, outside the DB-only launch
-operation; a genuine shared parent writer remains parent-owned. Its phase
-cancellation probe remains live regardless of ordinary survivor settings.
+`console_workflow_wave.py` enrolls actual preparations and snapshot tickets, then
+launches dependency-ready tasks through AgentService. A wave retains its own
+baseline/ending snapshot dispositions until native clients/tools and required
+publication return. Its explicit membership excludes duplicate or detached close
+and launch. A cancellation before native entry closes a known unused wave; a
+started worker keeps its actual owner. Capacity/activity notifications are
+subscribed before readiness is rechecked. Active-time accounting quiesces only
+after actual finite reads, owners, claims and wave return, and resumes at real work
+admission, rather than passive reads or task reservations.
 
-Workflow tasks with effectful hooks refuse while their notification lifetime is
-unowned. Workflow skill scripts refuse in both modes until typed process/reader
-cleanup proof exists. Ordinary hooks, scripts and Goal policies keep their native
-behavior. These are explicit unsupported paths, not hidden permission overrides.
+Pause prevents new launch commits while already committed work settles. Stop
+revokes continuation and requests native cancellation, preserving workspace edits.
+Resume revalidates clean saved state and requests fresh approval; it does not
+reconstruct an execution capability. Failed or stale checks require explicit
+repair, keeping the immutable objective, prior results and cumulative spend.
 
-`quiesce_workflow_phase(..., drained=True)` durably closes a capacity wait without
-completing the accepted phase or discarding its claim receipts. Unclaimed and
-reserved-but-unlaunched children do not keep the interval open; dispatched tasks
-need their durable result and positive retirement, and unknown usage refuses closure.
-The coordinator must supply a real native physical-drain observation including tools
-and owned effects. `resume_workflow_phase` rechecks acceptance/control/live ceilings
-before explicit work; native `admit_call` and child-reservation `commit` also reopen
-inside their own FULL dispatch transaction. The tool registry resumes after its live
-custody check and immediately before provider invocation. Polls and task reservations
-do not resume time. No new generation is consumed by resumption.
+### Required evidence and bounded history
 
-Planning settlement accepts `outcome="failed"` or `"cancelled"` with no plan after
-positive drain, including after a pause advances control authority. Native attempt
-state `completed` means settled; `WorkflowPhaseAttempt.outcome` distinguishes success,
-failure and cancellation. Existing planning phase statuses map `failed` to failure
-and `closed` to cancellation. This path preserves charges, releases the unused
-planning-result capacity, and changes neither current plan nor workflow control
-revision. Unknown usage keeps the attempt open. Successful planning still requires
-atomic plan publication with the original control-revision CAS.
+`Agents/workflow_run_service.py` owns history/checkpoint/recovery operations. Its
+`call` dispatches supported operation names on the actual registered service under
+existing finite owned-storage helpers. It cannot execute a supplied callback in
+place of the service operation. Reads and runtime projections share coherent
+worker-side SQLite snapshots; no transaction crosses a host await. Superseded
+reads refuse instead of adopting a later live run. Issuing Tasks sequence actual
+host delivery/discard; equal counters do not hide accounting changes.
 
-Workflow hook-source validations serialize on the original legacy issuer's
-private validation lock. Each waiter rereads saved hook policy and the current
-runtime/engine/issuer identity before checking pending cleanup and entering the
-original source capture. That capture returns before the next validator checks
-cleanup. Actual event admission and required physical retirement retain their
-existing gates.
+Only a registered `WorkflowChildReceipt`, its actual owner drain and required
+canonical result/checkpoint can settle a task and release that claim. A model's
+check label, terminal run row or returned model text alone is insufficient.
+`prepare_task_inputs` supplies file references and complete predecessor handoffs;
+preparation and launch recheck content/absence, binding identity and dependency
+freshness. Shared scoped writes keep observed-content/absence preconditions.
 
-## Native phased workflow evidence
+Approved verification wrappers use the existing raw-shell permission/runtime and
+executor. Their bounded private capture precedes optional log truncation, requires
+both EOFs and cleanup, and records the actual shell, arguments, wrapper digest and
+input/output manifests. Other shell commands do not satisfy approved checks.
+Effectful workflow hooks and skill scripts remain refused where native notification
+or process/reader cleanup is not owned. Ordinary hook/script behavior is unchanged.
 
-`Agents/workflow_run_service.py` is the passive history/checkpoint service for
-ADR-285. Its finite `call` owns the complete callback through the existing
-`run_owned_db_call` and Goal storage lifetime helpers, including bounded source
-preflight. `prepare_task_inputs` supplies source references and complete saved
-handoffs; it does not authorize file-body reads. Native preparation and launch
-revalidate the exact seed, current binding and dependency evidence.
-Metadata-only preparation refuses missing/failed predecessor checkpoints before
-issuing task custody or reserving a child launch; phase approval still defers
-future same-phase output references. The private Console preparation callback
-claims its selected root plus external native shell reads from all prior-phase
-review sources and the selected task's direct dependencies before reading bodies.
-It rechecks source identities after acquisition and releases only after callback
-return. Human review and phase settlement still need coordinator-owned admission.
+AgentRuns v27 stores immutable checkpoints and inert resume-command history; v28
+stores bounded Change Review windows and normalized snapshot references; v29 stores
+repair-instruction digests. Windows distinguish unresolved ending publication from
+an exact zero-row ending. Each workflow allows at most 64 windows, 64 KiB per
+window, and 64 roots. Required references survive pruning until explicit permitted
+payload removal. Existing immutable plan/result/checkpoint JSON remains byte-stable.
 
-Only the original `WorkflowChildReceipt` retained on the private task
-authorization can bind settlement. The service observes its actual owner's drain
-callback and publishes required result, native checkpoint, retirement and active
-accounting in one FULL transaction before releasing that receipt's original
-activity claim. Known no-worker native failures retain original typed receipts;
-ambiguous creation/cleanup retains custody. A model's check labels or a terminal
-row alone cannot certify completion.
+AgentRuns v30 adds one fixed-size `recovery_reviewed_revision` field. The additive
+FULL migration, standalone SQL and installed backup catalog agree. Old histories
+upgrade with zero, never inferred review. A positive marker is immutable, belongs
+to a closed/removed workflow and cannot exceed its control revision. It consumes
+no result-payload quota, so a full quota cannot prevent recovery review and cleanup.
 
-Approved `VerificationSpec` wrappers are observed through the existing raw-shell
-provider/runtime/executor. The bounded sanitized capture precedes diagnostic
-preview/log truncation, and completeness requires both actual EOFs and cleanup.
-Wrapper source/arguments, selected cwd, resolved shell and input/output manifests
-are rechecked. Other shell commands do not satisfy expected checks. Skill
-scripts remain unsupported, and ordinary raw-shell behavior is unchanged.
+Startup projects the existing native audit into folder-scoped historical recovery
+protection. A saved plan's directory-chain identity must match the current root;
+renamed/replaced directories and changed symlink targets inherit no fence.
+Planning-only history without a saved plan retains accounting review but has no
+persisted folder ownership or mutating task effects to project. Installed overlays
+recheck their captured directory chain before admission and wave readiness; stale
+scopes retire independently of other current roots or live native claims. Checks
+and release notifications run outside the activity lock.
+Transient read/metadata errors preserve an established scope. A fallback root stat
+can prove replacement or absence; inability to read it retains the existing fence.
+Missing/replaced historical roots do not create a global opaque claim that blocks
+unrelated scratch. Legacy closed history with a zero review marker remains
+protected while unsettled. `resolve_recovery` requires that current audit,
+current control revision and explicit typed review, and refuses actual native
+workers, unfinished preparations/waves or prepared/accepted admissions. It records
+review and releases only that workflow's recovery overlay. Live claims and unknown
+charges/retirement rows remain unchanged.
 
-Schema v27 adds immutable `workflow_checkpoints` and inert
-`workflow_resume_commands`. Historical absent-field JSON remains byte-stable.
-Schema v28 adds workflow-only `workflow_change_windows` and one normalized
-`workflow_change_window_refs` table. Windows record the original phase, bounded
-roots, once-bound actual member anchor and separate B/E dispositions. The expected
-E reference count is NULL while unresolved, and 0–64 after conclusive publication;
-zero-row E and unused B therefore remain distinguishable from missing rows.
-Each workflow admits at most 64 windows, each reserves 64 KiB in the existing
-payload budget, and each carries at most 64 roots (4096 UTF-8 bytes per root,
-32768 bytes serialized). Native E rows, refs, count and disposition commit in one
-FULL transaction. Late E never rewrites immutable task checkpoints. Canonical
-archive validation checks the exact phase/anchor/ref joins and required count;
-restoration creates no live membership. Active/unresolved windows prevent payload
-removal; settled required refs survive pruning until permitted payload removal
-leaves bounded tombstones and releases their snapshot refs.
-Required Change Review references protect their native snapshots from pruning;
-settled explicit private-payload removal retains accounting tombstones.
-`prepare_decision` reviews upcoming execution; `prepare_quality_review` and
-`review_quality` handle completed results. Recovery carries a different tag.
-The existing fleet startup owner passes its single audit to workflow projection.
-Only prepared unused or explicit closed/drained quiescence is clean; accepted
-unmarked/open/unknown intervals stay recovery-required.
+When planning returns physically but final accounting or delivery fails, the
+preparation hands its already-durable admission/charges to a typed resource-return
+receipt and captured folder protection before releasing its owner, configuration,
+claim and slots. It then joins recovery recording. If that recording fails, explicit
+review retries it with the displayed revision through the same returned resources;
+no synthetic native completion is recorded. A committed recovery recording is
+idempotent even if its delivery failed. An uncommitted settlement becomes
+review-required when storage returns; committed plans/completion and known token
+charges remain intact. Shutdown may discard the proven nonlive coordinator entry
+without reviewing history, including while recording remains unavailable. Existing
+native rows and charges survive for the startup audit. Unknown/reversed clocks keep
+honest unknown interval evidence; they do not keep returned workers admitted.
+Actual failed source/storage scopes or unfinished tool threads still retain custody.
+Planning captures the admitted system-prompt text independently of editable session
+settings. Saving the same prompt or a future prompt during execution/Stop cannot
+invalidate native unwind; required system-prefix and seed checks remain at actual
+provider dispatch.
+Generic controls cannot reopen completed/stopped/closed history; recovery review
+uses its own revision-checked closing transaction.
 
-`resume` validates saved clean state and returns awaiting approval without an
-execution capability. Private `WorkflowPhaseAuthorization._control` serializes
-Pause/Stop with the original `_run_owned` child allowance COMMIT. Only the exact
-committed task, owner, activity claim and service can continue at that persisted
-Pause revision, including the prebind interval. New preparation and commits remain
-strict. Stop revokes this in-memory continuation and requests original cancellation
-outside the finite mutex. The fence preloads live policy and the activated SQLite
-handle; the original FULL SQL transaction and storage guards remain authoritative.
-Definition-time function records bind the finite producer and receiver chain to
-its original control or child-commit operation; current replacement methods cannot
-become native issuers.
+`remove_payloads` refuses live work and unresolved history. Terminal clean history,
+or explicitly reviewed closed uncertainty, can remove results/checkpoints and
+window references exactly once, releasing their reservations. Plans, accounting,
+agent-run history and workspace files remain. Console detail provides confirmed
+**Review prior effects** and **Remove stored results** commands; stale confirmations
+refuse after a fresh revision read. These controls grant no resume authority.
+If closing review committed but its response was lost, a fresh-revision retry
+acknowledges the immutable review marker without changing already closed/removed
+history. Known and unknown accounting share this idempotent path; live native work
+still refuses review, and removed payloads are not reopened.
 
-`WorkflowRunService.settle_execution_phase` consumes original returned task, wave,
-frame and required checkpoint evidence. Only conclusively never-run claims may
-close without results; precreated rows and committed allowances are not unused.
-Fresh successful siblings keep their exact result/checkpoint references and spend.
-Failed, stale or unverified outcomes require repair. `_accept_remaining_workflow_phase`
-validates the complete remaining decision under an original current OPAQUE read
-claim and native nonchild operation. Its worker retains source/storage custody
-through host acceptance/discard and actual finish RETURN; new custody is delivered
-only after physical retirement. Repeated-phase ID acceptance cannot bypass that
-receiver. A saved PREPARED retry refuses new custody after comparing the complete
-original command and decision; an accepted exact duplicate remains inert. Each
-read proves its original worker-local DB handles returned after every native
-scope, retaining the same owner/claim/cell if native close is uncertain. During
-shutdown, the same accepted but unused cell performs only its required cancelled
-settlement through the existing tracked reader. It keeps its original root/claim
-until terminal SQL, source/storage/handle and physical worker return are proven.
-Known post-return cancellation preserves that proof and is re-raised after
-retirement; missing proof never releases custody.
-Caller command identity is stored verbatim; the unique decision at R and
-attempt at R+1 are committed together. Only the never-run complement gets new
-ordinals/charges, and final quality checks retained plus new results. The public
-Console coordinator composes these native producers; Console setup, status and
-history views call that coordinator without owning execution. Restored history
-does not adopt an old owner or grant scheduling authority.
+### Ordinary Console coordination
 
-### Public native workflow coordination
+`console_ordinary_tree.py` retains the originating native owner and file footprint
+for primary, child and surviving work. It checks actual sessions, configuration,
+provider/spec/tool maps, roots, permissions and current claims; transparent wrappers
+do not add an implementation-attestation gate when workflows are inactive or
+disabled. Custom effects remain opaque until admitted. Source scopes and canonical
+row/step/terminal persistence return before the originating tree settles. A late
+child, tool or lifecycle effect keeps its actual owner and claim through physical
+return. Ordinary automatic wake uses its own empty Context and native authorization.
+Runtime disposal fences the registered wake owner before draining workflows and
+retiring downstream stores and scratch.
 
-`ConsoleRuntime.ensure_workflow_coordinator` lazily owns the
-`Chat/console_workflow_runs.py::ConsoleWorkflowCoordinator`. `start` preserves the
-complete immutable `WorkflowRequest`, resolves every execution target through the
-actual session/configured gateway selection, and retains the original selected
-planner separately. The planner need not be an execution target. Native readiness,
-full target equality, source, binding and admission checks precede acceptance and
-billing. Original `prepare_workflow_planning` and `run_planning` retain planning
-custody through required plan/accounting and physical return; planning does not
-launch approved tasks. Before initial or repair preparation returns, the public
-coordinator retains the actual pending invocation, issuing Task and prepared
-object. Stop cancels that same issuer and waits for its original finite reads and
-unused cleanup. Only an exact returned planning receipt can abort a still-PREPARED
-attempt and release its reserved generation; accepted charges are never refunded.
-Missing read/receipt or uncertain source return retains the original pending run.
+Native Library construction uses the resource registered by that Console runtime.
+Bounded admission captures it and rechecks its runtime/app ownership before
+construction; replacement callbacks cannot run under that bounded claim. Unknown
+factories, including partials bound to the app, acquire opaque protection before
+their initialization effects. Registered read-only Library tools stay bounded,
+including through transparent callable wrappers, without implementation identity.
 
-`approve` uses the same original E acceptance cell for truthful initial or
-remaining decisions. Exact command duplicates return their original outcome;
-stored workflow/decision/attempt IDs never supply execution authority. An original
-pending cell survives cancellation, COMMIT, host handoff and shutdown until its
-same read/producer/retired/source/storage/owner/claim returns are proven. A
-conclusive pre-prepare refusal releases admission only after those positive
-returns; a missing reader or entered PREPARED attempt retains custody.
-
-The accepted execution driver prepares finite native tasks and composes
-`console_workflow_wave.run_workflow_wave`. Earlier-phase dependencies become
-eligible only through the accepted decision's exact completed, drained and fresh
-result/checkpoint references; original native preparation and launch repeat
-freshness checks. Capacity/activity/fleet notifications
-are subscribed before readiness recheck. A genuine no-dispatch wait retries the
-same preparation/TaskAuth only after both original scope/operation returns and
-wave B/E settlement; negative or uncertain return markers retain the original
-preparation, operation and fence. Workflow child membership excludes these tasks
-from ordinary fleet automatic-wake synthesis without changing unrelated fanout.
-
-Direct and wave launches retain an invocation-local native result through their
-original storage and execution scopes. Only that invocation's created operation
-can be finished; a duplicate receipt cannot finish another launch. Enrollment,
-launch and close cooperate under the existing task-authorization lock, with
-reservation and finish callbacks outside the lock. Unknown scope return or an
-invoked-but-unreturned bridge Thread.start retains original custody. Ordinary and
-no-bridge launch cleanup keep their existing contracts. Native binding and close
-check their original source receivers before invoking them.
-
-A capacity wait stops active-time charging only after the same finite preparation
-read, producer, storage scopes, owner/claim and actual returned wave B/E are
-positively proven. Its closed interval retains durable `retirement=unknown`; only
-the same live phase's exact idle-return witness satisfies that specific accounting
-uncertainty. Database-only readers and restart remain conservative, including
-native attempts recovered to `review_required`. Work consumes the idle witness
-before the original admission reopens charging. A private original cleanup
-receiver can charge already-owned cleanup after revocation or budget exhaustion;
-it grants no new work and cannot prevent physically authorized cleanup if
-accounting fails. A proven current-clock OPEN interval continues charging even
-when a later wrapper fails: an exact running clock is separate from final total,
-physical return and retained recovery.
-
-Ordinary automatic wake delivery starts its independently authorized Task with
-an empty `contextvars.Context`; child-thread execution guards cannot flow through
-retry Handles into that Task. The original delivery still issues its own native
-AutomaticWorkContext, which propagates through unchanged runtime custody. Native
-fleet-attention callbacks own only newly opened same-thread file-backed storage
-handles; borrowed handles, active transactions and lazy/custom getter timing keep
-their original contracts.
-
-After exact execution return and release of its original intake and primary
-token, G notifies the existing pending-wake receiver. Notification failure stays
-separate from physical-return failure and cannot restore released custody.
-
-Planning also retries pending fleet results after its worker, root, worktree
-claim, configuration, received turn and primary token have all returned. A direct
-`_PreparedWorkflowReply.run_planning` calls the existing wake receiver itself.
-For a coordinated plan, `ConsoleWorkflowCoordinator._plan` first receives that
-same return, completes final metadata publication and removes the original run.
-An uncertain return leaves the run in recovery without notifying. A notification
-error after release stays visible; if the caller was already cancelled, the
-original cancellation carries the notification error as its cause.
-
-Runtime disposal permanently fences the original native wake receiver before
-closing G, including callbacks already posted on the host loop; fence failures
-and caller cancellation retain their separate error and cleanup semantics.
-
-Explicit workflow-ID Pause stops new launches while committed native work settles.
-Read-only planning Pause waits the original plan return before its paused CAS.
-Stop revokes through the original native control fence and drains original work;
-unknown accounting/required return remains recovery-required. Controls themselves
-use the original tracked offloaded reader and a same-run return Event, which also
-fences planning root release. Resume requires fresh review and either original
-clean awaiting-resume state or the actual latest positively drained planning
-attempt with its saved latest plan; a later execution attempt cannot masquerade
-as that planning state. A positively verified failed command produces a failed workflow task even when
-the model finished normally. Its immutable native exit, manifests and original
-submitted digest survive the explicit repair. Failed/stale results require explicit `revise`, preserving
-request, history, spend and exact repair instruction. Completed execution remains
-awaiting result review until a matching native quality decision accepts it.
-
-`subscribe` delivers the distinct bounded `WorkflowRuntimeSnapshot`; full private
-history remains `get`. Both reuse original tracked passive reads. Full history
-and runtime projection share one worker-only SQLite read transaction; no SQL
-transaction spans a host await or callback. Existing issuing Tasks sequence each
-read and synchronous host delivery/discard through the previous invocation's
-actual disposition Future. Equal revision/progress counters remain deliverable
-because native accounting and retirement can change without advancing them.
-Captured run/phase (or absence), definition-time producer records and source
-identity are rechecked: superseded publication discards, while `get` explicitly
-raises `workflow_snapshot_superseded`. No replacement overlay is adopted.
-
-Final drivers retain their original run through actual metadata worker and host
-return. Only the same final cell's positive original proof permits synchronous
-release; source/producer failures preserve both caller cancellation and original
-error, keep recovery sticky, and prevent downstream disposal. Close seals
-subscriptions/external reads, drains original commands/drivers and admitted host
-dispositions without joining unrelated caller work, and refuses unresolved
-custody. The original runtime-only cancellation handoff continues its existing
-disposal before redelivery after positive G return; independent direct coordinator
-close retains normal cancellation semantics. Headless native tests qualify these
-specific paths, not mounted UI, remote providers, performance or whole-system
-reliability.
-
-
-### Ordinary tree integration and qualification boundary
-
-AgentService consumes one original early Console owner at the real primary
-row, attach actual ordinary children immediately after native reservation and
-before precreated rows/clients/models/threads, and report original canonical
-row/step write outcomes to private activity settlement. Existing retries and
-readback remain; False, RunOutcome, Fleet terminal state and optional logging
-do not prove durable settlement. Survivors retain the originating tree. Genuine
-late child/tool/lifecycle holds follow original required/optional policy before
-causing effects. The gated storage-source and SSH request contracts above remain
-governed by ADR285. The Console coordinator and mounted controls are present.
-[Qualification receipts](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md)
-separate deterministic native, fresh-process and real-provider results.
+Current rebuild evidence and limits are recorded in the
+[implementation plan](../superpowers/plans/2026-11-07-native-phase-orchestration-rebuild.md).
+Historical [qualification receipts](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md)
+refer to earlier source and are not current acceptance evidence.

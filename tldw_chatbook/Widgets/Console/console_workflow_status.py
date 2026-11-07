@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from uuid import uuid4
 
 from rich.text import Text
@@ -12,12 +13,16 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
-from tldw_chatbook.Agents.workflow_models import WorkflowQualityReview
+from tldw_chatbook.Agents.workflow_models import (
+    WorkflowExecutionRecovery,
+    WorkflowQualityReview,
+)
 from tldw_chatbook.UI.Console_Modules.workflows import (
     WORKFLOW_VIEW_ERRORS,
     WorkflowViewReads,
     workflow_view_error,
 )
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
@@ -61,7 +66,7 @@ class ConsoleWorkflowHistory(SafeModalDismissMixin, ModalScreen[None]):
 
     def on_mount(self):
         self.query_one("#workflow-retry").display = False
-        self.run_worker(self._load())
+        self.run_worker(self._load)
 
     async def on_unmount(self):
         await self.reads.drain()
@@ -200,6 +205,11 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                     placeholder="Instruction for a revised plan",
                     id="workflow-instruction",
                 )
+                with Horizontal(
+                    id="workflow-history-actions", classes="workflow-actions"
+                ):
+                    yield Button("Review prior effects", id="workflow-recovery")
+                    yield Button("Remove stored results", id="workflow-remove")
             yield Static("Loading workflow…", id="workflow-notice", markup=False)
             with Horizontal(classes="workflow-actions"):
                 yield Button("Close", id="workflow-close")
@@ -256,7 +266,14 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
         self._read_again = True
         if not self._reading:
             self._reading = True
-            self.run_worker(self._refresh())
+            try:
+                self.run_worker(self._refresh)
+            except RuntimeError as error:
+                self._reading = False
+                self._disable_commands()
+                self.query_one("#workflow-notice").update(
+                    workflow_view_error("Review", error) + ". Refresh to retry."
+                )
 
     async def _refresh(self):
         service = self.coordinator.service
@@ -361,7 +378,16 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
         return decision, False
 
     def _disable_commands(self):
-        for name in ("approve", "accept", "revise", "resume", "pause", "stop"):
+        for name in (
+            "approve",
+            "accept",
+            "revise",
+            "resume",
+            "pause",
+            "stop",
+            "recovery",
+            "remove",
+        ):
             self.query_one("#workflow-" + name, Button).disabled = True
 
     def _render_state(self, view, repair_required):
@@ -534,8 +560,20 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                 )
             )
         self.query_one("#workflow-instruction").display = review or repair_required
+        history_actions = {
+            "recovery": full.status == "recovery_required"
+            or (spent.uncertain and full.status in {"closed", "stopped", "completed"}),
+            "remove": full.status in {"closed", "stopped", "completed"},
+        }
+        for name, applicable in history_actions.items():
+            button = self.query_one("#workflow-" + name, Button)
+            button.visible = applicable
+            button.disabled = self._sending or not applicable
+        self.query_one("#workflow-history-actions").display = any(
+            history_actions.values()
+        )
         reason = (
-            "Physical return requires recovery; review cannot release ownership."
+            "Review prior effects to close interrupted history. Active work and cleanup remain protected."
             if full.status == "recovery_required"
             else "Accounting is uncertain. Execution decisions are unavailable."
             if spent.uncertain
@@ -700,7 +738,12 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
             self._sending = True
             self._action_notice = ""
             self._disable_commands()
-            self.run_worker(self._act(action, full, decision, instruction))
+            try:
+                self.run_worker(partial(self._act, action, full, decision, instruction))
+            except RuntimeError as error:
+                self._sending = False
+                self._action_notice = workflow_view_error(action.capitalize(), error)
+                self.request_refresh()
 
     async def _act(self, action, full, decision, instruction):
         expected = full.control_revision
@@ -715,6 +758,35 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
             )
         command_id = self._command_ids.setdefault(key, str(uuid4()))
         try:
+            if action in {"recovery", "remove"}:
+                title, message, confirm = (
+                    (
+                        "Review prior workflow effects",
+                        (
+                            "Close this workflow after reviewing its prior file effects? Unknown charges stay recorded. "
+                            "This does not resume work. Active work and cleanup must finish first."
+                        ),
+                        "Close reviewed workflow",
+                    )
+                    if action == "recovery"
+                    else (
+                        "Remove stored workflow results",
+                        (
+                            "Remove results, checkpoints and Change Review references? Plans, charges, agent-run history "
+                            "and workspace files remain."
+                        ),
+                        "Remove results",
+                    )
+                )
+                if (
+                    not await self.app.push_screen_wait(
+                        ConfirmationDialog(
+                            title=title, message=message, confirm_label=confirm
+                        )
+                    )
+                    or not self._can_render
+                ):
+                    return
             current = await self.reads.read(self.coordinator.get, self.workflow_id)
             if (current.control_revision, current.status) != (expected, full.status):
                 raise ValueError("This review changed. Review the refreshed revision.")
@@ -738,6 +810,19 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                 call = co.pause(self.workflow_id, expected_control_revision=expected)
             elif action == "stop":
                 call = co.stop(self.workflow_id, expected_control_revision=expected)
+            elif action == "recovery":
+                call = co.reconcile(
+                    self.workflow_id,
+                    expected_control_revision=expected,
+                    decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
+                    command_id=command_id,
+                )
+            elif action == "remove":
+                call = co.remove_results(
+                    self.workflow_id,
+                    expected_control_revision=expected,
+                    command_id=command_id,
+                )
             else:
                 return
             receipt = await asyncio.shield(call)
@@ -748,6 +833,8 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                 "stop": "Stop",
                 "resume": "Resume",
                 "revise": "Revision",
+                "recovery": "Recovery review",
+                "remove": "Stored result removal",
             }[action]
             self._action_notice = (
                 f"{label} received · revision {receipt.control_revision}."

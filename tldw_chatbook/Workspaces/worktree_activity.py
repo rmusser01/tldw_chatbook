@@ -23,6 +23,7 @@ from loguru import logger
 
 from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryChain,
+    capture_directory_chain,
     directory_identity_from_stat,
 )
 
@@ -242,6 +243,7 @@ class WorktreeActivity:
             raise ValueError("original workflow wave required")
         wave.check_prepared_members(members)
         fence = _WaveFence(wave, footprint, tuple(members))
+        self._prune_recovery()
         with self._lock:
             if wave in self._waves:
                 raise ValueError("workflow wave already opened")
@@ -282,20 +284,77 @@ class WorktreeActivity:
         """Retain startup uncertainty for this runtime; this only denies admission."""
         if not workflow_id or not isinstance(footprint, WorktreeFootprint):
             raise ValueError("recovery identity and complete footprint required")
+        self._prune_recovery()
         with self._lock:
             previous = self._recovery.get(workflow_id)
             if previous is not None and previous != footprint:
                 raise ValueError("recovery protection cannot be replaced")
             self._recovery[workflow_id] = footprint
 
+    def _prune_recovery(self) -> None:
+        """Remove only historical scopes whose captured folder no longer matches."""
+        with self._lock:
+            saved = tuple(self._recovery.items())
+        changed = False
+        for workflow_id, footprint in saved:
+            current = set()
+            for root in {scope.root for scope in footprint.reads + footprint.writes}:
+                try:
+                    if capture_directory_chain(root.canonical_root) == root:
+                        current.add(root)
+                except (OSError, ValueError):
+                    try:
+                        identity = directory_identity_from_stat(
+                            os.lstat(root.canonical_root)
+                        )
+                    except (FileNotFoundError, NotADirectoryError):
+                        continue  # Confirmed absence retires this historical scope.
+                    except (OSError, ValueError):
+                        current.add(
+                            root
+                        )  # Unreadable metadata does not disprove ownership.
+                    else:
+                        if identity == root.identities[0]:
+                            current.add(root)
+            remaining = WorktreeFootprint(
+                reads=tuple(
+                    scope for scope in footprint.reads if scope.root in current
+                ),
+                writes=tuple(
+                    scope for scope in footprint.writes if scope.root in current
+                ),
+                opaque=footprint.opaque,
+            )
+            if remaining == footprint:
+                continue
+            with self._lock:
+                if self._recovery.get(workflow_id) is not footprint:
+                    continue
+                if remaining.reads or remaining.writes or remaining.opaque:
+                    self._recovery[workflow_id] = remaining
+                else:
+                    del self._recovery[workflow_id]
+                changed = True
+        if changed:
+            self._notify_released()
+
     def recovery_blockers(self, footprint: WorktreeFootprint) -> tuple[str, ...]:
         """Return body-free identities of unresolved startup protection."""
+        self._prune_recovery()
         with self._lock:
             return tuple(
                 key
                 for key, protected in self._recovery.items()
                 if footprint._conflicts(protected)
             )
+
+    def release_recovery(self, workflow_id: str) -> bool:
+        """Release reviewed history's overlay; actual native claims stay owned."""
+        with self._lock:
+            removed = self._recovery.pop(workflow_id, None) is not None
+        if removed:
+            self._notify_released()
+        return removed
 
     def subscribe(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Observe released activity; callbacks run outside the admission lock."""
@@ -334,6 +393,7 @@ class WorktreeActivity:
     def _prelaunch(self, *, footprint, wave_member=None, snapshot_source=None):
         if not isinstance(footprint, WorktreeFootprint):
             raise TypeError("footprint must be a WorktreeFootprint")
+        self._prune_recovery()
         claim = WorktreeActivityClaim(uuid4().hex, self)
         with self._lock:
             foreign_wave = snapshot_source is None and any(

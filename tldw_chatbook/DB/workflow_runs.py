@@ -220,7 +220,9 @@ class WorkflowRunsStore:
             status=row["status"],
             plans=tuple(plans),
             results=results,
-            accounting=self.db.automatic_work._snapshot(conn, row["chain_id"], _accounting=_accounting),
+            accounting=self.db.automatic_work._snapshot(
+                conn, row["chain_id"], _accounting=_accounting
+            ),
         )
 
     @staticmethod
@@ -252,10 +254,14 @@ class WorkflowRunsStore:
         """Read a consistent private history snapshot; no recovery sweep."""
         with self.db.connection() as conn:
             if conn.in_transaction:
-                return self._snapshot(conn, self._row(conn, workflow_id), _accounting=_accounting)
+                return self._snapshot(
+                    conn, self._row(conn, workflow_id), _accounting=_accounting
+                )
             conn.execute("BEGIN")
             try:
-                return self._snapshot(conn, self._row(conn, workflow_id), _accounting=_accounting)
+                return self._snapshot(
+                    conn, self._row(conn, workflow_id), _accounting=_accounting
+                )
             finally:
                 conn.rollback()
 
@@ -284,6 +290,14 @@ class WorkflowRunsStore:
     def _cas(conn, workflow_id, expected_control_revision, status):
         if type(expected_control_revision) is not int or expected_control_revision < 1:
             raise ValueError("invalid_revision")
+        row = WorkflowRunsStore._row(conn, workflow_id)
+        if row["control_revision"] != expected_control_revision:
+            raise ValueError("revision_conflict")
+        if (
+            row["status"] in {"completed", "stopped", "closed", "removed"}
+            and status != "removed"
+        ):
+            raise ValueError("workflow_terminal")
         if (
             conn.execute(
                 "UPDATE workflow_runs SET control_revision=control_revision+1,status=?,updated_at=? WHERE id=? AND control_revision=? AND status!='removed'",
@@ -795,7 +809,37 @@ class WorkflowRunsStore:
             )
 
     @staticmethod
+    def _recovery_reviewed(conn, workflow_id):
+        if conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] < 30:
+            return False
+        row = conn.execute(
+            "SELECT recovery_reviewed_revision,control_revision,status FROM workflow_runs WHERE id=?",
+            (workflow_id,),
+        ).fetchone()
+        return (
+            row is not None and 0 < row[0] <= row[1] and row[2] in {"closed", "removed"}
+        )
+
+    @staticmethod
     def _active(conn, workflow_id):
+        parent = conn.execute(
+            "SELECT status FROM workflow_runs WHERE id=?", (workflow_id,)
+        ).fetchone()
+        if (
+            parent is not None
+            and parent[0] in {"closed", "removed"}
+            and WorkflowRunsStore._recovery_reviewed(conn, workflow_id)
+        ):
+            # Reviewed history keeps unknown charges without resurrecting workers.
+            return (
+                conn.execute(
+                    "SELECT 1 FROM workflow_phase_attempts p JOIN automatic_wake_attempts a "
+                    "ON a.id=p.native_attempt_id WHERE p.workflow_id=? "
+                    "AND a.state IN ('prepared','accepted') LIMIT 1",
+                    (workflow_id,),
+                ).fetchone()
+                is not None
+            )
         if (
             conn.execute("SELECT 1 FROM schema_version WHERE version=28").fetchone()
             and conn.execute(
@@ -820,7 +864,8 @@ class WorkflowRunsStore:
         removed = status == "removed"
         if removed and (
             WorkflowRunsStore._active(conn, workflow_id)
-            or conn.execute(
+            or not WorkflowRunsStore._recovery_reviewed(conn, workflow_id)
+            and conn.execute(
                 "SELECT 1 FROM automatic_work_chains WHERE id=? AND status='review_required' "
                 "UNION ALL SELECT 1 FROM automatic_work_reservations r JOIN automatic_work_chains c ON c.id=r.chain_id "
                 "WHERE (c.id=? OR c.allowance_root_chain_id=?) AND r.state='uncertain' LIMIT 1",
@@ -885,7 +930,13 @@ class WorkflowRunsStore:
                 conn, workflow_id
             ):
                 raise ValueError("workflow_has_active_evidence")
-            if self.db.automatic_work._snapshot(conn, row["chain_id"]).uncertain:
+            if (
+                not (
+                    row["status"] == "closed"
+                    and self._recovery_reviewed(conn, workflow_id)
+                )
+                and self.db.automatic_work._snapshot(conn, row["chain_id"]).uncertain
+            ):
                 raise ValueError("workflow_has_active_evidence")
             self._cas(conn, workflow_id, expected_control_revision, "removed")
             conn.execute(
@@ -896,6 +947,10 @@ class WorkflowRunsStore:
             )
             conn.execute(
                 "UPDATE workflow_payload_reservations SET state='removed' WHERE workflow_id=?",
+                (workflow_id,),
+            )
+            conn.execute(
+                "UPDATE workflow_phase_attempts SET result_bytes=0 WHERE workflow_id=?",
                 (workflow_id,),
             )
             conn.execute(

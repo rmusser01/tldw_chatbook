@@ -63,6 +63,22 @@ def test_capture_off_tasks_keep_original_source_until_native_retirement(tmp_path
 def test_actual_required_e_publication_failures_keep_truthful_custody(
     tmp_path, failure
 ):
+    if failure == "publisher-both-fail":
+        from Tests.Chat.test_console_workflow_scheduling import (
+            _expect_retained_planning_child,
+        )
+
+        _expect_retained_planning_child(
+            (tmp_path, failure, "retained"),
+            {
+                "script": Path(__file__)
+                .with_name("workflow_wave_probe.py")
+                .read_text(),
+                "timeout": 60,
+            },
+            "WAVE_BOTH_E_WRITES_FAILED_PHYSICAL_RETURN_REQUIRED_CUSTODY_RETAINED",
+        )
+        return
     _run(
         tmp_path,
         failure,
@@ -174,12 +190,17 @@ def test_known_window_rollback_retires_before_native_ordinary_send(tmp_path):
 def test_unknown_window_publication_or_unwind_keeps_original_protection(
     tmp_path, failure
 ):
-    _run(
-        tmp_path,
-        failure,
-        "success",
-        script=Path(__file__).with_name("workflow_wave_probe.py").read_text(),
-        timeout=60,
+    from Tests.Chat.test_console_workflow_scheduling import (
+        _expect_retained_planning_child,
+    )
+
+    _expect_retained_planning_child(
+        (tmp_path, failure, "retained"),
+        {
+            "script": Path(__file__).with_name("workflow_wave_probe.py").read_text(),
+            "timeout": 60,
+        },
+        "WAVE_UNKNOWN_WINDOW_RETURN_RETAINED " + failure,
     )
 
 

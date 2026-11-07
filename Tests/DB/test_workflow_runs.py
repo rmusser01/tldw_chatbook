@@ -36,6 +36,38 @@ def test_duplicate_start_preserves_identity_and_no_dispatch(tmp_path):
             )
 
 
+@pytest.mark.parametrize("status", ["completed", "stopped", "closed"])
+def test_terminal_history_cannot_reopen_after_another_workflow_starts(tmp_path, status):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
+        original = planned(db, tmp_path)
+        terminal = db.workflow_runs.set_status(
+            original.id,
+            status=status,
+            expected_control_revision=original.control_revision,
+        )
+        successor = db.workflow_runs.create(original.request, launch_id="successor")
+        with pytest.raises(ValueError, match="workflow_terminal"):
+            db.workflow_runs.set_status(
+                terminal.id,
+                status="awaiting_approval",
+                expected_control_revision=terminal.control_revision,
+            )
+        with pytest.raises(ValueError, match="workflow_terminal"):
+            db.workflow_runs.save_plan(
+                terminal.id,
+                original.plans[-1],
+                expected_control_revision=terminal.control_revision,
+            )
+        assert db.workflow_runs.get(terminal.id) == terminal
+        assert db.workflow_runs.get(successor.id) == successor
+        removed = db.workflow_runs.remove_payloads(
+            terminal.id, expected_control_revision=terminal.control_revision
+        )
+        assert removed.status == "removed" and removed.accounting == terminal.accounting
+
+
 def test_create_rolls_back_chain_on_sql_failure(tmp_path):
     from Tests.Agents.workflow_support import make_workflow_request
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB

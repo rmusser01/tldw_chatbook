@@ -227,15 +227,6 @@ class WorkflowTaskAuthorization:
         self, *, owner: ExecutionOwner, activity_claim: WorktreeActivityClaim
     ) -> None:
         """Bind only after the existing native row, capacity and launch commit."""
-        if (
-            _workflow_bind_sources is not _BIND_SOURCE[0]
-            or _workflow_bind_sources.__code__ is not _BIND_SOURCE[1]
-            or _workflow_bind_sources.__defaults__ is not _BIND_SOURCE[2]
-            or _workflow_bind_sources.__kwdefaults__ is not _BIND_SOURCE[3]
-            or _workflow_bind_sources.__closure__ is not _BIND_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
-        _workflow_bind_sources(self)
         proof = self._check_continuation()
         from .execution_capacity import ExecutionOwner, WorkOrigin
 
@@ -287,30 +278,12 @@ class WorkflowTaskAuthorization:
                 _dispatch=proof,
             )
             self._binding_state.append((owner, activity_claim))
-        if (
-            _workflow_bind_sources is not _BIND_SOURCE[0]
-            or _workflow_bind_sources.__code__ is not _BIND_SOURCE[1]
-            or _workflow_bind_sources.__defaults__ is not _BIND_SOURCE[2]
-            or _workflow_bind_sources.__kwdefaults__ is not _BIND_SOURCE[3]
-            or _workflow_bind_sources.__closure__ is not _BIND_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
-        _workflow_bind_sources(self)
         if prepared is not None:
             from ..Chat.console_workflow_wave import (
-                _WAVE_SOURCE,
                 _workflow_wave_sources,
             )
 
             if wave is not None:
-                if (
-                    _workflow_wave_sources is not _WAVE_SOURCE[0]
-                    or _workflow_wave_sources.__code__ is not _WAVE_SOURCE[1]
-                    or _workflow_wave_sources.__defaults__ is not _WAVE_SOURCE[2]
-                    or _workflow_wave_sources.__kwdefaults__ is not _WAVE_SOURCE[3]
-                    or _workflow_wave_sources.__closure__ is not _WAVE_SOURCE[5]
-                ):
-                    raise PermissionError("original workflow helper source changed")
                 _workflow_wave_sources(wave)
             with self._lock:
                 if (
@@ -887,38 +860,3 @@ def check_task_provider(provider, tool_id: str, args: dict) -> None:
         _check_planning_call(authorization, call, authorization.registry)
     else:
         check_task_call(authorization, registry=authorization.registry, call=call)
-
-
-# This receiver's original source is checked before committing native binding.
-from ..Chat.console_ordinary_tree import (
-    _function_record as _bind_record,
-)
-from ..Chat.console_ordinary_tree import (
-    _function_unchanged as _bind_unchanged,
-)
-
-
-def _workflow_bind_sources(authorization):
-    import inspect
-
-    checker = _BIND_CHECKER[0]
-    if (
-        _bind_unchanged is not checker
-        or checker.__code__ is not _BIND_CHECKER[1]
-        or checker.__defaults__ is not _BIND_CHECKER[2]
-        or checker.__kwdefaults__ is not _BIND_CHECKER[3]
-        or checker.__closure__ is not _BIND_CHECKER[5]
-        or inspect.getattr_static(authorization, "bind_native", None)
-        is not _BIND_METHOD[0]
-        or inspect.getattr_static(WorkflowTaskAuthorization, "bind_native", None)
-        is not _BIND_METHOD[0]
-        or not checker(_BIND_METHOD)
-        or globals().get("_workflow_bind_sources") is not _BIND_SOURCE[0]
-        or not checker(_BIND_SOURCE)
-    ):
-        _refuse("original_native_binding_source_changed")
-
-
-_BIND_CHECKER = _bind_record(_bind_unchanged)
-_BIND_METHOD = _bind_record(WorkflowTaskAuthorization.bind_native)
-_BIND_SOURCE = _bind_record(_workflow_bind_sources)

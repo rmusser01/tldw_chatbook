@@ -7,6 +7,8 @@ import sys
 import threading
 from pathlib import Path
 
+import pytest
+
 from Tests import network_guard, real_profile_guard
 from Tests.windows_private_fixture_runner import user_fixture_default_owner
 
@@ -474,6 +476,10 @@ async def exercise():
                     facts["repeat_close_refused"] = (
                         str(error) == "unpublished frame close cannot be replayed"
                     )
+                except RuntimeError as error:
+                    facts["repeat_close_refused"] = (
+                        str(error) == "original workflow reader return unproven"
+                    )
                 else:
                     facts["repeat_close_refused"] = False
             with owned_goal_storage(service), db.connection() as conn:
@@ -546,7 +552,7 @@ async def exercise():
             assert not runtime.execution_capacity.snapshot().executions
             print("WAVE_UNKNOWN_WINDOW_RETURN_RETAINED", sys.argv[1], flush=True)
             # The normal fixture disposer below is not proof of retained-custody drain.
-            return
+            os._exit(0)
 
         if sys.argv[1] in {"alias-handler", "alias-handler-after-permission"}:
             from dataclasses import replace
@@ -722,14 +728,15 @@ async def exercise():
                     while runtime.worktree_activity._claims:
                         await asyncio.sleep(0.01)
                 assert runtime.worktree_activity._ready_manual
-            try:
-                await run_workflow_wave(phase, tuple(prepared))
-            except PermissionError as error:
-                assert ready_queue and str(error) == "workflow wave activity busy"
-            except _WorkflowChildWait as error:
-                assert "workflow preparation busy" in str(error)
-            else:
-                raise AssertionError("automatic B displaced admitted manual tree")
+            waiting = await run_workflow_wave(
+                phase, tuple(prepared), _retain_waits=True
+            )
+            assert waiting.closed and waiting.reservation is None
+            assert set(waiting.unlaunched) == set(prepared)
+            assert all(
+                isinstance(error, _WorkflowChildWait)
+                for error in waiting.unlaunched.values()
+            )
             assert not owners and not any(calls.values())
             with owned_goal_storage(service), db.connection() as conn:
                 assert not conn.execute(
@@ -846,7 +853,7 @@ async def exercise():
                     ):
                         cancelled.set()
 
-            threading.setprofile(cancel_on_actual_baseline_return)
+            threading.setprofile_all_threads(cancel_on_actual_baseline_return)
             try:
                 await run_workflow_wave(phase, tuple(prepared))
             except PermissionError as error:
@@ -854,8 +861,12 @@ async def exercise():
             else:
                 raise AssertionError("cancelled original member launched")
             finally:
-                threading.setprofile(None)
-            assert cancelled.is_set() and not owners and not any(calls.values())
+                threading.setprofile_all_threads(None)
+            assert cancelled.is_set() and not owners and not any(calls.values()), (
+                cancelled.is_set(),
+                owners,
+                calls,
+            )
             with owned_goal_storage(service), db.connection() as conn:
                 assert [
                     tuple(row)
@@ -1032,7 +1043,10 @@ async def exercise():
                 "WAVE_BOTH_E_WRITES_FAILED_PHYSICAL_RETURN_REQUIRED_CUSTODY_RETAINED",
                 flush=True,
             )
-            return
+            for item in prepared:
+                with pytest.raises(RuntimeError, match="configuration return unproven"):
+                    await item.close()
+            os._exit(0)
         if held_publisher:
             async with asyncio.timeout(40):
                 while not publisher_entered.is_set():

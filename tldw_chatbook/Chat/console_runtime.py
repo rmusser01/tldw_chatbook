@@ -776,6 +776,16 @@ def _library_provider_for_app(
     return LibraryToolProvider(service, **activity_kwargs)
 
 
+@dataclass(frozen=True, eq=False)
+class _NativeLibraryProviderFactory:
+    """Library construction resource registered by its owning Console runtime."""
+
+    runtime: Any
+
+    def __call__(self, turn_context: Any) -> Any | None:
+        return _library_provider_for_app(self.runtime._app, turn_context)
+
+
 def _default_session_settings_for_app(app: Any) -> Any:
     """Build new-session defaults from app-owned inputs."""
     from tldw_chatbook.Chat.console_session_settings import (
@@ -1123,6 +1133,7 @@ class ConsoleRuntime:
         self._first_send_wakeup = None
         self._first_send_loop = None
         self._app = app
+        self._library_provider_factory = _NativeLibraryProviderFactory(self)
         self._canvas_profile_snapshot = getattr(app, "_canvas_profile_snapshot", None)
         # -- setters, for the screen handles that now READ THROUGH here ----
         # `ChatScreen._console_chat_store`/`_console_provider_gateway`/
@@ -5514,9 +5525,7 @@ class ConsoleRuntime:
                 _default_session_settings_for_app,
                 self._app,
             ),
-            "library_provider_factory": functools.partial(
-                _library_provider_for_app, self._app
-            ),
+            "library_provider_factory": self._library_provider_factory,
             "global_user_display_name": functools.partial(
                 _global_user_display_name_for_app, self._app
             ),
@@ -5899,7 +5908,7 @@ class ConsoleRuntime:
             persistence = controller.store.persistence
             if bridge is None or persistence is None:
                 raise RuntimeError("Native workflow stores are unavailable")
-            service = WorkflowRunService(bridge.runs_db, persistence)
+            service = WorkflowRunService(bridge.runs_db, persistence, runtime=self)
             self._workflow_service = service
         return service
 
@@ -6856,25 +6865,15 @@ class ConsoleRuntime:
             if candidate is not None:
                 from . import console_fleet_wake as native_wake
 
-                if type(candidate) is native_wake._WORKFLOW_WAKE_CLASS:
+                if isinstance(candidate, native_wake.ConsoleFleetWakeCoordinator):
                     recovery_owner = candidate
                     try:
-                        source = native_wake._WORKFLOW_WAKE_SOURCE
                         if (
-                            native_wake._workflow_wake_source is not source[0]
-                            or source[0].__code__ is not source[1]
-                            or source[0].__defaults__ is not source[2]
-                            or source[0].__kwdefaults__ is not source[3]
-                            or tuple((source[0].__kwdefaults__ or {}).items())
-                            != source[4]
-                            or source[0].__closure__ is not source[5]
-                            or candidate._controller is not controller
+                            candidate._controller is not controller
                             or namespace.get("_fleet_wake") is not candidate
+                            or self._chat_controller is not controller
                         ):
-                            raise PermissionError(
-                                "original workflow wake fence source changed"
-                            )
-                        source[0](candidate)
+                            raise PermissionError("workflow wake owner changed")
                         recovery_owner.dispose()
                     except BaseException as error:  # noqa: BLE001 - a failed fence cannot skip already-owned physical cleanup.
                         wake_fence_error = error
@@ -6912,6 +6911,47 @@ class ConsoleRuntime:
                     if driver.done() and not driver.cancelled():
                         driver.exception()
                 await prepared.close()
+            # Finite execution preparation must return before scratch and
+            # configuration owners are tombstoned by downstream disposal.
+            from .console_preparation_reads import preparation_reads_for
+
+            preparing = tuple(
+                prepared
+                for prepared in self._workflow_preparations
+                if prepared not in planning and prepared._wave is None
+            )
+            for prepared in preparing:
+                prepared.cancel_event.set()
+            preparation_tasks = {
+                read.task
+                for read in preparation_reads_for(self._preparation_reads)
+                if any(read.source is prepared for prepared in preparing)
+            }
+            for task in preparation_tasks:
+                if task is not asyncio.current_task():
+                    task.cancel()
+            for task in preparation_tasks:
+                if task is asyncio.current_task():
+                    continue
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        planning_cancelled |= bool(asyncio.current_task().cancelling())
+                    except Exception:  # noqa: BLE001 - the original worker retains its failure and custody.
+                        break
+                if task.done() and not task.cancelled():
+                    task.exception()
+            for prepared in preparing:
+                if (
+                    not prepared._closed
+                    and not prepared._closing
+                    and (
+                        prepared.authorization is None
+                        or not prepared.authorization._native_launch
+                    )
+                ):
+                    await prepared.close()
             waves = tuple(self._workflow_waves)
             for wave in waves:
                 wave.stopping.set()
@@ -7592,14 +7632,4 @@ _CONSOLE_PENDING_RUNTIME_PROPERTIES = (
 # Direct callers and injected recompute callbacks retain their synchronous API.
 _ATTENTION_RECOMPUTE = ConsoleRuntime.recompute_console_attention
 _ATTENTION_RECOMPUTE_CODE = _ATTENTION_RECOMPUTE.__code__
-_NATIVE_ORDINARY_LIBRARY_FACTORY = (
-    _library_provider_for_app,
-    _library_provider_for_app.__code__,
-    _library_provider_for_app.__defaults__,
-    _library_provider_for_app.__kwdefaults__,
-    tuple((_library_provider_for_app.__kwdefaults__ or {}).items()),
-    _library_provider_for_app.__closure__,
-    (),
-)
-
 _NATIVE_ORDINARY_CANVAS_ENABLED = ConsoleRuntime._canvas_enabled

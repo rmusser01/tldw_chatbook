@@ -12,6 +12,7 @@ from threading import Event
 from time import monotonic
 
 from .models import OwnerAdapter
+from tldw_chatbook.DB.recovery_sqlite import _split_statistics, _statistics_metadata
 
 _PROGRESS_INTERVAL = 1000
 _STEP_BUDGET = 5_000_000
@@ -107,6 +108,8 @@ class _Restrictions:
         self.canvas_sibling_migration = False
         self.portrait_migration = None
         self.archive_chronology_migration = False
+        self.workflow_statistics = ()
+        self.dropping_workflow_phase = False
         self.preparing_response_rules = False
         self.sargable_migration = False
         self.canvas_schema = False
@@ -255,6 +258,14 @@ class _Restrictions:
             and source is None
         ):
             if (
+                self.dropping_workflow_phase
+                and action == sqlite3.SQLITE_DELETE
+                and first in self.workflow_statistics
+                and second is None
+                and database == "main"
+            ):
+                return sqlite3.SQLITE_OK
+            if (
                 database == "temp"
                 and first == "sqlite_temp_master"
                 and (
@@ -369,7 +380,12 @@ class _Restrictions:
                 self.migrating
                 and self.migration_owner == "db.agent_runs"
                 and first == "quick_check"
-                and second in {"automatic_wake_attempts", "workflow_phase_attempts"}
+                and second
+                in {
+                    "automatic_wake_attempts",
+                    "workflow_phase_attempts",
+                    "workflow_runs",
+                }
             )
             permitted |= (
                 self.migrating and self.migration_owner == "db.library_collections"
@@ -822,6 +838,7 @@ class _Restrictions:
                         and (first, second)
                         in {
                             ("workflow_checkpoint_immutable", "workflow_checkpoints"),
+                            ("workflow_recovery_review_immutable", "workflow_runs"),
                             (
                                 "workflow_repair_input_immutable",
                                 "workflow_phase_attempts",
@@ -873,7 +890,11 @@ class _Restrictions:
                     or action == sqlite3.SQLITE_ALTER_TABLE
                     and first == "main"
                     and second
-                    in {"workflow_phase_attempts", "workflow_active_intervals"}
+                    in {
+                        "workflow_phase_attempts",
+                        "workflow_active_intervals",
+                        "workflow_runs",
+                    }
                 )
                 if allowed_workflow_admission:
                     return sqlite3.SQLITE_OK
@@ -882,7 +903,9 @@ class _Restrictions:
                     REVIEW_BOUNDARY_AUTO_INDEXES,
                 )
                 from tldw_chatbook.DB.recovery_workflow_schema import (
-                    WORKFLOW_INDEXES, WORKFLOW_TABLES, WORKFLOW_TRIGGERS,
+                    WORKFLOW_INDEXES,
+                    WORKFLOW_TABLES,
+                    WORKFLOW_TRIGGERS,
                 )
 
                 if database == "main" and source is None and (
@@ -1100,7 +1123,7 @@ def _catalog(connection):
         size += sum(len(value.encode("utf-8")) for value in row if value is not None)
         if len(rows) >= _CATALOG_LIMIT or size > _CATALOG_BYTES:
             raise ValueError("sqlite_resource_limit")
-        rows.append(row)
+        rows.append(tuple(row))
     return tuple(rows)
 
 
@@ -1120,7 +1143,8 @@ def _metadata(connection, catalog, restrictions=None):
                 )
             try:
                 columns = tuple(
-                    connection.execute(f"PRAGMA table_xinfo({quote(name)})")
+                    tuple(row)
+                    for row in connection.execute(f"PRAGMA table_xinfo({quote(name)})")
                 )
             finally:
                 if restrictions is not None:
@@ -1135,7 +1159,15 @@ def _metadata(connection, catalog, restrictions=None):
             result.append((name, columns, indexes))
         elif kind == "index":
             result.append(
-                (name, tuple(connection.execute(f"PRAGMA index_xinfo({quote(name)})")))
+                (
+                    name,
+                    tuple(
+                        tuple(row)
+                        for row in connection.execute(
+                            f"PRAGMA index_xinfo({quote(name)})"
+                        )
+                    ),
+                )
             )
     return tuple(result)
 
@@ -1334,7 +1366,10 @@ def _check(connection, owner, policy, restrictions):
     if restrictions.expired():
         raise ValueError("sqlite_resource_limit")
     actual = _catalog(connection)
-    actual_sql = tuple(row[3] for row in actual if row[3] is not None)
+    base, stats = (
+        _split_statistics(actual) if owner.owner_id == "db.agent_runs" else (actual, ())
+    )
+    actual_sql = tuple(row[3] for row in base if row[3] is not None)
     matched = tuple(
         (version, schema)
         for version, schema in policy.schema_sql
@@ -1349,10 +1384,9 @@ def _check(connection, owner, policy, restrictions):
         return ("unsupported_schema_version",), None
     with _canvas_schema_access(connection, matched[0][1], restrictions):
         reference_catalog, metadata = _reference(matched[0][1])
-        if (
-            actual != reference_catalog
-            or _metadata(connection, actual, restrictions) != metadata
-        ):
+        if base != reference_catalog or _metadata(
+            connection, actual, restrictions
+        ) != _statistics_metadata(metadata, stats):
             return ("unsupported_schema",), None
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             return ("invalid_domain_reference",), None
@@ -1383,6 +1417,8 @@ def _check(connection, owner, policy, restrictions):
                 return issues, None
         if restrictions.expired():
             raise ValueError("sqlite_resource_limit")
+        if owner.owner_id == "db.agent_runs":
+            restrictions.workflow_statistics = tuple(row[1] for row in stats)
         return (), version
 
 
@@ -1565,7 +1601,14 @@ def _validate_candidate(
                                 for statement in statements:
                                     if restrictions.expired():
                                         raise InterruptedError
-                                    connection.execute(statement)
+                                    restrictions.dropping_workflow_phase = (
+                                        installed.owner_id == "db.agent_runs"
+                                        and statement == "DROP TABLE workflow_phase_attempts_v25"
+                                    )
+                                    try:
+                                        connection.execute(statement)
+                                    finally:
+                                        restrictions.dropping_workflow_phase = False
                             finally:
                                 restrictions.portrait_migration = None
                         restrictions.migrating = False

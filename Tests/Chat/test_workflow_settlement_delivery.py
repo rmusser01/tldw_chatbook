@@ -59,13 +59,14 @@ async def journey(tmp_path, monkeypatch):
         settled = await rig.wait_for_status("stopped")
         assert settled.plans == ()
         assert settled.accounting.used["generation"] == 1
-        paused = await rig.coordinator.pause(
-            rig.workflow.id, expected_control_revision=settled.control_revision
-        )
-        with pytest.raises(ValueError, match="resume_requires_completed_planning"):
+        with pytest.raises(ValueError, match="workflow_terminal"):
+            await rig.coordinator.pause(
+                rig.workflow.id, expected_control_revision=settled.control_revision
+            )
+        with pytest.raises(ValueError, match="resume_requires_clean_checkpoint"):
             await rig.coordinator.resume(
                 rig.workflow.id,
-                expected_control_revision=paused.control_revision,
+                expected_control_revision=settled.control_revision,
                 command_id="no-plan-resume",
             )
         unchanged = await rig.coordinator.get(rig.workflow.id)
@@ -88,52 +89,19 @@ def test_stop_held_planner_never_publishes_a_late_plan(tmp_path):
 
 
 async def unknown_usage_journey(tmp_path, monkeypatch):
-    rig = await build_workflow_rig(
-        tmp_path, monkeypatch, WorkflowProvider(hold=("planning",))
-    )
-    rig.workflow = await rig.coordinator.start(
-        rig.workflow.request, launch_id=rig.workflow.launch_id
-    )
-    await rig.wait_for_provider_entry()
-    original = rig.coordinator._runs[rig.workflow.id]
-    owner, claim = original.prepared.primary_owner, original.prepared.primary_claim
-    stopped = await rig.coordinator.stop(
-        rig.workflow.id, expected_control_revision=rig.workflow.control_revision
-    )
-    assert stopped.status == "stopping" and owner.is_admitted
-    rig.provider_release()
-    snapshot = await rig.wait_for_status("recovery_required")
-    assert snapshot.accounting.uncertain and snapshot.accounting.used["generation"] == 1
-    assert snapshot.plans == () and rig.coordinator._runs[rig.workflow.id] is original
-    assert original.prepared.primary_owner is owner and owner.is_admitted
-    assert original.prepared.primary_claim is claim
-    assert claim.id in rig.runtime.worktree_activity._claims
-    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from Tests.Chat.test_workflow_recovery_cancellation import cancelled_planner_journey
 
-    with owned_goal_storage(rig.service), rig.service.db.connection() as conn:
-        tokens = conn.execute(
-            "SELECT state,actual_amount FROM automatic_work_reservations WHERE kind='tokens'"
-        ).fetchall()
-    assert [tuple(row) for row in tokens] == [("uncertain", None)]
-    print("G_ORIGINAL_UNKNOWN_USAGE_AND_CUSTODY_RETAINED", flush=True)
-    # This isolated negative deliberately retains actual custody. Process exit
-    # is not a retirement observation and the creator-drain marker is forbidden.
-    raise RuntimeError("G_REQUIRED_CUSTODY_RETAINED_STOP_UNKNOWN_USAGE")
+    await cancelled_planner_journey(tmp_path)
 
 
-def test_stop_before_usage_retains_original_recovery_custody(tmp_path):
-    with pytest.raises(
-        AssertionError, match="G_REQUIRED_CUSTODY_RETAINED_STOP_UNKNOWN_USAGE"
-    ):
-        _run(
-            tmp_path,
-            "unknown-usage",
-            "native",
-            script=Path(__file__)
-            .with_name("workflow_coordinator_probe.py")
-            .read_text(),
-            timeout=60,
-        )
+def test_stop_before_usage_preserves_charges_and_releases_returned_resources(tmp_path):
+    _run(
+        tmp_path,
+        "unknown-usage",
+        "native",
+        script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        timeout=60,
+    )
 
 
 async def pending_acceptance_journey(tmp_path, monkeypatch):
@@ -286,62 +254,29 @@ async def pending_wrapper_failure_journey(tmp_path, monkeypatch):
             and observed[0]._producer.exception() is failure
         )
         assert observed[0].retired.done()
-        assert (
-            run.status == "recovery_required"
-            and rig.coordinator._runs[rig.workflow.id] is run
-        )
-        assert (
-            cell.owner.is_admitted
-            and cell.claim.id in rig.runtime.worktree_activity._claims
-        )
-        assert (
-            cell.phase is not None
-            and cell.terminal_result is None
-            and not cell.returned
-        )
-        assert not rig.controller.fleet_wake.try_claim_automatic_primary(
-            run.session_id, object()
-        )
+        assert cell.scopes_returned and cell.returned and cell.terminal_scopes_returned
+        assert cell.phase is None and cell.terminal_result.status == "awaiting_resume"
+        assert not cell.owner.is_admitted and cell.owner_return == [True]
+        assert cell.claim.id not in rig.runtime.worktree_activity._claims
+        assert rig.workflow.id not in rig.coordinator._runs
+        assert not rig.runtime.execution_capacity.snapshot().executions
         assert [key for key, _ in rig.provider.calls] == ["planning"]
-        command_error = rig.coordinator._commands[("approve", "unknown-initial")][
-            1
-        ].exception()
-        assert isinstance(command_error, RuntimeError)
-        with pytest.raises(RuntimeError, match="reader return unproven") as duplicate:
-            await rig.coordinator.approve(decision, command_id="unknown-initial")
-        assert duplicate.value is command_error
-        for _ in range(2):
-            with pytest.raises(
-                RuntimeError, match="workflow_original_shutdown_unresolved"
-            ):
-                await rig.runtime.dispose()
-            assert (
-                not rig.runtime._disposed
-                and not rig.runtime.execution_capacity.snapshot().closed
-            )
-            assert rig.coordinator._runs[rig.workflow.id] is run
-            assert (
-                cell.owner.is_admitted
-                and cell.claim.id in rig.runtime.worktree_activity._claims
-            )
-        print("G_ORIGINAL_E_WRAPPER_AND_CANCELLATION_RETAINED", flush=True)
     finally:
         release.set()
         threading.setprofile_all_threads(None)
-    raise RuntimeError("G_REQUIRED_CUSTODY_RETAINED_E_WRAPPER")
+        await rig.close()
 
 
-def test_pending_wrapper_failure_plus_repeated_cancel_retains_original(tmp_path):
-    with pytest.raises(AssertionError, match="G_REQUIRED_CUSTODY_RETAINED_E_WRAPPER"):
-        _run(
-            tmp_path,
-            "pending-wrapper",
-            "native",
-            script=Path(__file__)
-            .with_name("workflow_coordinator_probe.py")
-            .read_text(),
-            timeout=60,
-        )
+def test_pending_wrapper_error_and_repeated_cancel_return_unused_native_admission(
+    tmp_path,
+):
+    _run(
+        tmp_path,
+        "pending-wrapper",
+        "native",
+        script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        timeout=60,
+    )
 
 
 async def planning_control_return_journey(tmp_path, monkeypatch):
@@ -395,7 +330,7 @@ async def planning_control_return_journey(tmp_path, monkeypatch):
             terminal.set()
 
     threading.setprofile_all_threads(hold_original_returns)
-    retained = mode in {"control-unknown", "control-association"}
+    retained = mode == "control-unknown"
     try:
         rig.workflow = await rig.coordinator.start(
             rig.workflow.request, launch_id=rig.workflow.launch_id
@@ -425,7 +360,7 @@ async def planning_control_return_journey(tmp_path, monkeypatch):
         rig.provider_release()
         assert await asyncio.to_thread(terminal.wait, 10)
         # Wait for the original F tracked wrapper, not merely its callback flag.
-        read, producer, retired, _callback = prepared._planning_read_return
+        read, producer, retired = prepared._planning_read_return
 
         async def original_read_returns():
             while not producer.done() or not retired.done():
@@ -501,7 +436,7 @@ async def planning_control_return_journey(tmp_path, monkeypatch):
     ],
 )
 def test_planning_root_waits_for_original_control_return(tmp_path, mode):
-    if mode in {"control-unknown", "control-association"}:
+    if mode == "control-unknown":
         with pytest.raises(
             AssertionError, match="G_REQUIRED_CUSTODY_RETAINED_F_CONTROL_RETURN"
         ):
@@ -725,13 +660,7 @@ async def final_metadata_journey(tmp_path, monkeypatch):
     snapshot_code = WorkflowRunService.runtime_snapshot.__wrapped__.__code__
     direct_close = sys.argv[1] == "metadata-direct-close"
     late_failure = sys.argv[1] == "metadata-late-failure"
-    replaced_helper = sys.argv[1] == "metadata-helper-held"
-    uncertain = late_failure or replaced_helper
-    replacement_calls = []
-
-    def replacement(*args, **kwargs):
-        replacement_calls.append((args, kwargs))
-        raise AssertionError("replacement metadata helper executed")
+    uncertain = late_failure
 
     failure = RuntimeError("original final metadata wrapper failed")
     invoke_code = next(
@@ -789,8 +718,6 @@ async def final_metadata_journey(tmp_path, monkeypatch):
         ]
         assert len(reads) == 1
         read = reads[0]
-        if replaced_helper:
-            rig.coordinator._metadata = replacement
         close = asyncio.create_task(
             rig.coordinator.close() if direct_close else rig.runtime.dispose()
         )
@@ -808,46 +735,22 @@ async def final_metadata_journey(tmp_path, monkeypatch):
             )
             assert not read._producer.done() and not read.retired.done()
         release.set()
-        with pytest.raises(
-            RuntimeError if uncertain else asyncio.CancelledError
-        ) as closed:
+        with pytest.raises(asyncio.CancelledError):
             await close
         with pytest.raises(asyncio.CancelledError):
             await original.driver
         if uncertain:
-            assert str(closed.value) == "workflow_original_metadata_shutdown_unresolved"
             cell = original.final_metadata
             assert cell.proof[0] is read and cell.proof[1] is read._producer
-            assert read._producer.exception() is cell.producer_error
-            if late_failure:
-                assert cell.producer_error is failure
-            else:
-                assert isinstance(cell.producer_error, PermissionError)
-                assert (
-                    str(cell.producer_error)
-                    == "original workflow metadata helper changed"
-                )
-                assert replacement_calls == []
+            assert read._producer.exception() is cell.producer_error is failure
             assert isinstance(cell.caller_error, asyncio.CancelledError)
-            assert cell.source_error is not None and cell.disposed.result() is False
-            assert rig.coordinator._metadata_cells[cell] is cell.disposed
-            assert original.status == "recovery_required"
-            assert rig.coordinator._runs[rig.workflow.id] is original
-            assert (
-                not rig.runtime._disposed
-                and not rig.runtime.execution_capacity.snapshot().closed
-            )
-            assert len(seen) == callbacks and read.retired.result() is None
-            with pytest.raises(
-                RuntimeError, match="workflow_original_metadata_shutdown_unresolved"
-            ):
-                await rig.runtime.dispose()
-            retained = True
-            raise RuntimeError("G_REQUIRED_CUSTODY_RETAINED_METADATA_RETURN")
+            assert cell.source_error is None and cell.disposed.result() is True
+            assert cell not in rig.coordinator._metadata_cells
+            assert original.driver.cancelled()
         assert (
             read._producer.done()
             and not read._producer.cancelled()
-            and read._producer.exception() is None
+            and read._producer.exception() is (failure if uncertain else None)
         )
         assert read.retired.done() and read.retired.result() is None
         assert rig.workflow.id not in rig.coordinator._runs and len(seen) == callbacks
@@ -876,719 +779,65 @@ def test_final_original_metadata_worker_and_host_return_precede_shutdown(tmp_pat
     )
 
 
-def test_final_metadata_preserves_caller_cancellation_and_original_wrapper_error(
+def test_final_metadata_preserves_cancellation_and_post_return_error_without_retaining_resources(
     tmp_path,
 ):
-    with pytest.raises(
-        AssertionError, match="G_REQUIRED_CUSTODY_RETAINED_METADATA_RETURN"
-    ):
-        _run(
-            tmp_path,
-            "metadata-late-failure",
-            "native",
-            script=Path(__file__)
-            .with_name("workflow_coordinator_probe.py")
-            .read_text(),
-            timeout=60,
-        )
-
-
-async def execution_release_retention_journey(tmp_path, monkeypatch):
-    """An actual settled execution cannot release from a failed final receiver."""
-    import asyncio
-    import dis
-    import inspect
-    import os
-    import sys
-    import types
-
-    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
-    from tldw_chatbook.Chat import console_preparation_reads as native
-
-    rig = await build_workflow_rig(
-        tmp_path, monkeypatch, WorkflowProvider(), change_review=True
-    )
-    mode = sys.argv[2]
-    entered, release = threading.Event(), threading.Event()
-    saved, notifications, replacement_calls = {}, [], []
-    failure = RuntimeError("original execution metadata wrapper failed")
-    execute_code = type(rig.coordinator)._execute.__code__
-    publish_code = type(rig.coordinator)._publish.__code__
-    notify_code = type(rig.coordinator)._notify_execution_release.__code__
-    invoke_code = next(
-        code
-        for code in native.run_preparation_read.__code__.co_consts
-        if isinstance(code, types.CodeType) and code.co_name == "invoke"
-    )
-    callback_code = next(
-        code
-        for code in type(rig.coordinator)._metadata.__wrapped__.__code__.co_consts
-        if isinstance(code, types.CodeType) and code.co_name == "invoke"
-    )
-    metadata_code = next(
-        code
-        for code in type(rig.coordinator)._metadata.__wrapped__.__code__.co_consts
-        if isinstance(code, types.CodeType) and code.co_name == "read_metadata"
-    )
-    source_code = next(
-        code
-        for code in type(rig.coordinator)._metadata.__wrapped__.__code__.co_consts
-        if isinstance(code, types.CodeType) and code.co_name == "original_sources"
-    )
-    approval = None
-    primary_error = None
-
-    def replacement(*args, **kwargs):
-        replacement_calls.append((args, kwargs))
-        raise AssertionError("replacement release receiver executed")
-
-    def observe(frame, event, result):
-        code = frame.f_code
-        if code is execute_code and event == "call" and "run" not in saved:
-            assert frame.f_locals["self"] is rig.coordinator
-            run = frame.f_locals["run"]
-            assert run.driver is asyncio.current_task()
-            saved.update(run=run, driver=run.driver, phase=run.phase)
-        elif code is notify_code and event == "call":
-            notifications.append((frame.f_locals["self"], frame.f_locals["binding"]))
-        elif (
-            mode == "successor"
-            and code is publish_code
-            and event == "return"
-            and dis.opname[code.co_code[frame.f_lasti]]
-            in {"RETURN_VALUE", "RETURN_CONST"}
-            and frame.f_locals.get("_terminal_run") is saved.get("run")
-            and "cell" in saved
-        ):
-            run, cell = saved["run"], saved["cell"]
-            caller = frame.f_back
-            assert caller.f_code is execute_code
-            assert caller.f_locals["self"] is rig.coordinator
-            assert caller.f_locals["run"] is run
-            assert result is run.final_metadata is cell
-            assert asyncio.current_task() is saved["driver"] is run.driver
-            binding = caller.f_locals["release_binding"]
-            assert binding[1] is run and binding[2] is run.phase
-            assert binding[9] is saved["intake"] and binding[10] is saved["token"]
-            read, producer, retired, callback = saved["proof"]
-            assert cell.proof is saved["proof"] and read.callback is callback
-            assert read._producer is producer and read.retired is retired
-            assert (
-                producer.done()
-                and not producer.cancelled()
-                and producer.exception() is None
-            )
-            assert (
-                retired.done() and not retired.cancelled() and retired.result() is None
-            )
-            assert cell.disposed.done() and cell.disposed.result() is True
-            assert (
-                cell.body_error
-                is cell.caller_error
-                is cell.source_error
-                is cell.producer_error
-                is None
-            )
-            assert run.phase._retired and run.waves[0] is saved["wave"]
-            assert rig.runtime.execution_capacity.snapshot().executions == ()
-            wake = rig.controller._fleet_wake
-            assert binding[8] is wake
-            assert "successor" not in saved
-            successor = object()
-            # Deliberate native API replacement after positive original metadata;
-            # this grants no work and is never G's own release proof.
-            assert (
-                wake.release_automatic_primary(run.session_id, saved["token"]) is True
-            )
-            assert wake.try_claim_automatic_primary(run.session_id, successor) is True
-            saved["successor"] = successor
-        elif (
-            code is invoke_code
-            and event == "return"
-            and dis.opname[code.co_code[frame.f_lasti]]
-            in {"RETURN_VALUE", "RETURN_CONST"}
-            and "run" in saved
-            and not entered.is_set()
-        ):
-            run = saved["run"]
-            read = frame.f_locals["read"]
-            cell = run.final_metadata
-            if (
-                cell is None
-                or read.source is not rig.coordinator
-                or read.task is not run.driver
-            ):
-                return
-            callback = read.callback
-            assert callback.__code__ is callback_code
-            closure = inspect.getclosurevars(callback).nonlocals
-            assert closure["self"] is rig.coordinator and closure["cell"] is cell
-            assert closure["issuing"] is run.driver
-            guarded = closure["guarded_read"]
-            assert guarded.__wrapped__.__code__ is metadata_code
-            body = inspect.getclosurevars(guarded.__wrapped__).nonlocals
-            originals = body["original_sources"]
-            assert originals.__code__ is source_code
-            assert frame.f_locals["require_current"] is originals
-            source_closure = inspect.getclosurevars(originals).nonlocals
-            assert source_closure["self"] is rig.coordinator
-            assert source_closure["cell"] is body["cell"] is cell
-            assert body["database"] is rig.service.db
-            assert body["service"] is rig.service
-            full, view = body["result"]
-            assert full is None and view.status == "awaiting_result_review"
-            assert cell.run is run and cell.phase is run.phase is saved["phase"]
-            assert cell.issuing is saved["driver"] is run.driver
-            proof = cell.proof
-            assert proof[0] is read and proof[1] is read._producer
-            assert proof[2] is read.retired and proof[3] is callback
-            assert read.creator is rig.controller
-            assert frame.f_locals["callback"] is callback
-            binding = frame.f_locals["binding"]
-            assert binding.read is read and binding.thread is threading.current_thread()
-            assert binding.active is False and result is None
-            assert not read._producer.done() and not read.retired.done()
-            assert not cell.disposed.done() and cell.body_error is None
-            assert run.phase._retired and len(run.waves) == 1
-            wave_return = run.waves[0]
-            assert wave_return[0].closed and wave_return[1].done()
-            assert wave_return[1].exception() is None
-            assert wave_return[2].done() and wave_return[3].done()
-            assert len(wave_return[6]) == 1
-            prepared, receipt = wave_return[6][0]
-            authorization = prepared.authorization
-            assert prepared.phase is authorization.phase is run.phase
-            assert run.phase._task_scopes["task-1"] is authorization
-            assert authorization._bridge_preparation[0] is prepared
-            assert authorization._native_launch[0] is receipt
-            assert receipt.attempt_id == authorization.claim.id
-            assert receipt.run_id == authorization.claim.launch_run_id
-            assert rig.runtime.execution_capacity.snapshot().executions == ()
-            saved.update(
-                cell=cell,
-                proof=proof,
-                view=view,
-                wave=wave_return,
-                intake=run.intake,
-                token=run.token,
-                callback=callback,
-                prepared=prepared,
-                authorization=authorization,
-                receipt=receipt,
-            )
-            # This is the actual wrapper return after callback/source/binding exits.
-            threading.setprofile_all_threads(None)
-            sys.setprofile(None)
-            entered.set()
-            assert release.wait(10), "original final execution read hold expired"
-            if mode == "unknown":
-                raise failure
-
-    try:
-        rig.workflow = await rig.coordinator.start(
-            rig.workflow.request, launch_id=rig.workflow.launch_id
-        )
-        await asyncio.shield(rig.coordinator._runs[rig.workflow.id].driver)
-        decision = await rig.service.call(
-            rig.service.prepare_decision, rig.workflow.id, phase_id="phase-1"
-        )
-        threading.setprofile_all_threads(observe)
-        approval = asyncio.create_task(
-            rig.coordinator.approve(decision, command_id="q1-retained-release")
-        )
-        while not entered.is_set():
-            if (
-                approval.done()
-                and not approval.cancelled()
-                and approval.exception() is not None
-            ):
-                raise approval.exception()
-            if "run" in saved and saved["driver"].done():
-                original_cell = saved["run"].final_metadata
-                if original_cell is not None and original_cell.proof is not None:
-                    original_producer = original_cell.proof[1]
-                    if original_producer.done() and not original_producer.cancelled():
-                        original_error = original_producer.exception()
-                        if original_error is not None:
-                            import traceback
-
-                            print(
-                                "G_Q1_ORIGINAL_PRODUCER_FAILURE",
-                                type(original_error).__name__,
-                                str(original_error),
-                                [
-                                    (frame.filename, frame.name, frame.lineno)
-                                    for frame in traceback.extract_tb(
-                                        original_error.__traceback__
-                                    )
-                                ],
-                                flush=True,
-                            )
-                            raise original_error
-                await saved["driver"]
-                raise AssertionError("original terminal execution read not reached")
-            await asyncio.sleep(0.01)
-        run, cell = saved["run"], saved["cell"]
-        read, producer, retired, callback = saved["proof"]
-        assert rig.coordinator._runs[rig.workflow.id] is run
-        assert rig.store.received_turn_for_session(run.session_id) is saved["intake"]
-        assert (
-            rig.controller.fleet_wake._automatic_primary_claims[run.session_id]
-            is saved["token"]
-        )
-        if mode == "receiver":
-            rig.coordinator._release = replacement
-        if mode in {"buddy-error", "buddy-cancel", "fence-source"}:
-            await _original_buddy_disposal_control(rig, saved, approval, release, mode)
-            return
-        # The worker observer is retired; keep only the host's original notify
-        # entry observation through the actual driver return.
-        sys.setprofile(observe)
-        release.set()
-        await asyncio.shield(saved["driver"])
-        await asyncio.shield(approval)
-        assert cell is run.final_metadata and cell.proof is saved["proof"]
-        assert read.callback is callback is saved["callback"]
-        assert read.task is saved["driver"] and read.source is rig.coordinator
-        assert read._producer is producer and read.retired is retired
-        assert producer.done() and not producer.cancelled()
-        assert retired.done() and not retired.cancelled() and retired.result() is None
-        assert cell.body_error is cell.caller_error is None
-        if mode == "unknown":
-            assert producer.exception() is cell.producer_error is failure
-            assert isinstance(cell.source_error, RuntimeError)
-            assert str(cell.source_error) == "original workflow reader return unproven"
-            assert cell.disposed.result() is False
-        else:
-            assert producer.exception() is cell.producer_error is None
-            assert isinstance(cell.source_error, PermissionError)
-            assert str(cell.source_error) == (
-                "original workflow primary token changed"
-                if mode == "successor"
-                else "original workflow release source changed"
-            )
-            assert cell.disposed.result() is True
-        assert notifications == [] and replacement_calls == []
-        assert rig.coordinator._metadata_cells[cell] is cell.disposed
-        assert rig.coordinator._runs[rig.workflow.id] is run
-        assert run.status == "recovery_required" and run.phase._retired
-        assert run.waves[0] is saved["wave"]
-        assert [key for key, _ in rig.provider.calls] == ["planning", "task-1"]
-        with owned_goal_storage(rig.service):
-            current = rig.service.runtime_snapshot(rig.workflow.id)
-        assert current.accounting == saved["view"].accounting
-        assert current.status == "awaiting_result_review"
-        assert len(current.tasks) == 1 and current.tasks[0].status == "completed"
-        assert current.tasks[0].task_id == "task-1"
-        prepared, receipt = saved["wave"][6][0]
-        assert prepared is saved["prepared"] and receipt is saved["receipt"]
-        authorization = saved["authorization"]
-        assert (
-            prepared.authorization is run.phase._task_scopes["task-1"] is authorization
-        )
-        assert authorization.phase is run.phase
-        assert authorization._bridge_preparation[0] is prepared
-        assert authorization._native_launch[0] is receipt
-        assert current.tasks[0].run_id == receipt.run_id
-        assert current.accounting.used["generation"] == 2
-        assert current.accounting.used["child_launch"] == 1
-        assert current.accounting.used["model_call"] == 2
-        assert not current.accounting.uncertain
-        for _ in range(2):
-            with pytest.raises(
-                RuntimeError, match="workflow_original_metadata_shutdown_unresolved"
-            ):
-                await rig.runtime.dispose()
-            assert rig.coordinator._runs[rig.workflow.id] is run
-            assert rig.coordinator._metadata_cells[cell] is cell.disposed
-            assert run.intake is saved["intake"] and run.token is saved["token"]
-            assert (
-                rig.store.received_turn_for_session(run.session_id) is saved["intake"]
-            )
-            assert rig.controller.fleet_wake._automatic_primary_claims[
-                run.session_id
-            ] is saved.get("successor", saved["token"])
-            assert not rig.runtime._disposed
-            assert not rig.runtime.execution_capacity.snapshot().closed
-            assert notifications == [] and replacement_calls == []
-        print(
-            "G_Q1_REQUIRED_RELEASE_CUSTODY_RETAINED",
-            mode,
-            "; no creator drain",
-            flush=True,
-        )
-        os._exit(17)
-    except BaseException as error:
-        primary_error = error
-        raise
-    finally:
-        release.set()
-        threading.setprofile_all_threads(None)
-        sys.setprofile(None)
-        if approval is not None and not approval.done():
-            try:
-                await asyncio.shield(approval)
-            except BaseException as error:
-                if primary_error is None:
-                    raise
-                primary_error.add_note(f"Original approval also failed: {error!r}")
-        try:
-            await rig.close()
-        except BaseException as error:
-            if primary_error is None:
-                raise
-            primary_error.add_note(f"Original creator close also refused: {error!r}")
-
-
-@pytest.mark.parametrize("mode", ["unknown", "receiver"])
-def test_original_execution_release_requires_final_metadata_and_receiver(
-    tmp_path, mode
-):
-    with pytest.raises(AssertionError, match="G_Q1_REQUIRED_RELEASE_CUSTODY_RETAINED"):
-        _run(
-            tmp_path,
-            "q1-release",
-            mode,
-            script=Path(__file__)
-            .with_name("workflow_coordinator_probe.py")
-            .read_text(),
-            timeout=60,
-        )
-
-
-async def _original_buddy_disposal_control(rig, saved, approval, release, mode):
-    """Keep the real G return distinct from a native buddy-fence failure."""
-    import asyncio
-    import dis
-    import inspect
-    import sys
-
-    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
-    from tldw_chatbook.Chat import console_fleet_wake as native_wake
-    from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
-
-    runtime, coordinator = rig.runtime, rig.coordinator
-    wake = rig.controller._fleet_wake
-    sink = runtime._persona_buddy_sink
-    assert type(sink) is PersonaBuddyConsoleAdapter
-    assert rig.controller._buddy_sink is wake.buddy_sink is sink
-    assert sink._controller is vars(rig.controller.app)["_persona_buddy_controller"]
-    clear = inspect.getattr_static(PersonaBuddyConsoleAdapter, "clear_wakes")
-    assert inspect.getattr_static(sink, "clear_wakes") is clear
-    assert clear.__code__.co_freevars == ()
-    dispose_code = type(runtime).dispose.__code__
-    fence_code = type(wake).dispose.__code__
-    close_code = type(coordinator).close.__code__
-    drain_code = type(wake).drain_recovery.__code__
-    owned_code = type(runtime)._dispose_owned.__code__
-    source_record = native_wake._WORKFLOW_WAKE_SOURCE
-    source_code = source_record[0].__code__
-    retry_code = type(wake).retry_soon.__code__
-    notify_code = type(coordinator)._notify_execution_release.__code__
-    original_error = RuntimeError("original native buddy clear returned failure")
-    injected = asyncio.Event()
-    facts = {
-        "close": [],
-        "drain": [],
-        "owned": [],
-        "fence": [],
-        "fence_return": [],
-        "retry": [],
-        "notify": [],
-    }
-    failures = []
-    closing = None
-    primary_error = None
-
-    def observe(frame, event, result):
-        code = frame.f_code
-        if code not in {
-            clear.__code__,
-            close_code,
-            drain_code,
-            owned_code,
-            source_code,
-            fence_code,
-            retry_code,
-            notify_code,
-        }:
-            return
-        normal_return = event == "return" and dis.opname[
-            code.co_code[frame.f_lasti]
-        ] in {"RETURN_VALUE", "RETURN_CONST"}
-        if (
-            mode == "fence-source"
-            and code is source_code
-            and normal_return
-            and not injected.is_set()
-            and frame.f_back.f_code is dispose_code
-        ):
-            caller = frame.f_back
-            valid = (
-                frame.f_locals["wake"] is wake
-                and caller.f_locals["self"] is runtime
-                and caller.f_locals["recovery_owner"] is wake
-                and caller.f_locals["source"] is source_record
-                and native_wake._workflow_wake_source is source_record[0]
-                and asyncio.current_task() is closing
-                and not wake._disposed
-                and runtime._workflow_closing
-                and result is None
-            )
-            facts["source"] = valid
-            injected.set()
-            sys.setprofile(None)
-            if valid:
-                raise original_error
-            return
-        if (
-            mode != "fence-source"
-            and code is clear.__code__
-            and normal_return
-            and not injected.is_set()
-        ):
-            caller = frame.f_back
-            outer = caller.f_back
-            valid = (
-                frame.f_locals["self"] is sink
-                and frame.f_locals["conversation_id"] is None
-                and caller.f_code is fence_code
-                and caller.f_locals["self"] is wake
-                and outer.f_code is dispose_code
-                and outer.f_locals["self"] is runtime
-                and outer.f_locals["recovery_owner"] is wake
-                and asyncio.current_task() is closing
-                and wake._disposed
-                and runtime._workflow_closing
-                and not wake._pending
-                and not sink._wake_owners
-                and result is None
-            )
-            facts["clear"] = valid
-            injected.set()
-            sys.setprofile(None)
-            if valid:
-                raise original_error
-            return
-        try:
-            if code is close_code and normal_return:
-                facts["close"].append(
-                    (
-                        frame.f_locals["self"],
-                        frame.f_locals["_runtime_disposal"],
-                        asyncio.current_task(),
-                        result,
-                    )
-                )
-            elif code is drain_code and normal_return:
-                facts["drain"].append(
-                    (frame.f_locals["self"], asyncio.current_task(), result)
-                )
-            elif code is owned_code and event == "call":
-                facts["owned"].append((frame.f_locals["self"], asyncio.current_task()))
-            elif code is fence_code and frame.f_locals["self"] is wake:
-                if event == "call":
-                    facts["fence"].append(asyncio.current_task())
-                elif normal_return:
-                    facts["fence_return"].append(
-                        (asyncio.current_task(), result, wake._disposed)
-                    )
-            elif (
-                code is retry_code
-                and event == "call"
-                and frame.f_locals["self"] is wake
-            ):
-                facts["retry"].append(asyncio.current_task())
-            elif (
-                code is notify_code
-                and event == "call"
-                and frame.f_locals["self"] is coordinator
-            ):
-                facts["notify"].append(
-                    (asyncio.current_task(), frame.f_locals["binding"])
-                )
-        except BaseException as error:  # noqa: BLE001 - observer failures must not alter native cleanup.
-            failures.append(error)
-
-    try:
-        sys.setprofile(observe)
-        closing = asyncio.create_task(runtime.dispose())
-        await injected.wait()
-        assert facts["source" if mode == "fence-source" else "clear"] is True
-        assert not closing.done() and coordinator._closing
-        assert wake._disposed is (mode != "fence-source")
-        run, cell = saved["run"], saved["cell"]
-        read, producer, retired, callback = saved["proof"]
-        assert coordinator._runs[rig.workflow.id] is run
-        assert not producer.done() and not retired.done() and not cell.disposed.done()
-        assert run.intake is saved["intake"] and run.token is saved["token"]
-        assert (
-            not runtime._disposed and not runtime.execution_capacity.snapshot().closed
-        )
-        # The deliberate original-return exception disabled only the host profiler.
-        sys.setprofile(observe)
-        if mode == "buddy-cancel":
-            for _ in range(3):
-                closing.cancel()
-                await asyncio.sleep(0)
-                assert not closing.done()
-        release.set()
-        if mode == "fence-source":
-            with pytest.raises(
-                PermissionError, match="^workflow wake shutdown fence unproven$"
-            ) as notification:
-                await asyncio.shield(saved["driver"])
-            assert saved["driver"].exception() is notification.value
-            traceback = notification.value.__traceback__
-            frames = []
-            while traceback is not None:
-                frames.append(traceback.tb_frame)
-                traceback = traceback.tb_next
-            assert any(frame.f_code is notify_code for frame in frames)
-        else:
-            await asyncio.shield(saved["driver"])
-        await asyncio.shield(approval)
-        try:
-            await closing
-        except BaseException as error:  # noqa: BLE001 - compare the exact original error or caller cancellation.
-            actual_error = error
-        else:
-            raise AssertionError("original buddy fence failure was lost")
-        sys.setprofile(None)
-        assert failures == [] and len(facts["close"]) == 1
-        same_coordinator, same_runtime, same_task, cancellation = facts["close"][0]
-        assert same_coordinator is coordinator and same_runtime is runtime
-        assert same_task is closing
-        if mode == "buddy-cancel":
-            assert isinstance(cancellation, asyncio.CancelledError)
-            assert (
-                actual_error is cancellation
-                and actual_error.__cause__ is original_error
-            )
-        else:
-            assert cancellation is None and actual_error is original_error
-        assert facts["drain"] == [(wake, closing, False)]
-        assert facts["owned"] == []
-        if mode == "fence-source":
-            assert facts["fence"] == facts["fence_return"] == facts["retry"] == []
-            assert not wake._disposed
-            assert len(facts["notify"]) == 1
-            issuing, binding = facts["notify"][0]
-            assert issuing is saved["driver"] and binding[1] is run
-            assert binding[2] is run.phase and binding[8] is wake
-            assert run.status != "recovery_required"
-        assert cell is run.final_metadata and cell.proof is saved["proof"]
-        assert read.callback is callback is saved["callback"]
-        assert read.task is saved["driver"] and read.source is coordinator
-        assert read._producer is producer and read.retired is retired
-        assert (
-            producer.done()
-            and not producer.cancelled()
-            and producer.exception() is None
-        )
-        assert retired.done() and not retired.cancelled() and retired.result() is None
-        assert cell.disposed.done() and cell.disposed.result() is True
-        assert (
-            cell.body_error
-            is cell.caller_error
-            is cell.source_error
-            is cell.producer_error
-            is None
-        )
-        assert cell not in coordinator._metadata_cells
-        assert rig.workflow.id not in coordinator._runs
-        assert run.intake is saved["intake"] and run.token is saved["token"]
-        assert run.phase._retired
-        assert rig.store.received_turn_for_session(run.session_id) is None
-        assert run.session_id not in wake._automatic_primary_claims
-        assert run.waves[0] is saved["wave"]
-        assert runtime.execution_capacity.snapshot().executions == ()
-        assert (
-            not runtime._disposed and not runtime.execution_capacity.snapshot().closed
-        )
-        with owned_goal_storage(rig.service):
-            current = rig.service.runtime_snapshot(rig.workflow.id)
-        assert current.accounting == saved["view"].accounting
-        assert current.status == "awaiting_result_review"
-        assert len(current.tasks) == 1 and current.tasks[0].status == "completed"
-        prepared, receipt = saved["wave"][6][0]
-        assert prepared is saved["prepared"] and receipt is saved["receipt"]
-        assert prepared.authorization is saved["authorization"]
-        assert run.phase._task_scopes["task-1"] is prepared.authorization
-        assert prepared.authorization._bridge_preparation[0] is prepared
-        assert prepared.authorization._native_launch[0] is receipt
-        assert (
-            current.tasks[0].task_id == "task-1"
-            and current.tasks[0].run_id == receipt.run_id
-        )
-        assert current.accounting.used["generation"] == 2
-        assert current.accounting.used["child_launch"] == 1
-        assert current.accounting.used["model_call"] == 2
-        assert not current.accounting.uncertain
-        assert [key for key, _ in rig.provider.calls] == ["planning", "task-1"]
-        print("G_Q1_BUDDY_FIRST_ERROR_G_RETURNED", mode, flush=True)
-        # This is a separately authorized native idempotent disposal, never a
-        # claim that the first error completed downstream runtime teardown.
-        if mode == "fence-source":
-            sys.setprofile(observe)
-        await runtime.dispose()
-        sys.setprofile(None)
-        if mode == "fence-source":
-            assert failures == [] and facts["fence"]
-            assert facts["fence"][0] is asyncio.current_task()
-            assert facts["fence_return"][0] == (asyncio.current_task(), None, True)
-        assert runtime._disposed and runtime.execution_capacity.snapshot().closed
-        assert runtime.execution_capacity.snapshot().executions == ()
-        assert [key for key, _ in rig.provider.calls] == ["planning", "task-1"]
-        print("G_Q1_BUDDY_SECOND_NATIVE_DISPOSAL_RETURNED", mode, flush=True)
-    except BaseException as error:
-        primary_error = error
-        raise
-    finally:
-        release.set()
-        sys.setprofile(None)
-        if closing is not None and not closing.done():
-            try:
-                await asyncio.shield(closing)
-            except BaseException as error:
-                if primary_error is None:
-                    raise
-                primary_error.add_note(f"Original disposal also failed: {error!r}")
-
-
-@pytest.mark.parametrize("mode", ["buddy-error", "buddy-cancel"])
-def test_native_buddy_clear_error_preserves_g_close_and_cancellation(tmp_path, mode):
     _run(
         tmp_path,
-        "q1-release",
-        mode,
+        "metadata-late-failure",
+        "native",
         script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
         timeout=60,
     )
 
 
-def test_native_successor_token_refuses_original_g_release_without_notification(
-    tmp_path,
-):
-    with pytest.raises(AssertionError, match="G_Q1_REQUIRED_RELEASE_CUSTODY_RETAINED"):
-        _run(
-            tmp_path,
-            "q1-release",
-            "successor",
-            script=Path(__file__)
-            .with_name("workflow_coordinator_probe.py")
-            .read_text(),
-            timeout=60,
+async def notification_failure_journey(tmp_path, monkeypatch):
+    import asyncio
+
+    rig = await build_workflow_rig(
+        tmp_path, monkeypatch, WorkflowProvider(), change_review=True
+    )
+    notified = []
+    try:
+        rig.workflow = await rig.coordinator.start(
+            rig.workflow.request, launch_id=rig.workflow.launch_id
+        )
+        await rig.wait_for_status("awaiting_phase_review")
+        decision = await rig.service.call(
+            rig.service.prepare_decision, rig.workflow.id, phase_id="phase-1"
         )
 
+        def failed_notification(binding):
+            notified.append(binding)
+            raise RuntimeError("notification delivery failed")
 
-def test_pre_fence_source_error_keeps_positive_g_return_and_refuses_notification(
-    tmp_path,
-):
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(
+                rig.coordinator, "_notify_execution_release", failed_notification
+            )
+            await rig.coordinator.approve(decision, command_id="notification-failure")
+            run = rig.coordinator._runs[rig.workflow.id]
+            with pytest.raises(RuntimeError, match="notification delivery failed"):
+                await asyncio.shield(run.driver)
+        assert len(notified) == 1
+        assert rig.workflow.id not in rig.coordinator._runs
+        assert not rig.runtime.execution_capacity.snapshot().executions
+        assert not rig.runtime.worktree_activity._claims
+        snapshot = await rig.coordinator.get(rig.workflow.id)
+        assert snapshot.status == "awaiting_result_review"
+        assert (
+            snapshot.results[0].status == "completed"
+            and not snapshot.accounting.uncertain
+        )
+    finally:
+        await rig.close()
+
+
+def test_notification_failure_does_not_resurrect_returned_native_execution(tmp_path):
     _run(
         tmp_path,
-        "q1-release",
-        "fence-source",
+        "notification-failure",
+        "native",
         script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
         timeout=60,
     )
@@ -1871,101 +1120,6 @@ def test_equal_native_counters_deliver_actual_accounting_settlement(tmp_path):
         script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
         timeout=60,
     )
-
-
-async def replaced_metadata_before_call_journey(tmp_path, monkeypatch):
-    import asyncio
-
-    from tldw_chatbook.Agents.workflow_models import WorkflowSnapshot
-    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
-
-    rig = await build_workflow_rig(
-        tmp_path, monkeypatch, WorkflowProvider(hold=("planning",))
-    )
-    injected, calls = [], []
-    original_code = _PreparedWorkflowReply.run_planning.__code__
-    retained = False
-
-    async def replacement(*args, **kwargs):
-        calls.append((args, kwargs))
-
-    def replace_after_original_f_return(frame, event, result):
-        if (
-            event == "return"
-            and frame.f_code is original_code
-            and type(result) is WorkflowSnapshot
-            and frame.f_locals.get("self") is original.prepared
-        ):
-            assert (
-                original.prepared._planning_settled
-                and not original.prepared.primary_owner.is_admitted
-            )
-            threading.setprofile_all_threads(None)
-            rig.coordinator._publish = replacement
-            injected.append(result)
-
-    try:
-        rig.workflow = await rig.coordinator.start(
-            rig.workflow.request, launch_id=rig.workflow.launch_id
-        )
-        original = rig.coordinator._runs[rig.workflow.id]
-        await rig.wait_for_provider_entry()
-        threading.setprofile_all_threads(replace_after_original_f_return)
-        rig.provider_release()
-        await asyncio.shield(original.driver)
-        assert len(injected) == 1 and calls == []
-        assert rig.coordinator._runs[rig.workflow.id] is original
-        assert (
-            original.status == "recovery_required" and original.final_metadata is None
-        )
-        read, producer, retired, _callback = original.prepared._planning_read_return
-        assert (
-            producer is read._producer
-            and producer.exception() is None
-            and retired.result() is None
-        )
-        assert not original.prepared.primary_owner.is_admitted
-        assert (
-            original.prepared.primary_claim.id
-            not in rig.runtime.worktree_activity._claims
-        )
-        assert (
-            original.prepared._planning_intake is None
-            and original.prepared._planning_token is None
-        )
-        for _ in range(2):
-            with pytest.raises(
-                RuntimeError, match="workflow_original_shutdown_unresolved"
-            ):
-                await rig.runtime.dispose()
-            assert (
-                not rig.runtime._disposed
-                and not rig.runtime.execution_capacity.snapshot().closed
-            )
-            assert rig.coordinator._runs[rig.workflow.id] is original and calls == []
-        retained = True
-        raise RuntimeError("G_REQUIRED_CUSTODY_RETAINED_METADATA_HELPER")
-    finally:
-        rig.provider_release()
-        threading.setprofile_all_threads(None)
-        if not retained:
-            await rig.close()
-
-
-@pytest.mark.parametrize("mode", ["metadata-helper-held", "metadata-helper-before"])
-def test_replaced_metadata_helper_never_runs_or_releases_original_custody(
-    tmp_path, mode
-):
-    with pytest.raises(AssertionError, match="G_REQUIRED_CUSTODY_RETAINED_METADATA"):
-        _run(
-            tmp_path,
-            mode,
-            "native",
-            script=Path(__file__)
-            .with_name("workflow_coordinator_probe.py")
-            .read_text(),
-            timeout=60,
-        )
 
 
 async def superseded_metadata_journey(tmp_path, monkeypatch):

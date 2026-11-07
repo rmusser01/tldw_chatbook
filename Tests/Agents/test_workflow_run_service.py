@@ -757,8 +757,13 @@ def test_forged_receipt_boolean_and_oversize_required_payload_do_not_settle(
     assert service.get(result.workflow_id).results == ()
 
 
-def test_recovery_close_keeps_unknown_charges_and_claims_and_cannot_be_quality_approved(
+@pytest.mark.parametrize("full_history", [False, True])
+@pytest.mark.parametrize("prior_status", ["recovery_required", "closed", "stopped"])
+def test_recovery_close_keeps_unknown_charges_and_cannot_be_quality_approved(
     workflow_host,
+    monkeypatch,
+    full_history,
+    prior_status,
 ):
     from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
 
@@ -778,6 +783,17 @@ def test_recovery_close_keeps_unknown_charges_and_claims_and_cannot_be_quality_a
             expected_control_revision=before.control_revision,
             command_id="no-replay",
         )
+    if full_history:
+        from tldw_chatbook.DB import workflow_runs
+
+        monkeypatch.setattr(workflow_runs, "WORKFLOW_BYTES", 1)
+    if prior_status != "recovery_required":
+        # Earlier histories can have terminal display state without a review marker.
+        with host.db.connection() as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET status=? WHERE id=?",
+                (prior_status, before.id),
+            )
     closed = service.resolve_recovery(
         before.id,
         expected_control_revision=before.control_revision,
@@ -786,12 +802,72 @@ def test_recovery_close_keeps_unknown_charges_and_claims_and_cannot_be_quality_a
     assert closed.status == "closed" and closed.accounting.uncertain
     assert closed.accounting.used == before.accounting.used
     assert closed.accounting.reserved == before.accounting.reserved
-    with pytest.raises(ValueError, match="active_evidence"):
-        host.db.workflow_runs.remove_payloads(
-            closed.id, expected_control_revision=closed.control_revision
+    removed = service.remove_payloads(
+        closed.id, expected_control_revision=closed.control_revision
+    )
+    assert removed.results == () and removed.status == "removed"
+    assert removed.accounting.used == before.accounting.used
+    assert removed.accounting.reserved == before.accounting.reserved
+    assert removed.accounting.uncertain
+    with host.db.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT state FROM workflow_payload_reservations WHERE workflow_id=?",
+                (closed.id,),
+            ).fetchone()[0]
+            == "removed"
         )
-    with host.activity.prelaunch(footprint=host.authorization.footprint) as blocked:
-        assert blocked is None
+    with host.activity.prelaunch(footprint=host.authorization.footprint) as available:
+        assert available is not None
+
+
+def test_recovery_review_cannot_close_a_real_native_worker(workflow_host):
+    import threading
+
+    from Tests.Agents.test_agent_service import ScriptedChat
+    from Tests.Agents.test_workflow_child_launch import (
+        _join,
+        _launch,
+        _prepared_service,
+    )
+    from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
+    from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
+
+    host = workflow_host
+    entered, release = threading.Event(), threading.Event()
+    provider = ScriptedChat(["done"])
+
+    def held(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return provider(**kwargs)
+
+    service = WorkflowRunService(host.db, SimpleNamespace(workspace_registry=None))
+    messages = service.prepare_task_inputs(host.authorization)
+    native, _ = _prepared_service(host, held, seed=messages)
+    receipt = _launch(native, host)
+    service.bind_native_receipt(host.authorization, receipt)
+    try:
+        assert entered.wait(3)
+        before = service.get(host.authorization.claim.workflow_id)
+        review = host.db.workflow_runs.set_status(
+            before.id,
+            status="recovery_required",
+            expected_control_revision=before.control_revision,
+        )
+        with pytest.raises(ValueError, match="workflow_resources_still_live"):
+            service.resolve_recovery(
+                review.id,
+                expected_control_revision=review.control_revision,
+                decision=WorkflowExecutionRecovery(reason="reviewed"),
+            )
+        assert receipt.owner.is_admitted
+        assert service.get(review.id) == review
+        with host.activity.prelaunch(footprint=host.authorization.footprint) as blocked:
+            assert blocked is None
+    finally:
+        release.set()
+        _join(host)
 
 
 def test_completed_task_handoff_rejects_later_input_change_without_verifiers(task_host):

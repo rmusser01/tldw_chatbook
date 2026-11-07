@@ -12,6 +12,7 @@ from Tests.windows_private_fixture_runner import user_fixture_default_owner
 
 os.environ["TLDW_AGENTS_WORKFLOW_RUNS_ENABLED"] = "true"
 os.environ["TLDW_AGENTS_AUTOWAKE_ENABLED"] = "false"
+os.environ["OPENAI_API_KEY"] = "private-native-partial-test"
 network_guard.install()
 real_profile_guard.install()
 
@@ -19,7 +20,7 @@ real_profile_guard.install()
 async def exercise():
     import tldw_chatbook.Widgets.compact_model_bar  # noqa: F401
     from Tests.Agents.workflow_support import make_workflow_request, plan_data
-    from Tests.Chat.test_automatic_provider_budget import resolution, response
+    from Tests.Chat.test_automatic_provider_budget import response
     from Tests.Performance._stock_private_app_creators import OriginalPrivateAppCreators
     from tldw_chatbook import app as app_source
     from tldw_chatbook.Agents.execution_capacity import current_execution_owner
@@ -34,6 +35,8 @@ async def exercise():
         ProjectInstructionControlState,
     )
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Chat.console_received_dispatch import resolve_received_provider
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
     from tldw_chatbook.Chat.console_workflow_runs import _accept_workflow_phase
     from tldw_chatbook.Chat.console_workflow_wave import run_workflow_wave
     from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
@@ -107,6 +110,9 @@ async def exercise():
         store = runtime.ensure_chat_store()
         session = store.create_session(
             workspace_id="pause-native",
+            settings=ConsoleSessionSettings(
+                provider="openai", model="test-model", source="user"
+            ),
             project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
         )
         conversation = store.persist_session_if_needed(session.id)
@@ -134,7 +140,10 @@ async def exercise():
         binding = capture_run_admitted_workspace_roots(
             session=session, registry=registry
         )[0]
-        selected = resolution(model="test-model")
+        selected = await resolve_received_provider(
+            controller, controller._provider_selection_for_session(session.id)
+        )
+        assert selected.ready and selected.model == "test-model"
         request = make_workflow_request(root).model_copy(
             update={
                 "conversation_id": conversation,
@@ -187,45 +196,21 @@ async def exercise():
                 controller, attempt.id, session_id=session.id
             )
         assert phase is not None
-        if mode == "replaced-producer":
-            from tldw_chatbook.Chat.console_workflow_runs import (
-                WorkflowPhaseAuthorization,
-            )
+        if mode == "unregistered-control":
+            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 
-            original_control = WorkflowPhaseAuthorization._control
-            grants, policy_calls = [], []
-            from tldw_chatbook.Chat import console_workflow_runs as workflow_source
-
-            policy_code = workflow_source._policy_identity.__code__
-
-            def observe_policy(frame, event, _argument):
-                if event == "call" and frame.f_code is policy_code:
-                    policy_calls.append(True)
-
-            def replacement(self, _decision):
-                with self._fence("control") as fence:
-                    grants.append(fence)
-                    with self._ledger.transaction(_native=fence) as conn:
-                        conn.execute("SELECT 1")
-
-            WorkflowPhaseAuthorization._control = replacement
-            error = None
-            sys.setprofile(observe_policy)
             try:
-                phase._control(None)
-            except RuntimeError as caught:
-                error = str(caught)
-            finally:
-                sys.setprofile(None)
-                WorkflowPhaseAuthorization._control = original_control
+                with phase._fence("control"):
+                    raise AssertionError(
+                        "missing control intent granted a native fence"
+                    )
+            except AutomaticWorkRefused as error:
+                assert error.reason == "workflow_native_control_required"
             await service.call(
                 service.settle_execution_phase, phase, outcome="cancelled"
             )
-            assert not grants, "replacement producer received native fence and SQL"
-            assert not policy_calls, "replacement reached native policy preflight"
-            assert error == "workflow_original_fence_producer_required"
             assert not calls
-            print("E_FIX1_REPLACED_PRODUCER_REFUSED_BEFORE_NATIVE_FENCE", flush=True)
+            print("E_UNREGISTERED_CONTROL_REFUSED_BEFORE_NATIVE_FENCE", flush=True)
             return
         item = await bridge._prepare_workflow_reply(
             phase=phase,

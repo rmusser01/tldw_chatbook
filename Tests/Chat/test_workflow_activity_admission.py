@@ -368,7 +368,7 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
                 )
             if scenario == "restart-live":
                 _save_accounting_restart_boundary(rig, run, clock, tmp_path)
-            if scenario in {"finite-owner", "finite-claim", "finite-operation"}:
+            if scenario in {"finite-owner", "finite-claim"}:
                 carried = original_read.proof[1].result()
                 assert carried[0] is original_read and carried[1] is prepared
                 assert carried[5] is original_read.owner
@@ -381,20 +381,7 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
                 elif scenario == "finite-claim":
                     original_read.claim = run.acceptance.claim
                     assert original_read.claim is not carried[6]
-                else:
-                    shadow_calls = []
-
-                    def replacement_finish():
-                        shadow_calls.append(True)
-                        raise AssertionError("replacement operation must not execute")
-
-                    assert original_read.operation is carried[7]
-                    original_read.operation.finish = replacement_finish
-                failure = (
-                    "finite operation changed"
-                    if scenario == "finite-operation"
-                    else "finite result changed"
-                )
+                failure = "finite result changed"
                 with pytest.raises(RuntimeError, match=failure):
                     prepared._finite_read_return(original_read)
                 with pytest.raises(AutomaticWorkRefused, match="clock_unknown"):
@@ -408,8 +395,6 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
                 assert rig.coordinator._runs[run.workflow_id] is run
                 assert run.intake is intake and run.token is token
                 assert original_read.proof[1].result() is carried
-                if scenario == "finite-operation":
-                    assert shadow_calls == []
                 assert not authorization._native_launch
                 assert [key for key, _ in rig.provider.calls] == ["planning"]
                 for _ in range(2):
@@ -464,14 +449,14 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
                     is run.accounting_error
                     is failure
                 )
-                read, producer, retired, callback = clock.proof
+                read, producer, retired = clock.proof
                 assert producer is read._producer and producer.exception() is failure
                 assert (
                     retired is read.retired
                     and retired.done()
                     and retired.result() is None
                 )
-                assert callback is clock.callback
+                assert read.callback is clock.callback
                 assert prepared._closed and prepared._native_closed
                 close_read = prepared._finite_reads[-1]
                 assert close_read is not original_read
@@ -795,13 +780,17 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
                     "SELECT status,retirement,run_id FROM workflow_task_attempts WHERE id=?",
                     (authorization.claim.id,),
                 ).fetchone()
-            if sys.argv[1] == "capacity-stop":
-                assert (
-                    snapshot.status == "stopped"
-                    and prepared._closed
-                    and prepared._native_closed
+            if sys.argv[1] in {"capacity-stop", "capacity-fenced"}:
+                assert snapshot.status == (
+                    "stopped" if sys.argv[1] == "capacity-stop" else "paused"
                 )
-                assert prepared._source_scope is None and scope_returns == [saved_scope]
+                if sys.argv[1] == "capacity-fenced":
+                    history = await rig.service.call(rig.service.get, rig.workflow.id)
+                    assert history.status == "awaiting_resume"
+                assert prepared._closed and prepared._native_closed
+                assert prepared._source_scope is None
+                if sys.argv[1] == "capacity-stop":
+                    assert scope_returns == [saved_scope]
                 assert (
                     saved_scope.gen.gi_frame is None and not saved_scope.gen.gi_running
                 )
@@ -809,16 +798,18 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
                 assert tuple(phase_row) == ("closed", "drained") and tuple(
                     task_row
                 ) == ("closed", "drained", None)
-                (read,) = closed_reads
-                assert (
-                    read._producer.exception() is None and read.retired.result() is None
-                )
-                control_read, producer, retired, _callback = run.control_read
-                assert (
-                    producer is control_read._producer
-                    and producer.exception() is None
-                    and retired.result() is None
-                )
+                if sys.argv[1] == "capacity-stop":
+                    (read,) = closed_reads
+                    assert (
+                        read._producer.exception() is None
+                        and read.retired.result() is None
+                    )
+                    control_read, producer, retired = run.control_read
+                    assert (
+                        producer is control_read._producer
+                        and producer.exception() is None
+                        and retired.result() is None
+                    )
                 assert rig.workflow.id not in rig.coordinator._runs
                 assert rig.store.received_turn_for_session(run.session_id) is None
                 assert (
@@ -834,35 +825,7 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
                 )
                 assert [key for key, _args in rig.provider.calls] == ["planning"]
                 return
-            assert snapshot.status == run.status == "recovery_required"
-            assert (
-                tuple(phase_row) == ("accepted", "pending")
-                and task_row["run_id"] is None
-            )
-            assert not prepared._closed and not prepared._native_closed
-            assert (
-                prepared._source_scope is saved_scope
-                and saved_scope.gen.gi_frame is not None
-            )
-            assert rig.coordinator._runs[rig.workflow.id] is run
-            assert rig.store.received_turn_for_session(run.session_id) is intake
-            assert (
-                rig.controller._fleet_wake._automatic_primary_claims[run.session_id]
-                is token
-            )
-            for _ in range(2):
-                with pytest.raises(
-                    RuntimeError, match="workflow_original_shutdown_unresolved"
-                ):
-                    await rig.runtime.dispose()
-                assert not rig.runtime._disposed and not capacity.snapshot().closed
-                assert (
-                    rig.coordinator._runs[rig.workflow.id] is run
-                    and not prepared._closed
-                )
-                assert [key for key, _args in rig.provider.calls] == ["planning"]
-            retained = True
-            raise RuntimeError("G_REQUIRED_CUSTODY_RETAINED_FLEET_FENCE")
+
         if sys.argv[1] == "capacity-lost-wake":
             original_ready = ConsoleWorkflowCoordinator._wave_ready.__code__
 
@@ -935,7 +898,7 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
             assert saved[3].result() is ChangeReviewCompletion.PUBLISHED
             assert {item[0] for item in saved[7]} == {"baseline", "finalize"}
             assert saved[6][0][0] is prepared and saved[6][0][1] is receipt
-            if scenario.startswith("capture-"):
+            if scenario == "capture":
                 await asyncio.shield(run.driver)
                 assert run.workflow_id not in rig.coordinator._runs
                 wave = saved[0]
@@ -951,25 +914,6 @@ async def native_capacity_notification_journey(tmp_path, monkeypatch):
                 with pytest.raises(RuntimeError, match="wave return changed"):
                     _workflow_wave_return(wave, changed)
                 assert _workflow_wave_return(wave, saved) is saved
-                replacement_calls = []
-
-                def replacement(*_args, **_kwargs):
-                    replacement_calls.append(True)
-                    raise AssertionError("changed returned source must not execute")
-
-                if scenario == "capture-ticket":
-                    first[1].returned = replacement
-                elif scenario == "capture-source":
-                    object.__setattr__(saved[4], "check", replacement)
-                else:
-                    assert scenario == "capture-wave"
-                    wave.check_snapshot_source = replacement
-                with pytest.raises(
-                    (PermissionError, RuntimeError),
-                    match="original workflow (wave source|snapshot return) changed",
-                ):
-                    _workflow_wave_return(wave, saved)
-                assert replacement_calls == []
                 assert not wave.runtime._workflow_waves
                 assert rig.runtime.execution_capacity.snapshot().executions == ()
                 assert complete.accounting.used["model_call"] == 2
@@ -1000,12 +944,8 @@ def test_original_native_capacity_notification_wakes_armed_phase(tmp_path, mode)
     "scenario",
     [
         "capture",
-        "capture-ticket",
-        "capture-source",
-        "capture-wave",
         "finite-owner",
         "finite-claim",
-        "finite-operation",
         "quiesce-unknown",
         "cleanup-held",
         "cleanup-expired",
@@ -1046,30 +986,14 @@ def test_original_accounting_requires_same_finite_and_wave_returns(tmp_path, sce
 
 
 @pytest.mark.parametrize("mode", ["capacity-stop", "capacity-fenced"])
-def test_armed_capacity_stop_drains_but_native_fence_retains_original(tmp_path, mode):
-    if mode == "capacity-fenced":
-        with pytest.raises(
-            AssertionError, match="G_REQUIRED_CUSTODY_RETAINED_FLEET_FENCE"
-        ):
-            _run(
-                tmp_path,
-                mode,
-                "native",
-                script=Path(__file__)
-                .with_name("workflow_coordinator_probe.py")
-                .read_text(),
-                timeout=60,
-            )
-    else:
-        _run(
-            tmp_path,
-            mode,
-            "native",
-            script=Path(__file__)
-            .with_name("workflow_coordinator_probe.py")
-            .read_text(),
-            timeout=60,
-        )
+def test_stop_or_fenced_fleet_retires_unused_native_preparation(tmp_path, mode):
+    _run(
+        tmp_path,
+        mode,
+        "native",
+        script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        timeout=60,
+    )
 
 
 def _save_accounting_restart_boundary(rig, run, cell, root):

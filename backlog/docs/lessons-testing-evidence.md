@@ -25077,3 +25077,67 @@ Keep decisions with different consequences in stable cells. Capture the visible 
 The real local-model workflow finished its failed check, authorized edit, fresh passing check and independent review in a99.43-second process. Creator retirement then refused a MediaDB lease. An8.50-second fresh completed-history reopen returned every Creator because it ended before the original65-second sync-log retention timer. A bounded mounted probe waited for that actual timer and observed the original retention callback returning on asyncio_2. After App shutdown and executor join, its exact newly acquired connection still had a live lease on the dead thread, with zero active operations. The separate5-second media-cleanup callback had closed its own connection correctly.
 
 Retain callback return, connection close and final Creator return as separate facts. For the concrete retention producer, applying the existing finite-worker helper at its original callback boundary closed the new cache on that same worker. The later87.79-second mounted timer probe retained zero new workflow/model effects, observed the original close and returned every Creator. Preserve the earlier functional journey and failed cleanup on their own source versions. [Task10 process and source receipts](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/README.md)
+
+
+## A retained-owner test can preserve an accounting bug (TASK-39147, 2026-11-07)
+
+The old Stop-before-usage probe required an admitted planning owner forever when
+tokens were uncertain. The replacement native journey observed its actual provider,
+lifeline and tool threads returned, yet the owner still occupied capacity. A reversed
+accounting clock reproduced the same defect. Keep unknown charges and reviewable
+history, but prove native resource return separately; test that explicit review,
+unrelated scratch and normal shutdown work afterward. Pair that positive with real
+failed source/storage/operation-exit controls, which must still retain their owners.
+A post-return metadata delivery error also hid caller cancellation until cancellation
+was captured before publication validation. Neither a terminal row nor an old
+negative expectation substitutes for observing the actual runtime boundary.
+
+The re-review exposed a second gap: every accounting-refusal case let recovery
+recording succeed, and shutdown followed explicit review. A real SQLite trigger
+rejecting both completion and recovery updates retained the physically returned
+owner and blocked unrelated scratch; a separate unreviewed Stop refused disposal
+with zero native executions. Fail the recovery write too, test shutdown before
+review, and verify that later recording/review can retry without duplicating a
+committed disposition. Test directory replacement both before projection and
+after an overlay is installed; a startup-only identity assertion misses stale
+in-memory fences. These cases now exercise real native return, SQLite transactions,
+revision conflicts and original live-claim retention rather than copied receipts.
+
+A later pass injected a lost response after closing review committed. Known
+accounting could not retry, while unknown accounting retried until payload removal
+made it attempt to overwrite the immutable review marker. Test lost delivery at
+both the recovery-recording and closing-review boundaries, then acknowledge again
+after result removal. The same pass showed that transient EIO was mistaken for
+folder replacement and that saving an unchanged prompt replaced the settings
+object and poisoned native unwind. Preserve uncertainty on metadata failure, and
+observe the admitted provider input plus actual cleanup when session inputs change;
+a passing journal retry alone does not prove those separate return paths.
+
+
+The TASK-39147 UAT follow-up exposed separate probe errors: a delivery wrapper
+whose name was not the supported `resolve_recovery` operation was refused before
+its intended injection; an unchanged-prompt equality wait could finish before its
+Apply callback, while an active-tab predicate could fail after the captured chat
+had actually saved and the host's startup selected a blank chat. Wait for the
+captured chat's payload revision and value, and select its actual tab before the
+next edit. Likewise, wait for actual Stop cancellation before releasing a held
+provider, or the probe can settle normally and never create the unknown outcome
+it claims to review. Corrected mounted probes passed both prompt and lost-closing
+cases. A full native functional pass with explicit UAT waits was retained apart
+from the original failed latency bounds; it does not certify those bounds.
+
+
+TASK-39147's prompt-editor correction used full painted-label bounds plus physical
+clicks: keyboard activation alone had accepted the original clipped controls.
+The full CSS rebuild also pulled in other staged portrait declarations with
+unavailable tokens; the failing parser packet was kept separate and unrelated
+generated sheets restored to their starting bytes. During capture, Textual's raw
+SVG exporter sometimes emitted only its title although the mounted compositor's
+painted strips contained the controls. The accepted visual evidence records those
+actual strips at each terminal size, after checking the same painted-label bounds;
+empty SVGs do not count as screenshots of a fixed layout.
+The stricter feedback check also caught a stale-layout trap: calling
+`scroll_visible` immediately after updating a Static used its old one-line height,
+so the newly wrapped last line painted behind the docked footer despite passing
+the geometric clip check. Defer that scroll until layout refresh and assert the
+whole feedback text in painted cells, not just the widget's bounds.

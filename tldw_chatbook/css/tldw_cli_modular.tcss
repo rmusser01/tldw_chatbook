@@ -8977,6 +8977,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 }
 
 .console-system-prompt-actions {
+    dock: bottom;
     height: $ds-size-3;
     min-height: $ds-size-3;
     align-horizontal: right;

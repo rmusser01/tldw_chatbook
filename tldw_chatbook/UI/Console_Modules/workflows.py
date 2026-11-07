@@ -35,6 +35,8 @@ _VIEW_CONTEXTS = frozenset(
         "Resume",
         "Pause",
         "Stop",
+        "Recovery",
+        "Remove",
     }
 )
 _VIEW_REASONS = frozenset(
@@ -60,6 +62,11 @@ _VIEW_REASONS = frozenset(
         "wall_budget",
         "clock_unknown",
         "clock_reversed",
+        "workflow_resources_still_live",
+        "recovery_audit_required",
+        "recovery_unavailable",
+        "workflow_runtime_changed",
+        "workflow_has_active_evidence",
     }
 )
 _ERROR_TYPES = (
@@ -139,6 +146,10 @@ def workflow_view_error(context: str, error: BaseException) -> str:
     reason = _error_metadata(error)
     cause = _error_metadata(error.__cause__) if error.__cause__ is not None else "none"
     logger.warning("Workflow {} unavailable: {} (cause: {})", operation, reason, cause)
+    if error.args == ("workflow_resources_still_live",):
+        return f"{operation} unavailable · Work or cleanup is still active. Wait, then refresh."
+    if error.args == ("recovery_audit_required",):
+        return f"{operation} unavailable · Restart Chatbook to audit interrupted work, then review it."
     return f"{operation} unavailable · {reason}"
 
 

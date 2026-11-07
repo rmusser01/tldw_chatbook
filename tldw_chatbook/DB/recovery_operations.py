@@ -349,6 +349,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (26, 27, WORKFLOW_CHECKPOINT_MIGRATION),
                 (27, 28, WORKFLOW_WINDOW_MIGRATION),
                 (28, 29, WORKFLOW_REPAIR_INPUT_MIGRATION),
+                (29, 30, WORKFLOW_RECOVERY_REVIEW_MIGRATION),
             ),
         )
 
@@ -366,6 +367,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                     self.versions,
                     self.schemas,
                     version_query="SELECT MAX(version) FROM schema_version",
+                    allow_statistics=True,
                 )
         except (OSError, ValueError, sqlite3.Error):
             return ("operational_validation_unavailable",)
@@ -1391,7 +1393,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29),
+            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1815,4 +1817,16 @@ _AGENT_RUNS_SCHEMA += tuple(
     (29, workflow_repair_input_catalog(catalog))
     for version, catalog in _AGENT_RUNS_SCHEMA
     if version == 28
+)
+
+
+from .recovery_workflow_schema import (
+    WORKFLOW_RECOVERY_REVIEW_MIGRATION,
+    workflow_recovery_review_catalog,
+)
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (30, workflow_recovery_review_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 29
 )

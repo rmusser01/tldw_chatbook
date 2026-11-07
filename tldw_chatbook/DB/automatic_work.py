@@ -2638,20 +2638,14 @@ class AutomaticWorkLedger:
 
     def abort_workflow_planning(self, original, *, _prepared=None) -> bool:
         """Abort only the original returned, unaccepted planning invocation."""
-        import inspect
-
         from tldw_chatbook.Agents.workflow_models import WorkflowPhaseAttempt
         from tldw_chatbook.Chat.console_workflow_preparation import (
-            _PLANNING_ABORT_CALLER,
             _PreparedWorkflowReply,
         )
 
-        caller = inspect.currentframe().f_back
         if (
             type(original) is not WorkflowPhaseAttempt
             or type(_prepared) is not _PreparedWorkflowReply
-            or caller.f_code is not _PLANNING_ABORT_CALLER
-            or caller.f_locals.get("self") is not _prepared
         ):
             raise PermissionError("original prepared planning abort required")
         _prepared._planning_abort_source(self, original)
@@ -3176,44 +3170,3 @@ class AutomaticWorkLedger:
                 "UPDATE workflow_task_attempts SET run_id=? WHERE id=?",
                 (run_id, row["id"]),
             )
-
-
-# Finite original workflow fence receivers; captured when these definitions load.
-_WORKFLOW_NATIVE_RECORDS = tuple(
-    (
-        name,
-        method,
-        tuple(
-            (
-                function,
-                function.__code__,
-                function.__defaults__,
-                function.__kwdefaults__,
-                tuple((function.__kwdefaults__ or {}).items()),
-                function.__closure__,
-                tuple(
-                    (cell, cell.cell_contents) for cell in function.__closure__ or ()
-                ),
-            )
-            for function in (
-                method,
-                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
-            )
-        ),
-    )
-    for name in (
-        "transaction",
-        "_admission_transaction",
-        "commit",
-        "_check_admission",
-        "_workflow_enabled",
-        "_workflow_current",
-        "_resume_workflow_dispatch",
-        "quiesce_workflow_phase",
-        "resume_workflow_phase",
-        "_workflow_clock_unknown",
-        "_workflow_active_seconds",
-        "_snapshot",
-    )
-    for method in (vars(AutomaticWorkLedger)[name],)
-)

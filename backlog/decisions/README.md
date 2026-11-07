@@ -164,6 +164,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-244](244-shared-console-ownership-and-mobile-supervision.md) | Accepted (design only) | Replace mobile-specific storage/execution with canonical Console ownership, retained served hosts, explicit mobile controls and recoverable history consolidation; supersedes ADR-234's split and amends ADR-236. |
 | [ADR-285](285-native-phased-agent-workflows.md) | Accepted (design only) | Reuse Console execution for approved shared-worktree phases, with task scope, durable admission/results, active-time limits and explicit recovery. |
 | [ADR-286](286-console-prompt-mix-ins.md) | Accepted (design only) | Add literal Before/After Mix-in library artifacts through the existing composer Prompts button, with chat-owned selections, exact retry snapshots and current-send-only caching semantics. |
+| [ADR-356](356-native-phase-orchestration-runtime-ownership.md) | Accepted; implementation in progress | Rebuild PR3411 orchestration on native lifecycle owners, injected restrictions and supported recovery reconciliation, without Python implementation attestation. |
 
 ## Historical Decision Material
 

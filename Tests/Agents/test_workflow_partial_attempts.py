@@ -28,7 +28,7 @@ def test_drained_native_partial_closes_only_never_run_sibling(task_host, mode):
         sibling=mode == "precreated",
     )
     with (
-        pytest.raises(RuntimeError, match="workflow_original_fence_producer_required"),
+        pytest.raises(RuntimeError, match="workflow_native_commit_required"),
         host.phase._fence("child_commit"),
     ):
         pytest.fail("direct fence entry created native dispatch authority")
@@ -252,7 +252,7 @@ def test_actual_failed_or_unverified_result_requires_repair(task_host, failure):
     raw.shutdown()
 
 
-def test_original_launch_marker_excludes_unused_retirement(task_host):
+def test_original_launch_marker_excludes_unused_retirement(task_host, monkeypatch):
     import threading
     from types import SimpleNamespace
 
@@ -262,7 +262,6 @@ def test_original_launch_marker_excludes_unused_retirement(task_host):
         _launch,
         _prepared_service,
     )
-    from tldw_chatbook.Agents.agent_service import _WORKFLOW_LAUNCH_CODE
     from tldw_chatbook.Agents.workflow_models import WorkflowTaskResult
     from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
@@ -275,16 +274,15 @@ def test_original_launch_marker_excludes_unused_retirement(task_host):
     entered, release = threading.Event(), threading.Event()
     result = []
 
-    def observe(frame, event, _arg):
-        if (
-            event == "call"
-            and frame.f_code is _WORKFLOW_LAUNCH_CODE
-        ):
-            assert host.authorization._native_launch == [None]
-            entered.set()
-            assert release.wait(10)
+    launch = native._launch_prepared_child_result
 
-    threading.setprofile(observe)
+    def held_launch(*args, **kwargs):
+        assert host.authorization._native_launch == [None]
+        entered.set()
+        assert release.wait(10)
+        return launch(*args, **kwargs)
+
+    monkeypatch.setattr(native, "_launch_prepared_child_result", held_launch)
     worker = threading.Thread(target=lambda: result.append(_launch(native, host)))
     try:
         worker.start()
@@ -296,7 +294,6 @@ def test_original_launch_marker_excludes_unused_retirement(task_host):
     finally:
         release.set()
         worker.join(10)
-        threading.setprofile(None)
     assert not worker.is_alive()
     _join(host)
     receipt = result[0]

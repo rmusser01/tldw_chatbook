@@ -182,8 +182,9 @@ class WorkflowRig:
 
     async def close(self):
         self.provider_release()
+        capacity = self.runtime._execution_capacity
         await self.runtime.dispose()
-        assert self.runtime.execution_capacity.snapshot().executions == ()
+        assert capacity is None or capacity.snapshot().executions == ()
         await self.gateway.aclose()
         self.creators.retire()
         print("retired and reopened", flush=True)

@@ -135,6 +135,40 @@ def _join(host):
         assert not thread.is_alive()
 
 
+@pytest.mark.parametrize(
+    "method",
+    [
+        "launch_workflow_task",
+        "_workflow_launch_result",
+        "_finish_workflow_launch",
+        "_launch_prepared_child",
+        "_launch_prepared_child_result",
+        "bind_native",
+    ],
+)
+def test_native_workflow_launch_accepts_transparent_wrappers(
+    workflow_host, monkeypatch, method
+):
+    from functools import wraps
+
+    from Tests.Agents.test_agent_service import ScriptedChat
+
+    host = workflow_host
+    service, _ = _prepared_service(host, ScriptedChat(["done"]))
+    target = type(host.authorization) if method == "bind_native" else service
+    launch = getattr(target, method)
+
+    @wraps(launch)
+    def wrapped(*args, **kwargs):
+        return launch(*args, **kwargs)
+
+    monkeypatch.setattr(target, method, wrapped)
+    receipt = _launch(service, host)
+    _join(host)
+    assert host.db.get_run(receipt.run_id)["status"] == "done"
+    assert service.runtime_capacity.snapshot().executions == ()
+
+
 def test_workflow_uses_original_reservation_and_real_native_tool_run(
     workflow_host, monkeypatch
 ):

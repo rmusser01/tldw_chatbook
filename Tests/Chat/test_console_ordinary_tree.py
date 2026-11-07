@@ -357,10 +357,19 @@ async def test_personal_context_deadline_retains_original_preparation_worker(
 
 
 @pytest.mark.parametrize(
-    "library_kind", ["unknown", "notes_read", "notes_save", "conversation_read"]
+    "library_kind",
+    [
+        "unknown",
+        "custom_partial",
+        "notes_read",
+        "notes_save",
+        "conversation_read",
+        "wrapped_native",
+        "swapped_native",
+    ],
 )
 async def test_original_unknown_library_factory_is_opaque_before_construction(
-    ordinary_host, library_kind
+    ordinary_host, library_kind, monkeypatch
 ):
     from dataclasses import replace
 
@@ -383,9 +392,11 @@ async def test_original_unknown_library_factory_is_opaque_before_construction(
     session = h.store.create_session(workspace_id=h.session.workspace_id)
     h.controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
     constructions = []
+    factory_calls = []
 
     def factory(context):
         tree = current_ordinary_tree()
+        factory_calls.append(tree)
         constructions.append((tree, tree.footprint.opaque if tree else None))
         return LibraryToolProvider(LocalLibraryToolService())
 
@@ -402,9 +413,43 @@ async def test_original_unknown_library_factory_is_opaque_before_construction(
         h.app.notes_service = NotesInteropService(
             h.tmp_path, "ordinary-library", global_db_to_use=h.store.persistence.db
         )
-        h.controller._library_provider_factory = partial(
-            _library_provider_for_app, h.app
-        )
+        if library_kind == "custom_partial":
+
+            def custom_factory(app, context):
+                tree = current_ordinary_tree()
+                constructions.append((tree, tree.footprint.opaque))
+                (h.tmp_path / "custom-library-initialization.txt").write_text(
+                    "initialized"
+                )
+                return _library_provider_for_app(app, context)
+
+            h.controller._library_provider_factory = partial(custom_factory, h.app)
+        else:
+            h.controller._library_provider_factory = h.runtime._library_provider_factory
+            if library_kind == "swapped_native":
+                from tldw_chatbook.Chat import console_ordinary_tree
+
+                capture = console_ordinary_tree._capture_library_maximum
+
+                def capture_then_replace(tree):
+                    opaque = capture(tree)
+                    assert not opaque
+                    h.controller._library_provider_factory = factory
+                    return opaque
+
+                monkeypatch.setattr(
+                    console_ordinary_tree,
+                    "_capture_library_maximum",
+                    capture_then_replace,
+                )
+            if library_kind == "wrapped_native":
+                factory_type = type(h.runtime._library_provider_factory)
+                original = factory_type.__call__
+
+                def wrapped_factory(resource, context):
+                    return original(resource, context)
+
+                monkeypatch.setattr(factory_type, "__call__", wrapped_factory)
 
         class Gateway(_RecordingGateway):
             async def stream_chat(self, resolution, messages, **kwargs):
@@ -432,7 +477,13 @@ async def test_original_unknown_library_factory_is_opaque_before_construction(
         tools["agent_run_budget_maximum"], max_subagents=0
     )
     configuration = replace(configuration, tool_configuration=tools)
-    if library_kind in {"notes_read", "conversation_read"}:
+    if library_kind in {
+        "notes_read",
+        "conversation_read",
+        "custom_partial",
+        "wrapped_native",
+        "swapped_native",
+    }:
         selected = (
             "library_list_conversations"
             if library_kind == "conversation_read"
@@ -447,8 +498,14 @@ async def test_original_unknown_library_factory_is_opaque_before_construction(
     result = await h.controller.submit_draft(
         "use Library", session_id=session.id, configuration=configuration
     )
+    if library_kind == "swapped_native":
+        assert result.accepted
+        assert not factory_calls
+        assert not any(tree.library_providers for tree, _ in constructions)
+        assert constructions and all(opaque is False for _, opaque in constructions)
+        return
     assert result.accepted and h.gateway.payloads
-    expected_opaque = library_kind in {"unknown", "notes_save"}
+    expected_opaque = library_kind in {"unknown", "notes_save", "custom_partial"}
     assert constructions and all(
         tree is not None and opaque is expected_opaque for tree, opaque in constructions
     ), constructions
@@ -635,7 +692,11 @@ async def test_cancelled_original_admission_returns_its_unpublished_tree(
         os._exit(1)
 
 
-async def test_actual_received_turn_without_mcp_is_bounded(ordinary_host):
+@pytest.mark.parametrize("workflows_enabled", [False, True])
+@pytest.mark.parametrize("transparent_wrappers", [False, True])
+async def test_actual_received_turn_without_mcp_is_bounded(
+    ordinary_host, monkeypatch, workflows_enabled, transparent_wrappers
+):
     from dataclasses import replace
 
     from Tests.Chat.test_console_received_intent_custody import _intent
@@ -644,6 +705,42 @@ async def test_actual_received_turn_without_mcp_is_bounded(ordinary_host):
     from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
     h = ordinary_host
+    monkeypatch.setenv(
+        "TLDW_AGENTS_WORKFLOW_RUNS_ENABLED", str(workflows_enabled).lower()
+    )
+    if transparent_wrappers:
+        from functools import wraps
+
+        from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+        from tldw_chatbook.Agents.run_log import RunLogWriter
+        from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+        from tldw_chatbook.Chat.console_ordinary_tree import _OrdinaryTurn
+
+        for provider in (LocalToolProvider, BuiltinToolProvider):
+            original = provider.invoke
+
+            def wrapped(original):
+                @wraps(original)
+                async def invoke(*args, **kwargs):
+                    return await original(*args, **kwargs)
+
+                return invoke
+
+            monkeypatch.setattr(provider, "invoke", wrapped(original))
+        retain = _OrdinaryTurn.retain_source_scope
+
+        @wraps(retain)
+        def retain_scope(*args, **kwargs):
+            return retain(*args, **kwargs)
+
+        monkeypatch.setattr(_OrdinaryTurn, "retain_source_scope", retain_scope)
+        append = RunLogWriter.append
+
+        @wraps(append)
+        def append_record(*args, **kwargs):
+            return append(*args, **kwargs)
+
+        monkeypatch.setattr(RunLogWriter, "append", append_record)
     trees = []
 
     class Gateway(_RecordingGateway):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -409,10 +410,13 @@ class _TaskEvidence:
 class WorkflowRunService:
     """History is passive; only original native custody can publish a checkpoint."""
 
-    def __init__(self, db: AgentRunsDB, persistence: Any) -> None:
+    def __init__(
+        self, db: AgentRunsDB, persistence: Any, *, runtime: Any = None
+    ) -> None:
         self.db = db
         self.persistence = persistence
         self._tasks = {}
+        self._runtime = runtime
 
     async def call(
         self, operation: Callable[..., Any], /, *args: Any, **kwargs: Any
@@ -420,7 +424,7 @@ class WorkflowRunService:
         """Offload one named finite service operation with complete storage custody.
 
         Args:
-            operation: An original bound public service operation listed below.
+            operation: A bound service operation whose name is supported below.
             *args: Positional arguments for that operation.
             **kwargs: Keyword arguments for that operation.
 
@@ -428,46 +432,55 @@ class WorkflowRunService:
             The operation's result after its owned storage callback completes.
 
         Raises:
-            ValueError: The callback is not an original supported service method.
+            ValueError: The operation does not name a supported method on this service.
         """
         from tldw_chatbook.DB.base_db import run_owned_db_call
 
-        allowed = (
-            WorkflowRunService.get,
-            WorkflowRunService.list_history,
-            WorkflowRunService.setup_choices,
-            WorkflowRunService.read_checkpoint,
-            WorkflowRunService.change_windows,
-            WorkflowRunService.active_seconds,
-            WorkflowRunService.runtime_snapshot,
-            WorkflowRunService.set_status,
-            WorkflowRunService.phase_task_ids,
-            WorkflowRunService.reviewed_task_ids,
-            WorkflowRunService.prepare_task_inputs,
-            WorkflowRunService.validate_task_inputs,
-            WorkflowRunService.checkpoint_task,
-            WorkflowRunService.prepare_decision,
-            WorkflowRunService.settle_execution_phase,
-            WorkflowRunService.prepare_remaining_decision,
-            WorkflowRunService.validate_remaining_decision,
-            WorkflowRunService.prepare_quality_review,
-            WorkflowRunService.validate_decision,
-            WorkflowRunService.project_recovery,
-            WorkflowRunService.recovery_protections,
-            WorkflowRunService.resume,
-            WorkflowRunService.review_quality,
-            WorkflowRunService.resolve_recovery,
-        )
+        allowed = {
+            "get",
+            "list_history",
+            "setup_choices",
+            "read_checkpoint",
+            "change_windows",
+            "active_seconds",
+            "runtime_snapshot",
+            "set_status",
+            "phase_task_ids",
+            "reviewed_task_ids",
+            "prepare_task_inputs",
+            "validate_task_inputs",
+            "checkpoint_task",
+            "prepare_decision",
+            "settle_execution_phase",
+            "prepare_remaining_decision",
+            "validate_remaining_decision",
+            "prepare_quality_review",
+            "validate_decision",
+            "project_recovery",
+            "recovery_protections",
+            "resume",
+            "review_quality",
+            "resolve_recovery",
+            "remove_payloads",
+            "record_returned_planning",
+        }
         if (
             type(operation) is not MethodType
             or getattr(operation, "__self__", None) is not self
-            or getattr(operation, "__func__", None) not in allowed
+            or getattr(operation, "__name__", None) not in allowed
+        ):
+            raise ValueError("unsupported_workflow_operation")
+
+        native_operation = getattr(self, operation.__name__)
+        if (
+            type(native_operation) is not MethodType
+            or native_operation.__self__ is not self
         ):
             raise ValueError("unsupported_workflow_operation")
 
         def invoke():
             with owned_goal_storage(self):
-                return operation(*args, **kwargs)
+                return native_operation(*args, **kwargs)
 
         return await run_owned_db_call(self.db, invoke)
 
@@ -1038,15 +1051,6 @@ class WorkflowRunService:
         messages: tuple[dict, ...] | list[dict] | None = None,
     ) -> None:
         """Recheck the original finite seed and dependencies before admission."""
-        if (
-            _workflow_input_sources is not _INPUT_SOURCE[0]
-            or _workflow_input_sources.__code__ is not _INPUT_SOURCE[1]
-            or _workflow_input_sources.__defaults__ is not _INPUT_SOURCE[2]
-            or _workflow_input_sources.__kwdefaults__ is not _INPUT_SOURCE[3]
-            or _workflow_input_sources.__closure__ is not _INPUT_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
-        _workflow_input_sources(self)
         result = self._task_input_result(authorization, messages)
         if result.error is not None:
             raise result.error
@@ -1054,15 +1058,6 @@ class WorkflowRunService:
     @goal_storage_operation
     def _task_input_result(self, authorization, messages=None):
         """Carry a body refusal through the actual original storage return."""
-        if (
-            _workflow_input_sources is not _INPUT_SOURCE[0]
-            or _workflow_input_sources.__code__ is not _INPUT_SOURCE[1]
-            or _workflow_input_sources.__defaults__ is not _INPUT_SOURCE[2]
-            or _workflow_input_sources.__kwdefaults__ is not _INPUT_SOURCE[3]
-            or _workflow_input_sources.__closure__ is not _INPUT_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
-        _workflow_input_sources(self)
         tracker = self._tasks.get(authorization.claim.id)
         if tracker is None or tracker.authorization is not authorization:
             raise ValueError("native_task_custody_required")
@@ -1361,7 +1356,8 @@ class WorkflowRunService:
                 and not (
                     _remaining_read is not None
                     and r.source is _remaining_read
-                    and r.callback is _remaining_read.terminal_callback
+                    and _remaining_read.terminal_read_return is not None
+                    and r is _remaining_read.terminal_read_return[0]
                     and r.task is _remaining_read.issuing
                 )
                 for r in runtime._preparation_reads
@@ -1674,15 +1670,6 @@ class WorkflowRunService:
         )
 
     def _fresh_task_result(self, snapshot, task, *, partial=False):
-        if (
-            _workflow_input_sources is not _INPUT_SOURCE[0]
-            or _workflow_input_sources.__code__ is not _INPUT_SOURCE[1]
-            or _workflow_input_sources.__defaults__ is not _INPUT_SOURCE[2]
-            or _workflow_input_sources.__kwdefaults__ is not _INPUT_SOURCE[3]
-            or _workflow_input_sources.__closure__ is not _INPUT_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
-        _workflow_input_sources(self)
         result = self._fresh_task_result_value(snapshot, task, partial=partial)
         if result.error is not None:
             raise result.error
@@ -1690,15 +1677,6 @@ class WorkflowRunService:
 
     def _fresh_task_result_value(self, snapshot, task, *, partial=False):
         """Preserve predicate order without throwing a known body refusal."""
-        if (
-            _workflow_input_sources is not _INPUT_SOURCE[0]
-            or _workflow_input_sources.__code__ is not _INPUT_SOURCE[1]
-            or _workflow_input_sources.__defaults__ is not _INPUT_SOURCE[2]
-            or _workflow_input_sources.__kwdefaults__ is not _INPUT_SOURCE[3]
-            or _workflow_input_sources.__closure__ is not _INPUT_SOURCE[5]
-        ):
-            raise PermissionError("original workflow helper source changed")
-        _workflow_input_sources(self)
         record = _task_record(self.db, snapshot, task, partial=partial)
         if record is None:
             return _TaskInputResult(None)
@@ -1890,69 +1868,39 @@ class WorkflowRunService:
 
     @goal_storage_operation
     def recovery_protections(self, audit: RuntimeRecoveryResult) -> tuple:
-        """Read denial footprints only for the original completed startup audit.
-
-        Review closure is not physical cleanup. Unrepresentable roots and opaque
-        effects conservatively protect this runtime without creating an owner.
-        """
+        """Protect historical effects in their saved folder until explicit review."""
         from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
         from tldw_chatbook.Workspaces.worktree_activity import (
             WorktreeFootprint,
             WorktreeScope,
         )
 
-        if audit is None or audit is not getattr(
-            self.db.automatic_work, "recovery_result", None
-        ):
+        if audit is None or audit is not self.db.automatic_work.recovery_result:
             raise ValueError("untrusted_recovery_audit")
         with self.db.connection() as conn:
             self.db.automatic_work._check_runtime_owner(conn, audit.owner_id)
             ids = tuple(
                 row[0]
-                for row in conn.execute("SELECT id FROM workflow_runs")
+                for row in conn.execute(
+                    "SELECT id FROM workflow_runs WHERE status != 'removed'"
+                )
                 if self.db.workflow_runs._active(conn, row[0])
             )
         protections = []
         for workflow_id in ids:
             snapshot = self.get(workflow_id)
-            footprint = WorktreeFootprint(opaque=True)
-            with self.db.connection() as conn:
-                phases = tuple(
-                    conn.execute(
-                        "SELECT plan_revision,phase_id FROM workflow_phase_attempts "
-                        "WHERE workflow_id=? AND (status IN ('prepared','accepted','uncertain') OR retirement!='drained')",
-                        (workflow_id,),
-                    )
+            if not snapshot.plans:
+                continue  # Read-only planning has no saved ownership or mutating tasks.
+            try:
+                chain = capture_directory_chain(Path(snapshot.request.binding.locator))
+                saved_root = snapshot.plans[-1].root_identity
+                if saved_root != _workflow_root_identity(chain):
+                    continue
+                footprint = WorktreeFootprint(
+                    writes=(WorktreeScope(chain.canonical_root, True, chain),)
                 )
-                tasks = tuple(
-                    conn.execute(
-                        "SELECT plan_revision,task_id FROM workflow_task_attempts "
-                        "WHERE workflow_id=? AND (status IN ('prepared','accepted','uncertain') OR retirement!='drained')",
-                        (workflow_id,),
-                    )
-                )
-            phases = set(map(tuple, phases))
-            tasks = set(map(tuple, tasks))
-            opaque = not (phases or tasks) or any(
-                task.execution_mode == "exclusive"
-                for revision, plan in enumerate(snapshot.plans, 1)
-                for phase in plan.phases
-                for task in phase.tasks
-                if (revision, phase.id) in phases or (revision, task.id) in tasks
-            )
-            if not opaque and self._binding_reason(snapshot) is None:
-                try:
-                    chain = capture_directory_chain(
-                        Path(snapshot.request.binding.locator)
-                    )
-                    if snapshot.plans and snapshot.plans[
-                        -1
-                    ].root_identity == _workflow_root_identity(chain):
-                        footprint = WorktreeFootprint(
-                            writes=(WorktreeScope(chain.canonical_root, True, chain),)
-                        )
-                except (OSError, ValueError):
-                    pass
+            except (OSError, ValueError):
+                continue  # Missing historical folders confer no runtime-wide claim.
             protections.append((workflow_id, footprint))
         return tuple(protections)
 
@@ -2132,6 +2080,143 @@ class WorkflowRunService:
             return self.get(snapshot.id)
 
     @goal_storage_operation
+    def record_returned_planning(
+        self,
+        prepared,
+        *,
+        error: BaseException,
+        expected_control_revision: int | None = None,
+    ) -> WorkflowSnapshot:
+        """Retry recovery recording from an actual physically returned planner."""
+        from tldw_chatbook.Chat.console_workflow_preparation import (
+            _PreparedWorkflowReply,
+        )
+
+        from .automatic_work_budget import AutomaticWorkRefused
+
+        if (
+            not isinstance(prepared, _PreparedWorkflowReply)
+            or prepared.service is not self
+            or prepared.runtime is not self._runtime
+            or prepared.phase is None
+            or prepared.phase.attempt.purpose != "planning"
+            or not isinstance(error, BaseException)
+        ):
+            raise ValueError("workflow_planning_return_required")
+        returned = prepared.planning_recovery_return()
+        if returned.error is not error:
+            raise ValueError("workflow_planning_return_required")
+        attempt = prepared.phase.attempt
+        ledger = self.db.automatic_work
+        with ledger.transaction() as conn:
+            ledger._check_runtime_owner(conn, attempt.owner_id)
+            native = ledger._attempt(
+                conn, attempt.id, attempt.owner_id, "workflow_phase"
+            )
+            phase = conn.execute(
+                "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                (attempt.id,),
+            ).fetchone()
+            snapshot = self.get(attempt.workflow_id)
+            if (
+                expected_control_revision is not None
+                and snapshot.control_revision != expected_control_revision
+            ):
+                raise ValueError("revision_conflict")
+            if (
+                native["state"] not in {"accepted", "completed", "review_required"}
+                or phase is None
+                or phase["purpose"] != "planning"
+                or phase["workflow_id"] != snapshot.id
+                or (native["state"] == "completed" and phase["retirement"] != "drained")
+                or (
+                    native["state"] == "review_required"
+                    and (phase["status"], phase["retirement"])
+                    != ("uncertain", "unknown")
+                )
+            ):
+                raise ValueError("workflow_planning_return_required")
+            prepared.planning_recovery_return()
+            if native["state"] == "accepted":
+                try:
+                    ledger._close_workflow_interval(conn, snapshot.id)
+                except AutomaticWorkRefused as clock_error:
+                    if clock_error.reason not in {"clock_unknown", "clock_reversed"}:
+                        raise
+                    # Preserve the unknown interval; never invent an ending clock.
+                conn.execute(
+                    "UPDATE automatic_wake_attempts SET state='review_required' WHERE id=?",
+                    (attempt.id,),
+                )
+                conn.execute(
+                    "UPDATE workflow_phase_attempts SET status='uncertain',retirement='unknown' WHERE id=?",
+                    (phase["id"],),
+                )
+            # A retry preserves an already committed recovery or closing review.
+            if (
+                snapshot.status != "recovery_required"
+                and not self.db.workflow_runs._recovery_reviewed(conn, snapshot.id)
+            ):
+                updated = conn.execute(
+                    "UPDATE workflow_runs SET status='recovery_required',control_revision=control_revision+1,updated_at=? "
+                    "WHERE id=? AND control_revision=?",
+                    (time.time(), snapshot.id, snapshot.control_revision),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError("revision_conflict")
+            result = self.get(snapshot.id)
+        for workflow_id, footprint in self.recovery_protections(ledger.recovery_result):
+            if workflow_id == result.id:
+                self._runtime.worktree_activity.protect_recovery(workflow_id, footprint)
+        return result
+
+    def _has_live_workflow_resources(self, workflow_id: str) -> bool:
+        runtime = self._runtime
+        if runtime is not None:
+            if runtime._workflow_service is not self:
+                raise ValueError("workflow_runtime_changed")
+            if any(
+                wave.phase.attempt.workflow_id == workflow_id
+                for wave in tuple(runtime._workflow_waves)
+            ):
+                return True
+            for prepared in tuple(runtime._workflow_preparations):
+                attempt = (
+                    prepared.phase.attempt
+                    if prepared.phase is not None
+                    else prepared._planning_attempt
+                )
+                if attempt is not None and attempt.workflow_id == workflow_id:
+                    return True
+        for tracker in self._tasks.values():
+            auth = tracker.authorization
+            if auth.claim.workflow_id != workflow_id:
+                continue
+            with auth._lock:
+                if any(owner.is_admitted for owner, _claim in auth._binding_state):
+                    return True
+                if any(
+                    thread.is_alive()
+                    for native in auth._native_preparation
+                    for thread in native.threads.values()
+                ):
+                    return True
+            if tracker.receipt is not None and tracker.receipt.owner.is_admitted:
+                return True
+        return False
+
+    @goal_storage_operation
+    def remove_payloads(
+        self, workflow_id: str, *, expected_control_revision: int
+    ) -> WorkflowSnapshot:
+        """Remove terminal private results and windows while keeping plans and charges."""
+        if self._has_live_workflow_resources(workflow_id):
+            raise ValueError("workflow_resources_still_live")
+        return self.db.workflow_runs.remove_payloads(
+            workflow_id, expected_control_revision=expected_control_revision
+        )
+
+    @goal_storage_operation
     def resolve_recovery(
         self,
         workflow_id: str,
@@ -2139,125 +2224,55 @@ class WorkflowRunService:
         expected_control_revision: int,
         decision: WorkflowExecutionRecovery,
     ) -> WorkflowSnapshot:
-        """Close recovery review while retaining unknown physical/accounting fences."""
+        """Close reviewed historical uncertainty without altering native claims or charges."""
         if type(decision) is not WorkflowExecutionRecovery:
             raise ValueError("recovery_decision_required")
-        # Closing the saved review is not physical cleanup or permission to replay.
+        audit = self.db.automatic_work.recovery_result
+        if audit is None:
+            raise ValueError("recovery_audit_required")
         with self.db.automatic_work.transaction() as conn:
+            self.db.automatic_work._check_runtime_owner(conn, audit.owner_id)
             snapshot = self.get(workflow_id)
-            if snapshot.status != "recovery_required":
+            if snapshot.control_revision != expected_control_revision:
+                raise ValueError("revision_conflict")
+            reviewed = self.db.workflow_runs._recovery_reviewed(conn, workflow_id)
+            if (
+                snapshot.status != "recovery_required"
+                and not snapshot.accounting.uncertain
+                and not reviewed
+            ):
                 raise ValueError("recovery_unavailable")
-            self.db.workflow_runs._cas(
-                conn, workflow_id, expected_control_revision, "closed"
-            )
-            return self.get(workflow_id)
-
-
-# Original predicate sources, captured with the definitions, never on first use.
-from tldw_chatbook.Tools import local_tool_impls as _input_local_tools
-
-from ..Chat.console_ordinary_tree import (
-    _function_record as _input_record,
-)
-from ..Chat.console_ordinary_tree import (
-    _function_unchanged as _input_unchanged,
-)
-from . import goal_iteration as _input_iteration
-from . import goal_storage_lifetime as _input_storage
-
-
-def _workflow_input_sources(service):
-    import inspect
-
-    checker = _input_unchanged
-    if (
-        checker is not _INPUT_CHECKER[0]
-        or checker.__code__ is not _INPUT_CHECKER[1]
-        or checker.__defaults__ is not _INPUT_CHECKER[2]
-        or checker.__kwdefaults__ is not _INPUT_CHECKER[3]
-        or checker.__closure__ is not _INPUT_CHECKER[5]
-        or type(service) is not WorkflowRunService
-        or _TaskInputResult is not _INPUT_RESULT_CLASS
-        or any(not checker(record) for record in _INPUT_RESULT_METHODS)
-        or any(
-            inspect.getattr_static(service, name, None) is not method
-            or inspect.getattr_static(WorkflowRunService, name, None) is not method
-            or any(not checker(record) for record in records)
-            for name, method, records in _INPUT_METHODS
-        )
-        or any(not checker(record) for record in _INPUT_BODIES)
-        or any(
-            vars(module).get(name) is not record[0] or not checker(record)
-            for module, name, record in _INPUT_FUNCTIONS
-        )
-    ):
-        raise PermissionError("original workflow input source changed")
-
-
-_INPUT_CHECKER = _input_record(_input_unchanged)
-_INPUT_METHODS = tuple(
-    (
-        name,
-        method,
-        tuple(
-            _input_record(fn)
-            for fn in (
-                method,
-                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
-            )
-        ),
-    )
-    for name in (
-        "validate_task_inputs",
-        "_task_input_result",
-        "_fresh_task_result",
-        "_fresh_task_result_value",
-        "_source_manifest",
-        "_binding_reason",
-        "get",
-    )
-    for method in (vars(WorkflowRunService)[name],)
-)
-import sys as _input_sys
-
-_INPUT_FUNCTIONS = tuple(
-    (module, name, _input_record(vars(module)[name]))
-    for module, names in (
-        (
-            _input_sys.modules[__name__],
-            (
-                "_workflow_input_sources",
-                "_manifest",
-                "_shell_manifest",
-                "_task_record",
-                "_task_freshness_reads",
-                "_task_freshness_reads_result",
-                "_read_scope",
-                "_read_scope_result",
-                "_dependency_read_scopes",
-                "_dependency_read_scopes_result",
-                "_bound_path",
-                "capture_manifest",
-                "goal_storage_operation",
-            ),
-        ),
-        (_input_iteration, ("capture_manifest",)),
-        (_input_local_tools, ("resolve_workspace_path",)),
-        (_input_storage, ("goal_storage_operation", "owned_goal_storage")),
-    )
-    for name in names
-)
-
-_INPUT_BODIES = tuple(
-    _input_record(record[0].__wrapped__)
-    for _module, _name, record in _INPUT_FUNCTIONS
-    if hasattr(record[0], "__wrapped__")
-)
-
-_INPUT_SOURCE = _input_record(_workflow_input_sources)
-_INPUT_RESULT_CLASS = _TaskInputResult
-_INPUT_RESULT_METHODS = tuple(
-    _input_record(method)
-    for method in vars(_TaskInputResult).values()
-    if callable(method) and hasattr(method, "__code__")
-)
+            if (
+                self._has_live_workflow_resources(workflow_id)
+                or conn.execute(
+                    "SELECT 1 FROM workflow_phase_attempts p JOIN automatic_wake_attempts a "
+                    "ON a.id=p.native_attempt_id WHERE p.workflow_id=? "
+                    "AND a.state IN ('prepared','accepted') LIMIT 1",
+                    (workflow_id,),
+                ).fetchone()
+            ):
+                raise ValueError("workflow_resources_still_live")
+            if not reviewed:
+                # Recovery may close old terminal uncertainty; ordinary controls cannot reopen it.
+                updated = conn.execute(
+                    "UPDATE workflow_runs SET status='closed',control_revision=control_revision+1,"
+                    "recovery_reviewed_revision=control_revision+1,updated_at=? "
+                    "WHERE id=? AND control_revision=?",
+                    (time.time(), workflow_id, expected_control_revision),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError("revision_conflict")
+            resolved = self.get(workflow_id)
+        if self._runtime is not None:
+            self._runtime.worktree_activity.release_recovery(workflow_id)
+        for tracker in self._tasks.values():
+            receipt = tracker.receipt
+            if (
+                tracker.authorization.claim.workflow_id == workflow_id
+                and receipt is not None
+                and tracker.drain is True
+                and not receipt.owner.is_admitted
+                and receipt.failure != "unknown"
+            ):
+                receipt.activity_claim.settle(durable=True)
+        return resolved

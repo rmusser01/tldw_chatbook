@@ -95,10 +95,7 @@ class _OrdinaryTurn:
         self.snapshot_sources = []
         self.ssh_sources = {}
         self.local_maximum = {}
-        self.local_factory = None
         self.local_source_values = ()
-        self.local_function_values = ()
-        self.local_native = False
         self.raw_projection = None
         self.local_providers = {}
         self.other_maximum = {}
@@ -106,21 +103,19 @@ class _OrdinaryTurn:
         self.mcp_entries = {}
         self.mcp_source_maximum = None
         self.goal_catalog_permits = lambda _source, _name: True
-        self.virtual_native = False
         self.virtual_commands = frozenset()
         self.virtual_providers = {}
         self.builtin_maximum = {}
         self.builtin_classes = {}
         self.builtin_providers = {}
         self.catalog_permits = lambda _source, _name: False
-        self.library_factory = None
         self.library_maximum = frozenset()
+        self.library_factory = None
         self.library_services = {}
         self.library_providers = {}
         self.personal_getter = None
         self.personal_service = None
         self.personal_native = False
-        self.personal_functions = ()
         self.personal_source_values = ()
         self.members = {}
         self.runs = {}
@@ -156,10 +151,6 @@ class _OrdinaryTurn:
 
     def check_local_sources(self):
         self.check()
-        if any(
-            not _function_unchanged(record) for record in self.local_function_values
-        ):
-            raise RuntimeError("ordinary native callable implementation changed")
         if self.raw_projection is not None:
             original, was_reachable, values = self.raw_projection
             current, reachable, sources = _raw_shell_metadata(self)
@@ -170,26 +161,15 @@ class _OrdinaryTurn:
                 or values != sources
             ):
                 raise RuntimeError("ordinary raw shell maximum changed")
-        for obj, name, value, code in self.local_source_values:
-            from inspect import getattr_static
-
+        for obj, name, value, _code in self.local_source_values:
             current = getattr_static(obj, name, None)
-            if (
-                current is not value
-                or code is not None
-                and current.__code__ is not code
-            ):
-                raise RuntimeError("ordinary local callable maximum changed")
+            if current is not value:
+                raise RuntimeError("ordinary local resource maximum changed")
 
     def check_personal_source(self, app=None):
         self.check()
         if app is not None and app is not self.app:
             raise RuntimeError("ordinary personal context app changed")
-        if (
-            getattr_static(self.app, "get_personal_context_service", None)
-            is not self.personal_getter
-        ):
-            raise RuntimeError("ordinary personal context getter changed")
         if (
             getattr_static(self.app, "_personal_context_service", None)
             is not self.personal_service
@@ -200,8 +180,6 @@ class _OrdinaryTurn:
             for obj, name, value in self.personal_source_values
         ):
             raise RuntimeError("ordinary personal context source changed")
-        if any(not _function_unchanged(record) for record in self.personal_functions):
-            raise RuntimeError("ordinary personal context implementation changed")
 
     def publish_personal_service(self, app, service):
         self.check_personal_source(app)
@@ -245,17 +223,13 @@ class _OrdinaryTurn:
             )
         )
         specs = provider._specs
-        if self.local_native:
-            for name in reachable:
-                spec = specs[name]
-                if (
-                    name not in self.local_maximum
-                    or provider._native_ordinary_specs.get(name) is not spec
-                    or spec.worktree_effect != self.local_maximum[name]
-                ):
-                    raise RuntimeError("ordinary local catalog widened")
-        elif not self.footprint.opaque:
-            raise RuntimeError("unqualified ordinary local source")
+        for name in reachable:
+            spec = specs[name]
+            if (
+                name not in self.local_maximum
+                or spec.worktree_effect != self.local_maximum[name]
+            ):
+                raise RuntimeError("ordinary local catalog widened")
         if not self.footprint.opaque:
             for authority in (provider._admitted_roots or {}).values():
                 if is_remote(authority.root):
@@ -351,59 +325,22 @@ class _OrdinaryTurn:
             raise RuntimeError("ordinary local child root outside maximum")
 
     def bind_virtual_provider(self, provider):
-        from functools import partial
-        from types import MethodType
-
         from tldw_chatbook.Agents.virtual_cli_provider import _NATIVE_VIRTUAL_CLASS
         from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
         from tldw_chatbook.Tools.workspace_tool_executor import (
             _NATIVE_ORDINARY_EXECUTOR_CLASS,
         )
 
-        from .console_ssh_custody import require_virtual_sources
-
-        if self.virtual_native:
-            require_virtual_sources(provider)
-        elif not self.footprint.opaque:
-            raise RuntimeError("ordinary virtual source widened")
         if type(provider) is not _NATIVE_VIRTUAL_CLASS:
+            if not self.footprint.opaque:
+                raise RuntimeError("ordinary virtual source widened")
             return
         roots = tuple((provider._admitted_roots or {}).items())
         registries = (
             (None, provider._registry),
             *provider._registries_by_alias.items(),
         )
-        held, partials = [], []
-        for name in (
-            "_resolve_state",
-            "_local_tools_enabled",
-            "_kill_switch",
-            "_approval_callback",
-            "_is_session_approved",
-            "_persist_approval",
-            "_persist_arg_rule",
-            "_arg_rule_allows",
-            "_record_decision",
-            "_root_guard",
-            "_authority_scope",
-        ):
-            callback = getattr_static(provider, name, None)
-            self.local_source_values += ((provider, name, callback, None),)
-            function = callback
-            if type(callback) is partial:
-                partials.append(
-                    (
-                        callback,
-                        callback.func,
-                        callback.args,
-                        tuple(callback.keywords.items()),
-                    )
-                )
-                function = callback.func
-            if type(function) is MethodType:
-                function = function.__func__
-            if type(function) is FunctionType:
-                self.local_function_values += (_function_record(function),)
+        held = []
         for alias, registry in registries:
             executor = getattr_static(registry, "_workspace_executor", None)
             root = getattr_static(registry, "_root", None)
@@ -422,8 +359,6 @@ class _OrdinaryTurn:
                 ):
                     value = getattr_static(executor, name, None)
                     self.local_source_values += ((executor, name, value, None),)
-                    if type(value) is FunctionType:
-                        self.local_function_values += (_function_record(value),)
                 if not self.footprint.opaque:
                     self._require_covered_root(
                         getattr_static(executor, "_workspace_root", None), write=False
@@ -440,14 +375,10 @@ class _OrdinaryTurn:
                     local_root_path(authority.root, site="ordinary virtual maximum"),
                     write=False,
                 )
-        self.virtual_providers[provider] = roots, tuple(held), tuple(partials)
+        self.virtual_providers[provider] = roots, tuple(held)
 
     def check_virtual_call(self, provider, args=None):
         self.check_local_sources()
-        from .console_ssh_custody import require_virtual_sources
-
-        if self.virtual_native:
-            require_virtual_sources(provider)
         if args is not None and args.get("command") not in self.virtual_commands:
             raise RuntimeError("ordinary virtual command outside original maximum")
         retained = self.virtual_providers.get(provider)
@@ -455,17 +386,7 @@ class _OrdinaryTurn:
             if self.footprint.opaque:
                 return
             raise RuntimeError("ordinary virtual provider was not composed")
-        roots, registries, partials = retained
-        for callback, function, arguments, keywords in partials:
-            if (
-                callback.func is not function
-                or callback.args is not arguments
-                or len(callback.keywords) != len(keywords)
-                or any(
-                    callback.keywords.get(key) is not value for key, value in keywords
-                )
-            ):
-                raise RuntimeError("ordinary virtual callback source changed")
+        roots, registries = retained
         current = getattr_static(provider, "_admitted_roots", None) or {}
         aliases = getattr_static(provider, "_registries_by_alias", None)
         if (
@@ -493,9 +414,13 @@ class _OrdinaryTurn:
 
     def check_library_factory(self):
         self.check_local_sources()
-        factory = getattr_static(self.controller, "_library_provider_factory", None)
-        if factory is not self.library_factory:
-            raise RuntimeError("ordinary Library factory changed")
+        if not self.footprint.opaque and (
+            self.controller._library_provider_factory is not self.library_factory
+            or self.runtime._library_provider_factory is not self.library_factory
+            or self.library_factory.runtime is not self.runtime
+            or self.runtime._app is not self.app
+        ):
+            raise RuntimeError("ordinary Library construction resource changed")
 
     def bind_library_provider(self, provider, names):
         self.check_library_factory()
@@ -569,12 +494,7 @@ class _OrdinaryTurn:
 
                 from . import console_agent_bridge as bridge
 
-                if type(
-                    provider
-                ) is not bridge._NATIVE_ORDINARY_COLLISION_PROVIDER or any(
-                    getattr_static(provider, method, None) is not original
-                    for method, original in bridge._NATIVE_ORDINARY_COLLISION_METHODS
-                ):
+                if type(provider) is not bridge._NATIVE_ORDINARY_COLLISION_PROVIDER:
                     raise RuntimeError("ordinary MCP collision view changed")
                 underlying = getattr_static(provider, "_provider", None)
                 allowed = getattr_static(provider, "_allowed_names", None)
@@ -610,16 +530,7 @@ class _OrdinaryTurn:
                     raise RuntimeError("ordinary skill maximum widened")
             elif name not in self.other_maximum.get(source, ()):
                 raise RuntimeError("ordinary provider maximum widened")
-            methods = tuple(
-                (method, getattr_static(provider, method, None))
-                for method in ("invoke", "list_catalog", "load_schema")
-            )
-            functions = tuple(
-                _function_record(value)
-                for _method, value in methods
-                if type(value) is FunctionType
-            )
-            records[name] = (tool_id, provider, source, methods, functions)
+            records[name] = (tool_id, provider, source)
         self.catalogs[registry] = records
 
     def check_catalog_call(self, registry, name, provider):
@@ -630,15 +541,10 @@ class _OrdinaryTurn:
         record = records.get(name)
         if record is None or record[1] is not provider:
             raise RuntimeError("ordinary dispatch outside original catalog")
-        tool_id, _provider, source, methods, functions = record
+        tool_id, _provider, source = record
         current = registry.resolve_owner_for_name(name)
         if current is None or current[0] != tool_id or current[1] is not provider:
             raise RuntimeError("ordinary catalog owner changed")
-        if any(
-            getattr_static(provider, method, None) is not value
-            for method, value in methods
-        ) or any(not _function_unchanged(value) for value in functions):
-            raise RuntimeError("ordinary provider implementation changed")
         if source == "mcp":
             from tldw_chatbook.MCP.permission_store import definition_hash
 
@@ -1369,16 +1275,13 @@ def _capture_maximum(tree):
     )
     if service is not None:
         from tldw_chatbook.Workspaces.change_review_consent import (
-            _ordinary_metadata_sources,
+            ChangeReviewConsentService,
         )
 
-        records, native = _ordinary_metadata_sources(service)
-        for obj, name, _original, _code in records:
-            actual = getattr_static(obj, name, None)
-            tree.local_source_values += ((obj, name, actual, None),)
-            if type(actual) is FunctionType:
-                tree.local_function_values += (_function_record(actual),)
-        if native:
+        if (
+            type(service) is ChangeReviewConsentService
+            and not service._custom_capability_reader
+        ):
             status = service.status(tree.workspace)
             opaque |= (
                 status.capability.state is ChangeReviewState.ENABLED
@@ -1442,9 +1345,6 @@ def _capture_maximum(tree):
                             != "deny"
                         )
                     }
-                    tree.local_factory = local._default_specs
-                    tree.local_native = _capture_local_sources(tree, local)
-                    opaque |= not tree.local_native
                     opaque |= "opaque" in tree.local_maximum.values()
                     raw = getattr_static(tree.app, "raw_cli_runtime", None)
                     if (
@@ -1518,23 +1418,12 @@ def _capture_local_provider_sources(provider, names):
         (alias, tuple(mapping.items()))
         for alias, mapping in provider._path_specs_by_alias.items()
     )
-    functions = tuple(
-        _function_record(handler)
-        for handler in dict.fromkeys(
-            spec.handler
-            for _, spec in (
-                *specs,
-                *(entry for _, entries in aliases for entry in entries),
-            )
-            if type(spec.handler) is FunctionType
-        )
-    )
-    return specs, roots, aliases, functions
+    return specs, roots, aliases
 
 
 def _check_local_provider_sources(provider, retained):
     """Reuse the original ordinary receiving-instance checks before effects."""
-    specs, roots, aliases, functions = retained
+    specs, roots, aliases = retained
     if any(provider._specs.get(name) is not spec for name, spec in specs):
         raise RuntimeError("ordinary local call outside original maximum")
     current_roots = provider._admitted_roots or {}
@@ -1543,167 +1432,31 @@ def _check_local_provider_sources(provider, retained):
     ):
         raise RuntimeError("ordinary local root source changed")
     current_aliases = provider._path_specs_by_alias
-    if (
-        len(current_aliases) != len(aliases)
-        or any(
-            alias not in current_aliases
-            or len(current_aliases[alias]) != len(entries)
-            or any(
-                current_aliases[alias].get(tool) is not spec for tool, spec in entries
-            )
-            for alias, entries in aliases
-        )
-        or any(not _function_unchanged(record) for record in functions)
+    if len(current_aliases) != len(aliases) or any(
+        alias not in current_aliases
+        or len(current_aliases[alias]) != len(entries)
+        or any(current_aliases[alias].get(tool) is not spec for tool, spec in entries)
+        for alias, entries in aliases
     ):
         raise RuntimeError("ordinary local handler source changed")
 
 
-def _capture_native_local_sources(controller, local):
-    """Pin concrete construction sources without constructing a provider/spec."""
-    from inspect import getattr_static
-
-    from tldw_chatbook.Tools import web_tool_impls as web
-
-    from . import console_chat_controller as host
-
-    native = (
-        local._default_specs is local._NATIVE_DEFAULT_SPECS
-        and local._default_specs.__code__ is local._ORDINARY_NATIVE_FACTORY_CODE
-        and local._NATIVE_WORKTREE_EFFECTS is local._ORDINARY_NATIVE_EFFECTS
-        and local.LocalToolProvider is local._ORDINARY_NATIVE_PROVIDER
-    )
-    values = [
-        (
-            local,
-            "_default_specs",
-            local._default_specs,
-            local._default_specs.__code__
-            if type(local._default_specs) is FunctionType
-            else None,
-        ),
-        (local, "LocalToolProvider", local.LocalToolProvider, None),
-        (local, "_NATIVE_WORKTREE_EFFECTS", local._NATIVE_WORKTREE_EFFECTS, None),
-    ]
-    for obj, definitions in (
-        (controller, host._NATIVE_ORDINARY_COMPOSITION_METHODS),
-        (local.LocalToolProvider, local._ORDINARY_NATIVE_PROVIDER_METHODS),
-    ):
-        for name, original in definitions:
-            current = getattr_static(obj, name, None)
-            native &= current is original
-            values.append(
-                (
-                    obj,
-                    name,
-                    current,
-                    current.__code__ if type(current) is FunctionType else None,
-                )
-            )
-    for name, original, code in web._NATIVE_LOCAL_WEB_FUNCTIONS:
-        current = getattr_static(web, name)
-        native &= (
-            current is original
-            and type(current) is FunctionType
-            and current.__code__ is code
-        )
-        values.append(
-            (
-                web,
-                name,
-                current,
-                current.__code__ if type(current) is FunctionType else None,
-            )
-        )
-    records = (
-        *local._ORDINARY_NATIVE_FUNCTIONS,
-        *host._NATIVE_ORDINARY_COMPOSITION_FUNCTIONS,
-    )
-    native &= all(_function_unchanged(record) for record in records)
-    function_values = tuple(
-        _function_record(function)
-        for function in dict.fromkeys(
-            (
-                *(record[0] for record in records),
-                *(
-                    value
-                    for _obj, _name, value, _code in values
-                    if type(value) is FunctionType
-                ),
-            )
-        )
-    )
-    return native, tuple(values), function_values
-
-
-def _capture_local_sources(tree, local):
-    native, values, functions = _capture_native_local_sources(tree.controller, local)
-    tree.local_source_values += values
-    tree.local_function_values += functions
-    return native
-
-
 def _raw_shell_metadata(tree):
-    """Project the one native app reader without invoking a runtime descriptor."""
-    import sys
-    from inspect import getattr_static
-
-    from . import console_raw_cli as native
+    """Read the actual runtime and primitive app policy without invoking callbacks."""
+    from .console_raw_cli import RawCliRuntime
 
     raw = getattr_static(tree.app, "raw_cli_runtime", None)
-    app_module = sys.modules.get("tldw_chatbook.app")
-    wiring = sys.modules.get("tldw_chatbook.app_service_wiring")
     if raw is None:
         return None, False, ()
-    if (
-        app_module is None
-        or wiring is None
-        or type(raw) is not native._NATIVE_RAW_CLI_RUNTIME_TYPE
-        or type(tree.app) is not app_module._NATIVE_RAW_CLI_APP_TYPE
-        or any(
-            getattr_static(raw, name) is not value
-            for name, value in native._NATIVE_RAW_CLI_POLICY_DESCRIPTORS
-        )
-    ):
-        return raw, True, ("unknown",)
-    callback = getattr_static(raw, "_read_permitted")
-    reader, code, defaults, kwdefaults = wiring._NATIVE_RAW_CLI_PERMISSION_READER
-    helper = getattr_static(wiring, "_read_app_raw_cli_permitted")
-    if (
-        type(callback) is not FunctionType
-        or callback.__code__ is not app_module._NATIVE_RAW_CLI_PERMISSION_CALLBACK_CODE
-        or callback.__globals__ is not vars(app_module)
-        or callback.__defaults__ is not None
-        or callback.__kwdefaults__ is not None
-        or callback.__code__.co_freevars != ("self",)
-        or callback.__closure__ is None
-        or len(callback.__closure__) != 1
-        or callback.__closure__[0].cell_contents is not tree.app
-        or helper is not reader
-        or helper.__code__ is not code
-        or helper.__defaults__ is not defaults
-        or helper.__kwdefaults__ is not kwdefaults
-        or getattr_static(app_module, "_read_app_raw_cli_permitted") is not helper
-    ):
+    if not isinstance(raw, RawCliRuntime):
         return raw, True, ("unknown",)
     app_config = getattr_static(tree.app, "app_config", None)
     console = app_config.get("console", {}) if type(app_config) is dict else {}
     if type(console) is not dict:
         return raw, True, ("unknown",)
-    # Copy only primitives; these reads neither call the permission callback nor
-    # hold the runtime mutex across external configuration access.
     permitted = console.get("raw_cli_permitted") is True
     armed = getattr_static(raw, "_armed") is True
-    sources = (
-        id(app_config),
-        id(console),
-        callback,
-        callback.__code__,
-        id(callback.__closure__),
-        id(callback.__closure__[0]),
-        reader,
-        code,
-    )
-    return raw, permitted and armed, sources
+    return raw, permitted and armed, (id(app_config), id(console))
 
 
 def _function_record(function):
@@ -1738,6 +1491,7 @@ def _function_unchanged(record):
 
 
 def _capture_builtin_maximum(tree, advertised, catalog_allowed):
+    """Project declared effects and retain the actual tool classes for composition."""
     import importlib
 
     from tldw_chatbook import config
@@ -1747,77 +1501,12 @@ def _capture_builtin_maximum(tree, advertised, catalog_allowed):
         resolve_effective_state_by_key,
     )
 
-    factory, factory_code = catalog._NATIVE_ORDINARY_BUILTIN_FACTORY
-    native = (
-        catalog.BuiltinToolProvider is catalog._NATIVE_ORDINARY_BUILTIN_PROVIDER
-        and catalog._GATEABLE_BUILTINS is catalog._NATIVE_ORDINARY_BUILTIN_DECLARATIONS
-        and catalog.build_gateable_tool is factory
-        and factory.__code__ is factory_code
-    )
-    values = list(tree.local_source_values)
-    functions = list(tree.local_function_values)
-    for name in ("BuiltinToolProvider", "_GATEABLE_BUILTINS", "build_gateable_tool"):
-        value = getattr_static(catalog, name)
-        values.append(
-            (
-                catalog,
-                name,
-                value,
-                value.__code__ if type(value) is FunctionType else None,
-            )
-        )
-    if not native:
-        tree.local_source_values = tuple(values)
-        tree.local_function_values = tuple(functions)
-        return {}, True
-    for name, descriptor in catalog._NATIVE_ORDINARY_BUILTIN_METHODS:
-        current = getattr_static(catalog.BuiltinToolProvider, name)
-        native &= current is descriptor
-        values.append(
-            (
-                catalog.BuiltinToolProvider,
-                name,
-                current,
-                current.__code__ if type(current) is FunctionType else None,
-            )
-        )
-    declarations = tuple(
-        (
-            entry.gate_key,
-            entry.module_name,
-            entry.factory_name,
-            entry.tool_name,
-            entry.worktree_effect,
-        )
-        for entry in catalog._GATEABLE_BUILTINS
-    )
-    native &= all(type(value) is str for row in declarations for value in row)
-    native &= (
-        native and declarations == catalog._NATIVE_ORDINARY_BUILTIN_DECLARATION_VALUES
-    )
-    native &= all(
-        _function_unchanged(record)
-        for record in catalog._NATIVE_ORDINARY_BUILTIN_IMPLEMENTATIONS
-    )
-    if not native:
-        # An unknown constructor/table is covered by OPAQUE. Its own code and
-        # imported modules are not executed merely to classify it.
-        tree.local_source_values = tuple(values)
-        tree.local_function_values = tuple(functions)
-        return {}, True
-    functions.extend(
-        _function_record(record[0])
-        for record in catalog._NATIVE_ORDINARY_BUILTIN_IMPLEMENTATIONS
-    )
     effects = {}
     for name, cls in zip(
         catalog.ALWAYS_ON_BUILTIN_NAMES,
-        catalog._NATIVE_ORDINARY_ALWAYS_ON_CLASSES,
+        (catalog.CalculatorTool, catalog.DateTimeTool),
         strict=True,
     ):
-        current = getattr_static(catalog, cls.__name__)
-        native &= current is cls
-        values.append((catalog, cls.__name__, current, None))
         if advertised(name) and catalog_allowed("builtin", name):
             effects[name] = "none"
             tree.builtin_classes[name] = cls
@@ -1827,60 +1516,6 @@ def _capture_builtin_maximum(tree, advertised, catalog_allowed):
             config.get_cli_setting("tools", entry.gate_key, False), False
         ):
             continue
-        # These modules only declare their closed tools; private DB and sandbox
-        # construction is deferred to execute, not imported for this projection.
-        module = importlib.import_module("tldw_chatbook.Tools." + entry.module_name)
-        classes = module._NATIVE_ORDINARY_TOOL_CLASSES
-        native &= all(
-            _function_unchanged(record)
-            for record in module._NATIVE_ORDINARY_TOOL_IMPLEMENTATIONS
-        )
-        functions.extend(
-            _function_record(record[0])
-            for record in module._NATIVE_ORDINARY_TOOL_IMPLEMENTATIONS
-        )
-        cls = vars(module).get(entry.factory_name)
-        native &= cls in classes
-        values.append((module, entry.factory_name, cls, None))
-        for owner, name, descriptor in module._NATIVE_ORDINARY_TOOL_DESCRIPTORS:
-            current = getattr_static(owner, name)
-            native &= current is descriptor
-            values.append(
-                (
-                    owner,
-                    name,
-                    current,
-                    current.__code__ if type(current) is FunctionType else None,
-                )
-            )
-        for (
-            name,
-            original,
-            code,
-            defaults,
-            kwdefaults,
-            entries,
-        ) in module._NATIVE_ORDINARY_TOOL_FUNCTIONS:
-            current = getattr_static(module, name)
-            native &= (
-                current is original
-                and original.__code__ is code
-                and original.__defaults__ is defaults
-                and original.__kwdefaults__ is kwdefaults
-            )
-            native &= (
-                kwdefaults is None
-                or len(kwdefaults) == len(entries)
-                and all(kwdefaults.get(key) is value for key, value in entries)
-            )
-            values.append(
-                (
-                    module,
-                    name,
-                    current,
-                    current.__code__ if type(current) is FunctionType else None,
-                )
-            )
         if (
             not advertised(entry.tool_name)
             or not catalog_allowed("builtin", entry.tool_name)
@@ -1899,86 +1534,34 @@ def _capture_builtin_maximum(tree, advertised, catalog_allowed):
             and entry.tool_name in {"create_note", "update_note", "write_file"}
         ):
             continue
+        module = importlib.import_module("tldw_chatbook.Tools." + entry.module_name)
+        tree.builtin_classes[entry.tool_name] = getattr(module, entry.factory_name)
         effects[entry.tool_name] = entry.worktree_effect
-        tree.builtin_classes[entry.tool_name] = cls
-    for _obj, _name, value, _code in values:
-        if type(value) is FunctionType:
-            functions.append(_function_record(value))
-    tree.local_source_values = tuple(values)
-    tree.local_function_values = tuple(functions)
     tree.builtin_maximum = effects
-    return effects, not native or "opaque" in effects.values()
+    return effects, "opaque" in effects.values()
 
 
 def _capture_personal_source(tree):
-    import sys
-
-    getter = getattr_static(tree.app, "get_personal_context_service", None)
-    tree.personal_getter = getter
+    tree.personal_getter = getattr_static(
+        tree.app, "get_personal_context_service", None
+    )
     tree.personal_service = getattr_static(tree.app, "_personal_context_service", None)
-    if getter is None:
+    if tree.personal_getter is None:
         return False
-    tree.personal_functions = (
-        (_function_record(getter),) if type(getter) is FunctionType else ()
-    )
-    app = sys.modules.get("tldw_chatbook.app")
-    if app is None or type(tree.app) is not app._NATIVE_RAW_CLI_APP_TYPE:
-        return True
-    original, code, defaults, keywords = app._NATIVE_ORDINARY_PERSONAL_GETTER
-    if (
-        getter is not original
-        or original.__code__ is not code
-        or original.__defaults__ is not defaults
-    ):
-        return True
-    if len(original.__kwdefaults__ or {}) != len(keywords) or any(
-        (original.__kwdefaults__ or {}).get(key) is not value for key, value in keywords
-    ):
-        return True
-    from tldw_chatbook.Personal_Context import bootstrap
-
-    original, code, defaults, keywords = bootstrap._NATIVE_ORDINARY_BOOTSTRAP
-    native = (
-        bootstrap.bootstrap_personal_context_service is original
-        and original.__code__ is code
-        and original.__defaults__ is defaults
-        and len(original.__kwdefaults__ or {}) == len(keywords)
-        and all(
-            (original.__kwdefaults__ or {}).get(key) is value for key, value in keywords
-        )
-    )
-    current = getattr_static(bootstrap, "bootstrap_personal_context_service")
-    tree.personal_source_values = (
-        (bootstrap, "bootstrap_personal_context_service", current),
-    )
-    for name, expected in bootstrap._NATIVE_ORDINARY_BOOTSTRAP_SOURCES:
-        value = getattr_static(bootstrap, name, None)
-        native &= value is expected
-        tree.personal_source_values += ((bootstrap, name, value),)
-        if type(value) is FunctionType:
-            tree.personal_functions += (_function_record(value),)
-    if type(current) is FunctionType:
-        tree.personal_functions += (_function_record(current),)
-    native &= _capture_personal_service(tree, tree.personal_service)
-    tree.personal_native = native
-    return not native
+    tree.personal_native = _capture_personal_service(tree, tree.personal_service)
+    return not tree.personal_native
 
 
 def _capture_library_maximum(tree):
     """Read original Library declarations and selected backends, never compose."""
     import sys
-    from functools import partial
 
     from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 
-    from . import console_runtime as host
     from .console_library_policy import ConsoleAssistantLibraryAccess
+    from .console_runtime import _NativeLibraryProviderFactory
 
     factory = getattr_static(tree.controller, "_library_provider_factory", None)
-    tree.library_factory = factory
-    tree.local_source_values += (
-        (tree.controller, "_library_provider_factory", factory, None),
-    )
     policy = tree.configuration.library_policy_maximum
     if (
         factory is None
@@ -1991,24 +1574,14 @@ def _capture_library_maximum(tree):
     tree.library_maximum = frozenset(
         name for name in names if tree.catalog_permits("library", name)
     )
-    original = host._NATIVE_ORDINARY_LIBRARY_FACTORY
-    native = (
-        type(factory) is partial
-        and factory.func is original[0]
-        and len(factory.args) == 1
-        and factory.args[0] is tree.app
-        and not factory.keywords
-        and host._library_provider_for_app is original[0]
-        and _function_unchanged(original)
-    )
-    selected_function = factory.func if type(factory) is partial else factory
-    if type(selected_function) is FunctionType:
-        tree.local_function_values += (_function_record(selected_function),)
-    tree.local_source_values += (
-        (host, "_library_provider_for_app", host._library_provider_for_app, None),
-    )
-    if not native:
+    if not (
+        isinstance(factory, _NativeLibraryProviderFactory)
+        and tree.runtime._library_provider_factory is factory
+        and factory.runtime is tree.runtime
+        and tree.runtime._app is tree.app
+    ):
         return True
+    tree.library_factory = factory
     # Native RAG can initialize the selected shared backend; it has no closed
     # original artifact/index destination contract at this boundary.
     if not direct:
@@ -2018,7 +1591,6 @@ def _capture_library_maximum(tree):
         )
         return service is not None
     values = list(tree.local_source_values)
-    functions = list(tree.local_function_values)
     opaque = False
     services = (
         (
@@ -2112,81 +1684,24 @@ def _capture_library_maximum(tree):
             (module, cls.__name__, getattr_static(module, cls.__name__), None)
         )
         opaque |= getattr_static(module, cls.__name__) is not cls
-        for name, original_method in module._NATIVE_ORDINARY_LIBRARY_METHODS:
-            receiver = instance if instance is not None else cls
-            actual = getattr_static(receiver, name)
-            opaque |= actual is not original_method
-            values.append((receiver, name, actual, None))
-        opaque |= any(
-            not _function_unchanged(record)
-            for record in module._NATIVE_ORDINARY_LIBRARY_FUNCTIONS
-        )
-        functions.extend(
-            _function_record(record[0])
-            for record in module._NATIVE_ORDINARY_LIBRARY_FUNCTIONS
-        )
-    tree.local_source_values, tree.local_function_values = (
-        tuple(values),
-        tuple(functions),
-    )
+    tree.local_source_values = tuple(values)
     return opaque
 
 
 def _capture_other_providers(tree):
-    """Pin the remaining actual provider inputs without invoking their factories."""
-    from types import MethodType
-
+    """Project actual configured provider capabilities without executing factories."""
     from tldw_chatbook import config
     from tldw_chatbook.Agents import tool_catalog
 
-    from . import console_runtime
-
     opaque = False
-    values, functions = list(tree.local_source_values), list(tree.local_function_values)
-    enabled_reader = getattr_static(tree.controller, "_canvas_enabled_reader", None)
-    disabled_reader = getattr_static(tree.controller, "_canvas_disabled_reader", None)
     canvas = getattr_static(tree.store, "canvas_turn_controller", None)
-    values.extend(
-        (
-            (tree.controller, "_canvas_enabled_reader", enabled_reader, None),
-            (tree.controller, "_canvas_disabled_reader", disabled_reader, None),
-            (tree.store, "canvas_turn_controller", canvas, None),
-        )
-    )
-    original = config._NATIVE_ORDINARY_CANVAS_READER
-    native_reader = enabled_reader is original[0] and _function_unchanged(original)
-    if type(enabled_reader) is MethodType:
-        native_reader = (
-            enabled_reader.__self__ is tree.runtime
-            and enabled_reader.__func__
-            is console_runtime._NATIVE_ORDINARY_CANVAS_ENABLED
-            and getattr_static(tree.runtime, "_canvas_enabled_reader") is original[0]
-            and _function_unchanged(original)
-        )
-        values.append(
-            (
-                tree.runtime,
-                "_canvas_enabled_reader",
-                getattr_static(tree.runtime, "_canvas_enabled_reader"),
-                None,
-            )
-        )
-    if type(enabled_reader) is FunctionType:
-        functions.append(_function_record(enabled_reader))
-    elif type(enabled_reader) is MethodType:
-        functions.append(_function_record(enabled_reader.__func__))
-    # Only the original config reader is evaluated here; injected readers run
-    # later under OPAQUE and cannot be mistaken for harmless policy metadata.
-    canvas_enabled = original[0]() if native_reader else True
-    opaque |= not native_reader
-    if canvas is not None and canvas_enabled:
+    tree.local_source_values += ((tree.store, "canvas_turn_controller", canvas, None),)
+    if canvas is not None and config.get_canvas_execution_enabled():
         tree.other_maximum["canvas"] = frozenset(
             name
             for name in tool_catalog.CANVAS_RESERVED_TOOL_NAMES
             if tree.catalog_permits("canvas", name)
         )
-        # The native controller can accept arbitrary compiler/selection/listener
-        # callbacks. Their concrete original source must qualify before boundedness.
         opaque = True
     if tree.personal_getter is not None and not tree.session.ephemeral:
         tree.other_maximum["personal-context"] = frozenset(
@@ -2206,7 +1721,6 @@ def _capture_other_providers(tree):
                 and authority.options
                 and tree.catalog_permits("virtual_cli", "virtual_cli")
             ):
-                tree.other_maximum["virtual_cli"] = frozenset({"virtual_cli"})
                 from tldw_chatbook.Agents.virtual_cli_provider import (
                     VIRTUAL_CLI_COMMANDS,
                     VIRTUAL_CLI_SERVER_KEY,
@@ -2215,17 +1729,7 @@ def _capture_other_providers(tree):
                     resolve_effective_state_by_key,
                 )
 
-                from .console_ssh_custody import virtual_source_records
-
-                sources, originals, tree.virtual_native = virtual_source_records()
-                values.extend(sources)
-                functions.extend(
-                    _function_record(value)
-                    for _obj, _name, value, _code in sources
-                    if type(value) is FunctionType
-                )
-                functions.extend(_function_record(record[0]) for record in originals)
-                opaque |= not tree.virtual_native
+                tree.other_maximum["virtual_cli"] = frozenset({"virtual_cli"})
                 tree.virtual_commands = frozenset(
                     command
                     for command in VIRTUAL_CLI_COMMANDS
@@ -2238,78 +1742,33 @@ def _capture_other_providers(tree):
                     ).state
                     != "deny"
                 )
-            # Raw shell is projected below from original runtime/app metadata.
             if tree.catalog_permits("raw_shell", "shell_exec"):
                 tree.other_maximum["raw_shell"] = frozenset({"shell_exec"})
-    tree.local_source_values, tree.local_function_values = (
-        tuple(values),
-        tuple(functions),
-    )
     return opaque
 
 
 def _capture_personal_service(tree, instance):
-    """Qualify the actual cached private service, separately from its getter."""
-    from tldw_chatbook.Personal_Context import repository, service
-
-    native = True
-    selected = (
-        (service, instance),
-        (
-            repository,
-            getattr_static(instance, "_repository", None)
-            if instance is not None
-            else None,
-        ),
+    """Retain the actual private repository and encryption resources."""
+    from tldw_chatbook.Personal_Context.key_protector import (
+        InMemoryProfileKeyProtector,
+        KeyringProfileKeyProtector,
     )
-    for module, receiver in selected:
-        cls = module._NATIVE_ORDINARY_PROFILE_CLASS
-        current = getattr_static(module, cls.__name__)
-        native &= current is cls and (receiver is None or type(receiver) is cls)
-        tree.personal_source_values += ((module, cls.__name__, current),)
-        target = cls if receiver is None else receiver
-        for name, original in module._NATIVE_ORDINARY_PROFILE_METHODS:
-            actual = getattr_static(target, name, None)
-            native &= actual is original
-            tree.personal_source_values += ((target, name, actual),)
-            if type(actual) is FunctionType:
-                tree.personal_functions += (_function_record(actual),)
-        native &= all(
-            _function_unchanged(record)
-            for record in module._NATIVE_ORDINARY_PROFILE_FUNCTIONS
-        )
-        tree.personal_functions += tuple(
-            _function_record(record[0])
-            for record in module._NATIVE_ORDINARY_PROFILE_FUNCTIONS
-        )
-    if instance is None:
-        return native
-    for name, expected in zip(
-        ("clock", "_ids"), service._NATIVE_ORDINARY_PROFILE_CALLBACKS, strict=True
-    ):
-        actual = getattr_static(instance, name, None)
-        native &= actual is expected
-        tree.personal_source_values += ((instance, name, actual),)
-    held_repository = getattr_static(instance, "_repository", None)
-    tree.personal_source_values += ((instance, "_repository", held_repository),)
-    if held_repository is not None:
-        path = getattr_static(held_repository, "db_path", None)
-        protector = getattr_static(held_repository, "_protector", None)
-        tree.personal_source_values += (
-            (held_repository, "db_path", path),
-            (held_repository, "_protector", protector),
-        )
-        from tldw_chatbook.Personal_Context.key_protector import (
-            InMemoryProfileKeyProtector,
-            KeyringProfileKeyProtector,
-        )
+    from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+    from tldw_chatbook.Personal_Context.service import PersonalContextService
 
-        native &= type(protector) in (
-            KeyringProfileKeyProtector,
-            InMemoryProfileKeyProtector,
-        )
-    return native
-
-
-# Definition-time projection shared with prospective workflow metadata.
-_NATIVE_RAW_SHELL_METADATA = _function_record(_raw_shell_metadata)
+    if type(instance) is not PersonalContextService:
+        return False
+    repository = getattr_static(instance, "_repository", None)
+    tree.personal_source_values += ((instance, "_repository", repository),)
+    if repository is None:
+        return True
+    path = getattr_static(repository, "db_path", None)
+    protector = getattr_static(repository, "_protector", None)
+    tree.personal_source_values += (
+        (repository, "db_path", path),
+        (repository, "_protector", protector),
+    )
+    return type(repository) is PersonalContextRepository and type(protector) in (
+        KeyringProfileKeyProtector,
+        InMemoryProfileKeyProtector,
+    )
