@@ -626,3 +626,76 @@ async def test_network_with_an_unreadable_ssl_verify_opens_clean_and_r_keeps_it_
         screen.action_settings_revert_category()  # nothing left: no dialog
         await pilot.pause(0.2)
         assert not isinstance(host.screen, ConfirmationDialog)
+
+
+def _saved_ssl_verify():
+    """``[network] ssl_verify`` as written to this private profile's config."""
+    return SettingsConfigAdapter().load(force_reload=True)["network"]["ssl_verify"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_network_pick_back_to_verify_after_a_save_is_staged_and_saved(
+    request, monkeypatch
+) -> None:
+    """Review N6: after "off" was saved, picking "verify" again (the value the
+    card first showed) was dropped as a mount echo, and the next ``s`` wrote
+    false again while toasting success. Every user pick is an edit."""
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_network(host, pilot)
+        toasts = _capture_toasts(screen, monkeypatch)
+        select = screen.query_one("#settings-network-ssl-mode", Select)
+        rail = screen.query_one("#settings-category-network", Button)
+        warning = screen.query_one("#settings-network-warning", Static)
+
+        select.value = "off"
+        await pilot.pause()
+        screen.action_settings_save_category()
+        assert _saved_ssl_verify() is False
+
+        select.value = "verify"
+        await pilot.pause()
+        assert NETWORK_PANEL.pending(screen) == {"mode": "verify"}
+        assert str(rail.label).endswith(" *")
+        assert "Network" in unsaved_settings_titles(screen)
+        assert _static_text(warning) == ""  # no "Verification is DISABLED"
+
+        screen.action_settings_save_category()
+        assert _saved_ssl_verify() is True
+        assert toasts[-1] == ("Network TLS setting saved.", "information")
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert not str(rail.label).endswith(" *")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_network_ca_path_typed_back_after_a_save_is_staged_and_saved(
+    request, tmp_path
+) -> None:
+    """Review N6 on the CA path Input: after another bundle was saved, typing
+    the path the card first showed is an edit, and ``s`` writes it."""
+    first, second = tmp_path / "first-ca.pem", tmp_path / "second-ca.pem"
+    first.write_text("# first ca")
+    second.write_text("# second ca")
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        screen = _active_destination_screen(host)
+        screen._app_config_update_target().update({"network": {"ssl_verify": str(first)}})
+        await _click_settings_category(pilot, "network")
+        path = screen.query_one("#settings-network-ca-path", Input)
+        assert path.value == str(first)
+
+        path.value = str(second)
+        await pilot.pause()
+        screen.action_settings_save_category()
+        assert _saved_ssl_verify() == str(second)
+
+        path.value = str(first)
+        await pilot.pause()
+        assert NETWORK_PANEL.pending(screen) == {"ca_bundle_path": str(first)}
+        assert "Network" in unsaved_settings_titles(screen)
+        screen.action_settings_save_category()
+        assert _saved_ssl_verify() == str(first)
+        assert screen._category_has_unsaved_changes(_NETWORK) is False

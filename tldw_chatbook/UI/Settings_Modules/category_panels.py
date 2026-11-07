@@ -126,16 +126,18 @@ class _NetworkCard(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self._settings_screen = settings_screen
-        self._seeded = seeded
+        self._seeded = dict(seeded)
 
     def _stage(self, key: str, value: str) -> None:
         # Textual posts Changed when a control mounts with its seeded value.
         # That echo is no edit: an invalid ssl_verify seeds "verify", and
         # staging it raised a `*` that `r` could never clear (review N1).
-        screen = self._settings_screen
-        if key not in NETWORK_PANEL.pending(screen) and value == self._seeded[key]:
+        # Only a control's FIRST Changed can be that echo, so the seed goes
+        # with it; every later Changed is the user's, even one back to the
+        # seed after a save (review N6).
+        if self._seeded.pop(key, None) == value:
             return
-        NETWORK_PANEL.stage(screen, **{key: value})
+        NETWORK_PANEL.stage(self._settings_screen, **{key: value})
 
     @on(Select.Changed, "#settings-network-ssl-mode")
     def _mode_changed(self, event: Select.Changed) -> None:
