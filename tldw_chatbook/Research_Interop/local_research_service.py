@@ -13,6 +13,7 @@ from typing import Any, Iterable, Iterator
 
 from loguru import logger
 
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
     core_cached_connection,
@@ -77,6 +78,13 @@ class LeaseBudgetExhausted(Exception):
         self.max_attempts = max_attempts
 
 
+def _thread_cache(store):
+    """This thread's cached connection, which backup retirement may close."""
+    with store._lifecycle:
+        return store._connections.get(threading.get_ident())
+
+
+@declare_store("research.local", thread_cache=_thread_cache)
 class LocalResearchService:
     """Local-first persistence for research sessions, runs, events, and artifacts."""
 

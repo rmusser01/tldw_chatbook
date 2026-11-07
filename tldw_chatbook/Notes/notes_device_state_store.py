@@ -17,6 +17,7 @@ from weakref import WeakValueDictionary
 
 from loguru import logger
 
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
     core_cached_connection,
@@ -574,6 +575,10 @@ class NotesDeviceStateError(RuntimeError):
     """A device-state operation failed without disclosing private values."""
 
 
+@declare_store(
+    "notes.sync_state",
+    thread_cache=lambda store: getattr(store._thread_local, "connection", None),
+)
 class NotesDeviceStateStore:
     """Own the sole private connection and transaction seam for notes.sync_state.
 

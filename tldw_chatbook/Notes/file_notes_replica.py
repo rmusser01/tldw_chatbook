@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import RLock
 from typing import NamedTuple
 
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
@@ -71,6 +72,13 @@ class ReplicaRevisionBytes(NamedTuple):
     content_hash: str
 
 
+@declare_store(
+    "notes.file_notes",
+    closer="close",
+    policy="notes.file_notes_replica",
+    finite_worker=False,
+    shared_connection=True,
+)
 class FileNotesReplica:
     """Store current File Notes bytes without becoming their editor authority."""
 

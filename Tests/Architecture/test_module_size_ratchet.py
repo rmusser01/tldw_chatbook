@@ -777,7 +777,9 @@ _BUDGETS: dict[str, int] = {
     # close_connection forgets a handle quiescence already retired.
     # TASK-38955 review fix, same waiver: 25861 -> 25870 (+9) --
     # close_idle_connections for the quit close.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
+    # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
+    # comment): +2, the store's @declare_store backup-participant declaration and import.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25872,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -835,7 +837,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9436,
+    # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
+    # comment): +2, the store's @declare_store backup-participant declaration and import.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9438,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -906,7 +910,9 @@ _BUDGETS: dict[str, int] = {
     # raises the row with a dated comment); 6973 -> 7009, settings_revision_held
     # and the convergence span it reads. Exact measurement.
     "tldw_chatbook/UI/Console_Modules/session.py": 7009,
-    "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
+    # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
+    # comment): +2, the store's @declare_store backup-participant declaration and import.
+    "tldw_chatbook/DB/Subscriptions_DB.py": 6995,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
@@ -959,7 +965,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     # 2026-11-04, TASK-38686 (owner size waiver 2026-10-31): +1, the comment
     # on update_prompt_by_id's IMMEDIATE transaction.
-    "tldw_chatbook/DB/Prompts_DB.py": 4674,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
+    # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
+    # comment): +2, the store's @declare_store backup-participant declaration and import.
+    "tldw_chatbook/DB/Prompts_DB.py": 4676,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     "tldw_chatbook/Chat/citation_trace_repository.py": 4717,
     # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
     # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and

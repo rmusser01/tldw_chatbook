@@ -90,6 +90,7 @@ if TYPE_CHECKING:
     )
 from loguru import logger
 
+from tldw_chatbook.DB.backup_participant_registry import declare_store
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.input_validation import validate_conversation_archive_scope
 from tldw_chatbook.Utils.timestamps import parse_utc, to_utc_iso
@@ -746,6 +747,7 @@ class TrajectoryRowRead:
 
 
 # --- Database Class ---
+@declare_store("db.chachanotes.primary", closer="close_connection")
 class CharactersRAGDB:
     """
     Manages SQLite connections and operations for the Character Cards, Chats, and Notes database.
