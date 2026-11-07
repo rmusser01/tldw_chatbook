@@ -25397,7 +25397,8 @@ The bulk now resolves the Sync v2 profile once, before the loop, so no note
 reads another store while it holds the lock. Each hold fell from 136-152 ms to
 a median of 0.6-0.7 ms, and the whole loop from 6.9-7.5 s to 0.06 s for 50
 notes (17-19 s to 0.13-0.15 s for 120). An `add_conversation` started mid-run
-now gets in after 0.04-0.11 s. The gaps are still tiny: the lock is held for
+now gets in within the remaining run (0.04-0.30 s measured; at 50 notes it
+often waits out the rest of the run). The gaps are still tiny: the lock is held for
 63-70% of the loop, because nothing else happens between notes. A mid-run
 `add_note` still failed at once in 5 of 6 runs. Its exposure window is now
 0.06-0.15 s instead of 7-18 s.

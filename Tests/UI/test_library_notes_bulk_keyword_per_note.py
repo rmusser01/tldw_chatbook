@@ -523,6 +523,14 @@ async def test_a_bulk_keyword_change_reads_the_profile_once_not_per_note(
 async def test_a_writer_started_mid_run_gets_in_within_a_second(
     tmp_path, bulk: int
 ) -> None:
+    """A BOUND, not a fairness guard (PR #3423 re-review 2, m-2).
+
+    The un-gated ``add_conversation`` must succeed within ``UNGATED_BOUND``
+    seconds. It may well wait out the rest of the run -- at 50 notes it
+    usually does -- since the busy-timeout writer waits at most the short
+    locked run. A few extra milliseconds per note pass this pin; the
+    profile-read counting pin above is what guards the seam.
+    """
     host, seed = mounted(tmp_path)
     db = seed.profile.db
     ids = [db.add_note(f"Bulk {index:03d}", "bulk body") for index in range(bulk)]
