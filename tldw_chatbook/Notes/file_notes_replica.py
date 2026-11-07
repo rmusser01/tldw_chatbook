@@ -12,7 +12,7 @@ from pathlib import Path
 from threading import RLock
 from typing import NamedTuple
 
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,

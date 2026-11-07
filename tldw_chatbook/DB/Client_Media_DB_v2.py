@@ -47,7 +47,7 @@ from loguru import logger
 
 #
 # Local Imports
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..STT.persistence import dump_transcription_provenance_document
 from .keyword_store import KeywordStore, KeywordStoreSpec

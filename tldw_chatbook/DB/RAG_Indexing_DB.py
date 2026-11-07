@@ -36,7 +36,7 @@ from typing import (
     Union,
 )
 from loguru import logger
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .store_kernel import SQLiteStoreKernel
 from tldw_chatbook.Utils.private_paths import lexical_path

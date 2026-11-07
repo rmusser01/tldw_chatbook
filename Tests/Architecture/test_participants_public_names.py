@@ -15,6 +15,8 @@ import ast
 import re
 from pathlib import Path
 
+import pytest
+
 PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 PARTICIPANT = re.compile(r"participants?$")
 
@@ -147,7 +149,6 @@ def test_guard_detects_injected_private_uses(tmp_path):
     ]
 
 
-
 # TASK-36948.1: each store declares its backup-participant registration with
 # @declare_store. owner id -> (class under tldw_chatbook, the decorator's keywords).
 # A new store, or a changed closer or policy, updates this table in the same commit.
@@ -184,14 +185,16 @@ def declared_stores(root: Path = PACKAGE) -> dict[str, tuple[str, str]]:
     found = {}
     for path in sorted(root.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        if "@declare_store(" not in source:
+        if "declare_store(" not in source:
             continue
         module = ".".join(path.relative_to(root).with_suffix("").parts)
         for node in ast.walk(ast.parse(source)):
             if not isinstance(node, ast.ClassDef):
                 continue
             for decorator in node.decorator_list:
-                if isinstance(decorator, ast.Call) and getattr(decorator.func, "id", None) == "declare_store":
+                # Both @declare_store(...) and @module.declare_store(...).
+                called = getattr(decorator, "func", None)
+                if (getattr(called, "id", None) or getattr(called, "attr", None)) == "declare_store":
                     owner = decorator.args[0].value
                     assert owner not in found, f"{owner} is declared twice"
                     keywords = ", ".join(ast.unparse(keyword) for keyword in decorator.keywords)
@@ -212,14 +215,45 @@ def test_declared_store_set_is_frozen():
         assert repository_types()[store] == owner
 
 
+def imported_modules(tree: ast.AST, package: str) -> set[str]:
+    """Every module an import in ``tree`` can bind, relative imports resolved against ``package``."""
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = package.rsplit(".", node.level - 1)[0] if node.level else ""
+            module = ".".join(part for part in (base, node.module) if part)
+            found.add(module)
+            found.update(f"{module}.{alias.name}" for alias in node.names)
+    return found
+
+
 def test_participants_keeps_no_store_table():
     tree = ast.parse((PACKAGE / "Backup_Recovery" / "participants.py").read_text(encoding="utf-8"))
     strings = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
     policies = {"db.base", "notes.file_notes_replica", "notifications.event_state", "db.subscriptions.agent_read"}
     assert strings & (set(DECLARED_STORES) | policies) == set()
     store_modules = {f"tldw_chatbook.{dotted.rsplit('.', 1)[0]}" for dotted, _ in DECLARED_STORES.values()}
-    imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
-    assert imported & store_modules == set()
+    assert imported_modules(tree, "tldw_chatbook.Backup_Recovery") & store_modules == set()
+
+
+def test_declare_store_refuses_a_missing_closer_and_a_duplicate_owner():
+    from tldw_chatbook.Backup_Recovery.participants import repository_types
+    from tldw_chatbook.DB import declare_store, store_declarations
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    class Store:
+        def close(self):
+            pass
+
+    with pytest.raises(TypeError, match="clsoe"):
+        declare_store("tests.closer_typo", closer="clsoe")(Store)
+    with pytest.raises(ValueError, match="db.workspaces"):
+        declare_store("db.workspaces", closer="close")(Store)
+    assert "tests.closer_typo" not in store_declarations
+    assert Store not in repository_types()
+    assert repository_types()[WorkspaceDB] == "db.workspaces"
 
 
 def test_registration_table_is_built_once_not_per_connection_access(tmp_path):

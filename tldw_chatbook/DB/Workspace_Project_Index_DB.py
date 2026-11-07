@@ -12,7 +12,7 @@ import re
 import sqlite3
 from uuid import uuid4
 
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
 from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Utils.timestamps import utc_now_iso

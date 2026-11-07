@@ -23,7 +23,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from tldw_chatbook.DB.backup_participant_registry import declare_store
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import core_access
 
 from ..Utils.private_paths import lexical_path

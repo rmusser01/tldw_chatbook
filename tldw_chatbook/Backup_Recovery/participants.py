@@ -8,7 +8,7 @@ import time
 import weakref
 from typing import Protocol
 
-from tldw_chatbook.DB import backup_participant_registry as registry
+from tldw_chatbook import DB as store_registry
 
 from .models import Inventory
 
@@ -68,8 +68,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             participants = tuple(_installed_repositories)
         for participant in participants:
             repository = participant.repository()
-            # Installed participants exist only for declared owners.
-            declaration = registry.declarations[participant.owner_id]
+            declaration = store_registry.store_declarations.get(participant.owner_id)
             with storage._lock:
                 connections = [
                     (connection, lease)
@@ -80,6 +79,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
                     repository is None
                     or type(repository) not in types
                     or types[type(repository)] != participant.owner_id
+                    or declaration is None
                     or declaration.closer is None
                     or not declaration.finite_worker
                     or repository.is_memory_db
@@ -118,13 +118,14 @@ def retire_current_thread_caches(pause) -> None:
         participants = tuple(_installed_repositories)
     for participant in participants:
         repository = participant.repository()
-        declaration = registry.declarations[participant.owner_id]
+        declaration = store_registry.store_declarations.get(participant.owner_id)
         with storage._lock:
             storage._LocalPause._check(pause)
             if (
                 repository is None
                 or type(repository) not in types
                 or types[type(repository)] != participant.owner_id
+                or declaration is None
                 or not (declaration.closer or declaration.thread_cache)
                 or repository.is_memory_db
                 or repository.db_path != participant.path
@@ -255,11 +256,11 @@ class _RepositoryParticipant:
 def repository_types():
     """Exact source-backed runtime declarations; subclasses confer no authority.
 
-    Each store declares itself with ``@declare_store`` (DB/backup_participant_registry.py)
+    Each store declares itself with ``@declare_store`` (``tldw_chatbook/DB/__init__.py``)
     when its module loads, so a type is here only once its source is loaded. The
     table is replaced per declaration, never rebuilt per call.
     """
-    return registry.types
+    return store_registry.store_types
 
 
 def repository_participant(repository):
@@ -368,7 +369,7 @@ def _check_core_retirement(participant):
 
     if threading.current_thread() in participant.retiring_threads or (
         participant.retiring_threads
-        and registry.declarations[participant.owner_id].shared_connection
+        and store_registry.store_declarations[participant.owner_id].shared_connection
     ):
         raise RecoveryRequired("core_connection_retiring")
 
@@ -387,7 +388,7 @@ def core_closing(repository, connection):
     from . import storage_admission as storage
 
     participant = repository_participant(repository)
-    shared = registry.declarations[participant.owner_id].shared_connection
+    shared = store_registry.store_declarations[participant.owner_id].shared_connection
     current = threading.current_thread()
     with storage._lock:
         lease = participant.connections.get(connection)
@@ -441,7 +442,7 @@ def register_core_connection(repository, connection):
             lease = _ordinary_connections.get(connection)
         except TypeError:
             lease = None
-        policy_id = registry.declarations[participant.owner_id].policy_id(
+        policy_id = store_registry.store_declarations[participant.owner_id].policy_id(
             participant.read_only
         )
         if (
