@@ -20048,8 +20048,11 @@ DELETE FROM keywords
             cursor = self.execute_query(query, (json.dumps(ids),), redact_params=True)
             return {row["id"] for row in cursor.fetchall()}
         except CharactersRAGDBError as e:
+            # PR #3423 Qodo 1: how many ids were checked, never the ids.
             logger.error(
-                f"Database error checking live note ids: exception_type={type(e).__name__}"
+                "Database error checking live note ids: checked={} exception_type={}",
+                len(ids),
+                type(e).__name__,
             )
             raise
 
@@ -20081,7 +20084,9 @@ DELETE FROM keywords
             return {row["id"] for row in cursor.fetchall()}
         except CharactersRAGDBError as e:
             logger.error(
-                f"Database error checking note ids: exception_type={type(e).__name__}"
+                "Database error checking note ids: checked={} exception_type={}",
+                len(ids),
+                type(e).__name__,
             )
             raise
 
@@ -20670,8 +20675,15 @@ DELETE FROM keywords
                 return True
         except ConflictError:
             raise
-        except CharactersRAGDBError as e:
-            logger.error("Database error deleting a note forever: {}", type(e).__name__)
+        except (CharactersRAGDBError, sqlite3.Error) as e:
+            # PR #3423 Qodo 1: the note's id (an opaque uuid), never its text.
+            # A raw ``sqlite3.Error`` (a constraint, a disk error) is logged
+            # too -- it reached the caller unlogged -- and re-raised as is.
+            logger.error(
+                "Database error deleting a note forever: note_id={} error_type={}",
+                note_id,
+                type(e).__name__,
+            )
             raise
 
     def search_notes(
