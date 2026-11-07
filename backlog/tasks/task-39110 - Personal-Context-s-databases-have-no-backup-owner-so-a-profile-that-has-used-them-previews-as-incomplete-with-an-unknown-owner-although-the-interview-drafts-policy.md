@@ -1,6 +1,6 @@
 ---
 id: TASK-39110
-title: "Personal Context's databases have no backup owner, so a profile that has used them previews as incomplete with an unknown owner, although their policy says they are excluded from backup"
+title: "Personal Context's databases have no backup owner, so a profile that has used them previews as incomplete with an unknown owner, although the interview-drafts policy says that store is excluded from backup"
 status: To Do
 created_date: 2026-11-07 02:03
 labels:

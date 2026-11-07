@@ -40,7 +40,7 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f and aga
 - One spot check matches the data: run 42310788537's shard 3 took 23:37:59 to 23:49:50 (11.85 min), the figure recorded for that run.
 
 **Why now.**
-- Owner decision (2026-11-06), as relayed by the coordinator: "accept, record exception … file a follow-up to rebalance or split the hot shards themselves". Under it, round 11 put one small census entry on each of four of these hot shards.
+- Owner decision (2026-11-06), as relayed by the coordinator: "Accept, record exception … file a follow-up to rebalance or split the hot shards themselves". Under it, round 11 put one small census entry on each of four of these hot shards.
 - Every further tail entry is dealt by position, not by time, so the next one can land on a hot shard and push it to the cap. A timed-out shard fails the required check.
 <!-- SECTION:DESCRIPTION:END -->
 

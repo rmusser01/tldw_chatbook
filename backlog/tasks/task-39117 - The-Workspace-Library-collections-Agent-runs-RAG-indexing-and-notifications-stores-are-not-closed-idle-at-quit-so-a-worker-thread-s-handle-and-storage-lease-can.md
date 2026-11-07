@@ -30,13 +30,15 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 - `_close_main_databases` loops over exactly four stores: ChaChaNotes, media, Dreams and Guardian.
 - Among the kernel stores, only `DreamsDB` and `GuardianDB` set `SQLiteStoreKernel._connection_quiescence`. For any other kernel store, `close_idle_connections` is a no-op; TASK-39047's review notes pin that on a `WorkspaceDB`.
 
-**Kernel stores with no idle close at quit.** `app_lifecycle.py` on dev never references any of them.
+**Kernel stores with no idle close at quit.**
 - `WorkspaceDB` (`DB/Workspace_DB.py:18`), held as `local_workspace_db` (`app_service_wiring.py:2180`).
 - `LibraryCollectionsDB` (`DB/Library_Collections_DB.py:25`), held as `local_library_collections_db` (`app_collections_wiring.py:695`).
 - `AgentRunsDB` (`DB/AgentRuns_DB.py:307`), a per-runtime instance closed only on the calling thread.
 - `RAGIndexingDB` (`DB/RAG_Indexing_DB.py:107`), opened per ingestion.
 - `ClientNotificationsDB` (`Notifications/client_notifications_db.py:38`, `app_service_wiring.py:2612`).
 - `WorkspaceProjectIndexDB` (`DB/Workspace_Project_Index_DB.py:194`).
+
+`app_lifecycle.py` on dev references none of the first five. The project-index store is drained another way: at quit, `_shutdown_app_owned_lifecycles` calls `close_project_index_service` (`app_lifecycle.py:752-756`), which runs `service.aclose()` and `_factory.assert_retired()` (`Workspaces/project_index/runtime.py:299-314`). AC#1's per-store probe decides whether that drain also retires the store's worker-thread handles.
 
 **Why it matters, and what is not yet known.**
 - The kernel's `close` (`DB/store_kernel.py:287`) closes only the calling thread's handle.

@@ -22,7 +22,7 @@ dependencies:
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-11-07, and on round-11 branch fu/r11-backupinv (TASK-39053), where the doc rows are unchanged. Line numbers are dev's.
 
-A probe compared the doc's 93 `sqlite:` rows with the registry's 93 members. The names match; two rows' columns do not.
+A probe on round-11 branch fu/r11-backupinv, where TASK-39053 reconciles the names, compared the doc's 93 `sqlite:` rows with the registry's 93 members. On dev 2684e5453f the counts still differ (89 rows, 94 members). On the branch the names match, but two rows' columns do not, and the rows below are unchanged there.
 
 | Owner | Doc row (`backup-recovery-owner-inventory.md`) | Registry (`DB/private_sqlite.py`) | Changed by |
 |---|---|---|---|
