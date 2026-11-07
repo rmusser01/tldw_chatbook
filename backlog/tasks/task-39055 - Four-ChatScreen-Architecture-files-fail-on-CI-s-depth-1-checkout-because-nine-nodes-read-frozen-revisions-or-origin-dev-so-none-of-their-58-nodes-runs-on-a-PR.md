@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 23:20
+updated_date: 2026-11-07 01:14
 labels:
 - follow-up
 - tests
@@ -100,28 +100,46 @@ Owner decision (2026-11-06): "Lane 49, retire 9: put the 49 shallow-safe nodes o
 
 **After (AC#2).** I made the same depth-1 simulation of the committed HEAD 476cf26b2a. In that clone `git show 8d806b71d9:…` fails with `invalid object name`. The four files ran 51 passed and 0 failed (the 49, plus the 2 kept). With full history: 51 passed.
 
-**Lane (AC#3).** All four files were appended to the Architecture guards step and to `ARCHITECTURE_GUARD_TARGETS`, and the job comment now says no target may read git history. Timings are below, under the shared job timing.
+**Review r11a-rev1 fix (Minor).** The retirement left more dead code, which a rerun of the dead-name scan found once uses by a helper's own self-test no longer counted as live:
+- `_source_references_method` and its parametrized self-test `test_source_method_reference_detection`. Their only real consumer was `_external_method_reference_paths`, which went with the retired closeout nodes. Both are deleted.
+- With them gone, `test_console_wave6_closeout_inventory.py` had no tests left, only the realtime method sets. Its one consumer, the realtime boundary test, imported them. So the sets moved into `test_console_realtime_controller_boundary.py`, and the closeout file is deleted along with its lane entry.
+- In the wave-6 inventory, `_resolved_default_signature` was reachable only from the assertion in `test_assignment_oracles_order_same_line_ast_nodes_without_comparing_them` (its real caller, `_assignment_signatures`, was retired). The helper and that assertion are deleted; the test keeps its `_first_assignment_value` check.
+- `TASK10_SCREEN_LINE_CEILING` was already dead at base and is deleted.
+- What the scan still flags is reached only by tests that read no working-tree file, and they stay:
+  - `LINE_OVERAGE`, `METHOD_OVERAGE` and `DESCRIPTOR_LINE_BUDGET` feed `test_wave6_projection_clears_both_ratchet_overages`, one of the 49 laned nodes.
+  - `TASK_3070_9_FAMILY_NAMES` is the mutant input for `test_first_chat_move_oracles_are_non_vacuous`, whose helpers live tests use.
 
-Files: the four `Tests/Architecture` files, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`. A lesson was added to `backlog/docs/lessons-testing-evidence.md`: a node filed as history-only can hold the only live check.
+**Lane (AC#3).** The ChatScreen files were appended to the Architecture guards step and to `ARCHITECTURE_GUARD_TARGETS`: the realtime, review-selection and wave-6 files, plus the closeout file until the review fix folded it into the realtime file. The job comment now says no target may read git history. Timings are below, under the shared job timing.
 
-**Architecture guards job timings (shared by TASK-39054, TASK-39055, TASK-39060 and TASK-39061).**
-- Before adding anything: CI ran the step in 402 s (job 7 m 38 s) on #3436's run 42218508176, 2026-11-06.
-- The step's command, run with `bash $FU/jobstep.sh fu-r11-arch "Run Architecture guard contracts"` (serial, `--timeout=180 --tb=short`). Each run of the final 36 targets gave 383 passed:
+Files: the four `Tests/Architecture` files (the closeout file later deleted), `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`. A lesson was added to `backlog/docs/lessons-testing-evidence.md`: a node filed as history-only can hold the only live check.
 
-| Command | Targets | Nodes | pytest time | Load |
-|---|---|---|---|---|
-| Base 2684e5453f | 29 | 160 | 153.9 s | 7-11 |
-| Base 2684e5453f | 29 | 160 | 457.0 s | 27-45 |
-| Base 2684e5453f | 29 | 160 | 283.9 s | 32-38 |
-| This branch, run 1 | 36 | 383 | 563.4 s | 25-48 |
-| This branch, run 2 | 36 | 383 | 451.2 s | 24-48 |
-| This branch, run 3 | 36 | 383 | 440.6 s | 24-57 |
-| This branch, right after the 283.9 s base run | 36 | 383 | 413.8 s | 32-48 |
+**Architecture guards job timings (shared by TASK-39054, TASK-39055, TASK-39060 and TASK-39061; corrected per review r11a-rev1).**
 
-- Six agents shared the machine, and the load swung from 24 to 57, so the totals mostly measure the load.
-- One more run, with `--durations=0` (862.4 s at load 50-85), attributes setup, call and teardown time per file. The added files cost 146.9 s of its 858.3 s:
-  - `test_no_undefined_module_globals.py`: 72.5 s for 3 nodes, with no periodic-GC teardown;
-  - `test_log_sanitizer.py`: 40.6 s for 168 nodes, of which 31.8 s is the conftest's every-25th-test `gc.collect()`;
-  - the four ChatScreen files: 33.5 s for 51 nodes, 8.9 s of it GC;
-  - the two boundary nodes: 0.3 s.
-- An extra job run overlapped my temporary source reverts for a boot-census bisect (12 failed). I discarded it.
+- **CI before this branch:** the step took 402 s (job 7 m 38 s) on #3436's run 42218508176, 2026-11-06.
+- **The step at each commit:**
+
+| Commit | Targets | Nodes | Why |
+|---|---|---|---|
+| Base | 29 | 160 | |
+| 77c5a7a085 | 36 | 383 | Two boundary nodes listed separately. |
+| d29bb13b6a | 35 | 387 | The boundary file runs whole (6 nodes). |
+| This fix | 34 | 383 | The wave-6 closeout file folded into the realtime test: 1 target and 5 nodes fewer. The guard's new unparseable-module control adds 1 node. |
+
+- **Current figure (review r11a-rev1's run at d29bb13b6a):** 386 passed plus 1 pre-existing timeout, in 1,073.5 s at load 84-91. The timeout is `test_profile_owned_path_inventory::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners`, which also hits 180 s at base under load. Of that time, this branch's additions cost 149.2 s.
+- **Earlier runs:** my own runs of the step's command, through `jobstep.sh`, serial, pytest-reported time. The load swung from 24 to 57, so the totals mostly measure the load.
+
+| Command | Targets | Nodes | Result | pytest time | Load |
+|---|---|---|---|---|---|
+| Base 2684e5453f | 29 | 160 | 160 passed | 153.9 s | 7-11 |
+| Base 2684e5453f | 29 | 160 | 160 passed | 457.0 s | 27-45 |
+| Base 2684e5453f | 29 | 160 | 160 passed | 283.9 s | 32-38 |
+| 77c5a7a085, run 1 | 36 | 383 | 383 passed | 563.4 s | 25-48 |
+| 77c5a7a085, run 2 | 36 | 383 | 383 passed | 451.2 s | 24-48 |
+| 77c5a7a085, run 3 | 36 | 383 | 383 passed | 440.6 s | 24-57 |
+| 77c5a7a085, right after the 283.9 s base run | 36 | 383 | 383 passed | 413.8 s | 32-48 |
+
+- **Where the time goes:** a `--durations=0` run at 77c5a7a085 (load 50-85) attributes the additions as follows:
+  - `test_no_undefined_module_globals.py`: 72.5 s, with no periodic-GC teardown;
+  - `test_log_sanitizer.py`: 40.6 s, of which 31.8 s is the conftest's every-25th-test `gc.collect()`;
+  - the ChatScreen files: 33.5 s;
+  - the boundary nodes: 0.3 s.

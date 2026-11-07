@@ -1251,7 +1251,6 @@ jobs:
             Tests/Architecture/test_no_undefined_module_globals.py \
             Tests/Architecture/test_console_realtime_controller_boundary.py \
             Tests/Architecture/test_console_review_selection_controller_boundary.py \
-            Tests/Architecture/test_console_wave6_closeout_inventory.py \
             Tests/Architecture/test_console_wave6_inventory.py \
             --timeout=180 \
             --tb=short

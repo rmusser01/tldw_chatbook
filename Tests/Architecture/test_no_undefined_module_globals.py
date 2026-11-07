@@ -40,8 +40,8 @@ _EXEMPT: dict[str, str] = {
 }
 
 
-def _module_files() -> list[Path]:
-    return [p for p in sorted(PACKAGE.rglob("*.py")) if not SKIP_PARTS & set(p.parts)]
+def _module_files(package: Path = PACKAGE) -> list[Path]:
+    return [p for p in sorted(package.rglob("*.py")) if not SKIP_PARTS & set(p.parts)]
 
 
 def _module_level_bindings(tree: ast.Module) -> set[str]:
@@ -171,31 +171,62 @@ def _unresolved_private_calls(tree: ast.Module) -> set[str]:
     return unresolved
 
 
+def _guard_report(package: Path) -> tuple[list[str], list[str]]:
+    """Return ``(offenders, unparseable)`` for every module under ``package``.
+
+    The per-module form reported an unparseable module as a visible skip; one
+    node must name it instead, or the guard would pass over it in silence
+    (TASK-39054 review).
+    """
+    offenders: list[str] = []
+    unparseable: list[str] = []
+    for path in _module_files(package):
+        rel = str(path.relative_to(package.parent))
+        if rel in _EXEMPT:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            unparseable.append(f"{rel}: line {exc.lineno}: {exc.msg}")
+            continue
+        missing = _unresolved_private_calls(tree)
+        if missing:
+            offenders.append(f"{rel}: {sorted(missing)}")
+    return offenders, unparseable
+
+
 def test_every_private_helper_called_in_a_module_is_defined_in_it() -> None:
     """Every private helper a module calls must be defined or imported in it.
 
     One node for the whole package (TASK-39054): one node per module (about
     2,940) made the conftest's periodic ``gc.collect()`` cost about 6 minutes
-    of the Architecture job for about 30 s of AST work.
+    of the Architecture job for about 30 s of AST work. A module that does not
+    parse fails it too, by name, since it cannot be checked.
     """
-    offenders = []
-    for path in _module_files():
-        rel = str(path.relative_to(PACKAGE.parent))
-        if rel in _EXEMPT:
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:  # a syntax error is a different test's problem
-            continue
-        missing = _unresolved_private_calls(tree)
-        if missing:
-            offenders.append(f"{rel}: {sorted(missing)}")
-    assert not offenders, (
+    offenders, unparseable = _guard_report(PACKAGE)
+    assert not offenders and not unparseable, (
         "These modules call private helper(s) they do not define and do not "
         "import:\n  " + "\n  ".join(offenders) + "\nA deletion took the "
         "definition and left the call site — the shape of TASK-32912, which cost "
-        "four nights of CI."
+        "four nights of CI.\nThese modules do not parse, so the guard cannot "
+        "check them:\n  " + "\n  ".join(unparseable)
     )
+
+
+def test_guard_names_unparseable_and_offending_modules(tmp_path: Path) -> None:
+    """TASK-39054 review: a scratch package's broken module is named, not skipped."""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "broken.py").write_text("def f(:\n", encoding="utf-8")
+    (package / "caller.py").write_text(
+        "def f():\n    return _gone(1)\n", encoding="utf-8"
+    )
+    (package / "clean.py").write_text(
+        "def _ok():\n    return 1\n\n\nvalue = _ok()\n", encoding="utf-8"
+    )
+    offenders, unparseable = _guard_report(package)
+    assert offenders == ["pkg/caller.py: ['_gone']"]
+    assert [line.split(":", 1)[0] for line in unparseable] == ["pkg/broken.py"]
 
 
 def test_no_exemption_outlives_the_thing_it_excuses() -> None:

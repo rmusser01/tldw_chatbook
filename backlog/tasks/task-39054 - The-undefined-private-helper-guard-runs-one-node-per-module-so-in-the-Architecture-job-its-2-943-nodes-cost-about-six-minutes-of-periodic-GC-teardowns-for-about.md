@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 17:59
+updated_date: 2026-11-07 01:14
 labels:
 - follow-up
 - tests
@@ -64,26 +64,40 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
   - So the saving is about 285-340 s of job time, and the guard now runs on a PR lane for the first time.
   - The job command's three timed runs are in the table below.
 
+- Review r11a-rev1 fix (Minor): the one-node guard used to drop an unparseable module silently with `except SyntaxError: continue`, where the per-module form had shown a visible skip.
+  - The scan now lives in `_guard_report(package)`, which returns `(offenders, unparseable)`. The guard fails and names every module that does not parse, with its line and message, alongside the offenders.
+  - New negative control: `test_guard_names_unparseable_and_offending_modules` builds a scratch package containing `broken.py`, `caller.py` (which calls a missing `_gone`) and `clean.py`, and asserts that both bad modules are named.
+  - With the old silent skip temporarily restored, the control failed. With the fix the file passes 4 of 4, serial.
+
 Files: `Tests/Architecture/test_no_undefined_module_globals.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
 
-**Architecture guards job timings (shared by TASK-39054, TASK-39055, TASK-39060 and TASK-39061).**
-- Before adding anything: CI ran the step in 402 s (job 7 m 38 s) on #3436's run 42218508176, 2026-11-06.
-- The step's command, run with `bash $FU/jobstep.sh fu-r11-arch "Run Architecture guard contracts"` (serial, `--timeout=180 --tb=short`). Each run of the final 36 targets gave 383 passed:
+**Architecture guards job timings (shared by TASK-39054, TASK-39055, TASK-39060 and TASK-39061; corrected per review r11a-rev1).**
 
-| Command | Targets | Nodes | pytest time | Load |
-|---|---|---|---|---|
-| Base 2684e5453f | 29 | 160 | 153.9 s | 7-11 |
-| Base 2684e5453f | 29 | 160 | 457.0 s | 27-45 |
-| Base 2684e5453f | 29 | 160 | 283.9 s | 32-38 |
-| This branch, run 1 | 36 | 383 | 563.4 s | 25-48 |
-| This branch, run 2 | 36 | 383 | 451.2 s | 24-48 |
-| This branch, run 3 | 36 | 383 | 440.6 s | 24-57 |
-| This branch, right after the 283.9 s base run | 36 | 383 | 413.8 s | 32-48 |
+- **CI before this branch:** the step took 402 s (job 7 m 38 s) on #3436's run 42218508176, 2026-11-06.
+- **The step at each commit:**
 
-- Six agents shared the machine, and the load swung from 24 to 57, so the totals mostly measure the load.
-- One more run, with `--durations=0` (862.4 s at load 50-85), attributes setup, call and teardown time per file. The added files cost 146.9 s of its 858.3 s:
-  - `test_no_undefined_module_globals.py`: 72.5 s for 3 nodes, with no periodic-GC teardown;
-  - `test_log_sanitizer.py`: 40.6 s for 168 nodes, of which 31.8 s is the conftest's every-25th-test `gc.collect()`;
-  - the four ChatScreen files: 33.5 s for 51 nodes, 8.9 s of it GC;
-  - the two boundary nodes: 0.3 s.
-- An extra job run overlapped my temporary source reverts for a boot-census bisect (12 failed). I discarded it.
+| Commit | Targets | Nodes | Why |
+|---|---|---|---|
+| Base | 29 | 160 | |
+| 77c5a7a085 | 36 | 383 | Two boundary nodes listed separately. |
+| d29bb13b6a | 35 | 387 | The boundary file runs whole (6 nodes). |
+| This fix | 34 | 383 | The wave-6 closeout file folded into the realtime test: 1 target and 5 nodes fewer. The guard's new unparseable-module control adds 1 node. |
+
+- **Current figure (review r11a-rev1's run at d29bb13b6a):** 386 passed plus 1 pre-existing timeout, in 1,073.5 s at load 84-91. The timeout is `test_profile_owned_path_inventory::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners`, which also hits 180 s at base under load. Of that time, this branch's additions cost 149.2 s.
+- **Earlier runs:** my own runs of the step's command, through `jobstep.sh`, serial, pytest-reported time. The load swung from 24 to 57, so the totals mostly measure the load.
+
+| Command | Targets | Nodes | Result | pytest time | Load |
+|---|---|---|---|---|---|
+| Base 2684e5453f | 29 | 160 | 160 passed | 153.9 s | 7-11 |
+| Base 2684e5453f | 29 | 160 | 160 passed | 457.0 s | 27-45 |
+| Base 2684e5453f | 29 | 160 | 160 passed | 283.9 s | 32-38 |
+| 77c5a7a085, run 1 | 36 | 383 | 383 passed | 563.4 s | 25-48 |
+| 77c5a7a085, run 2 | 36 | 383 | 383 passed | 451.2 s | 24-48 |
+| 77c5a7a085, run 3 | 36 | 383 | 383 passed | 440.6 s | 24-57 |
+| 77c5a7a085, right after the 283.9 s base run | 36 | 383 | 383 passed | 413.8 s | 32-48 |
+
+- **Where the time goes:** a `--durations=0` run at 77c5a7a085 (load 50-85) attributes the additions as follows:
+  - `test_no_undefined_module_globals.py`: 72.5 s, with no periodic-GC teardown;
+  - `test_log_sanitizer.py`: 40.6 s, of which 31.8 s is the conftest's every-25th-test `gc.collect()`;
+  - the ChatScreen files: 33.5 s;
+  - the boundary nodes: 0.3 s.

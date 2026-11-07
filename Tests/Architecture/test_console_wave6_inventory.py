@@ -13,7 +13,6 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCREEN_PATH = _REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py"
-TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
@@ -618,31 +617,6 @@ def _default_signature(node: ast.AST) -> tuple[object, ...]:
     ):
         return (node.func.id,)
     return ("expression", ast.dump(node, include_attributes=False))
-
-
-def _resolved_default_signature(
-    value: ast.AST, method: ast.AST, before_line: int
-) -> tuple[object, ...]:
-    if not isinstance(value, ast.Name):
-        return _default_signature(value)
-    candidates: list[tuple[int, ast.AST]] = []
-    for node in ast.walk(method):
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-            continue
-        if node.lineno >= before_line:
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        if any(
-            isinstance(target, ast.Name) and target.id == value.id for target in targets
-        ):
-            candidates.append((node.lineno, node.value))
-    if not candidates:
-        return _default_signature(value)
-    line, initializer = max(
-        candidates,
-        key=lambda item: (item[0], item[1].col_offset),
-    )
-    return _resolved_default_signature(initializer, method, line)
 
 
 def _first_self_attribute_access(
@@ -2481,18 +2455,6 @@ def test_assignment_oracles_order_same_line_ast_nodes_without_comparing_them() -
     ).body[0]
     assert isinstance(sample, ast.ClassDef)
     method = _methods_from_class(sample)["initialize"]
-    state_assignments = [
-        node
-        for node in ast.walk(method)
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Attribute) and target.attr == "state"
-            for target in node.targets
-        )
-    ]
 
-    assert _resolved_default_signature(
-        ast.Name(id="value"), method, state_assignments[0].lineno
-    ) == ("set",)
     first = _first_assignment_value(method, "state")
     assert isinstance(first, ast.Name) and first.id == "value"

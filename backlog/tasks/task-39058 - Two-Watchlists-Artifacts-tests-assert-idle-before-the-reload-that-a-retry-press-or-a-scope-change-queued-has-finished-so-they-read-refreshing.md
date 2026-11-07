@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-06 17:59
+updated_date: 2026-11-07 01:14
 labels:
 - follow-up
 - tests
@@ -78,7 +78,16 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - Deterministic control: a temporary `await asyncio.sleep(0.5)` at the start of the queued load in `_request_briefings_refresh`, reverted afterwards.
   - Old waits: red in every run. All four press nodes fail at `:566` with `'storage_mismatch' == 'idle'`, and the scope nodes fail in 3 of 8 runs with `'refreshing' == 'idle'`.
   - New waits: green in 8 of 8 runs.
-- Four other tests in the same file have the same race and are red at HEAD under load too (Proposed follow-ups in the report): `test_generation_failure_preserves_last_good_content_and_has_own_state`, `test_refresh_failure_preserves_screen_owned_last_good_content`, `test_durable_receipt_mismatch_retains_last_good_content` and `test_citation_resolution_failure_retains_last_good_citations`.
+- Review r11a-rev1 extended the same fix to the file's sibling tests (recorded here, not as a new task). At load 68-98 the reviewer saw 3 of them go red in 2 of 8 runs: `test_generation_failure_preserves_last_good_content_and_has_own_state` at `:445`, `test_refresh_failure_preserves_screen_owned_last_good_content` at `:403` and `test_durable_receipt_mismatch_retains_last_good_content` at `:529`.
+  - Their setup moves the selection (`_apply_briefing_state_to_pane()`), and that queues a load. The load can land after the action under test and overwrite the state it set.
+  - A new `_track_every_pane_load_request(monkeypatch)` records load-requesting messages from every `ArtifactsPane` from mount on, since these tests move the selection before any pane instance is in reach.
+  - Each test now drains with `_drain_briefings_loads` after its setup and again after its action. This applies to the four named tests (the citation test included, even though it was never seen red), and to two more of the same shape:
+    - `test_failed_generation_receipt_does_not_replace_readable_selection`, which went red at `:516` in 1 of 8 runs of a stress with only the four fixed;
+    - `test_coordinated_failed_receipt_shows_the_generation_failed_state`, which only settled the loader group once.
+  - No assertion changed.
+  - Evidence, all with the reviewer's scratch `bootstrap_profile` plugin:
+    - Delay control (a temporary 0.5 s sleep at the start of every queued load, reverted): the HEAD versions of these six tests failed 3 and then 4 of 6; the fixed versions passed 6 of 6 both times.
+    - The whole file, 8 runs at `-n 4`, load 39-54: 0 of 8 red (19 passed each).
 
 Lesson added to `backlog/docs/lessons-testing-evidence.md` (the follow-up load chain).
 

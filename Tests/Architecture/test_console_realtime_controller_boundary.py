@@ -10,12 +10,80 @@ import pytest
 
 from Tests.Architecture.test_screen_size_ratchet import _BUDGETS as _SCREEN_SIZE_BUDGETS
 
-from Tests.Architecture.test_console_wave6_closeout_inventory import (
-    REALTIME_DELEGATE_METHODS,
-    REALTIME_MOVE_METHODS,
-    REALTIME_STAY_METHODS,
+
+#: The reviewed realtime family. TASK-39055 moved these sets here from the
+#: wave-6 closeout inventory, which this file was the last consumer of.
+REALTIME_METHODS = frozenset(
+    {
+        "_append_console_realtime_row",
+        "_begin_console_realtime_reply_audio",
+        "_build_console_realtime_callbacks",
+        "_build_console_realtime_session",
+        "_build_console_realtime_sink",
+        "_close_console_realtime_resources",
+        "_close_console_realtime_session",
+        "_connect_console_realtime",
+        "_console_realtime_adopt_transcript",
+        "_console_realtime_api_key",
+        "_console_realtime_begin_reconnect",
+        "_console_realtime_connect_failed",
+        "_console_realtime_exit_loop",
+        "_console_realtime_exit_message",
+        "_console_realtime_failure_token",
+        "_console_realtime_fallback_to_pipeline",
+        "_console_realtime_instructions",
+        "_console_realtime_marshal",
+        "_console_realtime_mode_changed",
+        "_console_realtime_playback_finished",
+        "_console_realtime_played_ms",
+        "_console_realtime_row_metadata",
+        "_console_realtime_seed_items",
+        "_console_realtime_seed_text",
+        "_console_realtime_silence_speech",
+        "_end_console_realtime_reply_audio",
+        "_enter_console_realtime_loop",
+        "_finish_console_realtime_reply_row",
+        "_handle_console_realtime_intent",
+        "_mark_console_realtime_transcript_empty",
+        "_note_console_realtime_audio_unavailable",
+        "_on_console_realtime_audio_delta",
+        "_on_console_realtime_closed",
+        "_on_console_realtime_error",
+        "_on_console_realtime_first_audio",
+        "_on_console_realtime_frames",
+        "_on_console_realtime_input_transcript",
+        "_on_console_realtime_output_transcript_delta",
+        "_on_console_realtime_ready",
+        "_on_console_realtime_reply_done",
+        "_on_console_realtime_reply_started",
+        "_on_console_realtime_sink_event",
+        "_on_console_realtime_speech_started",
+        "_on_console_realtime_transcription_usage",
+        "_on_console_realtime_turn_committed",
+        "_on_console_realtime_usage",
+        "_persist_console_realtime_event",
+        "_pump_console_realtime_audio",
+        "_release_console_realtime_state",
+        "_repaint_console_realtime_chip",
+        "_sanitize_console_realtime_failure",
+        "_send_console_realtime_text_turn",
+        "_set_console_realtime_transcript_status",
+        "_start_console_realtime_connect",
+        "_start_console_realtime_tap",
+        "_teardown_console_realtime_loop",
+        "_tick_console_realtime",
+    }
 )
 
+REALTIME_DELEGATE_METHODS: frozenset[str] = frozenset()
+REALTIME_STAY_METHODS = frozenset(
+    {
+        "_repaint_console_realtime_chip",
+    }
+)
+REALTIME_MOVE_METHODS = (
+    REALTIME_METHODS - REALTIME_DELEGATE_METHODS - REALTIME_STAY_METHODS
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_SCREEN_PATH = REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py"

@@ -440,11 +440,10 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Utils/test_log_sanitizer.py",
     # TASK-39054: the undefined-private-helper guard, now one node.
     "Tests/Architecture/test_no_undefined_module_globals.py",
-    # TASK-39055: the four ChatScreen files; their frozen-revision and origin/dev
+    # TASK-39055: the ChatScreen files; their frozen-revision and origin/dev
     # nodes were retired (owner decision, 2026-11-06), so none needs git history.
     "Tests/Architecture/test_console_realtime_controller_boundary.py",
     "Tests/Architecture/test_console_review_selection_controller_boundary.py",
-    "Tests/Architecture/test_console_wave6_closeout_inventory.py",
     "Tests/Architecture/test_console_wave6_inventory.py",
 )
 
