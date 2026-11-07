@@ -24,6 +24,10 @@
 #   `$name` fails the stylesheet parse). ensure_readable_text_hues sets them
 #   on the shipped, built-in and user-theme load paths, and
 #   ThemeVariableDefaultsMixin supplies them for any theme that skipped it.
+# - TASK-38229: `CARET_VARIABLES` (Textual's `input-cursor-background` /
+#   `input-cursor-foreground`) are generated names too; the guard pins them
+#   per theme where the caret Textual paints falls under WCAG 1.4.11 on a
+#   focused field's fill. Zero CSS bytes: no sheet names them.
 import contextlib
 import copy
 import dataclasses
@@ -148,6 +152,24 @@ _FOCUS_SHIFT = 1.25
 ACTIVE_EDGE_VARIABLE = "tldw-active-edge"
 #: The names the guard generates that no tcss defines and the tcss references.
 GUARD_VARIABLES = (BOUNDARY_VARIABLE, FOCUS_FILL_VARIABLE, ACTIVE_EDGE_VARIABLE)
+
+#: TASK-38229 (WCAG 1.4.11): the caret Textual paints in every Input and
+#: TextArea (textual/widgets/_input.py `&>.input--cursor`): a block in
+#: CARET_BLOCK_VARIABLE with the letter under it in CARET_INK_VARIABLE. Both
+#: are generated names no tcss defines, so a theme's entry paints (mechanism
+#: note above); Textual defaults them to the theme's $foreground and
+#: $background, never measured against the fill a focused field takes here
+#: (components/_forms.tcss `Input:focus`: $ds-input-focus-bg, the house tint
+#: over the pane). On dev the block was under 3:1 on 7 of the 89 measurable
+#: themes (pastel_dreams 1.77:1 on $panel) and the letter under it under
+#: 4.5:1 on 4 (pastel_dreams 2.53:1); ensure_readable_text_hues fixes both.
+CARET_BLOCK_VARIABLE = "input-cursor-background"
+CARET_INK_VARIABLE = "input-cursor-foreground"
+CARET_VARIABLES = (CARET_BLOCK_VARIABLE, CARET_INK_VARIABLE)
+#: Textual's `Input:focus` tints the focused field's fill 5% toward $foreground
+#: (`background-tint: $foreground 5%`), applied to the fill colour before it
+#: composites over the pane (textual/widget.py `_get_styles_background`).
+_FOCUS_TEXT_TINT = 0.05
 
 #: Review finding #3: ensure_readable_text_hues records the keys it wrote on
 #: the Theme under this attribute. A key a theme set by hand (22 shipped
@@ -291,6 +313,50 @@ def _opaque(value: object) -> Color | None:
     return color if color.a == 1 else None
 
 
+def _caret(generated: dict, defaults: dict, surfaces: list[Color], pole: Color) -> dict[str, str]:
+    """The caret entries ``theme`` needs, or {} when the ones it paints read.
+
+    TASK-38229. The block (CARET_BLOCK_VARIABLE) sits on a focused field's
+    fill: the house focus tint ($ds-input-focus-bg, the theme's
+    ``block-cursor-blurred-background``), tinted _FOCUS_TEXT_TINT toward
+    ``foreground`` as Textual's `Input:focus` does, over each pane fields
+    lay on (``surface``, ``panel``, ``background``). The block is kept where
+    it clears 3:1 (WCAG 1.4.11) on every one of them, else blended toward
+    white or black, whichever first clears; the theme's own entry, where it
+    has one, is the start. The letter under it (CARET_INK_VARIABLE) is kept
+    where it reads at 4.5:1 on the block, else blended toward the pole that
+    reads better on the block (one of them always clears 4.5:1).
+
+    Args:
+        generated: The theme's generated table, its own entries included.
+        defaults: Textual's table for the same theme without its entries.
+        surfaces: The theme's opaque ``surface`` and ``panel``.
+        pole: White on dark surfaces, black on light; the fallback block.
+
+    Returns:
+        The entries to pin, by variable name; empty when nothing changes.
+    """
+    tint = _measured("block-cursor-blurred-background", generated, defaults)
+    text = _measured("foreground", generated, defaults).with_alpha(_FOCUS_TEXT_TINT)
+    panes = list(surfaces)
+    background = _opaque(generated.get("background"))
+    if background is not None:
+        panes.append(background)
+    fills = [pane + tint.tint(text) for pane in panes]
+    white, black = Color(255, 255, 255), Color(0, 0, 0)
+    entries: dict[str, str] = {}
+    block = _measured(CARET_BLOCK_VARIABLE, generated, defaults)
+    if not _clears(block, fills, _NON_TEXT_RATIO):
+        found = _blend_until(block, (white, black), lambda c: _clears(c, fills, _NON_TEXT_RATIO))
+        block = found or pole
+        entries[CARET_BLOCK_VARIABLE] = block.hex
+    ink = _measured(CARET_INK_VARIABLE, generated, defaults)
+    if _contrast_ratio(ink, block) < _AA_RATIO:
+        ink_pole = white if _contrast_ratio(white, block) >= _contrast_ratio(black, block) else black
+        entries[CARET_INK_VARIABLE] = _blend_to_floor(ink, ink_pole, [block], _AA_RATIO)
+    return entries
+
+
 def ensure_readable_text_hues(theme: Theme) -> Theme:
     """Pin the ``text-*`` tints to AA and the boundary colour to 3:1, in place.
 
@@ -313,6 +379,10 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     ``ACTIVE_EDGE_VARIABLE`` (the active top tab's outline) starts from the
     theme's own entry or ``primary`` and blends toward white or black,
     whichever first reaches 3:1 on the tab's ``primary-darken-1`` fill.
+    TASK-38229: the caret's block (``CARET_BLOCK_VARIABLE``) and the letter
+    under it (``CARET_INK_VARIABLE``) are pinned by ``_caret`` only where
+    the ones the theme paints fall under 3:1 on a focused field's fill or
+    4.5:1 on the block; a theme whose caret already reads keeps it.
     Themes whose surfaces cannot be resolved (ANSI palettes, an 'auto NN%'
     surface) still get all three, because the tcss references them: the first
     of the old values (``surface-lighten-2``, the focus tint, ``primary``) and
@@ -389,6 +459,9 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
         found = _blend_until(start, (Color(255, 255, 255), Color(0, 0, 0)), outlines)
         pinned.add(ACTIVE_EDGE_VARIABLE)
         variables[ACTIVE_EDGE_VARIABLE] = (found or pole).hex
+    for name, value in _caret(generated, defaults, surfaces, pole).items():
+        pinned.add(name)
+        variables[name] = value
     theme.variables = variables
     setattr(theme, _PINNED_ATTR, frozenset(pinned))
     return theme
