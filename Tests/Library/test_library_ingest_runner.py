@@ -3544,11 +3544,15 @@ async def test_executor_failure_uses_stable_job_terminal(
         assert terminal.error
         assert "fixture" not in terminal.error
         if code is not TranscriptionFailureCode.CANCELLED:
+            # df22692d70 added the two diagnostic keys. This fake failure
+            # carries no STTFailureDiagnostic, so both read "unknown".
             assert terminal.error_detail == {
                 "category": "stt_failure",
                 "code": code.value,
                 "message": terminal.error,
                 "actions": ["retry_faster_whisper"],
+                "failure_stage": "unknown",
+                "exception_category": "unknown",
             }
 
 
