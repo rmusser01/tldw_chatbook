@@ -25,9 +25,17 @@ if TYPE_CHECKING:
 
 
 class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
-    #: TASK-38981: focusing the zero-width reader body reveals the reader
-    #: (``reveal_focused_reader``, F6), so it stays displayed.
-    hide_zero_width_work = False
+    @property
+    def hide_zero_width_work(self) -> bool:  # type: ignore[override]
+        """Hide the zero-width reader only while there is nothing to reveal.
+
+        TASK-38981: focusing a zero-width reader control reveals the reader
+        (``reveal_focused_reader``, F6), so with an artifact selected it stays
+        displayed. TASK-39062: with none selected, ``focus_reader`` reveals
+        nothing, and Tab from the list walked controls painted at -1 to -21
+        cells; then the reader hides like every other destination's.
+        """
+        return self.controller.selected is None
 
     def __init__(
         self, library: LibraryRail, controller: LibraryArtifactsController
@@ -130,3 +138,8 @@ class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
     def sync(self) -> None:
         self.items.sync()
         self.work.sync()
+        # TASK-39062: a selection change can flip ``hide_zero_width_work``, so
+        # re-apply the layout (in place; it only moves focus out of a pane it
+        # hides, or back into one it shows when the list is closed).
+        if self._applied_layout is not None:
+            self.sync_layout(self._applied_layout)

@@ -2527,3 +2527,11 @@ The first overflow probe reported no overflow at all. `Strip.cell_length` gave t
 **What to do.**
 - Before handing focus to a widget in a pane the layout is about to open, check `widget.focusable`. If it is False, park focus on something that is focusable now, and move it once the pane shows.
 - Drive grips, and anything whose behaviour depends on what holds focus, with `pilot.click`, and put focus where the user would have it first. A green test that uses `.press()` says nothing about focus.
+
+## A screen learns of a click only after the focus it caused; `get_focusable_widget_at` runs before it (TASK-39050, 2026-11-06)
+
+**Incident.** Library clears `resize_settling` only on real input, and it reads a focus change while settling as programmatic. TASK-38957's first test clicked the editor after a resize, and it stayed red after the fix. A click's focus reaches the screen before the click does. `Screen._forward_event` calls `set_focus(target)` and only then forwards the MouseDown. The target's `DescendantFocus` and the MouseDown then bubble the same hops, in that order, so the screen's `on_mouse_down` always runs second. The first click after every resize was classified as programmatic: the focus generation stayed 1 -> 1, and the compact transition's settled restore took the click back, in Database Notes and in Folder files. Tests that "simulate" a user's focus with `_mark_library_notes_user_interaction()` followed by `.focus()` cannot see this.
+
+**What to do.**
+- To know about a click before its focus lands, override the public `Screen.get_focusable_widget_at`. Textual 8.2.8 calls it only in that MouseDown branch, synchronously, just before `set_focus`. Mark the input there and return `super()`'s result. Do not override `_forward_event`.
+- Pin any "the user moved focus" rule with `pilot.click`, not with a mark plus `.focus()`. `pilot.click` calls `screen._forward_event` directly, so it takes the same path.

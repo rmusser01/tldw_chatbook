@@ -79,6 +79,11 @@ Below 120 columns, Notes keeps the existing navigation-first, one-stage
 layout. Choose Notes in the rail, then work in the full canvas; the compact
 editor's own Back control returns to its list.
 
+When a resize crosses 120 columns, Notes puts focus back on the control you
+were using once the new layout settles. A click or key press after the resize
+wins: the control you clicked or moved to keeps focus, and the settled restore
+leaves it alone. This holds in Library notes and in Folder files.
+
 ```text
 +----------------------------+     +----------------------------+
 | Library rail               | --> | Notes list or editor       |

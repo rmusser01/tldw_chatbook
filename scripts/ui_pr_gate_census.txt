@@ -2522,3 +2522,32 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[prompts-landed]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-loading]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept[media-landed]
+# TASK-39051 (2026-11-06): the Library Notes Session Git layout file, in no
+# PR lane until now. Whole file, 10 nodes, 15.6-20.5 s serially. Appended at
+# the tail.
+Tests/UI/test_library_notes_w5_session_git_layout.py
+# TASK-39050 (2026-11-06): after a resize, a click between the compact
+# transition's two focus restores keeps the clicked control, in Database
+# Notes and in Folder files (about 5-10 s each). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_database_notes_click_between_compact_restores_is_kept
+Tests/UI/test_library_file_notes_workspace.py::test_folder_files_click_between_compact_restores_is_kept
+# TASK-39062 (2026-11-06): with no artifact to open, Tab from the Artifacts
+# list never rests on a reader control painted at zero or negative width
+# (60x24 and 50x25; about 11 s each). Appended at the tail.
+Tests/UI/test_library_artifacts_focus.py::test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control[size0]
+Tests/UI/test_library_artifacts_focus.py::test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control[size1]
+# TASK-39062 review (2026-11-06): entering a narrow Artifacts stage before the
+# first artifact lands, Tab from the list still reaches and reveals the
+# reader (the shell's sync() re-apply; 60x24 and 50x25). Appended at the tail.
+Tests/UI/test_library_artifacts_focus.py::test_narrow_tab_reaches_the_reader_once_the_first_artifact_lands[size0]
+Tests/UI/test_library_artifacts_focus.py::test_narrow_tab_reaches_the_reader_once_the_first_artifact_lands[size1]
+# TASK-39052 review (2026-11-06): each destination's own Library grip
+# persists the shared Library close (the per-destination branches of
+# _toggle_library_media_reader_pane), which the route cycle no longer
+# exercises. Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[media]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[conversations]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[notes]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[prompts]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[skills]

@@ -1126,6 +1126,7 @@ jobs:
             Tests/LLM_Management/test_vllm_profiles.py \
             Tests/Chat/test_qwencloud_provider_contract.py \
             Tests/UI/test_library_modal_dismissal.py \
+            Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle \
             Tests/Web_Server/test_mobile_service.py \
             Tests/DB/test_sync_log_retention.py \
             --storage-lease-guard \

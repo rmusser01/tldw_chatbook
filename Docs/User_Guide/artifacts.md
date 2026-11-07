@@ -20,7 +20,10 @@ without changing the selected item. **‹ Items** or **Escape** returns to the
 selected row. Escape in a populated search field first clears the query.
 **/** focuses the artifact search. Pane handles follow Library's adaptive
 layout, and each artifact view remembers its query, selection, and scroll
-position for the current visit.
+position for the current visit. On a narrow terminal where Items takes the
+whole width, **Tab** or **F6** into the reader brings it forward at full width.
+With nothing selected (an empty view) there is no reader to bring forward, so
+**Tab** skips it and never stops on a control you cannot see.
 
 ## Reports and kept copies
 

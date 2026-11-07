@@ -1328,7 +1328,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: replaced by a one-shot pending landing the detail path runs
     #: (``_arm_stage_pick_landing``, ``_land_stage_pick``), on the tree
     #: stacked on the arch tip: exact measurement, 38149 lines, 1375 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38149, 1375),
+    #: 2026-11-06, TASK-39050 (owner size waiver): a click marks real input in
+    #: ``get_focusable_widget_at``, before Textual focuses its target, so the
+    #: first click after a resize is not read as programmatic: 38149 -> 38161
+    #: lines, 1375 -> 1376 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38161, 1376),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

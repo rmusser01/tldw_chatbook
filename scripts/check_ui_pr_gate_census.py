@@ -853,6 +853,22 @@ MINIMUM_FILES = 1744
 # TASK-38981 re-review 4 (2026-11-06): append the four stage-pick
 # user-move nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1748
+# TASK-39051 (2026-11-06): append the Library Notes Session Git layout file
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1749
+# TASK-39050 (2026-11-06): append the two click-between-restores nodes
+# (Database Notes, Folder files) at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 1751
+# TASK-39062 (2026-11-06): append the two empty narrow Artifacts stage Tab
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1753
+# TASK-39062 review (2026-11-06): append the two narrow Artifacts
+# first-artifact Tab nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1755
+# TASK-39052 review (2026-11-06): append the six per-destination Library
+# grip persistence nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1761
 
 
 def read_census(path: Path) -> list[str]:
