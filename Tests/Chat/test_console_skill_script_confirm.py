@@ -39,6 +39,7 @@ from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
 from Tests.console_provider_doubles import persisted_console_store
 from Tests.console_provider_doubles import provider_resolution
 from Tests.private_profile import private_profile_test
+from Tests.Chat.console_controller_factory import bind_app, bound_app
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
@@ -104,7 +105,7 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     def _make() -> ConsoleChatController:
         store = persisted_console_store()
         controller = ConsoleChatController(store=store, provider_gateway=object())
-        controller.app = _FakeApp()
+        bind_app(controller, _FakeApp())
         controller.pending_skill_script_payloads = []
         controller.set_pending_skill_script = (
             controller.pending_skill_script_payloads.append
@@ -417,7 +418,7 @@ def bridge_without_confirm(tmp_path, monkeypatch) -> _BridgeWithoutConfirm:
 def test_no_ui_bridge_denies_immediately(make_controller):
     """Headless must fail closed at once, not block for the full timeout."""
     controller = make_controller()
-    controller.app = None
+    bind_app(controller, None)
     controller.set_pending_skill_script = None
     decision = controller.request_skill_script_confirm({"skill_name": "demo"})
     assert decision == {"allow": False, "remember": False}
@@ -555,7 +556,7 @@ def test_request_skill_script_confirm_parks_for_a_non_active_session(make_contro
     thread.start()
     _wait_until(lambda: bool(controller.pending_skill_script_ids()))
 
-    assert controller.app.notifications == [
+    assert bound_app(controller).notifications == [
         "A Console session needs confirmation to run a skill script. "
         "Return to Console to respond."
     ]
@@ -1133,7 +1134,7 @@ def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch
 
     store = persisted_console_store()
     controller = ConsoleChatController(store=store, provider_gateway=object())
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.skill_script_confirm_timeout_seconds = lambda: 30.0
     session_id = store.ensure_session().id
     store.switch_session(session_id)

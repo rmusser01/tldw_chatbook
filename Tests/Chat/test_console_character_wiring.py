@@ -11,12 +11,13 @@ from Tests.Chat.test_console_skill_script_confirm import _FakeApp
 from Tests.console_provider_doubles import persisted_console_store
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Tools.character_tool_service import SERVER_REFUSAL
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def _make_controller():
     store = persisted_console_store()
     controller = ConsoleChatController(store=store, provider_gateway=object())
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     return controller, store
 
 
@@ -28,7 +29,7 @@ def test_no_session_id_returns_empty():
 def test_no_app_returns_empty():
     controller, store = _make_controller()
     session = store.create_session(runtime_backend="local")
-    controller.app = None
+    bind_app(controller, None)
     assert controller._character_wiring(session.id) == {}
 
 
@@ -78,7 +79,7 @@ def test_changed_posts_character_card_changed_without_call_from_thread():
     controller, store = _make_controller()
     session = store.create_session(runtime_backend="local")
     app = _PostRecordingApp()
-    controller.app = app
+    bind_app(controller, app)
     wiring = controller._character_wiring(session.id)
     service = wiring["character_service"]
 
@@ -111,7 +112,7 @@ async def test_composed_mcp_provider_reads_the_calling_sessions_runtime_source(b
         inventory={"tools": [_tool_dict("create_character")]},
         default_state=EffectiveToolState(state="allow", origin="tool_override"),
     )
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
 
     provider = await controller._compose_mcp_provider(session.id)
 
@@ -131,9 +132,9 @@ async def test_composed_mcp_provider_without_a_session_applies_no_check():
     from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _tool_dict
 
     controller, _store = _make_controller()
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         unified_mcp_service=FakeMCPService(inventory={"tools": [_tool_dict("create_character")]})
-    )
+    ))
 
     provider = await controller._compose_mcp_provider()
 

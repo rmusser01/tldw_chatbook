@@ -30,6 +30,7 @@ from tldw_chatbook.UI.Console_Modules.dispatch_recovery import (
     ConsoleDispatchRecoveryRegion,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from Tests.Chat.console_controller_factory import bind_app
 
 
 @pytest.mark.asyncio
@@ -141,6 +142,7 @@ async def test_restored_recovery_failed_discard_can_be_discarded_again(
         )
         runtime = console._console_runtime()
         runtime.set_chat_store(store)
+        bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
         runtime.set_chat_controller(controller)
         runtime.attach_view(console)
         store.set_session_draft(session_id, "next prompt")

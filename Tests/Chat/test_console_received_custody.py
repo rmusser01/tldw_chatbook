@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsoleTurnPreparationState,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -526,6 +527,7 @@ async def test_nonpromoted_attachment_turn_releases_before_actual_next_queue_cus
     runtime, store, session, request = _case()
     gateway = SequencedGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     attachment = PendingAttachment(
         "/received-image",
@@ -650,6 +652,7 @@ async def test_nonpromoted_resolution_rechecks_receipt_before_any_acceptance(mut
     runtime, store, session, request = _case()
     gateway = HeldResolution()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     accepted = []
     controller.on_submission_accepted = lambda: accepted.append(True)

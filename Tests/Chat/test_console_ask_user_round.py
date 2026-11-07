@@ -14,6 +14,7 @@ from tldw_chatbook.Agents.ask_user_questions import AskUserBusyRefusal
 from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor, use_run_id
 from tldw_chatbook.Chat.console_agent_bridge import format_question_marker
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from Tests.Chat.console_controller_factory import bind_app
 
 #: Bound only test synchronization; production questions remain deadline-free.
 _QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS = 5
@@ -98,7 +99,7 @@ def make_controller():
     def _make():
         store = persisted_console_store()
         controller = ConsoleChatController(store=store, provider_gateway=object())
-        controller.app = _FakeApp()
+        bind_app(controller, _FakeApp())
         controller.pending_question_payloads = []
         controller.set_pending_question = controller.pending_question_payloads.append
         made.append(controller)

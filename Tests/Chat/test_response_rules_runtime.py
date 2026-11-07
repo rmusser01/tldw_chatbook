@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Chat.response_rules.models import RuleRuntimeState
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -88,6 +89,7 @@ async def test_profile_rules_exist_before_console_controller_is_constructed(nati
         controller = ConsoleChatController(
             store=rules.chat_store, provider_gateway=owner.ensure_provider_gateway()
         )
+        bind_app(controller, owner._app)  # host as built at construction (TASK-36947.4)
         owner.set_chat_controller(controller)
         assert owner.ensure_response_rules() is rules
         assert rules.controller is controller

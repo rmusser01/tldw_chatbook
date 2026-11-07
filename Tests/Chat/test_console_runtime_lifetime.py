@@ -40,6 +40,7 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnCustodyRequest,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def test_view_hook_slot_keeps_canonical_model_and_historical_runtime_identity() -> None:
@@ -690,7 +691,7 @@ async def test_leaving_console_does_not_resolve_a_pending_approval_round():
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     # Without an app the round never reaches the poll loop -- see `_ThreadApp`.
-    controller.app = _ThreadApp()
+    bind_app(controller, _ThreadApp())
     mounted = threading.Event()
     view = _View({"set_pending_approval": lambda payload: mounted.set()})
     runtime = _runtime_with(controller, view)
@@ -814,7 +815,7 @@ async def test_a_round_from_the_previous_visit_is_not_resurrected():
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     # Without an app the round never reaches the poll loop -- see `_ThreadApp`.
-    controller.app = _ThreadApp()
+    bind_app(controller, _ThreadApp())
     runtime = _runtime_with(controller, _View())
 
     decisions: dict[str, str] = {}

@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from Tests.Chat.console_controller_factory import bind_app
 
 # These owners exercise native config participants selected at collection.
 pytestmark = pytest.mark.bootstrap_profile
@@ -836,10 +837,10 @@ async def test_agent_provider_composition_uses_owning_workspace_admission(tmp_pa
     )
     captured: dict[str, object] = {}
     controller = object.__new__(ConsoleChatController)
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=registry,
         unified_mcp_service=None,
-    )
+    ))
     controller.store = SimpleNamespace(sessions=lambda: [session])
 
     async def compose_mcp(*_args, **_kwargs):
@@ -1128,10 +1129,10 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
         agent_runtime_enabled=True,
         confirm_project_instruction_dispatch=confirm,
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=call_from_thread,
         workspace_registry_service=registry,
-    )
+    ))
 
     result = await controller.submit_draft("question")
 
@@ -1228,10 +1229,10 @@ async def test_state_drift_after_preparation_cancels_before_any_prompt(tmp_path,
             notices.append(notice) or "proceed"
         ),
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=lambda callback: callback(),
         workspace_registry_service=registry,
-    )
+    ))
 
     await controller.submit_draft("question")
 
@@ -1286,9 +1287,9 @@ async def test_folderless_session_skips_optional_project_instructions_and_runs(
         agent_runtime_enabled=True,
         select_project_instruction_binding=select_binding,
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=registry,
-    )
+    ))
 
     result = await controller.submit_draft("question")
 
@@ -1392,10 +1393,10 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry(
         agent_runtime_enabled=True,
         select_project_instruction_binding=disable,
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=registry,
         call_from_thread=lambda callback: callback(),
-    )
+    ))
 
     first = await controller.submit_draft("first")
 
@@ -1475,7 +1476,7 @@ def _refusal_probe_controller(store, bridge, registry):
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
-    controller.app = SimpleNamespace(workspace_registry_service=registry)
+    bind_app(controller, SimpleNamespace(workspace_registry_service=registry))
     return controller
 
 

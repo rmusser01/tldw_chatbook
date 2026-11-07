@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_controller_factory import host_for_app
 from tldw_chatbook.Chat.console_turn_context import resolve_session_workspace_roots
 
 
@@ -38,7 +39,7 @@ def _controller(*, consent, provider=None, workspaces=None):
     return SimpleNamespace(
         _turn_context_provider=provider,
         store=_Store(workspaces or {"s1": "ws-1", "s2": "ws-2"}),
-        app=SimpleNamespace(change_review_consent_service=consent),
+        _host=host_for_app(SimpleNamespace(change_review_consent_service=consent)),
         resolve_turn_execution_context=_no_snapshot,
     )
 

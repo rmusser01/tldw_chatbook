@@ -13,6 +13,7 @@ from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Agents.run_context import current_run_actor
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from Tests.Chat.console_controller_factory import bound_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -877,7 +878,7 @@ async def test_mounted_stop_wins_while_native_reader_waits_for_ui_guard(tmp_path
             nonlocal first
             if first:
                 first = False
-                controller.app.call_from_thread(stop_before_guard)
+                bound_app(controller).call_from_thread(stop_before_guard)
             return guard(write)
 
         object.__setattr__(admitted, "guard", pending_guard)

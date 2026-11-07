@@ -12,6 +12,7 @@ import pytest
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def controller_for(gateway, *, persistence=None):
@@ -35,7 +36,7 @@ async def test_archived_conversation_refuses_direct_voice_preparation_before_pro
         pytest.fail("Archived voice reached provider resolution")
 
     controller = controller_for(SimpleNamespace(resolve_for_send=resolve))
-    controller.app = SimpleNamespace()
+    bind_app(controller, SimpleNamespace())
     controller.store.sessions()[0].persisted_conversation_id = "archived-conversation"
     observed = []
 

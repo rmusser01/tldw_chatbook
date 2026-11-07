@@ -29,7 +29,7 @@ def test_received_prompt_scope_keeps_optional_fallback_and_stale_app_fence(sourc
             return scope
 
     app, store = App(), object()
-    controller = SimpleNamespace(app=app, store=store)
+    controller = SimpleNamespace(store=store)
     runtime = SimpleNamespace(
         _app=app,
         _chat_store=store,
@@ -66,8 +66,8 @@ def test_stock_catalog_checks_factory_before_evaluating_app_receiver(
 
     class Controller:
         @property
-        def app(self):
-            reads.append("app")
+        def _host(self):
+            reads.append("_host")
             raise AttributeError("receiver unavailable")
 
     monkeypatch.setattr(
@@ -76,7 +76,7 @@ def test_stock_catalog_checks_factory_before_evaluating_app_receiver(
     if factory_current:
         with pytest.raises(AttributeError, match="receiver unavailable"):
             _stock_console_tool_composition_current(Controller())
-        assert reads == ["app"]
+        assert reads == ["_host"]
     else:
         assert _stock_console_tool_composition_current(Controller()) is False
         assert reads == []

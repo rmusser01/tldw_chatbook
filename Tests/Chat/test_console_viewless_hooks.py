@@ -61,6 +61,7 @@ import toml
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
@@ -465,8 +466,8 @@ async def test_skill_confirms_armed_viewless_wait_and_remount_without_denial(
     rig = _controller_rig(tmp_path)
     chacha, app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
-        controller.app = app
         app.call_from_thread = lambda callback, *args: callback(*args)
+        bind_app(controller, app)
         runtime = _runtime_for(rig)
         old_projection_calls: list[tuple[str, object]] = []
         view = _mounted_view(
@@ -573,8 +574,8 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
     rig = _controller_rig(tmp_path)
     chacha, app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
-        controller.app = app
         app.call_from_thread = lambda callback, *args: callback(*args)
+        bind_app(controller, app)
         runtime = _runtime_for(rig)
         view = _mounted_view(
             set_pending_approval=lambda payload: None,

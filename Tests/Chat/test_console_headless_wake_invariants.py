@@ -68,6 +68,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.Chat.console_controller_factory import bind_app
 
 
 async def _leave_console(rig) -> ConsoleRuntime:
@@ -796,9 +797,9 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
             agent_bridge=bridge,
             agent_runtime_enabled=True,
         )
-        controller.app = SimpleNamespace(
+        bind_app(controller, SimpleNamespace(
             call_from_thread=lambda fn, *a, **kw: fn(*a, **kw)
-        )
+        ))
         controller.fleet_wake.wire(app=app)
 
         runtime = ConsoleRuntime(app=app)

@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -112,7 +113,7 @@ async def test_selected_project_send_composes_on_app_loop_and_rechecks_from_work
     app = _ThreadCheckingApp()
     app.workspace_registry_service = registry
     app.unified_mcp_service = case.service
-    controller.app = app
+    bind_app(controller, app)
 
     async with app.run_test():
         result = await controller.submit_draft("question")

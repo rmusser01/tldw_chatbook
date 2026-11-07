@@ -32,6 +32,7 @@ from Tests.UI.test_console_send_acknowledgement import (
     eager_tasks,
     ready_console,
 )
+from Tests.Chat.console_controller_factory import bound_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -207,14 +208,14 @@ async def test_an_unchanged_catalog_is_reused_until_the_kill_switch_changes():
         assert second is not first, "each run gets its own provider"
         assert _ids(second) == _ids(first)
         assert second._main_loop is asyncio.get_running_loop()
-        assert c.app.console_mcp_tool_count == len(_ids(first))
+        assert bound_app(c).console_mcp_tool_count == len(_ids(first))
         c.service.set_kill_switch(True)
         c.reads.reset()
         off, _gate, local, _hook = await _run_start(c.console)
         assert c.reads.total() > 0
         assert off is None and local is None
-        assert c.app.console_mcp_tool_count is None
-        assert c.app.console_mcp_not_connected_count is None
+        assert bound_app(c).console_mcp_tool_count is None
+        assert bound_app(c).console_mcp_not_connected_count is None
         c.service.set_kill_switch(False)
         again = await _recomposed(c.console, c.reads)
         assert _ids(again) == _ids(first)

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+from Tests.Chat.console_controller_factory import bind_app, host_for_app
 
 
 @pytest.mark.asyncio
@@ -143,9 +144,11 @@ async def test_manual_authority_resolves_exact_selection_off_ui_thread(tmp_path,
     )
     controller = SimpleNamespace(
         store=SimpleNamespace(sessions=lambda: [intent]),
-        app=SimpleNamespace(
-            workspace_registry_service=registry,
-            call_from_thread=lambda fn, *args: fn(*args),
+        _host=host_for_app(
+            SimpleNamespace(
+                workspace_registry_service=registry,
+                call_from_thread=lambda fn, *args: fn(*args),
+            )
         ),
         _console_tool_kill_switch_reader=lambda: lambda: gate == "kill",
     )
@@ -268,7 +271,7 @@ async def test_accepted_close_fences_late_manual_start_during_actual_drain(
 
     runtime, controller, bridge, store, session = _runtime_with_fleet()
     other = store.create_session(ephemeral=True)
-    controller.app = SimpleNamespace(console_runtime=runtime)
+    bind_app(controller, SimpleNamespace(console_runtime=runtime))
     bridge.runs_db = AgentRunsDB(tmp_path / "runs.db")
     bridge.runtime_capacity = RuntimeCapacity()
     helper = runtime.worktree_recovery

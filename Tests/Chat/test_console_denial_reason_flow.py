@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def pending():
@@ -49,10 +50,10 @@ def test_reason_round_trip_ignores_stale_rounds_and_non_denied_rows():
         store=ConsoleChatStore(), provider_gateway=object()
     )
     payloads = Queue()
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=lambda fn, *args, **kwargs: fn(*args, **kwargs),
         notify=lambda *_args, **_kwargs: None,
-    )
+    ))
     controller.set_pending_approval = payloads.put
     controller.mcp_approval_timeout_seconds = lambda: 5.0
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -221,10 +222,10 @@ def test_two_sessions_reasons_resolve_only_their_own_round():
     first = store.ensure_session()
     second = store.create_session()
     controller = ConsoleChatController(store=store, provider_gateway=object())
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=lambda fn, *args, **kwargs: fn(*args, **kwargs),
         notify=lambda *args, **kwargs: None,
-    )
+    ))
     controller.mcp_approval_timeout_seconds = lambda: 5.0
     controller.set_pending_approval = lambda payload: None
     with ThreadPoolExecutor(max_workers=2) as pool:

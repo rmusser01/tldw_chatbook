@@ -74,6 +74,7 @@ from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from Tests.Chat.console_controller_factory import bind_app
 
 ASK = EffectiveToolState(state="ask", origin="global_default")
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
@@ -137,7 +138,7 @@ def test_controller_retains_and_publishes_only_canonical_receipt_identity():
     )
     published: list[tuple[str, ...]] = []
     controller.follow_watchlists_operations = published.append
-    controller.app = SimpleNamespace(call_from_thread=lambda callback: callback())
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda callback: callback()))
 
     controller.observe_watchlists_operation_result(
         "run-1",
@@ -165,7 +166,7 @@ def test_controller_unfollow_survives_view_detach_and_remount():
         store=ConsoleChatStore(),
         provider_gateway=object(),
     )
-    controller.app = SimpleNamespace(call_from_thread=lambda callback: callback())
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda callback: callback()))
     controller.observe_watchlists_operation_result(
         "run-1",
         "call-1",
@@ -500,9 +501,9 @@ def test_mounted_approval_row_carries_exact_descriptor_effects(tmp_path):
             {call.llm_name: "deny"}, round_id=str(payload["round_id"])
         )
 
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=lambda callback, *args: callback(*args)
-    )
+    ))
     controller.set_pending_approval = _mount
     controller.park_pending_approval = lambda _session_id: None
 
@@ -653,14 +654,14 @@ def test_stop_mid_approval_records_only_the_unresolved_row(tmp_path):
     controller = ConsoleChatController(
         store=ConsoleChatStore(), provider_gateway=object()
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
         unified_mcp_service=SimpleNamespace(
             record_tool_decision=lambda server_key, tool_name, **kw: cancel_rows.append(
                 (server_key, tool_name, kw.get("decision"))
             )
         ),
-    )
+    ))
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -768,7 +769,7 @@ def _bare_controller(app):
     controller = object.__new__(ConsoleChatController)
     controller.store = ConsoleChatStore()
     controller._character_read_guards = {}
-    controller.app = app
+    bind_app(controller, app)
     from Tests.Chat.console_interrupt_test_bindings import (
         make_interrupt_host as InterruptRoundHost,
     )
@@ -1779,7 +1780,7 @@ def test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial(tmp_path
     controller = ConsoleChatController(
         store=ConsoleChatStore(), provider_gateway=object()
     )
-    assert controller.app is None  # the branch under test
+    assert controller._host.call_from_thread is None  # the branch under test
 
     p = provider(ASK, tmp_path)
     denials: list[str] = []
@@ -2051,7 +2052,7 @@ def test_approval_requested_fires_with_round_payload():
         ensure_run_hooks=lambda: engine,
     )
     mounted: list[dict | None] = []
-    controller.app = _InlineCallFromThreadApp()
+    bind_app(controller, _InlineCallFromThreadApp())
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     pending = MCPPendingCall(
@@ -2121,7 +2122,7 @@ def test_approval_requested_fires_for_view_detached_round():
         provider_gateway=object(),
         ensure_run_hooks=lambda: engine,
     )
-    controller.app = _InlineCallFromThreadApp()
+    bind_app(controller, _InlineCallFromThreadApp())
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     pending = MCPPendingCall(
         llm_name="local:__local__:fs_write",

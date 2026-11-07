@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from Tests.Chat.console_controller_factory import bind_app
 
 # Config admission remains bound to the profile selected at collection.
 pytestmark = pytest.mark.bootstrap_profile
@@ -797,7 +798,7 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
-    controller.app = SimpleNamespace(workspace_registry_service=object())
+    bind_app(controller, SimpleNamespace(workspace_registry_service=object()))
 
     async def personal_context_builder(_service=None):
         return _ProfileContextBuilder()

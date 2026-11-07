@@ -17,6 +17,7 @@ from Tests.Chat.console_interrupt_test_bindings import (
 from tldw_chatbook.Chat.permission_summary_service import (
     PermissionSummaryResolution,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def _bare_controller():
@@ -41,7 +42,7 @@ def _bare_controller():
     ctrl._parked_skill_script_payloads = host.payloads["skill_script"]
     ctrl._parked_question_payloads = host.payloads["question"]
     ctrl._parked_worktree_merge_payloads = host.payloads["worktree_merge"]
-    ctrl.app = None
+    bind_app(ctrl, None)
     ctrl.update_pending_approval_summary = None
     return ctrl
 
@@ -236,7 +237,7 @@ def test_remount_head_helper_fires_promoted_sibling_once(monkeypatch):
         def call_from_thread(fn, *args):
             fn(*args)  # run the UI-thread callback inline
 
-    ctrl.app = _InlineApp()
+    bind_app(ctrl, _InlineApp())
     ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
     assert mounted == [parked["r2"]]
     assert _ThreadStub.started == [True]
@@ -260,7 +261,7 @@ def test_remount_head_helper_skips_non_mcp_payloads(monkeypatch):
         def call_from_thread(fn, *args):
             fn(*args)
 
-    ctrl.app = _InlineApp()
+    bind_app(ctrl, _InlineApp())
     mounted = []
     ctrl.set_pending_approval = mounted.append
     ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")

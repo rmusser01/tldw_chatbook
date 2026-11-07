@@ -5,6 +5,7 @@ import pytest
 from Tests.Agents import code_review_helpers
 from Tests.Agents.test_code_review_reports import finding
 from tldw_chatbook.Agents.run_context import use_run_actor
+from Tests.Chat.console_controller_factory import bind_app
 
 review_case = code_review_helpers.review_case
 source_case = code_review_helpers.source_case
@@ -129,7 +130,7 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
     app = ConsolidatedCSSApp()
     # Headless (the launch wake): the app is attached but no Console view, so
     # nothing presents and the original stays pending.
-    controller.app = app
+    bind_app(controller, app)
     try:
         async with app.run_test(size=(48, 18)):
             assert not await asyncio.to_thread(
@@ -193,7 +194,7 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
                 report,
             )
             controller._session_close_generations.pop(session.id)
-            controller.app = SimpleNamespace()
+            bind_app(controller, SimpleNamespace())
             assert not await asyncio.to_thread(
                 controller._present_review_report,
                 session.id,

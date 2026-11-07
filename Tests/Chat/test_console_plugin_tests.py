@@ -5,6 +5,7 @@ import pytest
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from Tests.private_profile import private_profile_test
+from Tests.Chat.console_controller_factory import bound_app, update_app
 
 native_console = _native_console
 native_package = _native_package
@@ -15,7 +16,7 @@ async def test_review_requires_existing_session_and_current_component(native_con
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
     rig = native_console
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     installed = await rig.install()
@@ -96,7 +97,7 @@ async def test_reviewed_real_hook_runs_without_a_provider_or_conversation_effect
     await rig.service.commit(install, install.operation_id)
     trust = await rig.service.review_trust(install.installation_id)
     await rig.service.commit(trust, trust.operation_id)
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     before = tuple(rig.store.messages_for_session(rig.session.id))
@@ -187,9 +188,9 @@ async def test_configuration_save_then_reviewed_connection_discovery_grants_no_t
     await rig.service._call(
         lambda: setattr(rig.service._coordinator, "mcp_mapping_owner", local)
     )
-    rig.controller.app.unified_mcp_service = UnifiedMCPControlPlaneService(
+    update_app(rig.controller, unified_mcp_service=UnifiedMCPControlPlaneService(
         local_service=local, server_service=None, target_store=None, context_store=None
-    )
+    ))
     argv = child_argv(SERVER)
     monkeypatch.setenv(
         "PATH", str(Path(argv[0]).parent) + os.pathsep + os.environ.get("PATH", "")
@@ -245,7 +246,7 @@ async def test_configuration_save_then_reviewed_connection_discovery_grants_no_t
         install.installation_id, connections={"mcp:shared": saved["profile_id"]}
     )
     await rig.service.commit(mapped, mapped.operation_id)
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     before = tuple(rig.store.messages_for_session(rig.session.id))
@@ -287,7 +288,7 @@ async def test_explicit_admission_refuses_real_occupied_slot_without_consuming_i
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
     rig = native_console
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
     runtime.set_chat_controller(rig.controller)
     configuration = await rig.controller.capture_turn_configuration_snapshot(

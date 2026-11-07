@@ -217,6 +217,9 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
 
     db = CharactersRAGDB(":memory:", client_id)
     app.chachanotes_db = db
+    # TASK-36947.4: the Console controller reads ``services.storage``, so the
+    # bundle must name the same DB as the alias (as composition would have).
+    app._publish_application_services()
     return db
 
 

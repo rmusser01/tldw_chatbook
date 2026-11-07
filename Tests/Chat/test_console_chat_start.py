@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from Tests.Chat.console_controller_factory import bind_app, bound_app, update_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -367,7 +368,7 @@ def creation_controller(handoff_store):
         ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
     )
     app.console_runtime = runtime
-    controller.app = app
+    bind_app(controller, app)
     source = store.create_session(
         title="source",
         workspace_id="global",
@@ -855,14 +856,14 @@ def test_workspace_destination_resolves_persona_without_source_identity(
         ),
     )
     controller.store.persistence.workspace_registry = registry
-    controller.app.workspace_registry_service = registry
-    controller.app.local_character_persona_service = SimpleNamespace(
+    update_app(controller, workspace_registry_service=registry)
+    update_app(controller, local_character_persona_service=SimpleNamespace(
         get_persona_profile=lambda identifier: {
             "id": identifier,
             "name": "Destination persona",
             "system_prompt": "Destination standing instructions",
         }
-    )
+    ))
     source.workspace_id = "named"
     source.assistant_kind = "persona"
     source.assistant_id = "source-persona"
@@ -1675,7 +1676,7 @@ async def test_native_project_decision_refuses_before_both_fences(
         root.mkdir()
         (root / "AGENTS.md").write_text("Private project instruction body")
         registry.add_folder_binding("w1", root, allow_write=True)
-    controller.app = SimpleNamespace(workspace_registry_service=registry)
+    bind_app(controller, SimpleNamespace(workspace_registry_service=registry))
     selection = AsyncMock(return_value=("cancel", None))
     consent = Mock(return_value="cancel")
     controller._select_project_instruction_binding = selection
@@ -1816,7 +1817,7 @@ async def test_native_start_child_and_wake_share_original_allowance(
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 
     app.local_chat_conversation_service = ChatConversationService(store.persistence.db)
-    controller.app = app
+    bind_app(controller, app)
     runtime = ConsoleRuntime(app)
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
@@ -2267,7 +2268,7 @@ def creation_workspace(creation_controller, tmp_path):
     registry = LocalWorkspaceRegistryService(database)
     registry.create_workspace(workspace_id="named", name="Named")
     controller.store.persistence.workspace_registry = registry
-    controller.app.workspace_registry_service = registry
+    update_app(controller, workspace_registry_service=registry)
     source.workspace_id = "named"
     yield registry
     database.close()
@@ -2473,9 +2474,9 @@ def test_missing_persona_notice_reaches_preview_and_normal_target_notice(
     creation_workspace.set_assistant_defaults(
         "named", WorkspaceAssistantDefaults(assistant_id="deleted-persona")
     )
-    controller.app.local_character_persona_service = SimpleNamespace(
+    update_app(controller, local_character_persona_service=SimpleNamespace(
         get_persona_profile=lambda _identifier: None
-    )
+    ))
     settings = replace(controller._default_session_settings(), system_prompt=None)
     controller._default_session_settings = lambda: settings
     notices, cards = [], []
@@ -2727,7 +2728,7 @@ async def test_native_configured_v2_initialization_and_stop_proposal(
     app = SimpleNamespace(app_config={})
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
-    controller.app = app
+    bind_app(controller, app)
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
     initialized = tmp_path / "native-initialized"
@@ -3196,14 +3197,14 @@ def test_prepared_close_preserves_only_successfully_saved_draft(
             controller, "_chat_creation_destination_available", retire_before_save
         )
     elif phase == "queued_restore":
-        original_marshal = controller.app.call_from_thread
+        original_marshal = bound_app(controller).call_from_thread
 
         def marshal(callback, *args, **kwargs):
             if callback.__name__ == "restore":
                 close()
             return original_marshal(callback, *args, **kwargs)
 
-        controller.app.call_from_thread = marshal
+        update_app(controller, call_from_thread=marshal)
     result = controller.execute_agent_chat_create(prepared)
     assert not starts and not completions
     assert not controller._chat_creation_records
@@ -3954,7 +3955,7 @@ async def test_created_chat_progress_writer_wait_keeps_native_loop_responsive(
 
     monkeypatch.setattr(store, "restore_persisted_session", restore_on_loop)
     monkeypatch.setattr(messages, "wait_for_writer", wait_outside_loop)
-    monkeypatch.setattr(controller.app, "call_from_thread", marshal)
+    update_app(controller, call_from_thread=marshal)
     started = []
 
     def start(approved, target):

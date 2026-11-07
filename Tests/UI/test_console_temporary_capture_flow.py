@@ -299,7 +299,10 @@ async def test_cancel_on_a_capture_pause_gives_back_the_message_and_its_image(
                     draft=sent,
                     draft_revision=store.session_input_snapshot(session_id).draft_revision,
                     configuration=await capture_runtime_configuration_owned(
-                        case.controller, session_id, require_current=lambda: None
+                        runtime._app,  # the app the host's capture is anchored on
+                        case.controller,
+                        session_id,
+                        require_current=lambda: None,
                     ),
                     attachment_ids=(image.attachment_id,),
                 )

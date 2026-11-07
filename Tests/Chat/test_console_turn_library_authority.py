@@ -54,6 +54,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.Chat.console_prompt_queue import PromptQueueReservation
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class ConsoleChatStore(_ConsoleChatStore):
@@ -179,9 +180,9 @@ def _wire_automatic_library_service(monkeypatch):
 
     def init_with_library_service(controller, *args, **kwargs):
         original(controller, *args, **kwargs)
-        controller.app = SimpleNamespace(
+        bind_app(controller, SimpleNamespace(
             library_rag_search_service=_EmptyAutomaticLibraryService()
-        )
+        ))
 
     monkeypatch.setattr(ConsoleChatController, "__init__", init_with_library_service)
 

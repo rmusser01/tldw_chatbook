@@ -183,8 +183,10 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
     controller = SimpleNamespace(_code_review=coordinator)
 
     wiring.attach_review_presenter(controller, app)
-    assert controller.app is app
-    assert controller.review_report_presenter is wiring.present_code_review_original
+    # TASK-36947.4: the presenter is bound to the app; the controller is not.
+    assert not hasattr(controller, "app")
+    assert controller.review_report_presenter.func is wiring.present_code_review_original
+    assert controller.review_report_presenter.keywords["app"] is app
     first = controller._review_present_task
     runtime._attached_generation = 2  # a fresh claim while the first pass runs
     wiring.attach_review_presenter(controller, app)
@@ -219,7 +221,7 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
     # No loaded review owner: nothing is built, nothing is scheduled.
     bare = SimpleNamespace(_code_review=None)
     wiring.attach_review_presenter(bare, app)
-    assert bare.review_report_presenter is wiring.present_code_review_original
+    assert bare.review_report_presenter.func is wiring.present_code_review_original
     assert getattr(bare, "_review_present_task", None) is None
 
 

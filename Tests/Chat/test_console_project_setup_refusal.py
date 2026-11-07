@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from Tests.Chat.console_controller_factory import bind_app
 
 
 @pytest.mark.asyncio
@@ -80,10 +81,10 @@ async def test_setup_recovery_releases_run_and_excludes_unsent_echo(
         if decision == "unavailable"
         else disable,
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=registry,
         call_from_thread=lambda callback: callback(),
-    )
+    ))
 
     first = await controller.submit_draft("first")
 

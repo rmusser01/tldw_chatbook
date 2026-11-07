@@ -43,6 +43,7 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
     SkillInstallConfirmCard,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 # ---------------------------------------------------------------------------
 # rig
@@ -104,7 +105,7 @@ def _detached_rig(*, timeout_seconds: float | None = None):
     session = store.ensure_session(title="Headless")
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     app = _ThreadApp()
-    controller.app = app
+    bind_app(controller, app)
     if timeout_seconds is not None:
         controller.mcp_approval_timeout_seconds = lambda: timeout_seconds
     runtime = ConsoleRuntime(app=app)
@@ -120,7 +121,7 @@ def _never_visited_rig(*, timeout_seconds: float | None = 60.0):
     session = store.ensure_session(title="Headless")
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     app = _ThreadApp()
-    controller.app = app
+    bind_app(controller, app)
     if timeout_seconds is not None:
         controller.mcp_approval_timeout_seconds = lambda: timeout_seconds
     runtime = ConsoleRuntime(app=app)
@@ -605,6 +606,7 @@ async def test_pausing_at_exhaustion_settles_exact_round_fail_closed(
     app = _ThreadApp()
     runtime = ConsoleRuntime(app=app)
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     clock = _DecisionClock()
     controller.decision_monotonic_clock = clock
@@ -687,6 +689,7 @@ async def test_reprojection_never_renders_an_exhausted_head(decision_type, elaps
     app = _ThreadApp()
     runtime = ConsoleRuntime(app=app)
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     clock = _DecisionClock()
     controller.decision_monotonic_clock = clock
@@ -747,7 +750,7 @@ async def test_cross_type_publication_keeps_first_admitted_round_as_fifo_head():
     session = store.ensure_session(title="FIFO")
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     app = _ThreadApp()
-    controller.app = app
+    bind_app(controller, app)
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     controller.skill_install_confirm_timeout_seconds = lambda: 60.0
     mounted: list[object | None] = []
@@ -970,6 +973,7 @@ async def test_late_projection_failure_cannot_resurrect_terminal_announcement(
     app = _ThreadApp()
     runtime = ConsoleRuntime(app=app)
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     controller.skill_install_confirm_timeout_seconds = lambda: 60.0
@@ -1401,7 +1405,7 @@ def test_unified_router_never_invokes_legacy_type_setters():
     store = ConsoleChatStore()
     session = store.ensure_session(title="Unified")
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
-    controller.app = _ThreadApp()
+    bind_app(controller, _ThreadApp())
     projected: list[object] = []
     projected_event = threading.Event()
 
@@ -1935,7 +1939,7 @@ async def test_a_wake_delivery_cannot_resolve_a_pending_headless_round(tmp_path)
     chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
     try:
         thread_app = _ThreadApp()
-        controller.app = thread_app
+        bind_app(controller, thread_app)
         controller.mcp_approval_timeout_seconds = lambda: 60.0
         # Runtime ownership makes its app authoritative for every worker-
         # thread UI marshal.  Use the thread-safe app surface this test

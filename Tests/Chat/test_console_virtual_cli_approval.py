@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
 )
 from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from Tests.Chat.console_controller_factory import bind_app
 
 
 ASK = EffectiveToolState(state="ask", origin="global_default")
@@ -124,7 +125,7 @@ def test_controller_composition_honors_local_master_and_kill_switch(
     from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
 
     controller._interrupt_host = make_interrupt_host(controller)
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
     turn_context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": local_enabled},
         tool_policy_profile_id="default",
@@ -165,7 +166,7 @@ def test_compose_virtual_cli_provider_wires_arg_rule_persist_and_check(tmp_path)
     from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
 
     controller._interrupt_host = make_interrupt_host(controller)
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
     # `tool_policy_profile_id="default"` sidesteps an unrelated pre-existing
     # bug in this composition path with a bare `SimpleNamespace` turn
     # context (baselined red before this task; not this task's to fix).
@@ -205,7 +206,7 @@ def test_controller_does_not_compose_virtual_cli_without_admitted_roots(tmp_path
     from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
 
     controller._interrupt_host = make_interrupt_host(controller)
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
 
     assert controller._compose_virtual_cli_provider(
         session_id="session-1",

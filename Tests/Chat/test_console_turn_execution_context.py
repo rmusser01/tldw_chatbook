@@ -63,6 +63,7 @@ from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparationSt
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Workspaces import SkippedReviewRoot
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from Tests.Chat.console_controller_factory import bind_app, bound_app
 
 
 # Runtime/config authority must retain the profile selected during collection.
@@ -306,6 +307,7 @@ async def test_manual_custody_uses_captured_one_shot_and_preserves_newer_revisio
     )
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="manual-prefill-old",
@@ -616,7 +618,7 @@ def test_project_instruction_byte_caps_freeze_per_later_turn(monkeypatch):
         provider_gateway=_PausedGateway(),
         agent_runtime_enabled=True,
     )
-    controller.app = SimpleNamespace(workspace_registry_service=None)
+    bind_app(controller, SimpleNamespace(workspace_registry_service=None))
 
     old = controller.resolve_runtime_turn_configuration_snapshot(session.id)
     values.update(
@@ -697,7 +699,7 @@ async def test_manual_runtime_custody_reaches_the_existing_agent_bridge_once(tmp
 
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
-    controller.app = SimpleNamespace(workspace_registry_service=Registry())
+    bind_app(controller, SimpleNamespace(workspace_registry_service=Registry()))
     configuration = controller.resolve_runtime_turn_configuration_snapshot(
         session.id
     )
@@ -858,7 +860,7 @@ async def test_accepted_writable_selection_forwards_exact_live_worktree_authorit
         workspace_registry_service=Registry(),
         unified_mcp_service=tool_service,
     )
-    controller.app = app
+    bind_app(controller, app)
     runtime = ConsoleRuntime(app)
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
@@ -875,7 +877,7 @@ async def test_accepted_writable_selection_forwards_exact_live_worktree_authorit
             "local_tools_enabled": True,
         },
         project_authority=capture_project_instruction_authority(
-            session, controller.app.workspace_registry_service
+            session, bound_app(controller).workspace_registry_service
         ),
     )
     assert configuration.project_authority.selected.binding_id == selected.binding_id
@@ -1216,6 +1218,7 @@ async def _runtime_failed_retrieval():
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     runtime = ensure_console_runtime(app)
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="retrieval-owner",
@@ -2399,7 +2402,7 @@ async def test_automatic_library_preparation_uses_frozen_rag_defaults():
     )
     assert store.begin_preparation(preparation) is preparation
     controller = ConsoleChatController(store=store, provider_gateway=_PausedGateway())
-    controller.app = SimpleNamespace(library_rag_search_service=Rag())
+    bind_app(controller, SimpleNamespace(library_rag_search_service=Rag()))
 
     outcome = await controller.prepare_library_for_turn(preparation.preparation_id)
 
@@ -2427,7 +2430,7 @@ def test_live_tool_kill_switch_is_not_frozen_into_turn_context():
         store=store,
         provider_gateway=_PausedGateway(),
     )
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
 
     provider, review_hook = controller._compose_local_provider(
         session_id=session.id,
@@ -3486,6 +3489,7 @@ async def test_saved_recovery_cleanup_can_retry_after_sqlite_failure(tmp_path, a
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     runtime = ensure_console_runtime(app)
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     connection = store.persistence.db.get_connection()
     try:

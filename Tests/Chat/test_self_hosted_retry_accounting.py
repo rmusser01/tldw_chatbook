@@ -14,6 +14,7 @@ from Tests.Chat.test_console_refused_stream_retry import (
 from Tests.DB.test_automatic_work_budget import _automatic_work_db  # noqa: F401
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
+from Tests.Chat.console_controller_factory import update_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.loopback_network]
 
@@ -322,7 +323,7 @@ async def test_fallback_trace_recovery_keeps_accepted_owner(
 
             scope = Scope()
             scope.release.set()
-            app.controller.app.prompt_scope_service = scope
+            update_app(app.controller, prompt_scope_service=scope)
             if mixin_state != "empty":
                 app.controller.prompt_mixin_service().replace_preferences(
                     app.session.id,

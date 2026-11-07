@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import RawCliRequest, RawCliResult
 from Tests.console_provider_doubles import persisted_console_store
+from Tests.Chat.console_controller_factory import bind_app
 
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -144,7 +145,7 @@ def _controller_provider_hook(
     store = persisted_console_store()
     session = store.ensure_session(title="Raw shell")
     controller = ConsoleChatController(store=store, provider_gateway=object())
-    controller.app = _FakeApp(runtime)
+    bind_app(controller, _FakeApp(runtime))
     controller.set_pending_approval = lambda _payload: None
     provider, hook = controller._compose_raw_shell_provider(
         session_id=session.id,

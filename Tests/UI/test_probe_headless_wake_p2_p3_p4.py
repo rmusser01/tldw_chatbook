@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from Tests.Chat.console_controller_factory import bound_app
 
 
 def _report(title: str, lines: list[str]) -> None:
@@ -380,7 +381,7 @@ def test_probe_p4_headless_approval_cost():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=object())
     session = store.ensure_session(title="Headless")
-    findings.append(f"controller.app wired: {controller.app is not None}")
+    findings.append(f"controller.app wired: {bound_app(controller) is not None}")
     findings.append(
         f"set_pending_approval wired: {controller.set_pending_approval is not None}"
     )

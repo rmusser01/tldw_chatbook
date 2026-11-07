@@ -75,6 +75,7 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
     classify_console_raw_draft,
 )
 from tldw_chatbook.Widgets.Console import ProjectInstructionSetupResult
+from Tests.Chat.console_controller_factory import bind_app
 
 
 @pytest.fixture(autouse=True)
@@ -3325,7 +3326,7 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(
             runtime._chat_store = store
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            bind_app(controller, app)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True
@@ -3514,7 +3515,7 @@ async def test_prepared_native_start_allows_mounted_manual_send(
             runtime._chat_store = store
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            bind_app(controller, app)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True
@@ -3634,7 +3635,7 @@ async def test_native_acceptance_consumes_only_open_target_revision(
             runtime._chat_store = store
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            bind_app(controller, app)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True

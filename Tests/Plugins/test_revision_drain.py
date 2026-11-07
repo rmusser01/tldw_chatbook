@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from tldw_chatbook.Agents.activation import worker_guard
+from Tests.Chat.console_controller_factory import update_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -368,9 +369,9 @@ async def test_real_console_pending_permission_approval_blocks_revision_publicat
     gate = BuiltinToolGate(SimpleNamespace(permission_store=permissions))
     stopped, shown = threading.Event(), threading.Event()
     cards = []
-    rig.controller.app.call_from_thread = lambda fn, *args, **kwargs: fn(
+    update_app(rig.controller, call_from_thread=lambda fn, *args, **kwargs: fn(
         *args, **kwargs
-    )
+    ))
 
     def show(payload):
         if payload is not None:

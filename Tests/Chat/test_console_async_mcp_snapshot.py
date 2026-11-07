@@ -24,6 +24,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from Tests.Chat.console_controller_factory import bind_app
 
 mcp_sources = catalog_controls.mcp_sources
 local_root = catalog_controls.local_root
@@ -113,7 +114,7 @@ def snapshot_case(catalog_store, mcp_sources, monkeypatch):
         model="deepseek-chat",
         provider_config=lambda: {},  # noqa: PIE807 - exercise a custom Python callback, not a builtin factory type.
     )
-    controller.app = app
+    bind_app(controller, app)
     return SimpleNamespace(
         controller=controller,
         session=session,
@@ -375,7 +376,7 @@ async def test_custom_injected_snapshot_provider_preserves_sync_contract(snapsho
         return original
 
     case.controller._turn_context_provider = custom
-    del case.controller.app
+    bind_app(case.controller, None)  # no host: the custom provider needs none
     with _MaximumProbe(case.source, case.permissions).installed() as probe:
         captured = await case.controller.capture_turn_configuration_snapshot(
             case.session.id
@@ -645,7 +646,7 @@ def wired_case(snapshot_case, monkeypatch):
     screen = ChatScreen(app)
     screen._console_chat_store = case.store
     screen._console_chat_controller = case.controller
-    case.controller.app = app
+    bind_app(case.controller, app)
     case.store.replace_session_settings(
         case.session.id,
         ConsoleSessionSettings(provider="deepseek", model="deepseek-chat"),

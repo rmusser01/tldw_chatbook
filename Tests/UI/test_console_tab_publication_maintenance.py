@@ -24,6 +24,7 @@ from Tests.UI.test_console_tab_publication_read_barrier import (
     _shape,
     _source_code,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class _OriginalSurfaceEntry:
@@ -440,6 +441,7 @@ async def test_admitted_real_tab_publication_rechecks_replaced_controller(reques
             replacement = ConsoleChatController(store=store, provider_gateway=original.provider_gateway)
             replacement.add_pending_round(session_id, "replacement-round")
             assert replacement.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL
+            bind_app(replacement, console._console_runtime()._app)  # host as built at construction (TASK-36947.4)
             console._console_runtime().set_chat_controller(replacement)
             assert console._console_chat_store is store
             assert console._console_chat_controller is replacement
@@ -458,6 +460,7 @@ async def test_admitted_real_tab_publication_rechecks_replaced_controller(reques
                 if publication is not None:
                     await asyncio.wait_for(publication, 8)
             finally:
+                bind_app(original, console._console_runtime()._app)  # host as built at construction (TASK-36947.4)
                 console._console_runtime().set_chat_controller(original)
                 if replacement is not None:
                     replacement.discard_pending_round(session_id, "replacement-round")

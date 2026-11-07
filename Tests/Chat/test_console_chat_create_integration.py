@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.Chat.test_console_skill_script_confirm import _FakeApp
+from Tests.Chat.console_controller_factory import bind_app, bound_app, update_app
 
 
 #: Event waits and worker joins share the existing bounded race-test deadline.
@@ -138,7 +139,7 @@ def real_db_controller(tmp_path):
     persistence = ChatPersistenceService(db)
     store = ConsoleChatStore(persistence=persistence)
     controller = ConsoleChatController(store=store, provider_gateway=object())
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     completed = []
     controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
     try:
@@ -556,12 +557,12 @@ def _prepared_execute(controller, payload):
         }
     )
     controller._agent_bridge = bridge
-    controller.app.app_config = _FAKE_APP_CONFIG
-    runtime = SimpleNamespace(_app=controller.app)
+    update_app(controller, app_config=_FAKE_APP_CONFIG)
+    runtime = SimpleNamespace(_app=bound_app(controller))
     runtime._resolve_new_console_assistant = lambda workspace, settings: (
         ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
     )
-    controller.app.console_runtime = runtime
+    controller._hooks_v2_runtime = runtime  # the runtime reference the controller reads
     controller._default_session_settings = lambda: ConsoleSessionSettings(
         provider="llama_cpp",
         model="destination-model",
@@ -859,13 +860,13 @@ def _prepare_close_new_chat(controller, session_id, title):
             "status": "running",
         }
     bridge._live_primary_runs[source.persisted_conversation_id] = run
-    if not hasattr(controller.app, "console_runtime"):
-        controller.app.app_config = {}
-        runtime = SimpleNamespace(_app=controller.app)
+    if not hasattr(bound_app(controller), "console_runtime"):
+        update_app(controller, app_config={})
+        runtime = SimpleNamespace(_app=bound_app(controller))
         runtime._resolve_new_console_assistant = lambda workspace, settings: (
             ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
         )
-        controller.app.console_runtime = runtime
+        controller._hooks_v2_runtime = runtime  # the runtime reference the controller reads
     with use_run_id(run):
         prepared = controller.prepare_agent_chat_create(
             {
@@ -978,7 +979,7 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         else "create_conversation"
     )
     original_create = getattr(controller.store.persistence, persistence_method)
-    original_marshal = controller.app.call_from_thread
+    original_marshal = bound_app(controller).call_from_thread
     before = _live_conversation_count(db)
     controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
 
@@ -1025,7 +1026,7 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         return original_marshal(callback, *args, **kwargs)
 
     monkeypatch.setattr(controller.store.persistence, persistence_method, paused_create)
-    monkeypatch.setattr(controller.app, "call_from_thread", queued_marshal)
+    update_app(controller, call_from_thread=queued_marshal)
 
     def execute():
         """Capture executor failure without abandoning test-owned thread cleanup."""
@@ -1117,7 +1118,7 @@ def test_chat_create_completion_uses_the_current_view_sink(
         )
         return callback(*args, **kwargs)
 
-    monkeypatch.setattr(controller.app, "call_from_thread", handoff_after_view_change)
+    update_app(controller, call_from_thread=handoff_after_view_change)
     outcome = controller.execute_agent_chat_create(prepared)
     assert outcome["ok"]
     assert db.get_conversation_by_id(outcome["conversation_id"]) is not None
@@ -1174,9 +1175,7 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
             raise
 
     monkeypatch.setattr(controller.store, "restore_persisted_session", place_then_fail)
-    monkeypatch.setattr(
-        controller.app, "call_from_thread", retire_before_worker_receives_error
-    )
+    update_app(controller, call_from_thread=retire_before_worker_receives_error)
     outcome = controller.execute_agent_chat_create(prepared)
     assert outcome["ok"] and outcome["reason"] == "source_unavailable"
     assert len(placed) == 1
@@ -1314,12 +1313,12 @@ def child_new_chat_rig(real_db_controller, tmp_path):
     )
     controller._active_cancel_events[source.id] = Event()
     controller._active_assistant_message_ids[source.id] = "parent-message"
-    controller.app.app_config = _FAKE_APP_CONFIG
-    runtime = SimpleNamespace(_app=controller.app)
+    update_app(controller, app_config=_FAKE_APP_CONFIG)
+    runtime = SimpleNamespace(_app=bound_app(controller))
     runtime._resolve_new_console_assistant = lambda workspace, settings: (
         ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
     )
-    controller.app.console_runtime = runtime
+    controller._hooks_v2_runtime = runtime  # the runtime reference the controller reads
     controller._default_session_settings = lambda: ConsoleSessionSettings(
         provider="llama_cpp", model="destination-model"
     )

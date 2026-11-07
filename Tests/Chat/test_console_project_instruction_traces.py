@@ -30,6 +30,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+from Tests.Chat.console_controller_factory import bind_app
 
 GUIDANCE = "PROJECT_TRACE_GUIDANCE_31976: run the project tests."
 CREDENTIAL = "sk-" + "a" * 48
@@ -190,7 +191,7 @@ async def _project_console(
                 agent_bridge=bridge,
                 confirm_project_instruction_dispatch=lambda _notice: "proceed",
             )
-            controller.app = SimpleNamespace(workspace_registry_service=registry)
+            bind_app(controller, SimpleNamespace(workspace_registry_service=registry))
             if nested_tools:
                 from Tests.Chat.test_console_project_instruction_persistence_boundary import (
                     _InProcessWorkspaceExecutor,

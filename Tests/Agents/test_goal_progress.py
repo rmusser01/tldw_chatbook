@@ -1,6 +1,7 @@
 """Observed progress and human judgment are separate from model assertions."""
 
 from Tests.Agents.test_goal_iteration_report import iteration, report
+from Tests.Chat.console_controller_factory import update_app
 
 
 def test_model_success_without_resolved_evidence_cannot_complete():
@@ -172,7 +173,7 @@ async def run_verifier(
         import tldw_chatbook.Chat.console_chat_controller as controller_module
         from Tests.Chat.test_console_local_review_hook import ALLOW, _FakeService
 
-        controller.app.unified_mcp_service = _FakeService(state=ALLOW)
+        update_app(controller, unified_mcp_service=_FakeService(state=ALLOW))
         monkeypatch.setattr(
             "tldw_chatbook.Tools.workspace_file_roots._registry_factory",
             lambda: registry,
