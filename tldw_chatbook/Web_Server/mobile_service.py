@@ -59,7 +59,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
@@ -1974,10 +1974,13 @@ class MobileChatService:
             await asyncio.wait_for(engine.controller.shutdown(), timeout=10)
         except Exception:  # noqa: BLE001 - teardown must finish regardless
             logger.exception("mobile controller shutdown failed")
+        storage = engine.storage
         try:
-            with engine.storage.chachanotes.quiesce_connections(timeout_seconds=5):
+            with storage.chachanotes.quiesce_connections(timeout_seconds=5):
                 pass
         except Exception:  # noqa: BLE001 - teardown must finish regardless
             logger.exception("mobile store quiesce failed")
-        engine.storage.close()  # logs, never raises
+            # As before: a chat DB that did not quiesce is not closed.
+            storage = replace(storage, chachanotes=None)
+        storage.close()  # logs, never raises
         logger.info("mobile engine shut down")
