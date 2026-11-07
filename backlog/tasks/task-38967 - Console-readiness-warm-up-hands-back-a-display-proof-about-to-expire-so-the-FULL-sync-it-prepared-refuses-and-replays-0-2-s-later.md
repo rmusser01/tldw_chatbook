@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-07 01:21
+updated_date: 2026-11-07 01:58
 labels:
 - follow-up
 - console
@@ -129,6 +129,7 @@ None of them is on a PR lane. Each passed 6 of 6 here.
 - **Test.** `test_a_full_sync_slower_than_the_display_life_does_not_replay_itself` uses the clock harness. The transcript step advances the clock by 1.2x the display life.
   - Red before the fix: `a FULL sync whose awaits outlived the display replayed itself`.
   - A second FULL that stretches by only 0.6x must not re-read at the rail step. Under a variant that reads ahead there, it fails with `the rail step re-read a live display`.
+- **Review r11c-rev3.** While reads failed, the rail step's re-read could still start a second failing read in the same sync. The reviewer's clock-harness probe measured 4 reads against 3 with the re-warm off, and the retry backoff doubled from 0.8 s to 1.6 s. `rewarm_console_presentation` now reads nothing while `_retry_delay` is non-zero, the same guard as `warm()`. A third step of the test above records a failed read, makes reads fail, and stretches a FULL past the display life. It fails without the guard (`the rail step started a read while the display's reads were failing`, 3 == 2) and passes with it.
 - **Stress.** The unparseable-config test with three neighbours, `-n 4`:
   - final version, 10 of 10 runs passed at load 40-53;
   - then 5 interleaved rounds each at load 21-40, base 5 of 5 and head 5 of 5;

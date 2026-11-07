@@ -242,11 +242,15 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             real = console._sync_native_console_transcript
 
             stretch = {"share": 1.2}
+            reads: list = []
+            after_transcript: list = []
 
             async def slow_transcript(*args, **kwargs):
                 # Load stretched the FULL's awaits.
                 clock.now += projection.max_age * stretch["share"]
-                return await real(*args, **kwargs)
+                result = await real(*args, **kwargs)
+                after_transcript.append(len(reads))
+                return result
 
             console._sync_native_console_transcript = slow_transcript
             console._console_control_bar_replay_whole_sync = False
@@ -262,6 +266,40 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             read_at = projection.at
             assert await console._sync_native_console_chat_ui() is True
             assert projection.at == read_at, "the rail step re-read a live display"
+
+            # While reads fail, the rail step starts no read either: one failed
+            # read was followed by a second in the same sync, and the retry
+            # backoff doubled (r11c-rev3).
+            from tldw_chatbook.Chat import console_preparation_reads
+
+            async def unparseable(*args, **kwargs):
+                raise RuntimeError("config.toml is unparseable")
+
+            monkeypatch.setattr(
+                console_preparation_reads, "run_preparation_read", unparseable
+            )
+            await until(lambda: not projection.pending, timeout=30)
+            projection._retry_delay = spend.RETRY_FIRST_DELAY  # A read failed.
+            refresh = projection._refresh
+
+            def counting_refresh(key):
+                reads.append(key)
+                return refresh(key)
+
+            projection._refresh = counting_refresh
+            at_rail: list = []
+            rail = config_sync.sync_console_rail_visibility
+
+            def counting_rail(screen):
+                at_rail.append(len(reads))
+                return rail(screen)
+
+            monkeypatch.setattr(config_sync, "sync_console_rail_visibility", counting_rail)
+            stretch["share"] = 1.2
+            await console._sync_native_console_chat_ui()
+            assert at_rail and at_rail[-1] == after_transcript[-1], (
+                "the rail step started a read while the display's reads were failing"
+            )
 
 
 @pytest.mark.asyncio
