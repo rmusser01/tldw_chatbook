@@ -243,3 +243,86 @@ def test_an_answer_never_overrides_config_toml_where_it_decides(
     choice.apply_answer(repository, CitationRecordsAnswer.OFF)
 
     assert repository.canonical_writes_enabled is True
+
+
+class _UnreferenceableRepository:
+    """No weak references and no hash: ``question_for`` cannot key it."""
+
+    __slots__ = ("db",)
+    __hash__ = None
+    fingerprint_key_state = "writes_disabled"
+
+    def __init__(self, db) -> None:
+        self.db = db
+
+
+def test_noting_a_reply_never_fails_the_send(monkeypatch, no_saved_answer, db):
+    """The note runs inside the send pipeline; any failure is only logged."""
+    _config_with(monkeypatch, False)
+
+    asyncio.run(
+        choice.note_unrecorded_library_evidence(
+            _UnreferenceableRepository(db), "session-a"
+        )
+    )
+
+
+class _Notices:
+    def __init__(self) -> None:
+        self.shown: list[tuple[str, dict]] = []
+
+    def notify(self, message, **kwargs) -> None:
+        self.shown.append((message, kwargs))
+
+
+class _Screen:
+    def __init__(self, repository=None) -> None:
+        self.app = _Notices()
+        self._repository = repository
+
+    def _console_citation_repository_readiness(self):
+        return None, self._repository
+
+
+def test_a_failed_save_says_the_answer_lasts_only_until_chatbook_closes(
+    monkeypatch, no_saved_answer, db
+):
+    """Never promise to ask again: a recorded reply makes the profile ineligible."""
+    from tldw_chatbook.UI.Console_Modules import citation_records_question as question
+
+    _config_with(monkeypatch, False)
+
+    def refuse(answer):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(choice, "save_answer", refuse)
+    screen = _Screen()
+    repository = _repository(db)
+
+    asyncio.run(
+        question._save_and_apply(screen, repository, CitationRecordsAnswer.KEEP)
+    )
+
+    assert repository.canonical_writes_enabled is True
+    [(message, options)] = screen.app.shown
+    assert options["severity"] == "warning"
+    assert "ask again" not in message
+    assert "until Chatbook closes" in message
+    assert question.PALETTE_LABEL in message
+
+
+def test_the_palette_says_how_to_turn_off_records_that_config_toml_turns_on(
+    monkeypatch, no_saved_answer, db
+):
+    """Setting ``false`` alone is not enough after a saved Keep: name Don't keep."""
+    from tldw_chatbook.UI.Console_Modules import citation_records_question as question
+
+    _config_with(monkeypatch, True)
+    screen = _Screen(_repository(db, enabled=True))
+
+    question.open_citation_records_choice(screen)
+
+    [(message, _options)] = screen.app.shown
+    assert "set it to false" in message
+    assert question.DONT_KEEP_LABEL in message
+    assert question.PALETTE_LABEL in message
