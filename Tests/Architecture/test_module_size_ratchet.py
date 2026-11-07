@@ -229,7 +229,13 @@ _BUDGETS: dict[str, int] = {
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
     # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
     # the chat's previous ordinary outcome id at acceptance.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29180,
+    # 2026-11-06 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): 29173 -> 29185 (+12) -- an agent wake
+    # pauses before acceptance at the Ask trigger (+8), and the two
+    # compaction routes lift that pause (+4); the logic lives in
+    # console_compaction_gate.py and console_fleet_wake.py.
+    # 2026-11-06: re-measured after rebasing onto dev 8b762b52fa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 29180 -> 29192.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29192,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -985,7 +991,11 @@ _BUDGETS: dict[str, int] = {
     # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
     # a legacy/imported chat's missing Library-policy row (the safe
     # Never/Blocked default its turn ran under) instead of refusing it.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4239,
+    # 2026-11-06 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): 4239 -> 4245 (+6) -- the mix-in attempt
+    # save starts BEGIN IMMEDIATE, so a concurrent writer no longer refuses
+    # a turn with "database is locked".
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4245,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The

@@ -1,5 +1,23 @@
 # Lessons: verifying against the real thing
 
+## A live sub-agent needs Full agent tools and, on a fresh profile, capture off (TASK-33621.80, 2026-11-06)
+
+**Incident.** Verifying an agent wake live needs a background sub-agent that outlives
+its supervisor's turn. On a fresh launcher profile (claude-haiku-4-5), the model first
+answered "I don't have access to a spawn_subagent tool": plain Console chat gets the
+light tool surface ("Tools: 3 offered") until `[tools] full_agent_tools_enabled =
+true`. With 52 tools offered, every sub-agent then failed in under a second ("sub-agent
+error"), on dev 8ae979d81b as well and with OpenAI too; its run steps read "trace capture
+could not be saved, so this request was not sent" (TASK-34100.5.1). With `[console]
+exchange_capture = false` the same request returned "hello". To keep the child alive
+past the turn, the review proxy's `slow` mode (12 s per call) plus a three-step child
+task left it "1 working" after the supervisor replied.
+
+**What to do.** For a live sub-agent or wake check on a launcher profile, add both keys
+before launching (relaunch with `REUSE=1` after editing `config.toml`), and read the
+child's run steps in `agent_runs.db` (read-only `sqlite3`) when a child fails at once:
+the transcript's "sub-agent error" names no cause.
+
 ## A regression filed against a reviewed head can be gone from the merge: measure the merged code (TASK-33620.15.51, 2026-11-05)
 
 **Incident.** TASK-33620.15.51 was filed from TASK-33620.15.18's review. A first send's

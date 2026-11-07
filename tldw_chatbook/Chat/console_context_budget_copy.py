@@ -48,6 +48,11 @@ CONTEXT_LIMIT_HELP: tuple[str, tuple[tuple[str, str], ...]] = (
         ),
         ("/compact", "summarize older turns now (one model call)"),
         ("/rewind", "Summarize up to here previews what would be summarized"),
+        (
+            "Background agent",
+            "a finished sub-agent's wake over the trigger pauses with its results "
+            "saved; /compact (or leaving Ask) lets it go on",
+        ),
     ),
 )
 
@@ -239,4 +244,32 @@ def ask_trigger_refusal_copy(
         f"{_tokens(trigger_tokens)}). Run /compact to summarize older turns, "
         "then try again, or change When limit nears in Chat settings ▸ "
         f"Context and memory (Ctrl+O).{_estimate_window_sentence(estimated)}"
+    )
+
+
+def wake_ask_pause_copy(
+    *,
+    used_tokens: int,
+    budget_tokens: int,
+    trigger_tokens: int,
+    estimated: bool,
+) -> str:
+    """Compose the note for an agent wake paused at the Ask trigger.
+
+    Args:
+        used_tokens: Conversation tokens the wake would carry.
+        budget_tokens: The conversation budget.
+        trigger_tokens: Where Ask compaction starts.
+        estimated: True when the budget comes from an assumed window.
+
+    Returns:
+        Copy naming the numbers and how to go on (TASK-33621.80).
+    """
+
+    return (
+        "Background agent paused: this chat reached its compaction threshold "
+        f"({_tokens(used_tokens)} of {_tokens(budget_tokens)} tokens; trigger "
+        f"{_tokens(trigger_tokens)}). Its results are saved. Run /compact and "
+        "the agent goes on, or send a message to continue yourself."
+        f"{_estimate_window_sentence(estimated)}"
     )
