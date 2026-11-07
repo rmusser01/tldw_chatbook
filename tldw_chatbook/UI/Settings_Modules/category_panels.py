@@ -16,16 +16,19 @@ _settings_config_adapter()``, which resolves the adapter in the screen's
 module at call time, so tests that patch ``settings_screen.
 SettingsConfigAdapter`` reach panel saves too.
 
-Network is served wholly by its panel. Speech & TTS goes through
-``SpeechTTSCategoryPanel``, a thin adapter that routes its mounted widget's
-own contract (``has_unsaved_changes`` / ``request_save`` /
-``revert_to_saved``) through the same registry; its detail pane is still
-built by the screen.
+Network and Providers & Models are served wholly by their panels: the
+screen compares neither category. Providers & Models' detail pane, card
+handlers and helpers still live on the screen, and its panel calls them.
+Speech & TTS goes through ``SpeechTTSCategoryPanel``, a thin adapter that
+routes its mounted widget's own contract (``has_unsaved_changes`` /
+``request_save`` / ``revert_to_saved``) through the same registry; its
+detail pane is still built by the screen.
 """
 
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -33,12 +36,14 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
-from textual.widgets import Input, Select, Static
+from textual.widget import Widget
+from textual.widgets import Button, Input, Select, Static
 
 from ...state.settings_config_models import SettingsCategoryId
 from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
+from .settings_image_gen_defaults import unsaved_field_count
 from ..Screens.settings_network_defaults import (
     SettingsNetworkTLS,
     build_network_save_sections,
@@ -78,12 +83,27 @@ class ScopeText:
     banner: str
     #: The guided-action row, and the guidance ``s`` gives when it cannot save.
     guided: str
+    #: Whether the dirty banner adds "· revert with r" (False where the scope
+    #: needs the room on the 120-cell row).
+    banner_revert_hint: bool = True
 
 
 class SettingsCategoryPanel(Protocol):
-    """What a category provides so the screen need not special-case it."""
+    """What a category provides so the screen need not special-case it.
 
+    Every registered panel subclasses this class. The first six members are
+    required. The rest are optional (TASK-1378.2): the defaults below give the
+    answer the screen gives an unregistered category, so a panel overrides
+    only the surfaces it owns. They were drawn from Providers & Models alone,
+    so the next category to move may need to reshape them.
+    """
+
+    category: SettingsCategoryId
     commit_model: CommitModel
+    #: A switch to this category keeps the screen's focus state (the field
+    #: the Inspector names, and the provider form's pending echo
+    #: suppressions); a switch anywhere else drops it.
+    keeps_field_focus: bool = False
 
     def render(self, screen: SettingsScreen) -> ComposeResult:
         """Compose the category's detail pane."""
@@ -104,6 +124,57 @@ class SettingsCategoryPanel(Protocol):
     def scope_text(self, screen: SettingsScreen) -> ScopeText:
         """The category's scope copy for the banner and the guided row."""
         ...
+
+    # -- optional members -------------------------------------------------
+
+    def unsaved_count(self, screen: SettingsScreen) -> int:
+        """How many fields are unsaved (the banner's "N unsaved")."""
+        draft = screen._settings_drafts.get(self.category)
+        return unsaved_field_count(draft.dirty_keys) if draft is not None else 0
+
+    def after_change(self, screen: SettingsScreen, has_unsaved: bool) -> None:
+        """Repaint the panel's own widgets after its draft status changed."""
+
+    def help_notes(self, screen: SettingsScreen) -> tuple[str, ...]:
+        """Extra lines for the category's F1 help."""
+        return ()
+
+    def inspector(self, screen: SettingsScreen) -> ComposeResult | None:
+        """The Inspector body above its shared ownership rows.
+
+        ``None`` keeps the screen's "Impact and boundaries" body. A panel
+        that composes its own body names its fields' config keys there, so
+        the shared "Owns" list is left out.
+        """
+        return None
+
+    def inspector_actions(
+        self, screen: SettingsScreen, save: Button, revert: Button
+    ) -> tuple[Widget, ...]:
+        """Adjust the Inspector's Save/Revert pair as it is composed, and
+        return any widgets that follow it."""
+        return ()
+
+    def test(self, screen: SettingsScreen) -> bool:
+        """Run the category's ``t``; False lets the screen answer it."""
+        return False
+
+    def navigate(self, screen: SettingsScreen, context: Mapping[str, object]) -> bool:
+        """Apply cross-screen navigation context; False lets the screen
+        select the category plainly."""
+        return False
+
+    def focus(self, screen: SettingsScreen, widget_id: str) -> bool:
+        """Name a newly focused field in the Inspector; False clears it."""
+        return False
+
+    def poll(self, screen: SettingsScreen) -> bool:
+        """The Settings poll (every 0.25 s) while this category shows.
+
+        False makes the screen forget its subscription-readiness memo, as it
+        does for every category that does not show subscription readiness.
+        """
+        return False
 
 
 # Network ([network] ssl_verify) TLS trust mode options for the Select.
@@ -158,7 +229,7 @@ class _NetworkCard(Vertical):
         self._stage("ca_bundle_path", event.value)
 
 
-class NetworkPanel:
+class NetworkPanel(SettingsCategoryPanel):
     """Network: TLS trust for outbound API traffic.
 
     Staged commit with no ``SettingsDraft``: edits wait in the screen's
@@ -320,14 +391,15 @@ class NetworkPanel:
         screen.app.notify("Settings category changes reverted.", severity="information")
 
 
-class SpeechTTSCategoryPanel:
+class SpeechTTSCategoryPanel(SettingsCategoryPanel):
     """Speech & TTS: routes the mounted widget's own contract through here.
 
     ponytail: a thin adapter, not a full move. Still in the screen:
 
     - the detail pane, ``SettingsScreen._render_speech_tts_detail`` (its names
       are patched on the screen module by many tests);
-    - the dirty banner's leave wording, the unsaved count and the F1 note;
+    - the dirty banner's leave wording, its F1 note and its navigation
+      context;
     - the category-leave guard in ``_select_category``. It asks the live
       widget (``has_unsaved_changes()`` collects visible fields the
       ``_settings_drafts`` mirror has not heard of yet) and the audio_cpp
@@ -349,6 +421,12 @@ class SpeechTTSCategoryPanel:
         # Mirrored from the widget's DraftModified messages.
         draft = screen._settings_drafts.get(self.category)
         return bool(draft and draft.is_dirty)
+
+    def unsaved_count(self, screen: SettingsScreen) -> int:
+        snapshot = screen._speech_tts_draft_snapshot
+        if snapshot is None:
+            return super().unsaved_count(screen)
+        return snapshot.unsaved_field_count()
 
     def request_save(self, screen: SettingsScreen) -> None:
         widget = self._mounted(screen)
@@ -385,7 +463,7 @@ class SpeechTTSCategoryPanel:
             return None
 
 
-class ProvidersModelsPanel:
+class ProvidersModelsPanel(SettingsCategoryPanel):
     """Providers & Models: the default provider, model and credentials.
 
     Staged commit through the category's ``SettingsDraft`` (plus the snapshot
@@ -396,6 +474,11 @@ class ProvidersModelsPanel:
 
     category = SettingsCategoryId.PROVIDERS_MODELS
     commit_model = CommitModel("staged", "Draft — save with s")
+    keeps_field_focus = True
+
+    def showing(self, screen: SettingsScreen) -> bool:
+        """True while this category is the active one (its handlers' guard)."""
+        return screen.active_category == self.category.value
 
     def render(self, screen: SettingsScreen) -> ComposeResult:
         yield from screen._render_provider_detail()
@@ -1138,7 +1221,133 @@ class ProvidersModelsPanel:
                 if self.has_unsaved_changes(screen)
                 else "Guided edits: change a field first."
             ),
+            banner_revert_hint=False,  # the scope fills the 120-cell row
         )
+
+    # -- optional members -------------------------------------------------
+
+    def unsaved_count(self, screen: SettingsScreen) -> int:
+        # Fields, not draft keys (the context window and its reset are one),
+        # plus the snapshot preferences outside the draft.
+        return len(screen._provider_unsaved_field_names())
+
+    def after_change(self, screen: SettingsScreen, has_unsaved: bool) -> None:
+        from ..Screens.settings_screen import (
+            PROVIDER_NO_CHANGES_COPY,
+            PROVIDER_SAVED_COPY,
+        )
+        from .providers_models_card import unsaved_edits_note
+
+        self.relabel_revert(screen)
+        screen._update_provider_return_widgets()
+        # TASK-33007.4 (AC#3): the next new chat reads saved config, so a
+        # dirty form says its edits wait for s, and (#3057) which ones.
+        for note in screen.query("#settings-provider-next-chat-note").results(Static):
+            note.display = has_unsaved
+            note.update(unsaved_edits_note(screen))
+        if has_unsaved and screen._provider_save_result in (
+            PROVIDER_SAVED_COPY,
+            PROVIDER_NO_CHANGES_COPY,
+        ):
+            screen._provider_save_result = ""
+            screen._set_static_text("#settings-provider-save-result", "")
+        # TASK-33007.6: the context window and snapshot drafts re-say
+        # their Advanced titles here.
+        screen._refresh_advanced()
+        if screen.focused is not None and str(screen.focused.id or "").startswith(
+            "settings-model-profile-"
+        ):
+            # Dirty/readiness copy above the disclosure can grow while
+            # typing and push the active field past the compact fold.
+            screen._reveal_settings_focus_after_refresh()
+
+    def relabel_revert(self, screen: SettingsScreen) -> None:
+        """While snapshot preferences cannot be read, ``r`` reloads them."""
+        if not (self.showing(screen) and screen._snapshot_preferences_unavailable):
+            return
+        try:
+            button = screen.query_one("#settings-revert-category", Button)
+        except QueryError:
+            return
+        button.disabled = False
+        button.label = "Revert (r) — reload preferences"
+
+    def help_notes(self, screen: SettingsScreen) -> tuple[str, ...]:
+        from ..Screens.settings_screen import PROVIDER_TEST_GUIDANCE
+
+        return (f"Test provider (t): {PROVIDER_TEST_GUIDANCE}",)
+
+    def inspector(self, screen: SettingsScreen) -> ComposeResult:
+        # TASK-33007.4: Applies to, Next new chat, the focused field and
+        # Key, composed beside the card (spec mock (c)).
+        from .providers_models_card import compose_providers_models_inspector
+
+        return compose_providers_models_inspector(screen)
+
+    def inspector_actions(
+        self, screen: SettingsScreen, save: Button, revert: Button
+    ) -> tuple[Widget, ...]:
+        recovery = screen._vllm_default_recovery()
+        if recovery is not None:  # cleanup still owns the provider settings
+            save.disabled = revert.disabled = True
+        elif screen._snapshot_preferences_unavailable:
+            revert.disabled = False
+            revert.label = "Revert (r) — reload preferences"
+        recovery_status = Static(
+            "Verified vLLM handoff cleanup needs attention. Retry cleanup "
+            "to unlock provider actions.",
+            id="settings-vllm-handoff-recovery-status",
+            classes="settings-status-row",
+        )
+        recovery_status.display = recovery is not None
+        recovery_button = Button(
+            "Retry vLLM handoff cleanup",
+            id="settings-vllm-handoff-recovery",
+            variant="warning",
+            tooltip=(
+                "Retry the application-owned release without saving any "
+                "provider settings."
+            ),
+        )
+        recovery_button.display = recovery is not None
+        return (recovery_status, recovery_button)
+
+    def test(self, screen: SettingsScreen) -> bool:
+        screen._test_provider_settings()
+        return True
+
+    def navigate(self, screen: SettingsScreen, context: Mapping[str, object]) -> bool:
+        screen._route_to_provider_settings(context)
+        return True
+
+    def focus(self, screen: SettingsScreen, widget_id: str) -> bool:
+        screen._active_settings_field_id = screen._guided_field_id(
+            self.category, widget_id
+        )
+        screen._refresh_provider_field_guidance()
+        screen._scroll_impact_pane_to_field_guide(self.category)
+        return True
+
+    def poll(self, screen: SettingsScreen) -> bool:
+        from .providers_models_card import refresh_key_rows
+
+        provider = screen._provider_widget_value()
+        if not screen._subscription_readiness_changed(
+            self.category,
+            provider,
+            lambda: screen._provider_auth_readiness_config(provider),
+        ):
+            return True
+        refresh_key_rows(screen, provider)
+        tested_draft = screen._provider_subscription_test
+        if tested_draft is None:
+            return True
+        if tested_draft != (provider, screen._provider_draft_generation):
+            screen._provider_subscription_test = None
+            return True
+        screen._provider_test_result = screen._run_provider_readiness_test()
+        screen._update_provider_test_result()
+        return True
 
 
 NETWORK_PANEL = NetworkPanel()
