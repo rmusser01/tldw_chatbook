@@ -77,11 +77,12 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_send_diagnostics",
     "tldw_chatbook.Chat.console_automatic_submission",
     "tldw_chatbook.Chat.console_plugin_context",
-    "tldw_chatbook.Chat.console_hook_preparation",
     "tldw_chatbook.Agents.hook_permissions",
     "tldw_chatbook.Agents.run_hooks",
+    "tldw_chatbook.Agents.legacy_hook_ownership",
     "tldw_chatbook.Agents.automatic_work_runtime",
     "tldw_chatbook.Chat.console_references",
+    "tldw_chatbook.Chat.console_reference_preparation",
     "tldw_chatbook.Agents.hooks_v2.lifecycle",
     "tldw_chatbook.Agents.hooks_v2.matching",
     "tldw_chatbook.Agents.hooks_v2.models",
@@ -135,6 +136,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.citation_key_first_use",
     "tldw_chatbook.Canvas.guide",
     "tldw_chatbook.Chat.console_stream_persistence",
+    "tldw_chatbook.Chat.console_first_send_persistence",
     "tldw_chatbook.Chat.provider_rate_limits",
     # The run's end: canvas settlement (one UI-loop callback of 157 ms CPU on
     # a loaded host), remote sessions and citation counts. Its third-party

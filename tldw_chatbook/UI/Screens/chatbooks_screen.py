@@ -8,7 +8,6 @@ from loguru import logger
 
 from tldw_chatbook.Constants import TAB_CHATBOOKS
 
-from ..Chatbooks_Window_Improved import ChatbooksWindowImproved
 from ..Navigation.base_app_screen import BaseAppScreen
 
 
@@ -20,6 +19,8 @@ class ChatbooksScreen(BaseAppScreen):
 
     def compose_content(self) -> ComposeResult:
         """Compose the Chatbooks screen with the Chatbooks window."""
+        from ..Chatbooks_Window_Improved import ChatbooksWindowImproved
+
         logger.info("Composing Chatbooks screen")
         yield ChatbooksWindowImproved(self.app_instance)
 
@@ -31,6 +32,8 @@ class ChatbooksScreen(BaseAppScreen):
 
     async def on_screen_resume(self) -> None:
         """Restore state when screen is resumed."""
+        from ..Chatbooks_Window_Improved import ChatbooksWindowImproved
+
         logger.debug("Chatbooks screen resumed")
         chatbooks_window = self.query_one(ChatbooksWindowImproved)
         if hasattr(chatbooks_window, "_refresh_chatbooks"):

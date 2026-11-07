@@ -1,0 +1,18 @@
+{
+  "parsed": [
+    {
+      "path": "Tests/UI/test_console_send_acknowledgement.py",
+      "sha256": "b3598cf5d203991c8857e09cd26ac4517b2778233c92e2409e13d92a55b2b4da"
+    },
+    {
+      "path": "Tests/UI/test_console_projection_reads_off_loop.py",
+      "sha256": "0bbfb7e86f8e93d87ea8d95b10723d7223cc91fe6e57a55ba041798651d86878"
+    },
+    {
+      "path": "Tests/UI/test_console_cited_sources_persisted.py",
+      "sha256": "445f85ff4dc8b403cedd11e4c901d1e0f3cc5ca2e1092f3ae353ea40d7c62307"
+    }
+  ],
+  "production_changed": false,
+  "test_node": "Tests/UI/test_console_projection_reads_off_loop.py::test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection[direct]"
+}

@@ -1,0 +1,9 @@
+{
+  "path": "backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md",
+  "sha256": "daf01216c7491db52b0ee1b9541c131f48eae1ec9c453b395a09801967d97a81",
+  "current_window_stage": 29,
+  "unchanged_predecessors": "25\u201328",
+  "canonical_queue_links": 2,
+  "missing_local_links": [],
+  "result": "PASS"
+}

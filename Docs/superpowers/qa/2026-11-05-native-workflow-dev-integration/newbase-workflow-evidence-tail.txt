@@ -1,0 +1,21 @@
+................                                                         [100%]
+============================= slowest 25 durations =============================
+10.82s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[owned-edit]
+5.81s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[external-edit]
+5.72s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[removed]
+5.61s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[alias-overlap]
+5.56s call     Tests/Agents/test_workflow_run_service.py::test_native_done_without_approved_verifier_stays_missing_and_blocks_quality_and_next_phase
+5.37s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[unchanged]
+5.26s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[partial-unchanged]
+5.02s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[partial-directory]
+4.70s call     Tests/Agents/test_workflow_run_service.py::test_required_checkpoint_archives_and_protects_change_windows_until_private_removal
+3.61s setup    Tests/Agents/test_workflow_run_service.py::test_original_failed_launch_receipt_distinguishes_no_row_and_unknown[no_row]
+2.84s call     Tests/Agents/test_workflow_run_service.py::test_forged_receipt_boolean_and_oversize_required_payload_do_not_settle
+2.58s call     Tests/Agents/test_workflow_run_service.py::test_completed_task_handoff_rejects_later_input_change_without_verifiers
+2.43s call     Tests/Agents/test_workflow_run_service.py::test_partial_quiescent_recovery_reclaims_only_unused_payload_with_real_published_sibling
+1.75s call     Tests/Agents/test_workflow_run_service.py::test_recovery_close_keeps_unknown_charges_and_claims_and_cannot_be_quality_approved
+1.57s call     Tests/Agents/test_workflow_run_service.py::test_original_failed_launch_receipt_distinguishes_no_row_and_unknown[no_row]
+1.20s setup    Tests/Agents/test_workflow_run_service.py::test_recovery_close_keeps_unknown_charges_and_claims_and_cannot_be_quality_approved
+
+(9 durations < 1s hidden.)
+16 passed, 18 deselected in 76.09s (0:01:16)

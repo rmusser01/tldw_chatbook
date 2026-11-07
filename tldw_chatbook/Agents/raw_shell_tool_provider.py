@@ -136,6 +136,20 @@ def resolve_raw_shell_state(
     return "deny" if effective.state == "deny" else "ask"
 
 
+def raw_shell_schema(tool_id: str) -> ToolSchema:
+    """Return the one native descriptor; callers retain all eligibility gates."""
+    return ToolSchema(
+        id=tool_id,
+        name=RAW_SHELL_TOOL_NAME,
+        description=(
+            "Run a non-interactive command in a real host shell with the full "
+            "authority of the OS user. Every command requires visible approval "
+            "unless the user grants this Console session temporary authority."
+        ),
+        parameters=_MODEL_SCHEMA,
+    )
+
+
 class RawShellToolProvider:
     """Expose one conditional model schema and one always-projectable policy row."""
 
@@ -233,16 +247,7 @@ class RawShellToolProvider:
         name = tool_id.split(":", 1)[-1]
         if name != RAW_SHELL_TOOL_NAME or not self.catalog_enabled():
             raise KeyError(f"Raw shell tool is unavailable: {tool_id}")
-        return ToolSchema(
-            id=tool_id,
-            name=RAW_SHELL_TOOL_NAME,
-            description=(
-                "Run a non-interactive command in a real host shell with the full "
-                "authority of the OS user. Every command requires visible approval "
-                "unless the user grants this Console session temporary authority."
-            ),
-            parameters=_MODEL_SCHEMA,
-        )
+        return raw_shell_schema(tool_id)
 
     @staticmethod
     def hub_tool() -> HubTool:
@@ -470,6 +475,12 @@ class RawShellToolProvider:
             return ToolResult(ok=False, error=f"Unknown raw shell tool: {name}")
         run_id = current_run_id()
         call_id = current_tool_call_id() or RAW_SHELL_TOOL_NAME
+        from .workflow_task_scope import check_task_provider
+
+        try:
+            check_task_provider(self, tool_id, dict(args))
+        except Exception:  # noqa: BLE001 - authority failures must refuse
+            return ToolResult.blocked("workflow task scope refused")
         try:
             request = self._validated_request(
                 args,
@@ -520,6 +531,21 @@ class RawShellToolProvider:
                 return ToolResult.blocked(
                     RAW_SHELL_DENY_REFUSAL, approval_decision="denied"
                 )
+            try:
+                check_task_provider(self, tool_id, dict(args))
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
+            from .workflow_task_scope import current_task_authorization
+
+            authorization = current_task_authorization()
+            observation = None
+            if authorization is not None and authorization._required_evidence:
+                observation = authorization._required_evidence[0].begin_shell(
+                    self, request
+                )
+            from ..Chat.console_raw_cli_custody import bind_model_raw_cli
+
+            bind_model_raw_cli(self, request)
             from .code_review_checks import current_check_execution
 
             check_execution = current_check_execution()
@@ -536,6 +562,8 @@ class RawShellToolProvider:
                     request.invocation_id
                 )
                 callbacks["admission_scope"] = check_execution.admission_scope
+            if observation is not None:
+                callbacks["required_output"] = observation.output
             result = self._runtime.execute(
                 request,
                 lambda event: self._emit_progress(run_id, call_id, event),
@@ -543,6 +571,8 @@ class RawShellToolProvider:
             )
             if check_execution is not None:
                 check_execution.settled(result)
+            if observation is not None:
+                authorization._required_evidence[0].finish_shell(observation, result)
             self._emit_progress(run_id, call_id, result)
         except Exception as exc:
             detail = (str(exc) or type(exc).__name__)[:300]
@@ -624,3 +654,18 @@ __all__ = [
     "RawShellToolProvider",
     "resolve_raw_shell_state",
 ]
+
+
+# Original pure metadata for the conditional prospective planning descriptor.
+from copy import deepcopy as _planning_deepcopy
+
+_PLANNING_SHELL_SCHEMA = _planning_deepcopy(_MODEL_SCHEMA)
+_PLANNING_SHELL_DESCRIPTOR = (
+    raw_shell_schema,
+    raw_shell_schema.__code__,
+    raw_shell_schema.__defaults__,
+    raw_shell_schema.__kwdefaults__,
+    tuple((raw_shell_schema.__kwdefaults__ or {}).items()),
+    raw_shell_schema.__closure__,
+    tuple((c, c.cell_contents) for c in raw_shell_schema.__closure__ or ()),
+)

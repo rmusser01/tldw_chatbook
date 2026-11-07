@@ -1260,6 +1260,10 @@ async def test_actual_console_teardown_mcp_uses_captured_runtime_and_normal_guar
             started = time.monotonic()
             await runtime.close_hooks_v2(session.id)
             assert time.monotonic() - started < 8.5
+            # Refused nested context must discard its actual retained host, too.
+            assert not engine.cleanup_pending
+            if runtime._execution_capacity is not None:
+                assert runtime.execution_capacity.snapshot().tool_workers == 0
             # A real counter call proves whether the peer saw the notification.
             counter = await client.call_tool_result(
                 "fixture", "fixture", {"counter": True}

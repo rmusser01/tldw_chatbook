@@ -7,7 +7,9 @@ each taking the config write lock, a fresh config read, the store lock and raw
 admission. The attempt's first read is now passed explicitly to its later
 pre-commit consumers. These controls pin what must still hold:
 
-* exactly one full read before durable commit, plus one fresh final read;
+* one shared admission read, a separate native effect-maximum read, and a
+  fresh final dispatch read; changed definitions invalidate the shared read
+  and require the original v2 preparation to read fresh;
 * a grant revoked behind the owner's back (another process) after the shared
   read is still refused at the fresh final admission, before the provider;
 * an in-process consent change, or a read bound to another session or owner,
@@ -27,6 +29,7 @@ read (snapshot, v2 configuration, targets, launch guard) goes through.
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -41,8 +44,9 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_hook_preparation import ConsoleHookAttemptRead
-from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, _ConsoleTurnRefusedError
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+from tldw_chatbook.Chat.console_workflow_runs import native_workflow_qualified
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -126,20 +130,24 @@ class _Rig:
         )
         self.record = None
         self.phase = "send"
-        self.reads: list[tuple[str, bool]] = []
+        self.reads: list[tuple[str, bool, str]] = []
         real = self.owner._current
 
         def counted(*args, **kwargs):
             record = rig.record
             durable = bool(record is not None and record.inputs.durable_accepted)
-            rig.reads.append((rig.phase, durable))
+            rig.reads.append((rig.phase, durable, sys._getframe(1).f_code.co_name))
             return real(*args, **kwargs)
 
         monkeypatch.setattr(self.owner, "_current", counted)
 
     def send_reads(self) -> list[bool]:
         """Durable-acceptance state at each full read the Send itself made."""
-        return [durable for phase, durable in self.reads if phase == "send"]
+        return [durable for phase, durable, _stage in self.reads if phase == "send"]
+
+    def send_read_stages(self) -> list[tuple[str, bool]]:
+        """Original consent-reader caller and durable state, in actual order."""
+        return [(stage, durable) for phase, durable, stage in self.reads if phase == "send"]
 
     def key(self) -> str:
         snapshot = self.owner.snapshot()
@@ -222,18 +230,22 @@ async def test_warm_send_reads_once_before_commit_and_fresh_at_dispatch(rig, ent
 
     assert not isinstance(result, BaseException), result
     assert result.accepted and rig.gateway.calls == 1
-    # Before: received + admission + v2 + UserPromptSubmit + final = five
-    # (custody: four). Now the attempt's one read, then the fresh final one.
-    assert rig.send_reads() == [False, True], rig.reads
+    # The shared attempt read still serves admission and empty hook consumers.
+    # Native ordinary admission separately selects its declared effect maximum.
+    assert rig.send_read_stages() == [
+        ("snapshot", False),
+        *([("v2_configuration", False)] if native_workflow_qualified() else []), ("snapshot", True),
+    ], rig.reads
 
 
-async def test_externally_revoked_grant_is_still_refused_at_final_admission(rig):
-    """Another process revokes after the shared read; dispatch is refused."""
+@pytest.mark.skipif(
+    not native_workflow_qualified(), reason="native ordinary maximum read required"
+)
+async def test_external_revocation_at_native_maximum_refuses_before_durable_acceptance(rig):
+    """The native maximum's fresh read discovers an earlier external revoke."""
     key = rig.key()
 
     def revoke_elsewhere():
-        # A second owner is another process's consent owner: it writes the
-        # store through the canonical writer, unseen by this owner's memory.
         rig.phase = "elsewhere"
         other = HookPermissions()
         try:
@@ -244,15 +256,59 @@ async def test_externally_revoked_grant_is_still_refused_at_final_admission(rig)
 
     rig.between = revoke_elsewhere
     record = rig.start_received()
-
     result = await _outcome(record)
 
-    assert not isinstance(result, BaseException), result
-    assert rig.gateway.calls == 0, "a revoked grant reached the provider"
+    assert isinstance(result, _ConsoleTurnRefusedError), result
+    assert not record.inputs.durable_accepted
+    assert rig.gateway.calls == 0
+    assert rig.db.get_connection().execute(
+        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+    ).fetchone()[0] == 0
+    recovery = rig.runtime.recoveries_for_session(rig.session.id)
+    assert recovery and recovery[-1].reason == "Required hook initialization failed."
+    assert rig.send_read_stages() == [
+        ("snapshot", False), ("v2_configuration", False), ("v2_configuration", False),
+    ], rig.reads
+
+
+async def test_externally_revoked_grant_is_still_refused_at_final_admission(rig):
+    """A revoke after the actual commit still refuses the final dispatch."""
+    key = rig.key()
+    accepted = []
+    rig.reads.clear()
+
+    def revoke_after_acceptance():
+        checkpoint = rig.db.get_connection().execute(
+            "SELECT state FROM console_dispatch_checkpoints"
+        ).fetchone()
+        assert checkpoint is not None and checkpoint[0] == "accepted"
+        assert rig.gateway.calls == 0
+        accepted.append(checkpoint[0])
+        rig.phase = "elsewhere"
+        other = HookPermissions()
+        try:
+            assert not other.revoke(other.snapshot(), key).ready
+        finally:
+            other.close()
+            rig.phase = "send"
+
+    result = await rig.controller.submit_draft(
+        "revoke after the actual accepted turn",
+        session_id=rig.session.id,
+        configuration=rig.configuration,
+        custody_acceptance_hook=revoke_after_acceptance,
+    )
+    assert accepted == ["accepted"]
+    assert result.accepted and not result.provider_started
     assert result.visible_copy == "Accepted turn is retained for recovery."
-    # The shared read stood for the pre-commit consumers; the final admission
-    # read fresh, saw the revocation and refused before provider entry.
-    assert rig.send_reads() == [False, True], rig.reads
+    assert rig.gateway.calls == 0
+    # A public submit has no fabricated runtime custody record; the actual
+    # callback/checkpoint above proves acceptance separately from these flags.
+    assert rig.send_read_stages() == [
+        ("snapshot", False),
+        *([("v2_configuration", False)] if native_workflow_qualified() else []),
+        ("snapshot", False),
+    ], rig.reads
     assert not rig.owner.snapshot().ready
 
 
@@ -297,9 +353,13 @@ async def test_foreign_session_read_falls_back_and_the_fresh_read_is_shared(rig)
     )
 
     assert result.accepted and rig.gateway.calls == 1
-    # Admission read fresh (the foreign read was refused) and that one read
-    # served v2 preparation and UserPromptSubmit; the final read is fresh.
-    assert len(rig.send_reads()) == 2, rig.reads
+    # The foreign read cannot serve admission. Its fresh replacement shares
+    # empty hook consumers; native maximum and final dispatch remain separate.
+    assert rig.send_read_stages() == [
+        ("snapshot", False),
+        *([("v2_configuration", False)] if native_workflow_qualified() else []),
+        ("snapshot", False),
+    ], rig.reads
     assert accepted == [True]
 
 
@@ -332,14 +392,14 @@ async def test_legacy_selection_uses_only_its_own_owners_current_read(rig):
     read = rig.owner.authority_read()
     rig.reads.clear()
     assert not engine.fire(
-        "UserPromptSubmit", session_id="s", authority_read=read
+        "UserPromptSubmit", session_id=rig.session.id, authority_read=read
     ).blocked
     assert rig.reads == []
     other = HookPermissions()
     try:
         foreign = other.authority_read()
         assert not engine.fire(
-            "UserPromptSubmit", session_id="s", authority_read=foreign
+            "UserPromptSubmit", session_id=rig.session.id, authority_read=foreign
         ).blocked
         assert len(rig.reads) == 1, "a foreign owner's read replaced a fresh one"
     finally:
@@ -516,7 +576,15 @@ async def test_a_user_prompt_hook_narrowed_elsewhere_lets_the_send_proceed(
     unapproved."); a fresh selection omits the hook and the Send dispatches.
     """
     rig = ups_rig
-    rig.between = lambda: _edit(hook_file, _NARROWING_EDITS[edit])
+    standing = rig.owner.authority_read()
+    assert rig.owner.attempt_read_current(standing)
+
+    def narrow_elsewhere():
+        _edit(hook_file, _NARROWING_EDITS[edit])
+        # An external edit alone cannot move this owner's in-memory read.
+        assert rig.owner.attempt_read_current(standing)
+
+    rig.between = narrow_elsewhere
     record = rig.start_received()
 
     result = await _outcome(record)
@@ -525,9 +593,16 @@ async def test_a_user_prompt_hook_narrowed_elsewhere_lets_the_send_proceed(
     assert result.accepted and rig.gateway.calls == 1
     messages = rig.store.messages_for_session(rig.session.id)
     assert not any("blocked by hook" in str(row.content) for row in messages)
-    # The received read (shared by admission and v2 preparation), the fresh
-    # UserPromptSubmit selection that omits the hook, the fresh final read.
-    assert rig.send_reads() == [False, False, True], rig.reads
+    assert not rig.owner.attempt_read_current(standing)
+    # The native maximum refreshes the owner's observed revision, invalidating
+    # the old shared read. V2 preparation therefore also reads fresh before
+    # UserPromptSubmit selects the now-empty target set.
+    assert rig.send_read_stages() == [
+        ("snapshot", False),
+        *([("v2_configuration", False), ("v2_configuration", False)]
+          if native_workflow_qualified() else []),
+        ("targets", False), ("snapshot", True),
+    ], rig.reads
 
 
 async def test_an_approved_user_prompt_hook_is_selected_fresh_and_runs(ups_rig):
@@ -538,9 +613,13 @@ async def test_an_approved_user_prompt_hook_is_selected_fresh_and_runs(ups_rig):
 
     assert not isinstance(result, BaseException), result
     assert result.accepted and rig.gateway.calls == 1
-    # The received read, the fresh selection, the hook's own launch guard
-    # (immediately before its process), then the fresh final read.
-    assert rig.send_reads() == [False, False, False, True], rig.reads
+    # Native effect-maximum selection reads definitions before the fresh
+    # target selection and launch guard; it does not replace either authority.
+    assert rig.send_read_stages() == [
+        ("snapshot", False),
+        *([("v2_configuration", False)] if native_workflow_qualified() else []), ("targets", False),
+        ("launch_guard", False), ("snapshot", True),
+    ], rig.reads
 
 
 async def test_v2_handlers_removed_elsewhere_are_prepared_from_a_fresh_read(

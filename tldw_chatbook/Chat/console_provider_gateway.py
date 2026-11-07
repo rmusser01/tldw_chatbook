@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Chat.console_ordinary_tree import _NATIVE_CURRENTNESS_SOURCE as _ORIGINAL_CURRENTNESS_SOURCE
+
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 
 import asyncio
@@ -6971,6 +6973,40 @@ class ConsoleProviderGateway:
         ``fallback_retry``: this call IS that retry, traced on the
         stream-to-complete route the llama.cpp fallback uses.
         """
+        from types import ModuleType as _currentness_module_type
+
+        from tldw_chatbook.Chat import (
+            console_chat_controller as _currentness_controller,
+        )
+        from tldw_chatbook.Chat import console_runtime as _currentness_runtime
+
+        _currentness_source = _ORIGINAL_CURRENTNESS_SOURCE
+        if (
+            type(_currentness_runtime) is not _currentness_module_type
+            or type(_currentness_controller) is not _currentness_module_type
+            or _currentness_source is not vars(_currentness_runtime).get("_ORIGINAL_CURRENTNESS_SOURCE")
+            or _currentness_source is not vars(_currentness_controller).get("_ORIGINAL_CURRENTNESS_SOURCE")
+            or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_runtime") is not _currentness_runtime
+            or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_chat_controller") is not _currentness_controller
+        ):
+            raise RuntimeError("original native currentness consumer changed")
+        _currentness_record = _currentness_source[4][-1][1]
+        _currentness_reader, _currentness_code, _currentness_defaults, _currentness_kwdefaults, _currentness_entries, _currentness_closure, _currentness_cells = _currentness_record
+        if (
+            _currentness_reader.__code__ is not _currentness_code
+            or _currentness_reader.__defaults__ is not _currentness_defaults
+            or _currentness_reader.__kwdefaults__ is not _currentness_kwdefaults
+            or tuple((_currentness_kwdefaults or {}).items()) != _currentness_entries
+            or _currentness_reader.__closure__ is not _currentness_closure
+            or any(cell.cell_contents is not value for cell, value in _currentness_cells)
+        ):
+            raise RuntimeError("original native currentness dispatcher changed")
+
+        planning = _currentness_reader(_currentness_source, 'planning')
+        if planning is not None:
+            planning._admit_planning_primary(planning.planning_service)
+            if planning._planning_gateway is not self:
+                raise PermissionError("original planning gateway required")
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         stop_event = threading.Event()
@@ -6985,8 +7021,29 @@ class ConsoleProviderGateway:
         response_close_task: asyncio.Task[None] | None = None
 
         def call_response_close(close: Callable[[], Any]) -> None:
-            with contextlib.suppress(Exception):
-                close()
+            if planning is not None:
+                from tldw_chatbook.Agents.activation import worker_guard
+                from tldw_chatbook.Agents.goal_storage_lifetime import (
+                    owned_goal_storage,
+                )
+
+                @worker_guard(planning.phase._ledger)
+                def close_owned():
+                    with (
+                        owned_goal_storage(planning.service),
+                        planning.activate_source(),
+                    ):
+                        close()
+
+                try:
+                    with planning._planning_storage_return():
+                        close_owned()
+                except BaseException:
+                    planning._planning_provider_failure = True
+                    raise
+            else:
+                with contextlib.suppress(Exception):
+                    close()
 
         def claim_response_close() -> Callable[[], Any] | None:
             nonlocal close_requested, response_close_attempted
@@ -7476,9 +7533,41 @@ class ConsoleProviderGateway:
                     if current_automatic_work()
                     else contextlib.nullcontext()
                 ), capture_rate_limits_for(provider_config_key(resolution.provider)):
-                    consume_provider()
+                    if planning is None:
+                        consume_provider()
+                    else:
+                        from tldw_chatbook.Agents.goal_storage_lifetime import (
+                            owned_goal_storage,
+                        )
+
+                        with (
+                            owned_goal_storage(planning.service),
+                            planning.activate_source(),
+                        ):
+                            consume_provider()
             finally:
                 _local_reasoning_sink.reset(token)
+
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.workflow is not None:
+            from tldw_chatbook.Agents.activation import worker_guard
+
+            guarded_worker = worker_guard(automatic.ledger)(worker)
+
+            def worker() -> None:
+                try:
+                    if planning is None:
+                        guarded_worker()
+                    else:
+                        with planning._planning_storage_return():
+                            guarded_worker()
+                except BaseException as exc:
+                    # Admission can refuse before consume_provider owns the queue.
+                    enqueue(_QueueItem("error", adapter_error=exc))
+                    enqueue(_QueueItem.done())
+                    if planning is not None:
+                        planning._planning_provider_failure = True
+                        raise
 
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
         provider_work_owned = bool(
@@ -7548,18 +7637,40 @@ class ConsoleProviderGateway:
             stop_event.set()
             acknowledge_delivery()
             close_completion = close_response_off_loop()
-            if not provider_work_owned and not worker_task.done():
-                worker_task.cancel()
-            if close_completion is not None:
-                with contextlib.suppress(
-                    asyncio.CancelledError,
-                    asyncio.TimeoutError,
-                ):
-                    await asyncio.wait_for(
-                        asyncio.shield(close_completion), timeout=0
-                    )
-            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-                await asyncio.wait_for(asyncio.shield(worker_task), timeout=0)
+            if planning is not None:
+                cancellation = failure = None
+                for completion in (worker_task, close_completion):
+                    if completion is None:
+                        continue
+                    while not completion.done():
+                        try:
+                            await asyncio.shield(completion)
+                        except asyncio.CancelledError as error:
+                            cancellation = error
+                        except BaseException:  # noqa: BLE001 - retain original uncertainty or inspect exact native failure.
+                            break  # Consume the actual original future below.
+                    try:
+                        completion.result()
+                    except BaseException as error:  # noqa: BLE001 - retain original uncertainty or inspect exact native failure.
+                        planning._planning_provider_failure = True
+                        failure = error
+                if failure is not None:
+                    raise failure
+                if cancellation is not None:
+                    raise cancellation
+            else:
+                if not provider_work_owned and not worker_task.done():
+                    worker_task.cancel()
+                if close_completion is not None:
+                    with contextlib.suppress(
+                        asyncio.CancelledError,
+                        asyncio.TimeoutError,
+                    ):
+                        await asyncio.wait_for(
+                            asyncio.shield(close_completion), timeout=0
+                        )
+                with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(worker_task), timeout=0)
 
     @staticmethod
     def normalize_provider_response(
@@ -8489,5 +8600,34 @@ _CONTEXT_CAPACITY_DISPLAY_ORIGINALS = (
                 ConsoleProviderGateway._cached_context_window_from_display,
             ),
         )
+    ),
+)
+
+
+# Planning qualifies the same original loop-client cleanup consumer.
+_CONSOLE_PLANNING_LOOP_CLOSE_NATIVE = (
+    ConsoleProviderGateway.aclose_current_loop,
+    ConsoleProviderGateway.aclose_current_loop.__code__,
+    ConsoleProviderGateway.aclose_current_loop.__defaults__,
+    ConsoleProviderGateway.aclose_current_loop.__kwdefaults__,
+    tuple((ConsoleProviderGateway.aclose_current_loop.__kwdefaults__ or {}).items()),
+    ConsoleProviderGateway.aclose_current_loop.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in ConsoleProviderGateway.aclose_current_loop.__closure__ or ()
+    ),
+)
+
+
+_CONSOLE_PLANNING_STREAM_NATIVE = (
+    ConsoleProviderGateway._stream_generic_chat,
+    ConsoleProviderGateway._stream_generic_chat.__code__,
+    ConsoleProviderGateway._stream_generic_chat.__defaults__,
+    ConsoleProviderGateway._stream_generic_chat.__kwdefaults__,
+    tuple((ConsoleProviderGateway._stream_generic_chat.__kwdefaults__ or {}).items()),
+    ConsoleProviderGateway._stream_generic_chat.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in ConsoleProviderGateway._stream_generic_chat.__closure__ or ()
     ),
 )

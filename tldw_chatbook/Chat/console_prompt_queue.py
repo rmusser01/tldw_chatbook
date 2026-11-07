@@ -192,6 +192,7 @@ class QueuedPrompt:
     custody_request: ConsoleTurnCustodyRequest | None = field(
         default=None, repr=False
     )
+    mcp_capture_witness: object | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -666,6 +667,9 @@ class ConsolePromptQueueRegistry:
         if not isinstance(admitted_at, (int, float)) or isinstance(admitted_at, bool):
             return None
         self._next_insertion_order += 1
+        from .console_configuration_preparation import pending_mcp_witness
+
+        witness = pending_mcp_witness(custody_request.configuration) if custody_request else None
         prompt = QueuedPrompt(
             entry_id=entry_id,
             text=text,
@@ -673,6 +677,7 @@ class ConsolePromptQueueRegistry:
             insertion_order=self._next_insertion_order,
             admitted_at=float(admitted_at),
             custody_request=custody_request,
+            mcp_capture_witness=witness,
         )
         self._active_entry_ids.add(entry_id)
         return prompt
@@ -846,6 +851,17 @@ class ConsolePromptQueueRegistry:
             ))
         if next_request is None and existing.custody_request is not None:
             next_request = replace(existing.custody_request, draft=text)
+        from .console_configuration_preparation import pending_mcp_witness
+
+        witness = None
+        if next_request is not None:
+            if (
+                existing.custody_request is not None
+                and next_request.configuration is existing.custody_request.configuration
+            ):
+                witness = existing.mcp_capture_witness
+            else:
+                witness = pending_mcp_witness(next_request.configuration)
         state.waiting[index] = QueuedPrompt(
             entry_id=existing.entry_id,
             text=text,
@@ -853,6 +869,7 @@ class ConsolePromptQueueRegistry:
             insertion_order=existing.insertion_order,
             admitted_at=existing.admitted_at,
             custody_request=next_request,
+            mcp_capture_witness=witness,
         )
         self._bump(state)
         return self._result(
@@ -987,6 +1004,16 @@ class ConsolePromptQueueRegistry:
                 state=state,
                 entry_id=prompt.entry_id,
                 claim=state.claimed,
+            )
+
+    def owns_claimed_prompt(self, session_id, prompt):
+        """Check the exact current in-memory claim without invoking callbacks."""
+        with self._lock:
+            state = self._states.get(session_id)
+            return bool(
+                state is not None
+                and state.claimed is not None
+                and state.claimed.prompt is prompt
             )
 
     def bind_claimed_preparation(

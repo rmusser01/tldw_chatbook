@@ -597,6 +597,12 @@ def core_cached_connection(repository, connection):
     return connection
 
 
+_CORE_CACHE_INSPECTION = (
+    core_cached_connection, core_cached_connection.__code__,
+    repository_types, repository_types.__code__, retired_core_connections,
+)
+
+
 def core_getter(function):
     """A cross-instance raw getter cannot inherit another owner's operation."""
 

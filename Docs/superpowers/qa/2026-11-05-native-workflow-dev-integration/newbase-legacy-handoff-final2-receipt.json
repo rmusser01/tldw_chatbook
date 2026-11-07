@@ -1,0 +1,25 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_native_legacy_hook_handoff.py",
+    "--tb=short",
+    "-x",
+    "-W",
+    "error::RuntimeWarning",
+    "-W",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "--basetemp=../pytest-newbase-legacy-handoff-final2"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 18.09713758295402,
+  "source_file_count": 9109,
+  "before_sha256": "147bb7d757a46b11f78946437eb48e569517a2dba872378eb3ab6b5c199a320a",
+  "after_sha256": "147bb7d757a46b11f78946437eb48e569517a2dba872378eb3ab6b5c199a320a",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-legacy-handoff-final2.log"
+}

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from inspect import getattr_static
 from threading import get_ident
+from types import ModuleType
 from typing import Any
 from weakref import WeakValueDictionary
 
@@ -17,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.run_context import current_run_actor
+from tldw_chatbook.Chat import archive_recovery as _archive_origin
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
@@ -231,26 +235,39 @@ class ArchiveRecoveryRuntime:
             self._accepted_proofs[id(proof)] = (proof, turn_id)
             self._proofs.pop(id(proof), None)
 
-    def release_user_proof(self, proof: object) -> None:
-        """Drop provenance when custody ends without agent admission."""
+    def release_user_proof(self, proof: object, *, turn_id: str | None = None) -> None:
+        """Release this custody's proof when the turn ends without admission."""
+        accepted = self._accepted_proofs.get(id(proof))
+        if (
+            turn_id is not None
+            and accepted is not None
+            and (accepted[0] is not proof or accepted[1] != turn_id)
+        ):
+            return
         self._accepted_proofs.pop(id(proof), None)
         self._proofs.pop(id(proof), None)
 
-    def admit(self, turn_context: Any, session: Any) -> Any | None:
+    def admit(self, turn_context: Any, session: Any, *, _ordinary=None) -> Any | None:
         """Consume UI provenance with the executed turn's frozen Library policy."""
+        self.loop = asyncio.get_running_loop()
+        proof = turn_context.configuration.recovery_user_origin
+        if _ordinary is not None:
+            _ordinary.recovery.check_source(_ordinary)
+            _ordinary.recovery.check_proof(_ordinary, turn_context, session)
         from tldw_chatbook.Agents.archive_recovery_tool_provider import (
             ArchiveRecoveryToolProvider,
         )
 
-        self.loop = asyncio.get_running_loop()
-        proof = turn_context.configuration.recovery_user_origin
         accepted = self._accepted_proofs.pop(id(proof), None)
         policy = turn_context.library_authority
         if not recovery_eligibility(
             assistant_access=policy.policy.assistant_access.value,
             direct_library_tools=policy.direct_library_tools,
             user_originated=bool(
-                accepted and accepted[0] is proof and proof.session_id == session.id
+                accepted
+                and accepted[0] is proof
+                and proof.session_id == session.id
+                and (_ordinary is None or accepted[1] == _ordinary.recovery.turn_id)
             ),
             primary=True,
             temporary=session.ephemeral,
@@ -258,6 +275,8 @@ class ArchiveRecoveryRuntime:
             answerable=self.answerable(session.id),
         ):
             return None
+        if _ordinary is not None:
+            _ordinary.recovery.check_source(_ordinary)
         destination = getattr(turn_context, "resolved_destination", None)
         authority = _RecoveryAuthority(
             session.id,
@@ -265,6 +284,10 @@ class ArchiveRecoveryRuntime:
             destination if type(destination) is ConsoleResolvedDestination else None,
         )
         self._authorities[id(authority)] = authority
+        if _ordinary is not None:
+            # The enclosing reply releases this exact issued object even if
+            # validating the returned provider refuses before its first use.
+            _ordinary.recovery.authority = authority
         return ArchiveRecoveryToolProvider(self, authority)
 
     def authenticates(self, authority: object) -> bool:
@@ -682,8 +705,12 @@ async def prepare_archive_followup(
     agent_messages: list[dict[str, Any]],
     trace_request: Any,
     trusted_profile_user_message_id: str | None,
+    *,
+    _ordinary=None,
 ) -> tuple[list[dict[str, Any]], Any]:
     """Apply the exact admitted rider before shared fitting and capture."""
+    if _ordinary is not None:
+        _ordinary.recovery.check_source(_ordinary)
     from tldw_chatbook.Agents.archive_recovery_tool_provider import (
         SEARCH_ARCHIVED_CONVERSATIONS,
     )
@@ -712,6 +739,8 @@ async def prepare_archive_followup(
         and (getattr(resolution, "execution_key", None) or resolution.provider)
         in _controller.CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
     ):
+        if _ordinary is not None:
+            _ordinary.recovery.check_provider(_ordinary, recovery_provider)
         context = recovery_runtime.followup_context(recovery_provider.authority)
         if context:
             # Before the bridge's shared first-request fitting/counting.
@@ -792,3 +821,265 @@ def pending_recovery_reviews(
                 )
             )
     return recovery_pending, recovery_refusals
+
+
+@dataclass
+class OrdinaryRecoverySelection:
+    """Original archive issuers and the accepted turn whose proof they may consume."""
+
+    runtime: ArchiveRecoveryRuntime
+    proof: object
+    turn_id: str | None
+    declarations: Any
+    provider: Any = None
+    authority: _RecoveryAuthority | None = None
+
+    @classmethod
+    def capture(cls, tree, runtime, record):
+        proof = tree.configuration.recovery_user_origin
+        selected = cls(runtime, proof, None, tree.runtime._ordinary_archive_source[1])
+        selected.check_source(tree)
+        if record is None or record.request is None:
+            return selected
+        policy = tree.configuration.library_policy_maximum
+        if (
+            record.store is tree.store
+            and tree.runtime._turn_custody.get(record.turn_id) is record
+            and record.session_id == tree.session.id
+            and record.request.configuration.recovery_user_origin is proof
+            and type(proof) is _ORIGINAL_USER_PROOF
+            and proof.session_id == tree.session.id
+            and tree.origin.value == "manual"
+            and not tree.session.ephemeral
+            and tree.session.runtime_backend == "local"
+            and (policy is None or policy.assistant_access.value == "allowed")
+        ):
+            accepted = runtime._accepted_proofs.get(id(proof))
+            if accepted and accepted[0] is proof and accepted[1] == record.turn_id:
+                selected.turn_id = record.turn_id
+        return selected
+
+    def check_source(self, tree):
+        if (
+            type(_archive_origin) is not ModuleType
+            or sys.modules.get("tldw_chatbook.Chat.archive_recovery")
+            is not _archive_origin
+        ):
+            raise RuntimeError("ordinary archive runtime changed")
+        root = vars(_archive_origin)["_archive_root"]
+        chat = vars(_archive_origin)["_archive_parent"]
+        runtime = self.runtime
+        declarations = self.declarations
+        module = declarations.module
+        provider_class = declarations.provider_class
+        authority_property, getter, getter_code = declarations.authority_property
+        if (
+            tree.runtime._archive_recovery is not runtime
+            or tree.runtime._ordinary_archive_source[0] is not runtime
+            or tree.runtime._ordinary_archive_source[1] is not declarations
+            or getattr_static(runtime, "_ordinary_archive_declarations", None)
+            is not declarations
+            or getattr_static(tree.controller, "_archive_recovery_runtime", None)
+            is not runtime
+            or runtime.app is not tree.app
+            or type(runtime) is not _ORIGINAL_ARCHIVE_RUNTIME
+            or sys.modules.get(__name__) is not _ORIGINAL_RUNTIME_MODULE
+            or sys.modules.get("tldw_chatbook") is not root
+            or sys.modules.get("tldw_chatbook.Chat") is not chat
+            or vars(root).get("Chat") is not chat
+            or vars(root).get("Agents") is not declarations.package
+            or vars(chat).get("archive_recovery") is not _archive_origin
+            or vars(chat).get("_ordinary_archive_package") is not _archive_origin
+            or vars(_archive_origin).get("_ordinary_issuer")
+            is not tree.runtime._ordinary_archive_source[2]
+            or vars(_archive_origin).get("_ordinary_declarations") is not declarations
+            or vars(_archive_origin).get("runtime") is not _ORIGINAL_RUNTIME_MODULE
+            or sys.modules.get("tldw_chatbook.Agents.archive_recovery_tool_provider")
+            is not module
+            or sys.modules.get("tldw_chatbook.Agents") is not declarations.package
+            or vars(declarations.package).get("archive_recovery_tool_provider")
+            is not module
+            or vars(module).get("ArchiveRecoveryToolProvider") is not provider_class
+            or vars(module).get("_ORDINARY_SCHEMAS") is not declarations.schemas
+            or getattr_static(provider_class, "SOURCE") != "archive_recovery"
+            or getattr_static(provider_class, "authority") is not authority_property
+            or authority_property.fget is not getter
+            or getter.__code__ is not getter_code
+            or getter.__globals__ is not vars(module)
+            or getter.__defaults__ is not None
+            or getter.__kwdefaults__ is not None
+            or getter.__closure__ is not None
+            or vars(module).get("_schemas") is not declarations.schema_source[0]
+            or declarations.schema_source[0].__code__
+            is not declarations.schema_source[1]
+            or any(
+                getattr_static(provider_class, name, None) is not original
+                or original.__code__ is not code
+                for name, original, code in declarations.provider_methods
+            )
+            or _RecoveryAuthority is not _ORIGINAL_ARCHIVE_AUTHORITY
+            or any(
+                globals().get(name) is not original or original.__code__ is not code
+                for name, original, code in _ORDINARY_RUNTIME_FUNCTIONS
+            )
+            or any(
+                getattr_static(runtime, name, None) is not original
+                or original.__code__ is not code
+                for name, original, code in _ORDINARY_RUNTIME_METHODS
+            )
+        ):
+            raise RuntimeError("ordinary archive runtime changed")
+
+    def check_proof(self, tree, context, session):
+        if (
+            session is not tree.session
+            or context.configuration.recovery_user_origin is not self.proof
+            or context.configuration.session_id != session.id
+        ):
+            raise RuntimeError("ordinary archive proof changed")
+        record = tree.recovery_record
+        accepted = self.runtime._accepted_proofs.get(id(self.proof))
+        # A different accepted turn owns its proof even when this selection
+        # had no eligible maximum. Refuse before the native one-shot pop.
+        if accepted is not None and (
+            record is None
+            or accepted[0] is not self.proof
+            or accepted[1] != record.turn_id
+            or tree.runtime._turn_custody.get(record.turn_id) is not record
+        ):
+            raise RuntimeError("ordinary archive proof changed")
+        if self.turn_id is not None and (
+            tree.runtime._turn_custody.get(self.turn_id) is not record
+            or record.request is None
+            or record.request.configuration.recovery_user_origin is not self.proof
+            or not accepted
+            or accepted[0] is not self.proof
+            or accepted[1] != self.turn_id
+        ):
+            raise RuntimeError("ordinary archive proof changed")
+
+    def receive(self, tree, provider, authority):
+        if (
+            self.provider is not None
+            or self.turn_id is None
+            or authority is not self.authority
+        ):
+            raise RuntimeError("ordinary archive provider outside original turn")
+        self.provider = provider
+        self.check_provider(tree, provider)
+
+    def check_registry(self, registry):
+        if type(registry) is not self.declarations.registry_class or any(
+            getattr_static(registry, name, None) is not original
+            or original.__code__ is not code
+            for name, original, code in self.declarations.registry_methods
+        ):
+            raise RuntimeError("ordinary archive registry changed")
+
+    def check_provider(self, tree, provider, registry=None):
+        self.check_source(tree)
+        if (
+            provider is not self.provider
+            or type(provider) is not self.declarations.provider_class
+            or getattr_static(provider, "_issuer", None) is not self.runtime
+            or getattr_static(provider, "_authority", None) is not self.authority
+            or type(self.authority) is not _ORIGINAL_ARCHIVE_AUTHORITY
+            or self.authority.session_id != tree.session.id
+            or self.authority.turn_id != self.turn_id
+            or not self.runtime.authenticates(self.authority)
+            or any(
+                getattr_static(provider, name, None) is not original
+                or original.__code__ is not code
+                for name, original, code in self.declarations.provider_methods
+            )
+        ):
+            raise RuntimeError("ordinary archive provider changed")
+        if registry is not None:
+            self.check_registry(registry)
+            if (
+                registry._archive_recovery_provider is not provider
+                or registry._archive_recovery_authority is not self.authority
+            ):
+                raise RuntimeError("ordinary archive provider changed")
+
+    def check_descriptor(self, tree, registry, name, tool_id, provider):
+        self.check_provider(tree, provider, registry)
+        if (
+            name not in tree.other_maximum.get("archive_recovery", ())
+            or tool_id != f"archive_recovery:{name}"
+            or not registry._authenticated_recovery_name(provider, name)
+        ):
+            raise RuntimeError("ordinary archive catalog widened")
+        schema = provider.load_schema(tool_id)
+        declared_schemas = self.declarations.schemas
+        if (
+            schema is None
+            or schema.name != name
+            or schema.id != tool_id
+            or (
+                schema.name,
+                schema.id,
+                schema.description,
+                json.dumps(
+                    schema.parameters,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ),
+            )
+            not in declared_schemas
+        ):
+            raise RuntimeError("ordinary archive schema changed")
+
+
+_ORIGINAL_USER_PROOF = _UserOriginProof
+_ORIGINAL_ARCHIVE_RUNTIME = ArchiveRecoveryRuntime
+_ORIGINAL_ARCHIVE_AUTHORITY = _RecoveryAuthority
+_ORIGINAL_RUNTIME_MODULE = sys.modules[__name__]
+_ORDINARY_RUNTIME_METHODS = tuple(
+    (
+        name,
+        vars(ArchiveRecoveryRuntime)[name],
+        vars(ArchiveRecoveryRuntime)[name].__code__,
+    )
+    for name in (
+        "admit",
+        "authenticates",
+        "answerable",
+        "followup_context",
+        "release",
+        "activate_from_worker",
+        "close_from_worker",
+        "finish_from_worker",
+        "_worker_call",
+    )
+)
+_ORDINARY_RUNTIME_FUNCTIONS = tuple(
+    (function.__name__, function, function.__code__)
+    for function in (
+        recovery_eligibility,
+        prepare_archive_followup,
+        build_archive_recovery_tool_closures,
+    )
+)
+
+if (
+    type(sys.modules.get(__name__)) is not ModuleType
+    or vars(sys.modules[__name__]) is not globals()
+    or type(_archive_origin) is not ModuleType
+    or sys.modules.get("tldw_chatbook.Chat.archive_recovery") is not _archive_origin
+    or type(parent := sys.modules.get("tldw_chatbook.Chat")) is not ModuleType
+    or vars(parent).get("_ordinary_archive_package") is not _archive_origin
+):
+    raise RuntimeError("ordinary archive definition changed")
+if _archive_origin._ordinary_issuer is None:
+    _archive_origin._ordinary_issuer = (
+        _ORIGINAL_RUNTIME_MODULE,
+        ArchiveRecoveryRuntime,
+        ArchiveRecoveryRuntime.__init__,
+        ArchiveRecoveryRuntime.__init__.__code__,
+        OrdinaryRecoverySelection,
+        vars(OrdinaryRecoverySelection)["capture"],
+        OrdinaryRecoverySelection.capture,
+        OrdinaryRecoverySelection.capture.__func__.__code__,
+    )

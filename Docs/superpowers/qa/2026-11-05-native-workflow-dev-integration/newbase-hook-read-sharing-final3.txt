@@ -1,0 +1,78 @@
+..................................                                       [100%]
+=============================== warnings summary ===============================
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_read_stops_standing_on_any_in_memory_change[approve_in_process]
+  Tests/Chat/test_console_send_hook_read_sharing.py:415: PytestWarning: The test <Function test_a_read_stops_standing_on_any_in_memory_change[approve_in_process]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize(
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_read_stops_standing_on_any_in_memory_change[refresh_pending]
+  Tests/Chat/test_console_send_hook_read_sharing.py:415: PytestWarning: The test <Function test_a_read_stops_standing_on_any_in_memory_change[refresh_pending]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize(
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_read_stops_standing_on_any_in_memory_change[sealed]
+  Tests/Chat/test_console_send_hook_read_sharing.py:415: PytestWarning: The test <Function test_a_read_stops_standing_on_any_in_memory_change[sealed]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize(
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_read_stops_standing_on_any_in_memory_change[closed]
+  Tests/Chat/test_console_send_hook_read_sharing.py:415: PytestWarning: The test <Function test_a_read_stops_standing_on_any_in_memory_change[closed]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize(
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_read_stops_standing_on_any_in_memory_change[config_identity]
+  Tests/Chat/test_console_send_hook_read_sharing.py:415: PytestWarning: The test <Function test_a_read_stops_standing_on_any_in_memory_change[config_identity]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize(
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_read_stops_standing_on_any_in_memory_change[unpublished_targets]
+  Tests/Chat/test_console_send_hook_read_sharing.py:415: PytestWarning: The test <Function test_a_read_stops_standing_on_any_in_memory_change[unpublished_targets]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize(
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_read_stops_standing_on_any_in_memory_change[foreign_owner]
+  Tests/Chat/test_console_send_hook_read_sharing.py:415: PytestWarning: The test <Function test_a_read_stops_standing_on_any_in_memory_change[foreign_owner]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize(
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_blocked_read_is_never_shared
+  Tests/Chat/test_console_send_hook_read_sharing.py:468: PytestWarning: The test <Function test_a_blocked_read_is_never_shared> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_a_blocked_read_is_never_shared(hook_file):
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_shared_read_answers_only_an_empty_selection
+  Tests/Chat/test_console_send_hook_read_sharing.py:478: PytestWarning: The test <Function test_a_shared_read_answers_only_an_empty_selection> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_a_shared_read_answers_only_an_empty_selection(hook_file):
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_a_refusing_shared_selection_is_left_to_the_fresh_read
+  Tests/Chat/test_console_send_hook_read_sharing.py:509: PytestWarning: The test <Function test_a_refusing_shared_selection_is_left_to_the_fresh_read> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_a_refusing_shared_selection_is_left_to_the_fresh_read(hook_file, monkeypatch):
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_user_prompt_selection_with_a_shared_read_matches_a_fresh_one[unchanged]
+  Tests/Chat/test_console_send_hook_read_sharing.py:521: PytestWarning: The test <Function test_user_prompt_selection_with_a_shared_read_matches_a_fresh_one[unchanged]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize("edit", ["unchanged", *_NARROWING_EDITS])
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_user_prompt_selection_with_a_shared_read_matches_a_fresh_one[row_disabled]
+  Tests/Chat/test_console_send_hook_read_sharing.py:521: PytestWarning: The test <Function test_user_prompt_selection_with_a_shared_read_matches_a_fresh_one[row_disabled]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize("edit", ["unchanged", *_NARROWING_EDITS])
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_user_prompt_selection_with_a_shared_read_matches_a_fresh_one[master_disabled]
+  Tests/Chat/test_console_send_hook_read_sharing.py:521: PytestWarning: The test <Function test_user_prompt_selection_with_a_shared_read_matches_a_fresh_one[master_disabled]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize("edit", ["unchanged", *_NARROWING_EDITS])
+
+Tests/Chat/test_console_send_hook_read_sharing.py::test_user_prompt_selection_with_a_shared_read_matches_a_fresh_one[removed]
+  Tests/Chat/test_console_send_hook_read_sharing.py:521: PytestWarning: The test <Function test_user_prompt_selection_with_a_shared_read_matches_a_fresh_one[removed]> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    @pytest.mark.parametrize("edit", ["unchanged", *_NARROWING_EDITS])
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+2.52s call     Tests/Chat/test_console_send_hook_read_sharing.py::test_an_approved_user_prompt_hook_is_selected_fresh_and_runs
+1.75s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_warm_send_reads_once_before_commit_and_fresh_at_dispatch[received]
+1.60s call     Tests/Chat/test_console_send_hook_read_sharing.py::test_warm_send_reads_once_before_commit_and_fresh_at_dispatch[custodied]
+1.51s call     Tests/Chat/test_console_send_hook_read_sharing.py::test_a_user_prompt_hook_narrowed_elsewhere_lets_the_send_proceed[removed]
+1.43s call     Tests/Chat/test_console_send_hook_read_sharing.py::test_a_user_prompt_hook_narrowed_elsewhere_lets_the_send_proceed[row_disabled]
+1.31s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_v2_preparation_uses_only_a_matching_current_read
+1.18s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_v2_preparation_consults_plugin_owned_skills_fresh[definitions]
+1.18s call     Tests/Chat/test_console_send_hook_read_sharing.py::test_a_user_prompt_hook_narrowed_elsewhere_lets_the_send_proceed[master_disabled]
+1.13s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_a_user_prompt_hook_narrowed_elsewhere_lets_the_send_proceed[master_disabled]
+1.12s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_externally_revoked_grant_is_still_refused_at_final_admission
+1.11s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_in_process_consent_change_falls_back_to_a_fresh_admission
+1.10s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_foreign_session_read_falls_back_and_the_fresh_read_is_shared
+1.09s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_external_revocation_at_native_maximum_refuses_before_durable_acceptance
+1.02s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_v2_preparation_reads_fresh_for_configured_but_ungranted_handlers
+1.01s setup    Tests/Chat/test_console_send_hook_read_sharing.py::test_an_approved_user_prompt_hook_is_selected_fresh_and_runs
+
+(10 durations < 1s hidden.)
+34 passed, 14 warnings in 49.39s

@@ -1024,3 +1024,70 @@ def test_prompt_v6_recovery_migration_denial_rolls_back(tmp_path, monkeypatch):
             ).fetchall()
             == []
         )
+
+
+def test_database_catalog_owner_keeps_backup_aliases_and_own_bounds(monkeypatch):
+    from tldw_chatbook.DB import recovery_sqlite
+
+    catalog = getattr(recovery_sqlite, "_catalog", None)
+    metadata = getattr(recovery_sqlite, "_metadata", None)
+    assert catalog is not None and metadata is not None, (
+        "DB inspection owner is missing"
+    )
+    assert validation._catalog is catalog and validation._metadata is metadata
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.execute('CREATE TABLE "é" (value TEXT)')
+        rows = catalog(connection)
+        actual_bytes = sum(
+            len(value.encode("utf-8"))
+            for row in rows
+            for value in row
+            if value is not None
+        )
+        monkeypatch.setattr(recovery_sqlite, "_CATALOG_BYTES", actual_bytes)
+        assert catalog(connection) == rows
+        monkeypatch.setattr(recovery_sqlite, "_CATALOG_BYTES", actual_bytes - 1)
+        with pytest.raises(ValueError, match="sqlite_resource_limit"):
+            catalog(connection)
+
+
+def test_database_metadata_clears_original_fts_flag_after_error():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.DB import recovery_sqlite
+
+    metadata = getattr(recovery_sqlite, "_metadata", None)
+    assert metadata is not None, "DB metadata owner is missing"
+    restrictions = SimpleNamespace(reading_fts_metadata=False)
+
+    class BrokenConnection:
+        def execute(self, _statement):
+            assert restrictions.reading_fts_metadata is True
+            raise RuntimeError("original metadata error")
+
+    with pytest.raises(RuntimeError, match="original metadata error"):
+        metadata(
+            BrokenConnection(),
+            (("table", "fts", "fts", "CREATE VIRTUAL TABLE fts USING fts5(x)"),),
+            restrictions,
+        )
+    assert restrictions.reading_fts_metadata is False
+
+
+def test_database_validator_uses_its_live_catalog_slot(monkeypatch):
+    from tldw_chatbook.DB import recovery_sqlite
+
+    original_backup_slot = validation._catalog
+    observed = []
+    with closing(sqlite3.connect(":memory:")) as connection:
+
+        def catalog(received):
+            observed.append(received)
+            return (("table", "different", "different", "CREATE TABLE different(x)"),)
+
+        monkeypatch.setattr(recovery_sqlite, "_catalog", catalog)
+        assert recovery_sqlite._validate_sqlite(connection, (1,), ((1, ()),)) == (
+            "unsupported_schema",
+        )
+        assert observed == [connection]
+    assert validation._catalog is original_backup_slot

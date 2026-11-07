@@ -4,17 +4,14 @@ import sqlite3
 
 import pytest
 
-from Tests.DB.test_agent_runs_db import _LEGACY_PRE_V11_DDL
+from Tests.DB.fixtures.agent_runs_history import install_historical
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def test_legacy_usage_stays_unknown_across_migration_and_reopen(tmp_path):
     path = tmp_path / "legacy.db"
     with sqlite3.connect(path) as conn:
-        conn.executescript(_LEGACY_PRE_V11_DDL)
-        conn.execute("ALTER TABLE agent_runs ADD COLUMN resumed_from_run_id TEXT")
-        conn.execute("INSERT INTO schema_version VALUES (11)")
-        conn.execute("INSERT INTO schema_version VALUES (12)")
+        install_historical(conn, 12)
         conn.execute(
             "INSERT INTO agent_runs (id, conversation_id, agent_kind, status, created_at, updated_at) "
             "VALUES ('old', 'c', 'subagent', 'done', '2026-01-01', '2026-01-01')"

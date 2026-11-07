@@ -28,6 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         RawCliRequest,
         RawCliResult,
         RawCliStreamEvent,
+        RequiredCliOutput,
     )
 
 
@@ -655,9 +656,22 @@ class RawCliRuntime:
         on_registered: RawCliRegisteredSink | None = None,
         on_started: RawCliStartedSink | None = None,
         admission_scope: Callable[[], ContextManager[None]] | None = None,
+        required_output: RequiredCliOutput | None = None,
     ) -> RawCliResult:
-        """Synchronously execute one request through the guarded admission seam."""
+        """Execute through native admission, optionally retaining bounded required output.
+
+        Required output is accepted only by the actual native executor. It remains
+        sanitized and obtains completeness only from native stream/cleanup proof.
+        """
+        from .console_raw_cli_custody import current_raw_cli_call
+
+        try:
+            custody = current_raw_cli_call(self, request)
+        except (ValueError, RuntimeError):
+            return self._refused_result(request)
         request = _raw_cli_executor().validate_raw_cli_request(request)
+        if custody is not None:
+            custody.request = request
         if not callable(on_event):
             raise TypeError("on_event must be callable")
         if on_registered is not None and not callable(on_registered):
@@ -694,6 +708,8 @@ class RawCliRuntime:
                     or active.cancel_event.is_set()
                 )
 
+            if custody is not None:
+                custody.check()
             with self._admission_lock:
                 with self._lock:
                     if not authority_allows_launch_locked():
@@ -706,6 +722,8 @@ class RawCliRuntime:
                 ):
                     with self._lock:
                         # The second check and commit are the atomic launch boundary.
+                        if custody is not None:
+                            custody.check_memory()
                         if not authority_allows_launch_locked():
                             return False
                         started_at = commit_launch()
@@ -721,12 +739,34 @@ class RawCliRuntime:
         try:
             if on_registered is not None:
                 on_registered()
-            return self._executor_or_default().execute(
+            executor = self._executor_or_default()
+            extra = {}
+            if required_output is not None:
+                native = _raw_cli_executor()
+                if (
+                    type(executor) is not native.RawShellExecutor
+                    or type(required_output) is not native.RequiredCliOutput
+                ):
+                    raise ValueError("native_required_output_owner")
+                extra["required_output"] = required_output
+            if custody is not None:
+                from ..Agents.activation import worker_guard
+
+                if type(executor) is not _raw_cli_executor().RawShellExecutor:
+                    raise ValueError("native RawCLI executor changed")
+                admit_worker = worker_guard()(admit_worker)
+                extra["_join_helpers"] = True
+                custody.physical_proven = False
+            result = executor.execute(
                 request,
                 cancel_event=active.cancel_event,
                 on_event=on_event,
                 admit_worker=admit_worker,
+                **extra,
             )
+            if custody is not None:
+                custody.physical_proven = result.cleanup_proven is True
+            return result
         finally:
             with self._lock:
                 if self._active_invocations.get(request.invocation_id) is active:
@@ -883,3 +923,9 @@ __all__ = [
     "raw_cli_activity_presentation",
     "raw_cli_terminal_lifecycle",
 ]
+
+_NATIVE_RAW_CLI_RUNTIME_TYPE = RawCliRuntime
+_NATIVE_RAW_CLI_POLICY_DESCRIPTORS = tuple(
+    (name, vars(RawCliRuntime)[name])
+    for name in ("permitted", "armed", "_latest_permitted_locked")
+)

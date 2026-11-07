@@ -1,0 +1,32 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_native_legacy_hook_handoff.py",
+    "Tests/Chat/test_console_send_hook_read_sharing.py::test_an_approved_user_prompt_hook_is_selected_fresh_and_runs",
+    "Tests/Chat/test_console_send_hook_read_sharing.py::test_a_user_prompt_hook_narrowed_elsewhere_lets_the_send_proceed",
+    "--tb=short",
+    "-x",
+    "-W",
+    "error::RuntimeWarning",
+    "-W",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "--basetemp=../pytest-newbase-legacy-handoff-green2"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 124,
+  "elapsed_seconds": 181.5958363339305,
+  "source_file_count": 9109,
+  "before_sha256": "14feacd68e617e68ff97a337d3b45f9a6b2602cb91fd818b95f45d51d64b47bc",
+  "after_sha256": "b314516461ac05b1d23494cb65fcf87813662a04ebedef7899baafa3f56c0a83",
+  "changed_during_command": [
+    "Tests/Chat/test_console_ordinary_tree.py",
+    "tldw_chatbook/Chat/console_configuration_preparation.py",
+    "tldw_chatbook/Chat/console_ordinary_tree.py",
+    "tldw_chatbook/MCP/console_snapshot.py"
+  ],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-legacy-handoff-green2.log"
+}

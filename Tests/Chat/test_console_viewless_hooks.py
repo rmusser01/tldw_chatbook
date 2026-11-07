@@ -741,9 +741,19 @@ def _pre_tool_use_hook() -> dict:
     return {"event": "PreToolUse", "command": [sys.executable, "-c", "pass"]}
 
 
+def _hooks_runtime(app):
+    """Give native hook capture its real runtime store, session and controller."""
+    runtime = ConsoleRuntime(app=app)
+    store = ConsoleChatStore()
+    store.create_session(session_id="s")
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(ConsoleChatController(store=store, provider_gateway=None))
+    return runtime
+
+
 def test_same_engine_detects_saved_hooks_added_mid_session(hook_file):
     hook_file.write_text(toml.dumps({"hooks": {"hook": []}}))
-    runtime = ConsoleRuntime(app=_HooksApp(None))
+    runtime = _hooks_runtime(_HooksApp(None))
     assert runtime.run_hooks_engine is None
     engine = runtime.ensure_run_hooks()
     assert not engine.fire("UserPromptSubmit", session_id="s").blocked
@@ -818,7 +828,7 @@ def test_the_engine_reads_saved_config_not_the_app_cache(hook_file):
         )
     )
     app = _HooksApp(None)
-    runtime = ConsoleRuntime(app=app)
+    runtime = _hooks_runtime(app)
     engine = runtime.ensure_run_hooks()
     owner = runtime.ensure_hook_permissions()
     pending = owner.snapshot()

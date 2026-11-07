@@ -851,3 +851,39 @@ def test_interview_batch_stale_head_rolls_back_every_record_manifest_and_outbox(
             ).fetchone()[0]
             == 0
         )
+
+
+def test_repository_schema_aliases_keep_original_component_objects():
+    from tldw_chatbook.Personal_Context import repository, repository_models
+
+    names = (
+        "_LOCAL_UNDO_SCHEMA",
+        "_LOCAL_RECORD_LINK_SCHEMA",
+        "_LOCAL_UNLINKED_SCOPE_SCHEMA",
+        "_FIRST_LINK_REBASELINE_SCHEMA",
+        "_SCHEMA_STATEMENTS",
+    )
+    for name in names:
+        value = getattr(repository_models, name, None)
+        assert value is not None, f"schema declaration missing from models: {name}"
+        assert getattr(repository, name) is value
+    statements = repository._SCHEMA_STATEMENTS
+    for name in names[:-1]:
+        assert any(statement is getattr(repository, name) for statement in statements)
+
+
+def test_schema_initialization_uses_patched_repository_alias(monkeypatch):
+    from tldw_chatbook.Personal_Context import repository_models
+
+    original = repository_module._SCHEMA_STATEMENTS
+    monkeypatch.setattr(
+        repository_module,
+        "_SCHEMA_STATEMENTS",
+        (*original, "CREATE TABLE task13_alias_probe (value INTEGER)"),
+    )
+    with sqlite3.connect(":memory:") as connection:
+        PersonalContextRepository._initialize_schema(None, connection)
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = ?", ("task13_alias_probe",)
+        ).fetchone() == ("task13_alias_probe",)
+    assert repository_models._SCHEMA_STATEMENTS is original

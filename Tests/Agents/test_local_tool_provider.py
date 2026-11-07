@@ -54,6 +54,7 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 
+# Default specs read the real config source admitted during collection.
 pytestmark = pytest.mark.bootstrap_profile
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
@@ -4460,6 +4461,7 @@ def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, 
 
     assert not result.ok
     assert result.error == LOCAL_WORKER_FAILED_REFUSAL
+    assert result.dispatch_state == "uncertain"
     assert "private/path leaked" not in captured.err
 
 
@@ -5061,3 +5063,267 @@ def test_localroot_wrapped_authority_behaves_exactly_like_plain_path(
     assert plain_provider.path_targets("local:fs_read", {"path": "a.txt"}) == (
         wrapped_provider.path_targets("local:fs_read", {"path": "a.txt"})
     )
+
+
+@pytest.fixture
+def workflow_file_authorization(tmp_path, monkeypatch):
+    """Issue the real private accepted phase custody for provider boundary tests."""
+    from contextlib import closing
+    from threading import Event
+    from types import SimpleNamespace
+
+    from Tests.DB.test_workflow_runs import planned
+    from tldw_chatbook.Agents import automatic_work_runtime, run_log
+    from tldw_chatbook.Chat.console_workflow_runs import (
+        _accept_workflow_phase,
+        native_workflow_qualified,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    if not native_workflow_qualified():
+        pytest.skip("native workflow platform qualification required")
+    setting = lambda key, default: True if key == "workflow_runs_enabled" else default
+    monkeypatch.setattr(run_log, "_setting", setting)
+    monkeypatch.setattr(automatic_work_runtime, "_setting", setting)
+    with closing(AgentRunsDB(tmp_path / "workflow.db")) as db:
+        db.automatic_work.recover(current_owner_id="owner")
+        snap = planned(db, tmp_path)
+        attempt = db.automatic_work.prepare_workflow_phase(
+            snap.id,
+            revision_id=1,
+            phase_id="phase-1",
+            owner_id="owner",
+            session_id="session",
+            command_id="approve",
+        )
+        session = SimpleNamespace(
+            id="session", persisted_conversation_id=snap.request.conversation_id
+        )
+        controller = SimpleNamespace(
+            _disposed=False,
+            _shutdown_requested=Event(),
+            _agent_bridge=SimpleNamespace(runs_db=db),
+            _fleet_wake=SimpleNamespace(runtime_owner_id="owner"),
+            store=SimpleNamespace(sessions=lambda: [session]),
+        )
+        yield _accept_workflow_phase(controller, attempt.id, session_id="session")
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("evicted", [False, True])
+@pytest.mark.parametrize("supplied_digest", [False, True])
+def test_workflow_write_requires_observed_content(
+    tmp_path, workflow_file_authorization, evicted, supplied_digest
+):
+    import hashlib
+
+    from tldw_chatbook.Agents.fs_read_ledger import ReadLedger
+
+    target = tmp_path / "a.txt"
+    target.write_text("old\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    provider._read_ledger = ReadLedger(max_paths_per_run=1)
+    if evicted:
+        assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+        (tmp_path / "b.txt").write_text("other\n")
+        assert provider.invoke("fs_read", {"path": "b.txt"}).ok
+    args = {"path": "a.txt", "content": "mine\n"}
+    if supplied_digest:
+        args["expected_sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    with workflow_file_authorization.context.scope():
+        receipt = provider.invoke_detailed("fs_write", args)
+    assert not receipt.result.ok
+    assert "workflow fs_write requires" in receipt.result.error
+    assert receipt.result.dispatch_state == "not_started"
+    assert not receipt.dispatch_started
+    assert target.read_text() == "old\n"
+
+
+@pytest.mark.bootstrap_profile
+def test_workflow_write_absence_then_repeated_content(
+    tmp_path, workflow_file_authorization
+):
+    provider = make_provider(root=tmp_path, allow_write=True)
+    with workflow_file_authorization.context.scope():
+        assert provider.invoke(
+            "fs_write", {"path": "new.txt", "content": "one\n", "expected_absent": True}
+        ).ok
+        assert provider.invoke("fs_write", {"path": "new.txt", "content": "two\n"}).ok
+        assert provider.invoke("fs_write", {"path": "new.txt", "content": "three\n"}).ok
+    assert (tmp_path / "new.txt").read_text() == "three\n"
+
+
+@pytest.mark.bootstrap_profile
+def test_workflow_write_cannot_override_observation(
+    tmp_path, workflow_file_authorization
+):
+    import hashlib
+
+    target = tmp_path / "a.txt"
+    target.write_text("old\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+    target.write_text("peer\n")
+    with workflow_file_authorization.context.scope():
+        result = provider.invoke(
+            "fs_write",
+            {
+                "path": "a.txt",
+                "content": "mine\n",
+                "expected_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            },
+        )
+    assert not result.ok
+    assert target.read_text() == "peer\n"
+
+
+@pytest.mark.bootstrap_profile
+def test_workflow_remote_write_uses_worker_observation(
+    tmp_path, workflow_file_authorization, _laptop_disk_tripwire
+):
+    from tldw_chatbook.Agents.fs_read_ledger import ReadLedger
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceExecutionError,
+        run_bundle_loopback_frames,
+    )
+
+    class LoopbackExecutor:
+        def __init__(self):
+            self.calls = []
+            self.builder = WorkspaceToolExecutor(tmp_path)
+
+        def execute(self, operation, arguments, *, intent):
+            self.calls.append((operation, dict(arguments)))
+            request = self.builder._build_request(operation, arguments, intent=intent)
+            frames = run_bundle_loopback_frames(
+                tmp_path, json.loads(request.to_bytes())
+            )
+            response = frames[-1]
+            if response["outcome"] != "success":
+                raise RemoteWorkspaceExecutionError(
+                    response["code"], response["error"], admitted=len(frames) == 2
+                )
+            return response["result"]
+
+    executor = LoopbackExecutor()
+    provider = make_provider(
+        root=tmp_path, admitted_roots=(_remote_authority(executor=executor),)
+    )
+    provider._read_ledger = ReadLedger(max_paths_per_run=1)
+    (tmp_path / "a.txt").write_bytes(b"old\r\n")
+    (tmp_path / "b.txt").write_bytes(b"other\n")
+    with workflow_file_authorization.context.scope():
+        assert not provider.invoke("fs_write", {"path": "a.txt", "content": "blind"}).ok
+        assert executor.calls == []
+        assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+        assert provider.invoke("fs_write", {"path": "a.txt", "content": "one\r\n"}).ok
+        assert provider.invoke("fs_write", {"path": "a.txt", "content": "two\r\n"}).ok
+        writes = [args for op, args in executor.calls if op == "fs_write"]
+        assert all("expected_sha256" in args for args in writes)
+        assert writes[0]["expected_sha256"] != writes[1]["expected_sha256"]
+        assert provider.invoke("fs_read", {"path": "b.txt"}).ok
+        dispatched = len(executor.calls)
+        assert not provider.invoke(
+            "fs_write", {"path": "a.txt", "content": "evicted"}
+        ).ok
+        assert len(executor.calls) == dispatched
+        assert provider.invoke(
+            "fs_write",
+            {"path": "new.txt", "content": "created", "expected_absent": True},
+        ).ok
+    assert (tmp_path / "a.txt").read_bytes() == b"two\r\n"
+    assert (tmp_path / "new.txt").read_bytes() == b"created"
+
+
+@pytest.mark.bootstrap_profile
+def test_workflow_write_preview_does_not_arm_observation(
+    tmp_path, workflow_file_authorization
+):
+    from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+
+    provider = make_provider(root=tmp_path, allow_write=True)
+    with workflow_file_authorization.context.scope():
+        preview = provider.invoke(
+            "fs_write", {"path": "new.txt", "content": "preview", "dry_run": True}
+        )
+        assert preview.ok, preview.error
+        assert (
+            provider._read_ledger.stamp_for(
+                RUN, canonical_ledger_key(tmp_path / "new.txt")
+            )
+            is None
+        )
+        result = provider.invoke("fs_write", {"path": "new.txt", "content": "blind"})
+    assert not result.ok
+    assert not (tmp_path / "new.txt").exists()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "promotion_args", [{"promotion": {}}, {"proposal_digest": "forged"}]
+)
+def test_workflow_forged_promotion_cannot_bypass_write_guard(
+    tmp_path, workflow_file_authorization, promotion_args
+):
+    target = tmp_path / "AGENTS.md"
+    target.write_text("peer instructions\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    with workflow_file_authorization.context.scope():
+        receipt = provider.invoke_detailed(
+            "fs_write", {"path": "AGENTS.md", "content": "forged", **promotion_args}
+        )
+    assert not receipt.result.ok
+    assert not receipt.dispatch_started
+    assert receipt.result.dispatch_state == "not_started"
+    assert target.read_text() == "peer instructions\n"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("observed", [False, True])
+def test_workflow_explicit_absence_preserves_present_peer(
+    tmp_path, workflow_file_authorization, observed
+):
+    target = tmp_path / "a.txt"
+    target.write_text("peer\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    with workflow_file_authorization.context.scope():
+        if observed:
+            assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+        result = provider.invoke(
+            "fs_write", {"path": "a.txt", "content": "mine", "expected_absent": True}
+        )
+    assert not result.ok
+    assert target.read_text() == "peer\n"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("code", ["tool_failure", "cleanup_unproven"])
+def test_workflow_write_preserves_typed_worker_failure(
+    tmp_path, workflow_file_authorization, code
+):
+    target = tmp_path / "a.txt"
+    target.write_text("old\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+
+    def failed_worker(_args):
+        raise WorkspaceToolExecutionError(code, "failed operation, effects may remain")
+
+    provider._specs["fs_write"] = dataclasses.replace(
+        provider._specs["fs_write"], handler=failed_worker
+    )
+    with workflow_file_authorization.context.scope():
+        receipt = provider.invoke_detailed(
+            "fs_write", {"path": "a.txt", "content": "mine"}
+        )
+    assert not receipt.result.ok
+    assert receipt.dispatch_started
+    assert receipt.provider_terminal == local_tool_provider.LocalProviderTerminal.RAISED
+    if code == "cleanup_unproven":
+        assert receipt.result.dispatch_state == "uncertain"
+    else:
+        assert (
+            receipt.reason_code
+            == local_tool_provider.LocalToolInvocationReason.HANDLER_RAISED
+        )
+        assert receipt.result.outcome != "blocked"

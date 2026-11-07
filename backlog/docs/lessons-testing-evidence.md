@@ -23155,6 +23155,9 @@ Phase29 then proved a second lifetime error in the actual automatic collector lo
 
 On 2026-10-12, all three hosted Eval recovery jobs failed the complete retained-definition rebackup case. The selected-import staging helper imported `Chat.response_rules.recovery`; Python executed `Chat.__init__`, reached runtime TLS/config initialization, and retained a process-lifetime startup lease. Isolated publication then waited on its own unbound holder. A complete actual-dev control passed, and a passive original-child trace identified the extra holder; importing test helpers in an earlier observer had contaminated that observer and was not valid causal evidence. Recovery helpers must live behind constructor-free installed DB recovery imports. Test populated/malformed candidates in fresh children as well as complete publication: ordinary pytest fixture imports already preload Chat/config and conceal this dependency regression. The fix preserves startup/admission ownership and original deadlines rather than releasing the holder or preloading runtime.
 
+
+**TASK-38524, 2026-11-01 recurrence.** A complete workflow capture passed, but the fresh isolated restore coordinator timed out on its own unbound maintenance lease. Workflow row validation imported Goal's structural references through `goal_models` → `agent_models` → `Chat`/config; the new store's shared identity-helper import also reached the runtime. A fresh private-child RED proved imports created config/data before any workflow execution. Keeping annotation-only Goal imports under `TYPE_CHECKING`, resolving the termination enum only when constructing an actual iteration, and validating workflow identities without importing the ledger removed both paths. Fresh validator imports then created zero private-profile files; the unchanged native capture/restore/reopen/rebackup route passed without resetting admission, preloading runtime, or increasing its 30-second native watchdog.
+
 ## A call that can defer returns whether it ran; a test that ignores it acts on stale state (TASK-34789, PR #3091)
 
 TASK-34415 made `ChatScreen._sync_console_control_bar` defer when another thread holds a config lock: it schedules
@@ -24803,3 +24806,275 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - For a timing window, act with the action itself (`screen.action_focus_previous()`) and plain `asyncio` polling, not `pilot.press`.
 - Pass a diagnostic as a callable (`message=lambda: ...`), so it reports the state at the timeout.
 - Show each case red on the buggy tree before trusting it green.
+## Clearing source-profile admission can expose a separate storage-scope refusal (TASK-38529, 2026-11-01)
+
+The native child-launch baseline had98 failures at `raw_source_selection_changed`.
+Exact-node `bootstrap_profile` qualification exposed four isolated-worktree tests
+that instead failed with `operation_path_outside_scope`: the existing launch's
+AgentRuns repository operation did not authorize `_worktrees_base()` directory
+creation. A fresh interpreter loading the exact pre-change AgentService consumer
+read-only from a private temporary file reproduced all four failures with current
+dependencies; the installed shared source and admission guards were untouched.
+
+Treat profile qualification as removal of one test-setup obstacle, not proof that
+the next refusal is a regression or that the whole slice passes. Retain original,
+qualified and precisely attributed baseline evidence separately. This incident
+qualified196 other fleet cases and left four isolation bodies unqualified; it
+did not authorize widening storage scope.
+
+### Required CLI evidence needs its own EOF proof (TASK-38530, 2026-11-01)
+
+Workflow verification initially inspected the existing raw CLI event/result
+surface. Source inspection showed stream events are preview-capped, and the
+`truncated` flag also reflects optional log limits. More subtly, native consume
+can report exit 0 with positive process cleanup after a post-exit drain timeout
+without both stream-end messages. Neither successful exit nor that combined flag
+proves complete required output. The fix taps bounded sanitized output before
+preview/log truncation and seals it only on both native EOFs and normal consume
+plus cleanup. Real-process tests preserve 40 KB with a zero/tiny diagnostic cap
+and refuse completeness when a stderr EOF is withheld despite exit 0 and cleanup.
+
+
+## Observe the ticket that actually performed the effect (TASK-38531 Git custody)
+
+A selected-wrapper descendant probe initially inspected the first snapshot ticket,
+which belonged to discovery and performed no Git. Its retirement produced an
+invalid RED while a later baseline ticket owned the actual child. The initializer
+had no earlier discovery ticket and genuinely reproduced the same shared
+three-launch bug before implementation. Corrected baseline and final-snapshot
+controls selected their actual Git-bearing tickets and passed while the managed
+child and original publisher were independently held. The wrong-owner receipts
+were retained and were not relabelled as valid snapshot RED or executed BASE.
+
+When one request creates sequential finite jobs, tie the held effect to its actual
+source/operation before asserting retirement. A previously completed sibling is
+neither evidence of premature release nor coverage for the effect-bearing job.
+
+## Trace the actual host context and return (TASK-38531 confirmed Undo)
+
+The real Review callback refreshed Git-backed rows through Textual's
+`call_from_thread`, which copied the worker's native Undo ContextVar onto the UI
+loop. That caused an attempted nested asyncio.Runner and left required history
+proved but host acceptance unresolved. A retained-worker stack probe established
+this exact source; passing engine tests had not covered it. Capture the original
+host context and bind native authority to the original thread, while keeping its
+storage scopes through the synchronous host return. Tests must observe the actual
+worker/operation during that return, not expect worker ContextVars inside the
+deliberately restored host context. Also, Textual's is_mounted remained true after
+screen pop: original screen-stack membership supplied the conclusive stale-host
+discard check. Raw diagnostic and fixture-error receipts remain separate from
+the corrected mounted-path evidence.
+
+## SSH custody evidence must reach the actual model operation
+
+**TASK-38531 prerequisite S, 2026-11-02.** An initial local SSH peer hold was reached by startup project guidance before the model/tool dispatch. Its failure did not prove early retirement of a model operation. The premature draft was preserved and permanently withdrawn; only after the real model disclosed `fs_read`, selected the actual RemoteRoot and produced the original tool operation did the corrected BASE regression fail. The fresh implementation then kept that same operation through actual stderr/group return. Assert the producer and operation before interpreting a held transport as model evidence; a correct physical peer alone does not identify its caller.
+
+The affected selection later passed 424 cases and failed 196 existing local-provider cases at `raw_source_selection_changed`. A standalone failing node reproduced this without native tests. Read-only snapshots showed collection-bound private config remained registered while the fixture redirected `TLDW_CONFIG_PATH` before the test. The supported file-level `bootstrap_profile` marker exposed the real assertions: 282 passed and four stale catalog/uncertainty expectations failed. Three lists omitted the existing `fs_mkdir`; one expected not-run copy for an already uncertain cleanup result. Only those four expectations changed, then four exact nodes passed. Keep the three receipts separate; read-only BASE source comparison is not an executed baseline, and no participant reset or product change was needed.
+
+**S review fix1, same task/date.** The source check pinned an executor's manager but missed the different manager actually read by its transport; independently imported payload/command aliases were also outside the check. Six real-model replacement controls entered those changed receiving sources. Two real-peer controls then replayed each actual `fs_read` admission frame under its original request ID: the generic response decoder accepted it, so local IO/STATUS return incorrectly retired the operation. Use the existing terminal-only parser for terminal proof, and qualify the concrete receiving references rather than an outer config alias. The first relay accidentally changed ping responses, which have no admission marker; those results were discarded as evidence, and genuine RED preserved ping before replaying the file request's actual admission. Corrected source/proof controls passed eight cases without a new protocol or owner.
+
+**S review fix2, same task/date.** Comparing `type(instance).master_manager` with a pinned property still invoked a replacement descriptor's class `__get__`. A real shared-model after-enqueue descriptor returned the original property for class access but a different manager for instance access; the replacement local SSH peer actually ran (RED1 in4.58s). Read the exact stock class dictionary entry as raw metadata for this identity check. Dynamic class lookup is not descriptor-free introspection; the first correction's six ordinary field/builder negatives did not exercise this case.
+
+## Constructor retirement does not prove later worker storage returned
+
+**TASK-38531 phase wave, 2026-11-03.** Two actual native children completed file
+edits, checkpoints and E, and the private App creator's retirement check passed.
+The subsequent real complete-profile capture still waited on six AgentRunsDB
+leases belonging to the two departed model loops and four tool threads. The
+creator check covered its original constructor resources, not stores opened by
+later authority/budget checks. Moving those original checks inside their existing
+owned storage/source scopes, while keeping the native async worker guard outside,
+allowed actual capture, isolated restore and rebackup. Do not infer global
+storage quiescence from a narrower lifecycle receipt; exercise the real consumer
+that requires all those original leases to return.
+
+
+**Task8E continuation recurrence, 2026-11-03.** New source/binding checks in the
+provider budget path opened a WorkspaceDB handle before the original service's
+owned-storage scope. After that was fixed, the real tool worker still refused
+Pause because its early automatic-work check ran before the captured task and
+owner scopes; it correctly retained unknown cleanup. The native prebind/bound
+controls passed only after those original scopes reached that exact receiver.
+Check schema probes separately too: they run after bind but before the run-ID
+ContextVar, so a full executing-run check is not a valid metadata probe. Preserve
+both failed receipts instead of treating a producer-missing test as continuation
+proof or weakening the shared phase check.
+
+
+**Task8E review FIX1, 2026-11-03.** A native remaining-acceptance close-fault RED
+reached the original WorkspaceDB C-close and left its exact cache, handle, lease
+and participant live, while the reader returned execution custody. Check original
+worker-local handles after every source/storage scope, including the separate
+required settlement offload. Actual runtime shutdown then exposed a different
+boundary: repeated `begin_shutdown` cancelled the tracked terminal reader after
+its original SQL and all scopes had returned. The observed native attempt was
+completed/closed, but a catch-all cancellation branch retained its owner forever.
+A private same-cell fact produced only after all terminal scopes, combined with
+the tracked reader's actual worker return, permits proven retirement before
+rethrowing cancellation. This is neither cancellation reset nor permission to
+retire an unknown handle. The original diagnostic1F32.86 and final uninstrumented
+shutdown positive are separate receipts.
+
+
+## Repeat the physical click after a control changes (TASK-38532, 2026-11-04)
+
+Two mounted workflow tests clicked the original approval position twice while the first phase was starting. In both real SQLite histories, revision 2 contained approval and revision 3 contained a separate `pause` with reason `user_request`. The action row had hidden approval and moved Pause into its place before the second click. Looking up the approving button again, or calling the handler twice, tests a different interaction.
+
+Keep decisions with different consequences in stable cells. Capture the visible button's actual screen coordinate, click it again after the state transition, and inspect the durable decisions. The repair's one- and two-phase cases recorded exactly one approval and one separate quality acceptance per phase.
+
+
+## Cover the original delayed timer before claiming whole-App retirement (TASK-38533, 2026-11-04)
+
+The real local-model workflow finished its failed check, authorized edit, fresh passing check and independent review in a99.43-second process. Creator retirement then refused a MediaDB lease. An8.50-second fresh completed-history reopen returned every Creator because it ended before the original65-second sync-log retention timer. A bounded mounted probe waited for that actual timer and observed the original retention callback returning on asyncio_2. After App shutdown and executor join, its exact newly acquired connection still had a live lease on the dead thread, with zero active operations. The separate5-second media-cleanup callback had closed its own connection correctly.
+
+Retain callback return, connection close and final Creator return as separate facts. For the concrete retention producer, applying the existing finite-worker helper at its original callback boundary closed the new cache on that same worker. The later87.79-second mounted timer probe retained zero new workflow/model effects, observed the original close and returned every Creator. Preserve the earlier functional journey and failed cleanup on their own source versions. [Task10 process and source receipts](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/README.md)
+
+
+### 2026-11-05: distinguish source refusal, masked assertions and retained cleanup
+
+During native workflow/current-dev integration, a mounted cadence test never reached its held provider. Original-frame observation separated an invented fixture data directory from the selected private profile, then exposed a real provider-direct MCP publication handoff missing its consumer. Reuse file-backed fixtures and the actual configured private root; a provider-entry timeout alone does not identify a UI cadence failure. Warming the permission store or switching dispatch modes would have hidden the cold-send defect.
+
+The same integration’s failed-required-save control expected zero tool workers although the original host handoff correctly retained one. Its unconditional shutdown waited on that unresolved claim and masked the assertion. Observe the original exception/await before changing a cleanup fixture. Deliberate uncertainty controls need a bounded private process and an explicit retained-state marker; process exit proves the negative assertions, never native drain. Keep successful original retirement controls separate. Hook read-count changes likewise require the actual caller stages: the added footprint read came from `_capture_maximum -> v2_configuration`, not duplicated target selection or the adjacent handoff correction.
+
+### 2026-11-05: wait for the current screen and actual message publication
+
+PR3411's first-use dialog qualification exposed two fixture races. A coalesced
+Console sync could return before message publication; selecting that missing
+message returned false, so later waiting for its action button never selected it.
+Wait for the original mounted message row before selecting it, and preserve the
+original Edit, Save and store assertions.
+
+The initial workspace-modal correction queried `ConsoleHarness` itself. Installed
+Textual retained its original `_compose_screen`, while the harness had pushed
+Chat and then the modal onto the screen stack; the app query searched the wrong
+screen and timed out with empty visible text. The existing current-stack modal
+helper, inside the same two-second elapsed bound, qualified all eight real
+dialog actions in a 52.00-second run. A successful app query and a query of the
+current screen are separate facts in this harness.
+
+
+### A custody marker cannot classify a negative test's observed effects
+
+PR3411 final integration (2026-11-06): an earlier model-admission read reached a
+native-hook test's shared barrier. A proposed marker-only observer default kept
+assertion ASTs unchanged but would silently ignore an uncustodied hook effect,
+making three direct refusal checks vacuous. Independent review stopped that
+proposal before application. Classify only the proven earlier producer through
+its captured original call; keep all later marked and unmarked effects observed.
+The existing unqualified fallback control must still record ownerNone, providing
+a check that the observer has not started depending on the custody it measures.
+
+
+### 2026-11-06: re-read the old prefix after native enrollment
+
+TASK-38944's first quota-proof correction inferred a missing native claim from
+any native execution in the logical phase. A valid restored v25 result-only
+attempt passed admission, but the first original native preparation appended its
+next ordinal and made that older result fail saved get. The same global proof
+then blocked unrelated workflow creation. Fresh native-only histories did not
+exercise this transition. The Round2 regression
+`test_first_native_phase_coexists_with_restored_result_only_attempt` preserves
+the actual old result/slot, performs original preparation, physically reopens,
+and checks the saved read, unrelated admission and exact byte limits.
+
+When stricter evidence is introduced, test the existing valid prefix after the
+normal enrollment operation commits. Match obligations to the issuing phase's
+own task set; a new row must not retrospectively relabel an older ordinal.
+
+
+### PR3411 first-send observer calibration (2026-11-06)
+
+Task11's native RawCLI election probe initially registered a three-argument
+callback for CPython3.12 LINE monitoring. It reached the real parent return but
+never injected the command; the later finish wait timed out. A stock3.12.11 API
+calibration observed two arguments, and the corrected original-code observer
+passed the existing held-finish/pending/retirement assertions under the same caps.
+Calibrate an observer's actual event signature before using its silence as
+product evidence; [LINE takes code and line_number](https://docs.python.org/3.12/library/sys.monitoring.html#callback-function-arguments).
+This diagnosis does not attribute the separate earlier trace-based startup
+timeouts or later intermittent confirmation Toast timeout; those remain recorded.
+
+
+### PR3411 warning filters must reach pytest (2026-11-06)
+
+Task12 placed the pytest-specific unraisable-warning filter before `-m pytest` in three intermediate commands. CPython printed `Invalid -W option ignored: invalid module name: pytest`; the textual flag did not establish an active pytest warning gate. Those receipts remain historical, and final targeted runs put both filters after `-m pytest`, or inside `pytest.main` arguments for the isolated policy probe. Inspect actual option diagnostics and filter ownership before treating a passing process as strict warning evidence.
+
+
+### 2026-11-07 — PR3411: pytest rewrites assertions inside fixture helpers
+
+Task14c's first diagnostic stopped before the test because it assumed a lazily
+loaded configuration-preparation module was resident. Its next version imported
+the real module, then stopped at the house observer's raw-source Code comparison
+for `_ask_console`. The helper contained assertions: pytest rewrites assertions
+inside async helpers as well as test functions. Compiler-only calibration found
+raw/re-written helper bytecode sizes 1,256/8,434; the assertion-free `_send` stayed
+shape-identical. Both failed diagnostic setups produced zero behavioral evidence.
+
+The corrected PREP observer pinned `_send` normally for module/file provenance,
+compiled only `_ask_console` through the installed pytest assertion rewriter with
+the actual loader's identical pytest configuration, and compared its full Code
+shape before observing it. Production pins and the shared observer stayed strict.
+The assertion-pass option changes generated code and offsets, so a raw helper
+return offset cannot identify the rewritten executable's return. This compiler
+calibration is not an application test. The diagnostic's earlier module import
+also changes import/source-capture timing and must stay separate from later
+uninstrumented Source results. Evidence: PR3411 Task14c pytest-pin analysis,
+compiler proof, R0/R1 setup failures and R2 reviews in the retained PR preparation
+artifacts; all forty-two final required cases were subsequently exercised without
+the diagnostic plugin.
+
+The same incident exposed a separate fixture trap: a composer widget did not
+establish original arrival/stop readiness, and an `accept_turn` recorder did not
+observe native `accept_received_intent` tasks. Qualified original returns first
+identified the stop gate, then MCP source qualification. The fixture reused real
+reconciliation/stop readers, canonical profile paths with isolated SQL, and actual
+same-session received tasks; it also awaited the original first-send publisher
+before forcing the next programmatic capture. The queued caller reused that
+existing helper rather than asserting on its held reservation before preparation
+completed. No readiness field, source binding, queue entry or completion result
+was fabricated. An observed guard group does not identify an unobserved operand
+or exception origin; the retained reports keep those limits explicit.
+
+### 2026-11-07: observing a disposed lazy resource can allocate it
+
+PR3411 R53’s managed-getter refusal test completed its real refusal, worker cleanup
+and runtime disposal, then queried `runtime.execution_capacity` to check cleanup.
+That property creates the resource lazily; with no capacity previously allocated,
+the disposed runtime correctly raised instead. The corrected test retains the
+existing private capacity reference without allocating one, then verifies the same
+reference is empty or remains absent. Resource-retirement assertions must observe
+existing owners rather than call a lazy factory after disposal. Both the failed
+receipt and the focused corrected pass are retained in the R53 evidence.
+
+### 2026-11-07: private child warning policies need inherited filters
+
+PR3411 Task14e passed outer pytest with strict -W flags, but inspection showed the
+private-profile wrapper launches a fresh pytest without forwarding those flags.
+PYTHONWARNINGS is inherited. An external pytest warning category failed at Python
+startup because pytest was not yet importable. Builtin RuntimeWarning plus a
+UserWarning filter limited to the installed pytest unraisable emitter was validated
+with an actual unawaited-coroutine negative control, then all ten target cases
+passed with the child policy. Verify the real child environment, and recheck the
+emitter/control after pytest upgrades; an outer command line alone is not proof.
+
+
+## PR3411 integration: export history and an inherited identity-ratchet conflict (2026-11-07)
+
+The PR3411 ignored integration export was not a Git worktree. Its diagnostic
+history test ran `git log --follow <revision> -- tldw_chatbook/...` relative to the
+export and reported no history although the object existed. An explicit
+read-only `GIT_DIR`/`GIT_WORK_TREE` context produced the same result as the exact
+canonical-root command, and the unchanged history assertions passed. Qualify
+that path context before interpreting missing history. Scope the override to
+read-only history checks: inheriting it into fixtures that initialize or mutate
+Git repositories can target the shared checkout.
+
+The same integration passed 75 selected native/cold/source/custody controls but
+failed all three existing whole-Chat identity ratchets: published f9 already
+counted 240/137/171 against 56/27/43; private and the actual union counted
+245/139/173, with no census growth from the sync. Passing selected architecture
+or native tests had not reconciled that different governing census. Enumerate
+the affected architecture checks and measure immutable parents before deciding
+whether a failure is new. ADR285 now records the explicit, reviewed per-owner
+policy amendment and its real debt; the original failures are retained. Count
+controls do not prove a source check is necessary or detect offsetting changes.

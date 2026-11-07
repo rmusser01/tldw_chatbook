@@ -1,0 +1,28 @@
+.........................                                                [100%]
+============================= slowest 25 durations =============================
+43.71s call     Tests/Chat/test_workflow_settlement_delivery.py::test_pre_fence_source_error_keeps_positive_g_return_and_refuses_notification
+41.03s call     Tests/Chat/test_workflow_settlement_delivery.py::test_native_buddy_clear_error_preserves_g_close_and_cancellation[buddy-cancel]
+40.66s call     Tests/Chat/test_workflow_settlement_delivery.py::test_native_successor_token_refuses_original_g_release_without_notification
+39.42s call     Tests/Chat/test_workflow_settlement_delivery.py::test_original_execution_release_requires_final_metadata_and_receiver[unknown]
+39.42s call     Tests/Chat/test_workflow_settlement_delivery.py::test_native_buddy_clear_error_preserves_g_close_and_cancellation[buddy-error]
+38.22s call     Tests/Chat/test_workflow_settlement_delivery.py::test_original_execution_release_requires_final_metadata_and_receiver[receiver]
+24.63s call     Tests/Chat/test_workflow_settlement_delivery.py::test_planning_root_waits_for_original_control_return[control-association]
+19.10s call     Tests/Chat/test_workflow_settlement_delivery.py::test_planning_root_waits_for_original_control_return[control-positive]
+19.08s call     Tests/Chat/test_workflow_settlement_delivery.py::test_planning_root_waits_for_original_control_return[control-unknown]
+18.22s call     Tests/Chat/test_workflow_settlement_delivery.py::test_shutdown_drains_external_metadata_host_disposition_without_joining_caller
+18.00s call     Tests/Chat/test_workflow_settlement_delivery.py::test_planning_root_waits_for_original_control_return[control-driver-cancel]
+17.83s call     Tests/Chat/test_workflow_settlement_delivery.py::test_equal_native_counters_deliver_actual_accounting_settlement
+17.49s call     Tests/Chat/test_workflow_settlement_delivery.py::test_concurrent_get_uses_one_snapshot_and_sequences_original_host_disposition
+16.86s call     Tests/Chat/test_workflow_settlement_delivery.py::test_actual_new_pending_run_supersedes_original_absence_without_adopting_overlay
+16.33s call     Tests/Chat/test_workflow_settlement_delivery.py::test_shutdown_after_initial_commit_awaits_original_unused_return
+15.74s call     Tests/Chat/test_workflow_settlement_delivery.py::test_replaced_metadata_helper_never_runs_or_releases_original_custody[metadata-helper-held]
+15.73s call     Tests/Chat/test_workflow_settlement_delivery.py::test_incomplete_original_acceptance_refuses_repeated_shutdown[pending-prepared]
+15.37s call     Tests/Chat/test_workflow_settlement_delivery.py::test_final_original_metadata_worker_and_host_return_precede_shutdown
+14.27s call     Tests/Chat/test_workflow_settlement_delivery.py::test_final_metadata_preserves_caller_cancellation_and_original_wrapper_error
+14.24s call     Tests/Chat/test_workflow_settlement_delivery.py::test_stop_pending_initial_acceptance_drains_original_cell
+14.19s call     Tests/Chat/test_workflow_settlement_delivery.py::test_incomplete_original_acceptance_refuses_repeated_shutdown[pending-no-reader]
+13.95s call     Tests/Chat/test_workflow_settlement_delivery.py::test_direct_coordinator_close_preserves_caller_cancellation
+13.83s call     Tests/Chat/test_workflow_settlement_delivery.py::test_replaced_metadata_helper_never_runs_or_releases_original_custody[metadata-helper-before]
+13.41s call     Tests/Chat/test_workflow_settlement_delivery.py::test_pending_wrapper_failure_plus_repeated_cancel_retains_original
+12.92s call     Tests/Chat/test_workflow_settlement_delivery.py::test_stop_before_usage_retains_original_recovery_custody
+25 passed, 1 deselected in 555.94s (0:09:15)

@@ -17,7 +17,33 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 from .activation import execution_scope
-from .storage_admission import acquire_storage
+from .storage_admission import acquire_storage, _Acquisition, StorageLease
+
+
+@dataclass
+class _AdmissionRefusalReturn:
+    """Inert one-invocation return evidence, never admission authority."""
+
+    used: bool = False
+    thread: object = None
+    guard: object = None
+    error: BaseException | None = None
+    guard_returned: bool = False
+    returned: bool = False
+
+
+_REFUSAL_PROTOCOLS = tuple(
+    (fn, fn.__code__)
+    for fn in (
+        execution_scope,
+        execution_scope.__wrapped__,
+        acquire_storage,
+        _Acquisition.__init__,
+        StorageLease.close,
+        ExitStack.__exit__,
+        ExitStack.enter_context,
+    )
+)
 
 
 def execution_identity() -> "tuple[int, int, asyncio.Task[object] | None]":
@@ -142,6 +168,7 @@ class RecoveryAdmissionGuard:
         sources: tuple = (),
         transfer: "ExecutionState | None" = None,
         resolve: Callable[..., tuple] | None = None,
+        _refusal_return: _AdmissionRefusalReturn | None = None,
     ) -> Iterator[None]:
         """Retain admission through final persistence in this task/thread.
 
@@ -162,6 +189,28 @@ class RecoveryAdmissionGuard:
                 failed admission, or a storage failure during admission.
         """
         active = transfer if transfer is not None else self.context.get()
+        if _refusal_return is not None and (
+            type(_refusal_return) is not _AdmissionRefusalReturn
+            or not _refusal_return.used
+            or _refusal_return.thread is not threading.current_thread()
+            or _refusal_return.guard is not self
+            or _refusal_return.error is not None
+            or active is not None
+            or transfer is not None
+            or resolve is not None
+            or self.admit_source is not None
+            or self.finalize is not None
+            or self.check_states
+            or any(fn.__code__ is not code for fn, code in _REFUSAL_PROTOCOLS)
+            or execution_scope is not _REFUSAL_PROTOCOLS[0][0]
+            or execution_scope.__wrapped__ is not _REFUSAL_PROTOCOLS[1][0]
+            or ExitStack.__exit__ is not _REFUSAL_PROTOCOLS[5][0]
+            or ExitStack.enter_context is not _REFUSAL_PROTOCOLS[6][0]
+            or acquire_storage is not _REFUSAL_PROTOCOLS[2][0]
+            or _Acquisition.__init__ is not _REFUSAL_PROTOCOLS[3][0]
+            or StorageLease.close is not _REFUSAL_PROTOCOLS[4][0]
+        ):
+            raise self.error()
         if active is not None:
             if self.check_states:
                 active.check(self.error)
@@ -172,33 +221,63 @@ class RecoveryAdmissionGuard:
         observed = tuple(
             dict.fromkeys((active.sources if active else ()) + observe(service))
         )
+        decision = None
         with ExitStack() as stack:
             try:
                 for owner, path in observed:
                     if path not in leases:
-                        leases[path] = acquire_storage(path)
+                        if _refusal_return is None:
+                            leases[path] = acquire_storage(path)
+                        else:
+                            nonce = object()
+                            try:
+                                leases[path] = acquire_storage(
+                                    path, _refusal_nonce=nonce
+                                )
+                            except BaseException as error:
+                                fact = vars(error).get("_local_pause_decision")
+                                if (
+                                    type(fact) is tuple
+                                    and len(fact) == 2
+                                    and fact[0] is nonce
+                                    and type(fact[1]) is _Acquisition
+                                    and fact[1]._refusal_nonce is nonce
+                                    and fact[1]._pause_error is error
+                                    and not fact[1]._pause_consumed
+                                    and fact[1].thread is threading.current_thread()
+                                ):
+                                    fact[1]._pause_consumed = True
+                                    decision = self.error()
+                                    break
+                                raise
                         stack.callback(leases[path].close)
                     if self.admit_source is not None and self.admit_source(
                         stack, owner, path, leases[path]
                     ):
                         continue
                     if not stack.enter_context(
-                        execution_scope(
-                            self.owners(owner), path, retained=leases[path]
-                        )
+                        execution_scope(self.owners(owner), path, retained=leases[path])
                     ):
+                        if _refusal_return is not None:
+                            decision = self.error()
+                            break
                         raise self.error()
                 if self.finalize is not None and not self.finalize(observed, leases):
                     raise self.error()
             except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
                 raise self.error() from None
-            state = ExecutionState(execution_identity(), leases, observed, active)
-            token = self.context.set(state)
-            try:
-                yield
-            finally:
-                state.live = False
-                self.context.reset(token)
+            if decision is None:
+                state = ExecutionState(execution_identity(), leases, observed, active)
+                token = self.context.set(state)
+                try:
+                    yield
+                finally:
+                    state.live = False
+                    self.context.reset(token)
+        if decision is not None:
+            _refusal_return.error = decision
+            _refusal_return.guard_returned = True
+            raise decision
 
     @contextmanager
     def worker_isolation(self) -> Iterator[None]:

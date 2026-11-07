@@ -1,0 +1,18 @@
+{
+  "observed_utc": "2026-11-05T20:28:36.942331+00:00",
+  "head": "f4e72e54078413c35e01ea52607afe76283cc972",
+  "eval_windows": {
+    "job_id": 127508091563,
+    "bootstrap": "success",
+    "checkout": "success",
+    "job_status": "in_progress",
+    "downstream_tests": "not_claimed"
+  },
+  "plugin_windows": {
+    "job_id": 127508091646,
+    "job_status": "in_progress",
+    "checkout": "success",
+    "bootstrap": "success",
+    "downstream_tests": "not_claimed"
+  }
+}

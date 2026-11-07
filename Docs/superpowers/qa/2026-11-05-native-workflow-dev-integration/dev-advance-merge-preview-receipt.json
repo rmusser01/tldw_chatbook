@@ -1,0 +1,14 @@
+{
+  "command": [
+    "git",
+    "-c",
+    "gc.auto=0",
+    "merge-tree",
+    "--write-tree",
+    "--name-only",
+    "f4e72e54078413c35e01ea52607afe76283cc972",
+    "29592ecc9bf3856957a8d9b70a270795b8f4348d"
+  ],
+  "exit_code": 1,
+  "qualification": "Preview only; pending frozen correction tree still must be included. No ref, checkout or index change."
+}

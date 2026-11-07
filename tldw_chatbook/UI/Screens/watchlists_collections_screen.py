@@ -147,7 +147,6 @@ from ..Watchlists_Modules.artifacts_pane import (
     audio_file_path_is_safe,
     cadence_scope_phrase,
 )
-from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import (
     ContentPane,
     OpenInBrowserRequested,
@@ -165,7 +164,6 @@ from ..Watchlists_Modules.items_pane import (
     NextUnreadRequested,
     RefreshItemsRequested,
 )
-from ..Watchlists_Modules.kept_briefings_modal import KeptBriefingsModal
 from ..Watchlists_Modules.notifications_pane import (
     DismissNotificationRequested,
     MarkNotificationReadRequested,
@@ -214,7 +212,6 @@ from ..Watchlists_Modules.runs_pane import (
     RunSelected,
     RunsPane,
 )
-from ..Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 from ..Watchlists_Modules.bulk_sources_modal import (
     BulkSourcesContinueRequested,
     BulkSourcesCreateRequested,
@@ -9477,6 +9474,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         resolve against the SAME database this screen would use anywhere
         else, not a second, differently-scoped lookup.
         """
+        from ..Watchlists_Modules.kept_briefings_modal import KeptBriefingsModal
+
         subs_db = self._briefings_db()
         await self.app.push_screen_wait(
             KeptBriefingsModal(
@@ -10383,6 +10382,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         character_options = await self._load_character_options()
         voice_options = await self._load_voice_options()
+        from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
+
         changed = await self.app.push_screen_wait(
             BriefingPresetModal(
                 db,
@@ -12513,6 +12514,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 markup=False,
             )
             return
+        from ..Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+
         snapshot = snapshots[index]
         await self.app.push_screen_wait(
             SnapshotViewModal(

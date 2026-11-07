@@ -1,0 +1,6 @@
+{
+  "scanned": "Owned qualification plaintext only",
+  "credential_pattern_matches": 0,
+  "actual_provider_secrets_retained": false,
+  "source": "Local provider uses no credentials; configured cloud keys stayed transient and were excluded from retained artifacts."
+}

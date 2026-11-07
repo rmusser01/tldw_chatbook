@@ -276,3 +276,48 @@ target is a warm call of about one round trip.
   - A fast operation's admitted marker, result and STATUS leave the host
     in one write; the parent holds a running child's output at most 10 ms
     before writing it. Measured: live host over Wi-Fi, 2026-09-28: warm median 11.5-13.8 ms coalesced vs 16.6-17.2 ms without (3.3, 4.7, 5.1 ms lower in three interleaved pairs).
+
+
+### Native SSH request custody (Task8D2 prerequisite S)
+
+An actual AgentService model fs_* call retains its original native tool operation
+through the selected stock provider/RemoteRoot/adapter/executor, every ping/request,
+original cache/result host return and operation.finish return. Exact original
+request identity, validated remote terminal cleanup and local request/IO retirement
+are separate required facts. The same original worker/storage stays retained on
+unknown cleanup; timeout, local SSH death and result text are not proof.
+
+Finite native ssh -G and ssh -O checks reuse ProcessTreeController on the original
+worker, preserving argv/configuration/timeout semantics. The existing ControlMaster
+manager and session registry own healthy shared infrastructure: a private acceptance
+observation binds original invocation/source and actual launcher/IO return to real
+publication or verified exact adoption. Registration, path existence or zero exit
+alone does not establish acceptance. Unlearned/ambiguous setup and unpublished
+session starts require real cleanup or retain native uncertainty. Healthy shared
+connections need not exit for a request to finish. No new owner, protocol, poller,
+permission, binary restriction or master-lifetime service is introduced.
+
+This qualifies existing operation/source retirement, not early ordinary worktree
+coverage. Ordinary covering claims, separately scheduled recovery probes, remote
+guidance and complete child/late integration remain mandatory. Task7 currently
+accepts local roots only and is not SSH positive evidence. Native platform limits
+remain; uncertainty may retain worker/storage/capacity and disposal indefinitely.
+
+
+### Ordinary remote producers (Task8D2 integration contract)
+
+The complete ordinary maximum captures selected SSH descriptors before guidance,
+adapters or recovery dispatch. Goal binding filtering precedes unrelated remote
+enumeration. Recovery probes reserve their own original worker operation/source
+before Thread.start, following existing best-effort/debounce omission policy;
+disabled, debounced or rejected probes create no operation. Retain original
+ping/cache host return and finish return. Model requests consume the already
+qualified S operation/request/terminal/local-IO proof without another owner;
+healthy accepted shared infrastructure keeps its existing manager lifetime.
+
+Direct ordinary preparation reuses the same request/terminal/helper proof. The
+original instruction IO and selected binding/registry/cache, or the original
+scheduled probe executor/config/binding/cache, replace only the model-specific
+provider/adapter association. No fabricated model catalog or authority stands in
+for these direct producers. Admission precedes the original enqueue/start; the
+original source stays live through host return and operation.finish return.

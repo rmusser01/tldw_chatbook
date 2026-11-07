@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output",
+    "Tests/Agents/test_workflow_run_service.py::test_native_done_without_approved_verifier_stays_missing_and_blocks_quality_and_next_phase",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-reason_green-blozv0_u/pytest",
+    "--junitxml",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-reason_green/tests.xml"
+  ],
+  "basetemp": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-reason_green-blozv0_u",
+  "pgid": 24832,
+  "pid": 24832,
+  "signals": [],
+  "started": 1793854839.548098,
+  "whole_bound": 90
+}

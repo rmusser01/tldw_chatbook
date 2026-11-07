@@ -1,0 +1,21 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[external-edit]",
+    "-q",
+    "-x",
+    "--tb=short",
+    "--basetemp=../pytest-checkpoint-input-red"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 1,
+  "elapsed_seconds": 9.245406250003725,
+  "source_file_count": 9108,
+  "before_sha256": "8834487b11b047edcf66ad1c637e9dc28e3f5ad3058cdf53a2799e249cdf87f8",
+  "after_sha256": "8834487b11b047edcf66ad1c637e9dc28e3f5ad3058cdf53a2799e249cdf87f8",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/checkpoint-input-red.log"
+}

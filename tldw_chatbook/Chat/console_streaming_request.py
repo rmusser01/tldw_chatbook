@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+# Capture the original tuple before other module initialization.
+# isort: split
+from tldw_chatbook.Chat.console_ordinary_tree import (
+    _NATIVE_CURRENTNESS_SOURCE as _ORIGINAL_CURRENTNESS_SOURCE,
+)
+
+# isort: split
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -109,7 +117,10 @@ def chat_call_impl(
     transport_messages = bridge._serialize_project_instruction_rows_for_transport(
         messages_payload, native_tools=self._native_tools
     )
-    is_subagent = self._is_subagent(transport_messages)
+    is_subagent = (
+        attributed[1] == bridge.AGENT_KIND_SUBAGENT
+        if attributed is not None else self._is_subagent(transport_messages)
+    )
     # Resolve sidecars after the trace factory has built the neutral request.
     # The reserved canonical key is valid only once its groups are attached.
     # This temporary scalar also keeps mandatory continuation ownership separate.
@@ -228,8 +239,7 @@ def chat_call_impl(
         call_signals = aggregate_signals.new_usage_call()
         gateway_signals = call_signals
 
-    @bridge.agent_async_worker_guard(self)
-    async def _consume() -> None:
+    async def _consume_body() -> None:
         nonlocal \
             any_streamed, \
             terminal_metadata, \
@@ -457,7 +467,7 @@ def chat_call_impl(
 
         if isinstance(self._gateway, bridge.ConsoleProviderGateway):
             stream_kwargs["emission_observer"] = observe_emission
-        owner_session_id = self._store.session_id_for_message(
+        owner_session_id = self._session_id or self._store.session_id_for_message(
             self._assistant_message_id
         )
         bridge.require_thinking_persistence_support(
@@ -641,10 +651,54 @@ def chat_call_impl(
     # `child_lifeline`), so `run_reply`'s end-of-turn teardown of the
     # TURN's loop can no longer strand a child mid-call -- the case the
     # timeout above was the last line of defence against.
+    from types import ModuleType as _currentness_module_type
+
+    from tldw_chatbook.Chat import console_chat_controller as _currentness_controller
+    from tldw_chatbook.Chat import console_runtime as _currentness_runtime
     from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
 
+    _currentness_source = _ORIGINAL_CURRENTNESS_SOURCE
+    if (
+        type(_currentness_runtime) is not _currentness_module_type
+        or type(_currentness_controller) is not _currentness_module_type
+        or _currentness_source is not vars(_currentness_runtime).get("_ORIGINAL_CURRENTNESS_SOURCE")
+        or _currentness_source is not vars(_currentness_controller).get("_ORIGINAL_CURRENTNESS_SOURCE")
+        or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_runtime") is not _currentness_runtime
+        or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_chat_controller") is not _currentness_controller
+    ):
+        raise RuntimeError("original native currentness consumer changed")
+    _currentness_record = _currentness_source[4][-1][1]
+    _currentness_reader, _currentness_code, _currentness_defaults, _currentness_kwdefaults, _currentness_entries, _currentness_closure, _currentness_cells = _currentness_record
+    if (
+        _currentness_reader.__code__ is not _currentness_code
+        or _currentness_reader.__defaults__ is not _currentness_defaults
+        or _currentness_reader.__kwdefaults__ is not _currentness_kwdefaults
+        or tuple((_currentness_kwdefaults or {}).items()) != _currentness_entries
+        or _currentness_reader.__closure__ is not _currentness_closure
+        or any(cell.cell_contents is not value for cell, value in _currentness_cells)
+    ):
+        raise RuntimeError("original native currentness dispatcher changed")
+
+    workflow_preparation = _currentness_reader(_currentness_source, 'workflow')
+
+    @bridge.agent_async_worker_guard(self)
+    async def _consume():
+        from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+
+        if workflow_preparation is None:
+            await _consume_body()
+        else:
+            with (
+                workflow_preparation._planning_storage_return()
+                if workflow_preparation.phase.attempt.purpose == "planning"
+                else bridge.contextlib.nullcontext(),
+                owned_goal_storage(workflow_preparation.service),
+                workflow_preparation.activate_source(),
+            ):
+                await _consume_body()
+
     future = bridge.asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
-    _stall_session_id = self._store.session_id_for_message(self._assistant_message_id)
+    _stall_session_id = self._session_id or self._store.session_id_for_message(self._assistant_message_id)
     try:
         future.result(timeout=bridge._CHAT_CALL_TIMEOUT_SECONDS)
     except bridge.FuturesTimeoutError:
@@ -790,3 +844,12 @@ def chat_call_impl(
         response, terminal_metadata, call_envelope
     )
     return result
+
+
+# Definition-time records follow the actual extracted native receivers (ADR-285).
+from tldw_chatbook.Chat.console_ordinary_tree import _function_record as _native_record
+
+_NATIVE_WORKFLOW_RECEIVERS = tuple(
+    (name, _native_record(globals()[name]))
+    for name in ('chat_call_impl',)
+)

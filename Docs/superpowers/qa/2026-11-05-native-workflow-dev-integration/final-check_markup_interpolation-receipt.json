@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_markup_interpolation.py"
+  ],
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 11.216,
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/final-check_markup_interpolation.log",
+  "output_bytes": 142,
+  "qualification": "Production checkpoint announced stable; final before/after source receipt required."
+}

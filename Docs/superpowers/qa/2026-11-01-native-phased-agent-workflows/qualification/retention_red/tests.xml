@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="1.227" timestamp="2026-11-04T20:45:46.460731-08:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.DB.test_sync_log_retention" name="test_app_pass_prunes_both_stores" time="1.128"><failure message="AssertionError: retention left a worker-owned native connection after executor join&#10;assert {&lt;tldw_chatbo... 0x10ecae250&gt;} == {&lt;tldw_chatbo... 0x10ecae250&gt;}&#10;  &#10;  Extra items in the left set:&#10;  &lt;tldw_chatbook.DB.private_sqlite._with_storage_admission.&lt;locals&gt;.admitted.&lt;locals&gt;.AdmittedConnection object at 0x11b3bce50&gt;&#10;  Use -v to get more diff">Tests/DB/test_sync_log_retention.py:291: in test_app_pass_prunes_both_stores
+    assert set(db._maintenance_participant.connections) == handles, (
+E   AssertionError: retention left a worker-owned native connection after executor join
+E   assert {&lt;tldw_chatbo... 0x10ecae250&gt;} == {&lt;tldw_chatbo... 0x10ecae250&gt;}
+E     
+E     Extra items in the left set:
+E     &lt;tldw_chatbook.DB.private_sqlite._with_storage_admission.&lt;locals&gt;.admitted.&lt;locals&gt;.AdmittedConnection object at 0x11b3bce50&gt;
+E     Use -v to get more diff</failure></testcase></testsuite></testsuites>

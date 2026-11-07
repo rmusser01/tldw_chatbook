@@ -103,6 +103,7 @@ async def _send(console, pilot, draft: str) -> None:
 
 async def _select(console, pilot, message: ConsoleChatMessage) -> ConsoleTranscript:
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
     transcript.select_message(message.id)
     await console._sync_native_console_chat_ui()
     await _wait_for_selector(

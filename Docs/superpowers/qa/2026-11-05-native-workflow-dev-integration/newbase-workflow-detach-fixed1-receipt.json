@@ -1,0 +1,25 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/UI/test_console_workflow_navigation.py::test_detach_preserves_planning_and_background_link_identifies_owner",
+    "--tb=short",
+    "-x",
+    "-W",
+    "error::RuntimeWarning",
+    "-W",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "--basetemp=../pytest-newbase-workflow-detach-fixed1"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 36.535037875175476,
+  "source_file_count": 9109,
+  "before_sha256": "75f896584b7c2daa074c744f7e089775bed31489a97ddfe144647949eee6c60c",
+  "after_sha256": "75f896584b7c2daa074c744f7e089775bed31489a97ddfe144647949eee6c60c",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-workflow-detach-fixed1.log"
+}

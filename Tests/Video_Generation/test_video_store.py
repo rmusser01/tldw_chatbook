@@ -2156,3 +2156,147 @@ def test_boot_retention_creates_no_lock_file_for_a_never_used_store(tmp_path):
         "boot retention created the capacity lock file for a never-used store"
     )
     assert not root.exists(), "boot retention created the store root dir"
+
+
+def test_video_store_factory_reads_the_current_app_logger_only_after_retention_fails(
+    monkeypatch,
+):
+    from Tests.app_module_patches import set_app_global
+    from tldw_chatbook import app
+
+    calls = []
+    original_logger = SimpleNamespace(warning=lambda *args: calls.append(("old", args)))
+    replacement = SimpleNamespace(warning=lambda *args: calls.append(("new", args)))
+    set_app_global(monkeypatch, "logger", original_logger)
+
+    class Store:
+        def enforce_retention(self):
+            set_app_global(monkeypatch, "logger", replacement)
+            raise ValueError("private detail")
+
+    store = Store()
+    monkeypatch.setattr(video_store_module, "VideoStore", lambda: store)
+    assert app._build_generated_video_store() is store
+    assert calls == [
+        (
+            "new",
+            ("Generated-video startup retention failed (error_type={}).", "ValueError"),
+        )
+    ]
+
+
+def test_video_store_factory_never_reads_logger_on_success_or_constructor_failure(
+    monkeypatch,
+):
+    build = getattr(video_store_module, "_build_generated_video_store", None)
+    assert build is not None, "video store factory not yet moved"
+    calls = []
+    store = SimpleNamespace(enforce_retention=lambda: calls.append("retention"))
+    monkeypatch.setattr(video_store_module, "VideoStore", lambda: store)
+    assert build(lambda: calls.append("logger")) is store
+    assert calls == ["retention"]
+
+    error = ValueError("constructor")
+
+    def fail():
+        raise error
+
+    monkeypatch.setattr(video_store_module, "VideoStore", fail)
+    with pytest.raises(ValueError) as caught:
+        build(lambda: calls.append("logger"))
+    assert caught.value is error
+    assert calls == ["retention"]
+
+
+def test_video_store_factory_returns_real_store_after_one_retention(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook import app
+
+    store = VideoStore(root=tmp_path / "videos")
+    original = store.enforce_retention
+    calls = []
+
+    def retain():
+        calls.append("retention")
+        return original()
+
+    monkeypatch.setattr(store, "enforce_retention", retain)
+    monkeypatch.setattr(video_store_module, "VideoStore", lambda: store)
+    assert app._build_generated_video_store() is store
+    assert calls == ["retention"]
+
+
+def test_video_store_factory_propagates_reader_failure(monkeypatch):
+    error = LookupError("logger")
+    store = SimpleNamespace(
+        enforce_retention=lambda: (_ for _ in ()).throw(ValueError())
+    )
+    monkeypatch.setattr(video_store_module, "VideoStore", lambda: store)
+
+    def read_logger():
+        raise error
+
+    with pytest.raises(LookupError) as caught:
+        video_store_module._build_generated_video_store(read_logger)
+    assert caught.value is error
+
+
+def test_video_store_factory_module_entry_uses_executing_app_globals():
+    import sys
+
+    script = """
+import runpy
+import sys
+import types
+
+entry = types.ModuleType("tldw_chatbook.app_entry")
+def run():
+    app = sys.modules["__main__"]
+    assert sys.modules["tldw_chatbook.app"] is app
+    import tldw_chatbook.Video_Generation.video_store as video
+    calls = []
+    class Logger:
+        def warning(self, *args): calls.append(args)
+    replacement = Logger()
+    class Store:
+        def enforce_retention(self):
+            app.logger = replacement
+            raise ValueError("private")
+    store = Store()
+    video.VideoStore = lambda: store
+    assert app._build_generated_video_store() is store
+    assert calls == [("Generated-video startup retention failed (error_type={}).", "ValueError")]
+    assert sys.modules["tldw_chatbook.app"] is app
+entry._run_module_main = run
+sys.modules[entry.__name__] = entry
+assert "tldw_chatbook.app" not in sys.modules
+runpy.run_module("tldw_chatbook.app", run_name="__main__", alter_sys=True)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_video_store_factory_propagates_import_failure(monkeypatch):
+    import builtins
+
+    from tldw_chatbook import app
+
+    original_import = builtins.__import__
+    error = ImportError("store unavailable")
+
+    def fail_store_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "Video_Generation.video_store" and level == 1:
+            raise error
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fail_store_import)
+    with pytest.raises(ImportError) as caught:
+        app._build_generated_video_store()
+    assert caught.value is error

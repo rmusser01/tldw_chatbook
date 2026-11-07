@@ -30,6 +30,8 @@ from tldw_chatbook.Utils.Splash_Screens.card_definitions import (
 from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
 CONTENT = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 

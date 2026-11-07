@@ -365,3 +365,25 @@ __all__ = [
     "persist_event",
     "safe_metadata_token",
 ]
+
+
+def _exception_frames(error: BaseException) -> list[tuple[str, str, int | None]]:
+    """Return ``(module, function, line)`` for each traceback frame, outermost first.
+
+    TASK-32533. Identifiers only -- module ``__name__``, ``co_name`` and the
+    line number -- so the result can be persisted through the metadata-only
+    diagnostics schema without ever carrying the message or a file path.
+    """
+    frames: list[tuple[str, str, int | None]] = []
+    tb = error.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        frames.append(
+            (
+                str(frame.f_globals.get("__name__", "")),
+                frame.f_code.co_name,
+                tb.tb_lineno,
+            )
+        )
+        tb = tb.tb_next
+    return frames

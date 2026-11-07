@@ -190,9 +190,12 @@ def _repository_operation(participant):
 
 
 class _Acquisition:
-    def __init__(self):
+    def __init__(self, *, _refusal_nonce=None):
         self.pid = os.getpid()
         self.thread = threading.current_thread()
+        self._refusal_nonce = _refusal_nonce
+        self._pause_error = None
+        self._pause_consumed = False
         self.task = _task_identity()
         self.initializing_root = None
         self.scope_roots = None
@@ -202,7 +205,11 @@ class _Acquisition:
             if self.operation is not None:
                 _check_operation(self.operation)
             if _pause is not None and self.operation is None:
-                raise bootstrap.RecoveryRequired("storage_locally_paused")
+                error = bootstrap.RecoveryRequired("storage_locally_paused")
+                if _refusal_nonce is not None:
+                    self._pause_error = error
+                    error._local_pause_decision = (_refusal_nonce, self)
+                raise error
             _pending_acquisitions.add(self)
 
     def check(self, path=None):
@@ -506,6 +513,7 @@ class _Hold:
         self.key = key
         self.names = names
         self.count = 0
+        self.retiring_thread = None
         self.ready = threading.Event()
         self.stop = threading.Event()
         self.error: BaseException | None = None
@@ -557,6 +565,7 @@ class StorageLease:
         self.resource_policy = None
         self.resource_path = None
         self.resource_thread = None
+        self._acquiring_thread = threading.current_thread()
         self.resource_close_failed = False
         with _changed:
             _live_leases.add(self)
@@ -618,6 +627,7 @@ class StorageLease:
             if hold.count == 0:
                 hold.stop.set()
                 del _holds[key]
+                hold.retiring_thread = threading.current_thread()
                 _retiring_holds.add(hold)
                 retired = hold
         if retired is not None:
@@ -1385,14 +1395,14 @@ def _scope(
 
 
 def acquire_storage(
-    path: Path | None = None, *, related_paths: tuple[Path, ...] = ()
+    path: Path | None = None, *, related_paths: tuple[Path, ...] = (), _refusal_nonce=None
 ) -> StorageLease:
     """Admit every operation path under one native group, without creating files.
 
     Companion paths receive the same pre/post-lock scope checks as the primary.
     The returned lease's borrowable execution selection remains the primary path.
     """
-    attempt = _Acquisition()
+    attempt = _Acquisition() if _refusal_nonce is None else _Acquisition(_refusal_nonce=_refusal_nonce)
     try:
         return _acquire_storage(path, attempt, related_paths=related_paths)
     except bootstrap.RecoveryRequired:

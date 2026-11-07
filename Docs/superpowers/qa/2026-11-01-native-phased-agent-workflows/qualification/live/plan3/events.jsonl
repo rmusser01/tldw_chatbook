@@ -1,0 +1,12 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 7141, "time": 1793849180.36193}
+{"conversation": "dbc50ccb-52a6-44b7-9301-f8dc581f1f8e", "event": "chat", "pid": 7141, "session": "ad00d918-a38a-4a85-bf8d-b1ef17a8f32e", "time": 1793849180.532359}
+{"event": "ready", "label": "named-chat-tab", "pid": 7141, "time": 1793849181.819607}
+{"base": "http://127.0.0.1:8010", "event": "native-provider", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 7141, "provider": "llama_cpp", "ready": true, "time": 1793849181.9344718}
+{"event": "ready", "label": "#console-send-message", "pid": 7141, "time": 1793849181.95036}
+{"event": "clicked", "id": "#console-send-message", "pid": 7141, "region": [116, 52, 14, 1], "time": 1793849182.814764}
+{"event": "ready", "label": "setup", "pid": 7141, "time": 1793849182.913023}
+{"event": "ready", "label": "#workflow-plan", "pid": 7141, "time": 1793849182.968172}
+{"event": "clicked", "id": "#workflow-plan", "pid": 7141, "region": [80, 49, 43, 1], "time": 1793849183.146503}
+{"event": "ready", "label": "detail", "pid": 7141, "time": 1793849184.5641532}
+{"event": "ready", "label": "plan terminal", "pid": 7141, "time": 1793849375.431592}
+{"event": "plan-disposition", "pid": 7141, "plans": 0, "spend": {"child_launch": 0, "generation": 1, "model_call": 2, "tokens": 15100}, "status": "awaiting_plan", "time": 1793849375.431813, "workflow": "65555e0b-ab3d-48b3-87ee-e63fc08d90ff"}

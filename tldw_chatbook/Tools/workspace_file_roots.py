@@ -776,7 +776,9 @@ def current_run_sandbox_root() -> Path | None:
     return _RUN_FILE_SANDBOX_ROOT.get()
 
 
-def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
+def allowed_file_roots(
+    *, write: bool, sandbox_root: Path, _selection: tuple[Any, str | None] | None = None
+) -> tuple[Path, ...]:
     """Sandbox root plus the run's workspace folder roots, existing-only.
 
     Fail-safe: any registry failure degrades to sandbox-only rather than
@@ -808,10 +810,13 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
 
         if workspace_id == DEFAULT_WORKSPACE_ID:
             return tuple(roots)
-        registry = _registry_factory()
-        if workspace_id is None:
-            active = registry.get_active_workspace()
-            workspace_id = active.workspace_id if active is not None else None
+        if _selection is not None:
+            registry, workspace_id = _selection
+        else:
+            registry = _registry_factory()
+            if workspace_id is None:
+                active = registry.get_active_workspace()
+                workspace_id = active.workspace_id if active is not None else None
         if workspace_id is None or workspace_id == DEFAULT_WORKSPACE_ID:
             return tuple(roots)
         maximum_binding_ids = (
@@ -862,7 +867,9 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
     return tuple(roots)
 
 
-def current_folder_binding_exclusions() -> tuple[Path, ...]:
+def current_folder_binding_exclusions(
+    *, _selection: tuple[Any, str | None] | None = None
+) -> tuple[Path, ...]:
     """Absolute user-exclusion paths for the current run's folder bindings.
 
     Family-2 injection point (spec 2026-09-20): the builtin file tools fold
@@ -897,14 +904,14 @@ def current_folder_binding_exclusions() -> tuple[Path, ...]:
         workspace_id = current_run_workspace_id()
         from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 
-        registry = _registry_factory()
-        if workspace_id is None:
-            # Fallback parity (Finding A, PR #2767): ``allowed_file_roots``
-            # admits the ACTIVE workspace's bindings when no run workspace
-            # is bound; the exclusions here must follow the same fallback or
-            # the builtin tools reach those folders with ZERO exclusions.
-            active = registry.get_active_workspace()
-            workspace_id = active.workspace_id if active is not None else None
+        if _selection is not None:
+            registry, workspace_id = _selection
+        else:
+            registry = _registry_factory()
+            if workspace_id is None:
+                # Same active-workspace fallback as allowed_file_roots.
+                active = registry.get_active_workspace()
+                workspace_id = active.workspace_id if active is not None else None
         if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
             return ()
         maximum_binding_ids = _RUN_WORKSPACE_READ_BINDING_IDS.get()

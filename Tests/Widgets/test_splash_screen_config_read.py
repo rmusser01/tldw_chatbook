@@ -31,8 +31,8 @@ def test_splash_screen_reads_configured_duration():
     """A configured value must win over the hardcoded default."""
 
     def fake_get_cli_setting(section, key=None, default=None):
-        if section == "splash_screen" and key == "duration":
-            return 9.5
+        if section == "splash_screen" and key is None:
+            return {"duration": 9.5}
         return default
 
     with patch(
@@ -61,8 +61,8 @@ def test_splash_screen_default_applies_only_when_key_absent():
 
 def test_settings_splash_viewer_reads_configured_card_selection():
     def fake_get_cli_setting(section, key=None, default=None):
-        if section == "splash_screen" and key == "card_selection":
-            return "matrix"
+        if section == "splash_screen" and key is None:
+            return {"card_selection": "matrix"}
         return default
 
     with patch(

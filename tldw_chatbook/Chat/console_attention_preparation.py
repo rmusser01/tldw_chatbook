@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from ..DB import ChaChaNotes_DB as notes
 from ..DB import base_db
+from ..DB.AgentRuns_DB import AgentRunsDB
 from . import conversation_local_marks_service as marks
 
 _MARKS_TYPE = marks.ConversationLocalMarksService
@@ -166,3 +167,42 @@ def capture_attention_marks_read(service: object) -> AttentionMarksRead | None:
         ),
     )
     return read if read.current() else None
+
+
+class _ReceiptStorageFailure(RuntimeError):
+    """Native storage source, entry or retirement did not complete."""
+
+
+def _enter_receipt_storage(
+    stack,
+    runs,
+    service,
+    _sources=(
+        AgentRunsDB, _NOTES_TYPE, _MARKS_TYPE, _OWNED_CONNECTION, _ReceiptStorageFailure
+    ),
+):
+    """Enter only distinct stock file-backed databases owned by this operation."""
+    runs_type, notes_type, marks_type, owned_connection, storage_failure = _sources
+    databases = (runs, vars(service).get("db") if type(service) is marks_type else None)
+    seen = set()
+    for database in databases:
+        if (
+            (type(database) is runs_type or type(database) is notes_type)
+            and not database.is_memory_db
+            and id(database) not in seen
+        ):
+            seen.add(id(database))
+            try:
+                stack.enter_context(owned_connection(database))
+            except Exception as error:
+                raise storage_failure("console_attention_storage_entry_failed") from error
+
+
+_RECEIPT_STORAGE_SOURCE = (
+    _enter_receipt_storage,
+    _enter_receipt_storage.__code__,
+    _enter_receipt_storage.__defaults__,
+    _enter_receipt_storage.__kwdefaults__,
+    _enter_receipt_storage.__closure__,
+    _ReceiptStorageFailure,
+)

@@ -70,6 +70,8 @@ async def _wait(pilot, predicate):
 
 
 async def _seed_console(app, pilot):
+    trust = await app.ensure_local_skill_trust_service()
+    assert app.local_skills_service.trust_service is trust
     await _wait(pilot, lambda: app._initial_screen_pushed)
     console = await _navigate(app, pilot, "chat", expect="ChatScreen")
     await _wait(pilot, lambda: bool(list(console.query("#console-native-composer"))))

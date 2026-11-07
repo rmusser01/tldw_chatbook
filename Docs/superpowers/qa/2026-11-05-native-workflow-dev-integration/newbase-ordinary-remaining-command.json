@@ -1,0 +1,22 @@
+[
+  "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+  "-m",
+  "pytest",
+  "-q",
+  "Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_capture_is_opaque_even_when_prefill_skips_agent",
+  "Tests/Chat/test_console_ordinary_tree.py::test_deferred_native_mcp_permission_lazy_publication_keeps_original_source",
+  "Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_without_original_task_context_refuses_before_effects",
+  "Tests/Chat/test_console_ordinary_tree.py::test_pending_cold_mcp_receiver_replacement_refuses_before_callback",
+  "Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_original_path_or_factory_replacement_refuses",
+  "Tests/Chat/test_console_ordinary_tree.py::test_pending_mcp_manifest_changed_defaults_refuses_before_callback",
+  "Tests/Chat/test_console_ordinary_tree.py::test_accepted_voice_uses_original_pending_mcp_source",
+  "Tests/Chat/test_console_ordinary_tree.py::test_unwitnessed_permission_reader_never_runs_before_ordinary_claim",
+  "Tests/Chat/test_console_ordinary_tree.py::test_public_mcp_maximum_still_returns_original_custom_hashes",
+  "Tests/Chat/test_console_ordinary_tree.py::test_stale_managed_mcp_runtime_never_falls_back_to_standalone",
+  "Tests/Chat/test_console_ordinary_tree.py::test_standalone_mcp_capture_refuses_runtime_attachment_during_original_read",
+  "Tests/Chat/test_console_ordinary_tree.py::test_actual_change_review_initializer_borrows_original_ordinary_tree",
+  "Tests/Chat/test_console_ordinary_tree.py::test_actual_ordinary_change_review_baseline_and_end_borrow_same_tree",
+  "--tb=short",
+  "-x",
+  "--basetemp=../pytest-newbase-ordinary-remaining"
+]

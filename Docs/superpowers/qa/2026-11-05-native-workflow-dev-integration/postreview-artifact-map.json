@@ -1,0 +1,242 @@
+[
+  {
+    "source_receipt": "sqlite-seam-review.md",
+    "artifact": "sqlite-seam-review.md",
+    "sha256": "05e5af6836de1c4a0b074bf81d590363d97031164af48d6c959bcd54d50794dd"
+  },
+  {
+    "source_receipt": "review-fix-scoped-initial.md",
+    "artifact": "review-fix-scoped-initial.md",
+    "sha256": "efc638226eff38643c7330b937f688276a7a8ddf1527ba7f2123cbe2cfb46fdc"
+  },
+  {
+    "source_receipt": "upstream-sqlite-inventory-source-proof.json",
+    "artifact": "upstream-sqlite-inventory-source-proof.json",
+    "sha256": "a84baaf9ed540473c56ebe38965cd20a31ffb35ddf80a20f8286edb22b227af4"
+  },
+  {
+    "source_receipt": "ci-windows-plugin-f4e.txt",
+    "artifact": "ci-windows-plugin-f4e.txt",
+    "sha256": "9f75715d3dbe42f1b9baea59e2e177d1d97a4503baecd56548a80b6044cc2b5c"
+  },
+  {
+    "source_receipt": "postreview-static-summary.json",
+    "artifact": "postreview-static-summary.json",
+    "sha256": "6b14d3936671743fe630b257108b3cf7a2b81af07f8e931fbe746f6aed0bb20d"
+  },
+  {
+    "source_receipt": "finalreview-static-summary.json",
+    "artifact": "finalreview-static-summary.json",
+    "sha256": "a7f5412bac83fd036919592f29fe423f348185841d175cb9c1d50a2e38454267"
+  },
+  {
+    "source_receipt": "static-source-postreview-before.json",
+    "artifact": "static-source-postreview-before.json",
+    "sha256": "5fb8306db9e812fe2ff44643c4c936bc8df2462da751755fc37417f369bb25c6"
+  },
+  {
+    "source_receipt": "static-source-postreview-after.json",
+    "artifact": "static-source-postreview-after.json",
+    "sha256": "5fb8306db9e812fe2ff44643c4c936bc8df2462da751755fc37417f369bb25c6"
+  },
+  {
+    "source_receipt": "static-source-finalreview-before.json",
+    "artifact": "static-source-finalreview-before.json",
+    "sha256": "3e36bc061a927d91cb54f38f4d707bd2df9e4d699c5545bacc12ea9eec1aa55b"
+  },
+  {
+    "source_receipt": "static-source-finalreview-after.json",
+    "artifact": "static-source-finalreview-after.json",
+    "sha256": "3e36bc061a927d91cb54f38f4d707bd2df9e4d699c5545bacc12ea9eec1aa55b"
+  },
+  {
+    "source_receipt": "postreview-diagnostic-review.md",
+    "artifact": "postreview-diagnostic-review.md",
+    "sha256": "3b5191a7b58138a1f78440c966019460131d3a06e59bde34aa1832e8ad2490c6"
+  },
+  {
+    "source_receipt": "postreview-diagnostic-statements.log",
+    "artifact": "postreview-diagnostic-statements.txt",
+    "sha256": "65e1d6a31d3ea4946f7711b6ab5dd6c18d05a624603c40f0d6dfe5bbcf784d1e"
+  },
+  {
+    "source_receipt": "postreview-diagnostic-statements-receipt.json",
+    "artifact": "postreview-diagnostic-statements-receipt.json",
+    "sha256": "b99cab8f0b34cdd3c49fb86d42ec0cae7cfbc6cb2fdab2983ac6b56367c1955e"
+  },
+  {
+    "source_receipt": "postreview-diagnostic-write-receipt.json",
+    "artifact": "postreview-diagnostic-write-receipt.json",
+    "sha256": "5381c70548178ae035286448dc0054323ed8aee872d934aa82f3a0282a47881f"
+  },
+  {
+    "source_receipt": "review-fix-frozen-manifest.json",
+    "artifact": "review-fix-frozen-manifest.json",
+    "sha256": "b10638b8d1e4b2d268a541f989ec94f029fa4141719a0005b7281887f05cf4cb"
+  },
+  {
+    "source_receipt": "review-fix-governance-frozen-manifest.json",
+    "artifact": "review-fix-governance-frozen-manifest.json",
+    "sha256": "9428b67900bd53b60901cfaa8561c27d8b18d5c70eb5453eed9baca15a1da52d"
+  },
+  {
+    "source_receipt": "postreview-check_ui_pr_gate_census.log",
+    "artifact": "postreview-check_ui_pr_gate_census.txt",
+    "sha256": "3be85feff2f88de5e2eb6ffd438236cbaf1cd15b382b782d517ef8ac095cbed5"
+  },
+  {
+    "source_receipt": "postreview-check_textual_worker_contract.log",
+    "artifact": "postreview-check_textual_worker_contract.txt",
+    "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992"
+  },
+  {
+    "source_receipt": "postreview-check_index_plan_pins.log",
+    "artifact": "postreview-check_index_plan_pins.txt",
+    "sha256": "e7f47b1cb61886400797dd9675108a226ffc32b8ed4516fae0ef6e614ac620b3"
+  },
+  {
+    "source_receipt": "postreview-check_schema_table_allowlist.log",
+    "artifact": "postreview-check_schema_table_allowlist.txt",
+    "sha256": "d239cae48defe59e58eba5717d9e468939bad0c6e553a53d73773634b1b41c3d"
+  },
+  {
+    "source_receipt": "finalreview-check_timestamp_writers.log",
+    "artifact": "finalreview-check_timestamp_writers.txt",
+    "sha256": "c7d9f8c695e6b6d5ffea7b08b9fdf60bec11ab91f2f79b97b6ead504b948b102"
+  },
+  {
+    "source_receipt": "postreview-check_persistent_diagnostic_inventory.log",
+    "artifact": "postreview-check_persistent_diagnostic_inventory.txt",
+    "sha256": "7ad8add5506437ef87d1225673b48cfa06b1a6ca5f88fed0ae10ca699c94ab3b"
+  },
+  {
+    "source_receipt": "finalreview-check_ui_pr_gate_census.log",
+    "artifact": "finalreview-check_ui_pr_gate_census.txt",
+    "sha256": "3be85feff2f88de5e2eb6ffd438236cbaf1cd15b382b782d517ef8ac095cbed5"
+  },
+  {
+    "source_receipt": "finalreview-check_markup_interpolation.log",
+    "artifact": "finalreview-check_markup_interpolation.txt",
+    "sha256": "ce7687e4e0056d151f6463108f61d8677e7ff6c4f8af72c2eff44f3b7294e001"
+  },
+  {
+    "source_receipt": "postreview-check_timestamp_writers.log",
+    "artifact": "postreview-check_timestamp_writers.txt",
+    "sha256": "c7d9f8c695e6b6d5ffea7b08b9fdf60bec11ab91f2f79b97b6ead504b948b102"
+  },
+  {
+    "source_receipt": "postreview-check_profile_owned_path_inventory.log",
+    "artifact": "postreview-check_profile_owned_path_inventory.txt",
+    "sha256": "c1d4b52b3951c1e0333cbf5079a6a7ec3d1644bcb7341affb37e4ca3b618da40"
+  },
+  {
+    "source_receipt": "postreview-check_schema_table_allowlist-receipt.json",
+    "artifact": "postreview-check_schema_table_allowlist-receipt.json",
+    "sha256": "04a19a5daea7715a295b1f5137433df78dcce28e768b96b832fd8f7c026d8ff1"
+  },
+  {
+    "source_receipt": "postreview-check_markup_interpolation.log",
+    "artifact": "postreview-check_markup_interpolation.txt",
+    "sha256": "ce7687e4e0056d151f6463108f61d8677e7ff6c4f8af72c2eff44f3b7294e001"
+  },
+  {
+    "source_receipt": "postreview-check_ui_pr_gate_census-receipt.json",
+    "artifact": "postreview-check_ui_pr_gate_census-receipt.json",
+    "sha256": "43c3f3c25d551dddef61502940e3d11af30ef9a5c2f50584770aeba01c2e4673"
+  },
+  {
+    "source_receipt": "postreview-check_index_plan_pins-receipt.json",
+    "artifact": "postreview-check_index_plan_pins-receipt.json",
+    "sha256": "f7c6f9367e76e9d3e8e305ccea7aa046cf76b965a8ea8240ab86a63460fd49c8"
+  },
+  {
+    "source_receipt": "finalreview-check_markup_interpolation-receipt.json",
+    "artifact": "finalreview-check_markup_interpolation-receipt.json",
+    "sha256": "727401c62cceb1b6835e7ed02d7811c687e2af5ca2915618e07e364d28b8080e"
+  },
+  {
+    "source_receipt": "finalreview-check_textual_worker_contract.log",
+    "artifact": "finalreview-check_textual_worker_contract.txt",
+    "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992"
+  },
+  {
+    "source_receipt": "postreview-check_timestamp_writers-receipt.json",
+    "artifact": "postreview-check_timestamp_writers-receipt.json",
+    "sha256": "f2959df62dd3dffa2ae770155932f639b5ba318b5b03a5d85ee7a66f58ec0971"
+  },
+  {
+    "source_receipt": "finalreview-check_index_plan_pins.log",
+    "artifact": "finalreview-check_index_plan_pins.txt",
+    "sha256": "e7f47b1cb61886400797dd9675108a226ffc32b8ed4516fae0ef6e614ac620b3"
+  },
+  {
+    "source_receipt": "finalreview-check_profile_owned_path_inventory.log",
+    "artifact": "finalreview-check_profile_owned_path_inventory.txt",
+    "sha256": "c1d4b52b3951c1e0333cbf5079a6a7ec3d1644bcb7341affb37e4ca3b618da40"
+  },
+  {
+    "source_receipt": "finalreview-check_index_plan_pins-receipt.json",
+    "artifact": "finalreview-check_index_plan_pins-receipt.json",
+    "sha256": "c8abd1cf06313732d0566412c143a10a5b21fa36a65c3a3a105e9d6245b6cab4"
+  },
+  {
+    "source_receipt": "finalreview-check_schema_table_allowlist.log",
+    "artifact": "finalreview-check_schema_table_allowlist.txt",
+    "sha256": "d239cae48defe59e58eba5717d9e468939bad0c6e553a53d73773634b1b41c3d"
+  },
+  {
+    "source_receipt": "postreview-check_profile_owned_path_inventory-receipt.json",
+    "artifact": "postreview-check_profile_owned_path_inventory-receipt.json",
+    "sha256": "bf32a6d56857c0f91b28a424983bc32a5a729c34fe1686179c1e11b0b4be0ecd"
+  },
+  {
+    "source_receipt": "finalreview-check_schema_table_allowlist-receipt.json",
+    "artifact": "finalreview-check_schema_table_allowlist-receipt.json",
+    "sha256": "b258f32fdfac51fda40e5e4644b2dff4324b3d9db9ff779e54ef157cdc95652e"
+  },
+  {
+    "source_receipt": "postreview-check_persistent_diagnostic_inventory-receipt.json",
+    "artifact": "postreview-check_persistent_diagnostic_inventory-receipt.json",
+    "sha256": "adf9897944bf3f2228c1e1f44f9dfbcdf2220ddb376663ef10b421db2963f9ae"
+  },
+  {
+    "source_receipt": "postreview-check_markup_interpolation-receipt.json",
+    "artifact": "postreview-check_markup_interpolation-receipt.json",
+    "sha256": "00350e6a6ecb944cb17708a034ddda1badfbb266f82e17400ec313d1f05ef28a"
+  },
+  {
+    "source_receipt": "finalreview-check_persistent_diagnostic_inventory.log",
+    "artifact": "finalreview-check_persistent_diagnostic_inventory.txt",
+    "sha256": "eef1ce2691f2c9d580bfddf49a682e969f3c1865ad07f14baaec35def041ae17"
+  },
+  {
+    "source_receipt": "postreview-check_textual_worker_contract-receipt.json",
+    "artifact": "postreview-check_textual_worker_contract-receipt.json",
+    "sha256": "79aa37f3ed60a00bc7b494f2c3569d77ac21ae41cacfe9d33b9222f3870ae905"
+  },
+  {
+    "source_receipt": "finalreview-check_persistent_diagnostic_inventory-receipt.json",
+    "artifact": "finalreview-check_persistent_diagnostic_inventory-receipt.json",
+    "sha256": "c27f9e692af271081df81a1700833d64300201b8a098c875009481cb065441a2"
+  },
+  {
+    "source_receipt": "finalreview-check_ui_pr_gate_census-receipt.json",
+    "artifact": "finalreview-check_ui_pr_gate_census-receipt.json",
+    "sha256": "f3ffd57f58f4c042abbd5aca9e7b71bde5cd72724eb6ef71ec634bdf23f18405"
+  },
+  {
+    "source_receipt": "finalreview-check_timestamp_writers-receipt.json",
+    "artifact": "finalreview-check_timestamp_writers-receipt.json",
+    "sha256": "ef9528c7a2e8ce1aea5c110bafdadb56816dea162050a21e133ee9ae993d8083"
+  },
+  {
+    "source_receipt": "finalreview-check_textual_worker_contract-receipt.json",
+    "artifact": "finalreview-check_textual_worker_contract-receipt.json",
+    "sha256": "13728305c3ad7ef62f0fcd254d966b3bf1eec50ebda4d295c874669a421712c9"
+  },
+  {
+    "source_receipt": "finalreview-check_profile_owned_path_inventory-receipt.json",
+    "artifact": "finalreview-check_profile_owned_path_inventory-receipt.json",
+    "sha256": "1a1c2df5d43c1a55c624f77a4ee0c209f76671a5a8861c7ae020516194723522"
+  }
+]

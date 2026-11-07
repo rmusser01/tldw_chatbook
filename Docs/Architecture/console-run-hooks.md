@@ -50,11 +50,158 @@ Invalid entries fail loud: a warning is logged and that hook is disabled; a non-
 ## Legacy execution mechanics
 
 - **Payload**: JSON on stdin — `{hook_event, session_id, run_id, timestamp, cwd, data}`. `cwd` defaults to `[console] workspace_root`, else the app cwd, overridable per fire. Tool arguments are summarized for notification events (never `str()`-coerced); guard events receive arguments verbatim.
-- **Process model**: `subprocess_exec` argv with `start_new_session=True` (process group); timeout kills the whole group (`killpg` SIGKILL; `taskkill /F /T` on Windows), then a bounded 5 s reap. Escaped descendants are outside the guarantee.
+- **Process model**: argv is launched with `start_new_session=True` (process group). Ordinary hooks use `subprocess_exec`; timeout kills the group (`killpg` SIGKILL; `taskkill /F /T` on Windows), then a bounded 5 s reap. Escaped descendants are outside the guarantee.
 - **Capture**: both pipes drained continuously with bounded prefixes (~4000 chars per stream); truncation markers appended. PreToolUse stdout overflow itself denies — incomplete decision JSON must never look like a clean pass.
 - **Concurrency**: a dedicated 4-worker pool for blocking events (never shared), a 1-worker notify coordinator plus a separate notification pool; first-deny-wins reduce (remaining processes run out and are discarded). Notify admission is bounded (64 slots; oversized payloads dropped whole with diagnostics).
 - **Logging**: every execution is a structured loguru record with session/run ids and a SHA-256 command fingerprint.
 - **Shutdown**: `close()` seals admission; live process owners kill groups within 50 ms; a `PreToolUse` fired against a closed engine fails closed.
+
+`ConsoleRuntime.ensure_run_hooks()` also attaches the private original source in
+`Agents/legacy_hook_ownership.py`. Construction is metadata-only. A selected app
+event acquires one complete opaque WorktreeActivity claim and a genuine non-child
+ExecutionOwner, reserving each real target's tool operation before the existing
+pool/notification enqueue. Capacity/activity refusal preserves the event's
+existing policy. No-target and disabled events allocate neither. Standalone
+RunHooksEngine callers remain independent of native attachment.
+
+Targets retain their operation through actual callback return, original process
+exit plus managed-group absence, and the original host handoff. First-deny keeps
+sibling workers owned. Notification discard callbacks are part of that join.
+UserPromptSubmit uses the actual submit coroutine, carrying its same handoff into
+an existing durable postcommit continuation when necessary. Failed optional audit
+publication retains that continuation for retry or conclusive discard; ordinary
+required native-write failure and unproven cleanup retain opaque protection.
+No hook journal or AgentRun is created, and ephemeral/no-transcript behavior is
+unchanged. A recoverable pending publication can therefore block competing opaque
+work until retry/discard. Runtime shutdown permanently retires non-resumable host
+continuations and joins original callbacks before disposing storage, even when a
+shutdown waiter is cancelled. An expired process/group proof remains explicitly
+unresolved; no new poller or executor claims later success.
+For an attached legacy target, the original worker preflights its actual Python
+child-watcher and SIGCHLD disposition before launch. An unqualified native host
+refuses that target before starting it; it does not fall back to an ordinary
+attached execution. A qualified worker launches the configured argv directly
+with `Popen` inside the existing permission guard. It observes its exact child
+without consuming its status, signals its still-owned group before consuming that
+status, and requires the signed status, local I/O return, real pipe EOF and
+managed-group absence within the original cleanup bound. The worker may poll
+only for group absence after consuming the status, without another kill. Lost
+wait ownership or changed original sources prohibit later PID actions and retain
+unknown custody. A late exact-child reap after a still-owned pending wait only
+returns that OS resource; it does not repair an expired proof. Ordinary clean
+hooks keep their existing route; an attached clean target also drains its managed
+group. Neither route proves escaped descendants gone.
+
+Selected-chat close seals the existing admission fences and retains the original
+session and close ticket while that chat's legacy captures and events retire.
+The existing close coroutine polls original metadata without blocking on the hook
+lock or default executor, preserving cancellation until physical disposition.
+Changed source or unproven cleanup keeps the same session and fences; other chats
+continue to use the existing engine. A producer-owned construction witness
+separates genuine never-started, partial and original completed attachments.
+
+Native attachment requires the metadata-only `native_workflow_qualified()` POSIX
+group capability in `Chat/console_workflow_runs.py`. Unqualified platforms,
+including Windows, retain ordinary granted app hooks and existing shutdown limits
+without native attachment. The same predicate refuses actual workflow authority
+before phase acceptance, regardless of the workflow feature flag. Passive saved
+workflow history/storage stays available. Future public planning, Start and Resume
+must reuse it before billable preparation; Task 9 will surface the reason. Policy
+simulation tests do not qualify Windows physical cleanup.
+
+This is Task 8D2B1's legacy boundary. The v2 integration below extends finite
+event custody through native command and MCP workers; ordinary covering-tree
+borrowing remains mandatory before outer execution is enabled. Workflow capture/planning/coordinator admission remains closed. Runtime
+coordination does not exclude unrelated ordinary orphaned effects across restart.
+
+## Native plugin hook preparation (Task 8D2B2a)
+
+Before an engine exists, `ConsoleRuntime.prepare_hooks_v2()` calls the existing
+`PluginService.hook_configuration()` with the captured selected component maximum.
+Its `component_snapshots()`/`admit()` callbacks perform real plugin admission.
+`console_plugin_hook_preparation.NativePluginHookPreparation` binds the original
+`_HookPreparationSource`, maximum, published plugin snapshots and original service
+infrastructure to one finite opaque activity claim and one non-child tool operation.
+The original validated submission supplies manual/automatic origin; labels do not.
+No selected plugin rows means no native worker or activity acquisition.
+
+The source is rechecked before native reservation, at service queue publication,
+before each actual callback and around the original `NativeHooks` host handoff.
+`PluginService._call()` retains and joins the original service Future through
+repeated cancellation; its return does not retire the persistent PluginRuntimeOwner.
+The existing Console preparation-read observers retain the request through the
+actual native release callback. Runtime/session sealing precedes capacity close;
+their existing drains wait for those callbacks before disposing shared storage.
+The shared `native_workflow_qualified()` predicate preserves the existing ordinary
+path on unqualified platforms; it provides no Windows workflow qualification.
+
+Preparation retires before the event owner below begins. Outer ordinary-tree
+borrowing remains pending; workflow capture/planning/coordinator admission stays closed.
+
+## Native v2 command and MCP events (Task 8D2B2b1/b2)
+
+`hooks_v2.native_commands.NativeCommandEvents` pins the actual runtime, engine,
+session incarnation/binding, permissions, published NativeHooks and service
+infrastructure. `HookEngine.begin_event()` freezes the complete event definition
+maximum and matcher values. `MCPHookSelection` pins the original context registration,
+registry definition, provider entry/maximum, service infrastructure and owned plugin
+snapshot. Replacement, revocation or definition widening refuses covered dispatch.
+Nested events inherit only the live original delivery, ToolHookRun definition and
+private causal chain. Event IDs and input labels cannot select coverage or a fallback.
+Accepted context may outlive its spent input registration only after actual host
+custody retirement and the existing native owner's positive drain observation.
+It still checks the original provider/schema/catalog, plugin/permission and host
+sources. Every admission/start/currentness/nested borrow requires original live
+registration; closed scopes and returned operations never authorize dispatch.
+
+Before sync/async individual or notification queue publication, a covered event
+acquires one opaque claim/non-child owner and reserves its complete reachable worker
+union. Metadata-only traversal captures PreToolUse, PostToolUse and failure candidates
+under existing matching, dependency/cycle and capacity bounds. Selected DENY, disabled
+and impossible branches are excluded; ASK remains subject to ordinary review. Input
+and result transformations cannot widen immutable tool/provider matcher metadata.
+The actual engine lock rechecks the concrete source before publishing each delivery.
+Original permissions, activation guards, plugin admission and hook budgets still
+run. No-target/disabled events remain cold, and standalone/unqualified engines keep
+their existing path. Actual manual initialization and UserPromptSubmit carry the
+validated submission origin; public event labels grant no reserved capacity.
+
+`CommandExecutor` retains native target callbacks through its original process exit,
+managed-group absence and required `HookProcessOwner.settle_process()` return.
+Cancelling a job joins original threaded callbacks before consuming their resources;
+unknown cleanup and failed settlement retain stopping capacity and opaque protection.
+The existing reaper may later establish positive terminal proof. No journal payload
+is added. Shared `_EventCustody` joins the original operation-release callback too.
+
+`HookSessionLifecycle` retains host custody through actual publish or discard.
+`ToolHookRun` keeps it through transformations and checkpoint acceptance; compaction
+keeps it through its separate ContextLedger and provider candidate preparation.
+The original Stop proposal consumer retains the same event through its existing
+queue acceptance/discard; it releases before later ordinary durable admission.
+Stopping during a native commit pauses the exact session's machine queue before
+cancelling the commit wrapper, invalidating a pending continuation receipt gate.
+Each acceptance checks the original source after host callbacks. Closing the event
+scope alone cannot retire these holds. Authorized SessionEnd targets are retained
+by the original lifecycle seal while capacity remains open. Runtime/session drains
+join actual callbacks and host handoffs through repeated waiter cancellation before
+removing the session or disposing its storage.
+
+`MCPHookExecutor` enters each actual thread through the existing worker isolation and
+reacquires the exact original activation sources and native owner. The sequential
+result validator shares the original operation; distinct nested workers each retain
+one. Callback return, bridge completion/settled dispatch, original plugin request
+`completed` proof and the existing reaper all precede native release. A failed required
+plugin settlement retains custody until the original request is actually settled;
+logical timeout/cancellation/result alone cannot clear it. The persistent plugin
+runtime is not claimed drained by one request's completion. Never-issued conditional
+branches are discarded only when their original producer returns; nested host scopes
+join the root through transformations/checkpoint acceptance and actual host return.
+
+The live authorized lifecycle seal retains exact MCP/nested operations before capacity
+close, so later nested work consumes those holds without a reserve exception. Existing
+configured disposed-runtime policy still refuses MCP SessionEnd; custody does not
+extend teardown permission or currentness. Full ordinary-tree borrowing and public
+workflow capture/coordinator remain closed. There are no new event journal writes.
 
 ## Consent layer (ADR-197)
 
@@ -101,3 +248,8 @@ error; Windows v2 commands remain refused. See TASK-37204 and ADR-163.
 - [console.md](./console.md) — the send lifecycle these events hook into
 - [mcp-hub.md](./mcp-hub.md) — the permission store hooks can deny but never bypass
 - `Docs/User_Guide/console/agent-runs-and-tools.md` — user-facing hook configuration
+
+
+### Ordinary footprint and prompt handoff integration
+
+The shared received authority read continues to serve eligible empty consumers under ADR230. The ordinary tree separately observes fresh `HookPermissions.v2_configuration` for its whole-hook effect maximum. Actual legacy target selection, launch guard and final pre-dispatch admission remain fresh; tests distinguish those caller stages. The extracted `console_automatic_submission.legacy_submission_hook_input` retains the real async outcome and completes the original prompt handoff immediately only when no block or context needs consumption. A failed required native save retains the original event, tool reservation and execution even after the subprocess returns; shutdown cannot convert that uncertainty into positive retirement. Retained-state process tests prove only refusal/retention, while retry/discard/close positives verify actual return separately.

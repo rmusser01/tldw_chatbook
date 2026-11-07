@@ -22,7 +22,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from Tests.app_module_patches import set_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import ConfigLoadFailure
 from tldw_chatbook.Utils.instance_lock import InstanceLockStatus
@@ -157,6 +156,7 @@ def test_subscriptions_starter_reads_no_config_on_the_ui_loop(monkeypatch, tmp_p
     the boot fleet's own suite, runs in none).
     """
     import tldw_chatbook.app as app_module
+    from Tests.app_module_patches import set_app_global
     from tldw_chatbook.Backup_Recovery import activation
 
     def config_read():

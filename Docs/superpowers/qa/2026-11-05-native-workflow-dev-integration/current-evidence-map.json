@@ -1,0 +1,987 @@
+[
+  {
+    "source_receipt": "checkpoint-input-green-receipt.json",
+    "artifact": "checkpoint-input-green-receipt.json",
+    "sha256": "fa0e5f92a403848ce27f7d96fde00677e68d2cd86ed258258ba70e1acc7e6354"
+  },
+  {
+    "source_receipt": "checkpoint-input-green.log",
+    "artifact": "checkpoint-input-green.txt",
+    "sha256": "64ae8a3c69ba6f2310bafc3ebf455dc96142840e32e297ba4a4d98b9a018aca8"
+  },
+  {
+    "source_receipt": "checkpoint-input-red-receipt.json",
+    "artifact": "checkpoint-input-red-receipt.json",
+    "sha256": "43bcaf3eb4e435cd4cc51fe9686beda7c9cb5409c019c1a273b39af5f205755a"
+  },
+  {
+    "source_receipt": "checkpoint-input-red.log",
+    "artifact": "checkpoint-input-red.txt",
+    "sha256": "695281464bfaf024f454f0a6e300dbbc064635c14d82b7adeb5e21a65d17f7a7"
+  },
+  {
+    "source_receipt": "dev-sync-css-build.log",
+    "artifact": "dev-sync-css-build.txt",
+    "sha256": "8735abbe211e56c370d579f245669ed23ef73f8fe9b441b049583e33a83d9884"
+  },
+  {
+    "source_receipt": "dev-sync-css-receipt.json",
+    "artifact": "dev-sync-css-receipt.json",
+    "sha256": "bd33dc815836a2b348b1d98fb68755fa29d308d23cc0482093e8b7fb5598dca5"
+  },
+  {
+    "source_receipt": "dev-sync-css-sync.log",
+    "artifact": "dev-sync-css-sync.txt",
+    "sha256": "4402d5c436d80460af8024a8abda896c4917acc54ab50423d72a584eb92436a3"
+  },
+  {
+    "source_receipt": "dev-sync-materialization.json",
+    "artifact": "dev-sync-materialization.json",
+    "sha256": "02b61c7aa232a531368e8c23067a0d0fad0444c6c03408fa65b0fa936c62d25a"
+  },
+  {
+    "source_receipt": "dev-sync-prepared.json",
+    "artifact": "dev-sync-prepared.json",
+    "sha256": "41aa3bb0bc108bb857147996ee1246f4a7b2423367334768c862fa2e054bf954"
+  },
+  {
+    "source_receipt": "devsync-check_index_plan_pins-receipt.json",
+    "artifact": "devsync-check_index_plan_pins-receipt.json",
+    "sha256": "15c37bc62e302417a5cb6a890389e068b3f0506fb537d73827d18746c83ddfcc"
+  },
+  {
+    "source_receipt": "devsync-check_index_plan_pins.log",
+    "artifact": "devsync-check_index_plan_pins.txt",
+    "sha256": "e7f47b1cb61886400797dd9675108a226ffc32b8ed4516fae0ef6e614ac620b3"
+  },
+  {
+    "source_receipt": "devsync-check_markup_interpolation-receipt.json",
+    "artifact": "devsync-check_markup_interpolation-receipt.json",
+    "sha256": "fca9815a0910b890f902b8f74f342ebfbc570dd674c83eb3ea4f3ad9cdb0d778"
+  },
+  {
+    "source_receipt": "devsync-check_markup_interpolation.log",
+    "artifact": "devsync-check_markup_interpolation.txt",
+    "sha256": "ce7687e4e0056d151f6463108f61d8677e7ff6c4f8af72c2eff44f3b7294e001"
+  },
+  {
+    "source_receipt": "devsync-check_persistent_diagnostic_inventory-receipt.json",
+    "artifact": "devsync-check_persistent_diagnostic_inventory-receipt.json",
+    "sha256": "c524bfc3ea8ce5ce38a514bf3c5ddc34ac31e104fd930c3d1f3c38ecc687b599"
+  },
+  {
+    "source_receipt": "devsync-check_persistent_diagnostic_inventory.log",
+    "artifact": "devsync-check_persistent_diagnostic_inventory.txt",
+    "sha256": "eef1ce2691f2c9d580bfddf49a682e969f3c1865ad07f14baaec35def041ae17"
+  },
+  {
+    "source_receipt": "devsync-check_profile_owned_path_inventory-receipt.json",
+    "artifact": "devsync-check_profile_owned_path_inventory-receipt.json",
+    "sha256": "73fda6eaaf8f1b98dc32d633fd8f699b8f062698173f921339846cdc50616a44"
+  },
+  {
+    "source_receipt": "devsync-check_profile_owned_path_inventory.log",
+    "artifact": "devsync-check_profile_owned_path_inventory.txt",
+    "sha256": "c1d4b52b3951c1e0333cbf5079a6a7ec3d1644bcb7341affb37e4ca3b618da40"
+  },
+  {
+    "source_receipt": "devsync-check_schema_table_allowlist-receipt.json",
+    "artifact": "devsync-check_schema_table_allowlist-receipt.json",
+    "sha256": "446b0e97dfb63488f4a87b2f3f06f327caade10d5de8b6a89a82ddac1d04bba8"
+  },
+  {
+    "source_receipt": "devsync-check_schema_table_allowlist.log",
+    "artifact": "devsync-check_schema_table_allowlist.txt",
+    "sha256": "d239cae48defe59e58eba5717d9e468939bad0c6e553a53d73773634b1b41c3d"
+  },
+  {
+    "source_receipt": "devsync-check_textual_worker_contract-receipt.json",
+    "artifact": "devsync-check_textual_worker_contract-receipt.json",
+    "sha256": "e7a30e62549637d9f83fba60cdf987a81b33e68cd13bea0f46a824dac6b1aa2c"
+  },
+  {
+    "source_receipt": "devsync-check_textual_worker_contract.log",
+    "artifact": "devsync-check_textual_worker_contract.txt",
+    "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992"
+  },
+  {
+    "source_receipt": "devsync-check_timestamp_writers-receipt.json",
+    "artifact": "devsync-check_timestamp_writers-receipt.json",
+    "sha256": "1b2fe0c6727204586830dc8044dfc298f0d4eaa9fb1e48e76d05f61c28057789"
+  },
+  {
+    "source_receipt": "devsync-check_timestamp_writers.log",
+    "artifact": "devsync-check_timestamp_writers.txt",
+    "sha256": "c7d9f8c695e6b6d5ffea7b08b9fdf60bec11ab91f2f79b97b6ead504b948b102"
+  },
+  {
+    "source_receipt": "devsync-check_ui_pr_gate_census-receipt.json",
+    "artifact": "devsync-check_ui_pr_gate_census-receipt.json",
+    "sha256": "57f6d1ce23d820dd59f43348b00cf617236f579f6333b991d4e86159028e54ac"
+  },
+  {
+    "source_receipt": "devsync-check_ui_pr_gate_census.log",
+    "artifact": "devsync-check_ui_pr_gate_census.txt",
+    "sha256": "4dbfefa68610a422ecc32cec95e1fd29c181e5d3b0ee7f9039be36bae573ca85"
+  },
+  {
+    "source_receipt": "devsync-static-summary.json",
+    "artifact": "devsync-static-summary.json",
+    "sha256": "8328fd3a899334312894635b5e314da9a03bdb40f1732efa95633f20589735ee"
+  },
+  {
+    "source_receipt": "integration-report.md",
+    "artifact": "integration-report.md",
+    "sha256": "c917ecaef34c1d17d315bf5a221a502ad26f60e5c563f4f446b2c2c3e722b643"
+  },
+  {
+    "source_receipt": "newbase-document-governance.json",
+    "artifact": "newbase-document-governance.json",
+    "sha256": "4cc78142868005f13ef9cd4893c9164f2af41464f5ccab70fd64eca1a699639e"
+  },
+  {
+    "source_receipt": "newbase-final-scoped-ruff-attribution.json",
+    "artifact": "newbase-final-scoped-ruff-attribution.json",
+    "sha256": "1c39669a822015d98483c5c62ef404eac68c485803ed679e57d58bc668b99852"
+  },
+  {
+    "source_receipt": "newbase-final-scoped-ruff-attribution2.json",
+    "artifact": "newbase-final-scoped-ruff-attribution2.json",
+    "sha256": "d6f0dd820e3cc16d2a33684bbfb74b004a82cf0787722c626fddb3d05de3843d"
+  },
+  {
+    "source_receipt": "newbase-hook-read-sharing-final-receipt.json",
+    "artifact": "newbase-hook-read-sharing-final-receipt.json",
+    "sha256": "9b907f59899a45146a6a7d0c8b45106ae8bd88f3f6cd964ba330be15b090d5ae"
+  },
+  {
+    "source_receipt": "newbase-hook-read-sharing-final.log",
+    "artifact": "newbase-hook-read-sharing-final.txt",
+    "sha256": "f91d9a29333b4914b296e2e7eabab1a5c74464d85e8f7fc3943c6f6a62a3df03"
+  },
+  {
+    "source_receipt": "newbase-hook-read-sharing-final2-receipt.json",
+    "artifact": "newbase-hook-read-sharing-final2-receipt.json",
+    "sha256": "fd1c674df637a37efa6624bed2425262e8bd5bc7ee86615d00350fd0bbbc5b46"
+  },
+  {
+    "source_receipt": "newbase-hook-read-sharing-final2.log",
+    "artifact": "newbase-hook-read-sharing-final2.txt",
+    "sha256": "1e4993ba5de79e66c25e4e6076660619bf02991ac2fc9a6f7a7898c941e2f89e"
+  },
+  {
+    "source_receipt": "newbase-hook-read-sharing-final3-receipt.json",
+    "artifact": "newbase-hook-read-sharing-final3-receipt.json",
+    "sha256": "7e2b1357817a785767ccb9ff93975e3426baa18ef8c8a436d56cd82dea21a5c0"
+  },
+  {
+    "source_receipt": "newbase-hook-read-sharing-final3.log",
+    "artifact": "newbase-hook-read-sharing-final3.txt",
+    "sha256": "5a1cab4d4c07587b8fd02afac997b0a48e430f5de1c88a0ff7a8b6b23fc1dac7"
+  },
+  {
+    "source_receipt": "newbase-legacy-empty-red-receipt.json",
+    "artifact": "newbase-legacy-empty-red-receipt.json",
+    "sha256": "5ca3cc839588d14b71029a5bf4b4497b8b441988c751d98770f33248119ff364"
+  },
+  {
+    "source_receipt": "newbase-legacy-empty-red.log",
+    "artifact": "newbase-legacy-empty-red.txt",
+    "sha256": "b393743843adef2a3d5df91f9a450d817d45f55576fbaa8808db2914e14089c8"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-final-receipt.json",
+    "artifact": "newbase-legacy-handoff-final-receipt.json",
+    "sha256": "d3d427a4fa26792f70c13ba179a928bcddf4f48fc4d61ebbb04c436b6bad9167"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-final.log",
+    "artifact": "newbase-legacy-handoff-final.txt",
+    "sha256": "9ad9ab454119741d9fdabcfb7e9ae6e7e1cd6db93dd0904452c12be260b40265"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-final2-receipt.json",
+    "artifact": "newbase-legacy-handoff-final2-receipt.json",
+    "sha256": "544267043776ffa1290525114c611b6593b7b866d38fde082ebbe08d3ddc51d2"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-final2.log",
+    "artifact": "newbase-legacy-handoff-final2.txt",
+    "sha256": "52c127cf54612d6aeeef909185aa8aa9da6a531ecc2b3117aa8afb5610a66d4d"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-focused-receipt.json",
+    "artifact": "newbase-legacy-handoff-focused-receipt.json",
+    "sha256": "2bf4eddd756a2e704254364209f0504aa3a3e2c17b08c9635e2639cb070316c2"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-focused.log",
+    "artifact": "newbase-legacy-handoff-focused.txt",
+    "sha256": "2eacd7869075edc98ce75a238ff4cd27604dc84e74bba8c7c26ab14b53883638"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-green-receipt.json",
+    "artifact": "newbase-legacy-handoff-green-receipt.json",
+    "sha256": "72d767c37c9d69fce545ad19ee2021d6a3c41e7f84c2c57cae0ade94d01ea5d3"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-green.log",
+    "artifact": "newbase-legacy-handoff-green.txt",
+    "sha256": "f03dde7e27689b3697feae765896dd3478865cd3089e3cf5c41feac932a0059d"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-green2-receipt.json",
+    "artifact": "newbase-legacy-handoff-green2-receipt.json",
+    "sha256": "6f45515cf9341126f6c8d66d3f96ee7fb2ddcbbc8c6ced2ad49e5416ae367a85"
+  },
+  {
+    "source_receipt": "newbase-legacy-handoff-green2.log",
+    "artifact": "newbase-legacy-handoff-green2.txt",
+    "sha256": "dbb87025ab88d57e65d160f359f3f2bb4547c2ff73b9744ae3d6e8880ee4c871"
+  },
+  {
+    "source_receipt": "newbase-legacy-read-stages-receipt.json",
+    "artifact": "newbase-legacy-read-stages-receipt.json",
+    "sha256": "d202fcad51c144ab16c8caddfe03ee228a7fb8315df7e3256964b089e8c1a5b9"
+  },
+  {
+    "source_receipt": "newbase-legacy-read-stages.log",
+    "artifact": "newbase-legacy-read-stages.txt",
+    "sha256": "1a61b9c1a9a4c32334ca0f22d9c9f67e43fad44f9351cb4470f16ad9d78752fd"
+  },
+  {
+    "source_receipt": "newbase-legacy-retention-error-receipt.json",
+    "artifact": "newbase-legacy-retention-error-receipt.json",
+    "sha256": "11f8c5d06b8caf05ce11fab717fcb6b6da0580c42b63e6badd246ad36916d3d3"
+  },
+  {
+    "source_receipt": "newbase-legacy-retention-error.log",
+    "artifact": "newbase-legacy-retention-error.txt",
+    "sha256": "47ea16ec424debbb9b3347ad61dee51c100d4bf72f2682482935f81bbdfda67f"
+  },
+  {
+    "source_receipt": "newbase-legacy-retention-stack-receipt.json",
+    "artifact": "newbase-legacy-retention-stack-receipt.json",
+    "sha256": "9ce4bea6477362efee332958d1db234ba9e857fe82783bd6635a236030a0f711"
+  },
+  {
+    "source_receipt": "newbase-legacy-retention-stack.log",
+    "artifact": "newbase-legacy-retention-stack.txt",
+    "sha256": "d7f0c1198d80ac354e887937ce72ef0b962a2e33e5cb02adc81ef18e947135ea"
+  },
+  {
+    "source_receipt": "newbase-mcp-publication-controls-receipt.json",
+    "artifact": "newbase-mcp-publication-controls-receipt.json",
+    "sha256": "52f10a802fa5150de871f2967dabdee2f8e1c6b4b2974717ea8297fc467527f7"
+  },
+  {
+    "source_receipt": "newbase-mcp-publication-controls.log",
+    "artifact": "newbase-mcp-publication-controls.txt",
+    "sha256": "cec530ae7c862140fabbe9f460660cda16e42a2cfca5451c445f2c1e055e614a"
+  },
+  {
+    "source_receipt": "newbase-native-config-callsite-receipt.json",
+    "artifact": "newbase-native-config-callsite-receipt.json",
+    "sha256": "c14f9930087a623b54c434ce024682a453d55ff7931956854de762e671cfb09e"
+  },
+  {
+    "source_receipt": "newbase-native-config-callsite.log",
+    "artifact": "newbase-native-config-callsite.txt",
+    "sha256": "105e10a8c7a7cf95d4add0b7bea6de8059651a5d7991c46e500b13d1690d6d7a"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-adverse-isolated-receipt.json",
+    "artifact": "newbase-native-mcp-adverse-isolated-receipt.json",
+    "sha256": "d47268826b5881d60f26bb3a9a30ce0b7b65364c5623509d93e8a8415eb25af9"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-adverse-isolated.log",
+    "artifact": "newbase-native-mcp-adverse-isolated.txt",
+    "sha256": "f5a54ee589825fa24864aef4dcbd092281b9242e644132588c44daca1c632bdd"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-green-receipt.json",
+    "artifact": "newbase-native-mcp-green-receipt.json",
+    "sha256": "b3490b213963d5f7733c66daed916ee6363706bea28879e2b059f26a90608226"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-green.log",
+    "artifact": "newbase-native-mcp-green.txt",
+    "sha256": "6082208aee1ea6a355197a5959f755df8f24c0548ad591bcea2a19c3b5312dcc"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-owner-receipt.json",
+    "artifact": "newbase-native-mcp-owner-receipt.json",
+    "sha256": "d845a68afed30b91a90584620b867846878428b24a5dd9105d7e08011b2ace30"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-owner.log",
+    "artifact": "newbase-native-mcp-owner.txt",
+    "sha256": "3f649b3e27403448c1360fda100be0680fe9d191685bbd48c881f57a93e858e3"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-source-receipt.json",
+    "artifact": "newbase-native-mcp-source-receipt.json",
+    "sha256": "b0fb6dc37e1f850fc38b73f16a08b07d55a598b48ea49511f7613b0045d67484"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-source.log",
+    "artifact": "newbase-native-mcp-source.txt",
+    "sha256": "0e67396efc6ff830c1112cfd6edfb8bc48a90385fb156547b091d275a04f4baf"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-trace-receipt.json",
+    "artifact": "newbase-native-mcp-trace-receipt.json",
+    "sha256": "c49bd923a068c6a9dbb176d15b90b5ed6f0a612cad6d163b66df94af72323566"
+  },
+  {
+    "source_receipt": "newbase-native-mcp-trace.log",
+    "artifact": "newbase-native-mcp-trace.txt",
+    "sha256": "4f4ff56717a03d26681e4c6d921db639010fb4a261adc880e1b9173f27c8d094"
+  },
+  {
+    "source_receipt": "newbase-ordinary-mounted-receipt.json",
+    "artifact": "newbase-ordinary-mounted-receipt.json",
+    "sha256": "6ee09a5ab254a1025cf0036d1ae88fa55c8ad03c3d529f5c28a5d80cfaac9270"
+  },
+  {
+    "source_receipt": "newbase-ordinary-mounted.log",
+    "artifact": "newbase-ordinary-mounted.txt",
+    "sha256": "aa5d1835a78af84160bcfc4dc6efa2d923ea1906469704f1fcd73df2ae03dbe2"
+  },
+  {
+    "source_receipt": "newbase-ordinary-remaining-command.json",
+    "artifact": "newbase-ordinary-remaining-command.json",
+    "sha256": "e77781eba04e216a53163e46dee3a0d436271898e0c13a17bf8de4265c7dd1ed"
+  },
+  {
+    "source_receipt": "newbase-ordinary-remaining-receipt.json",
+    "artifact": "newbase-ordinary-remaining-receipt.json",
+    "sha256": "d52e3e715a52cb6fb1d411a6c05e736050798676c5a0a28865597ed6a81dcaf0"
+  },
+  {
+    "source_receipt": "newbase-ordinary-remaining.log",
+    "artifact": "newbase-ordinary-remaining.txt",
+    "sha256": "fc2d1f27da317c985f65b941b246c33442ebc1ecb87e8b6f15dc728f197ae8ab"
+  },
+  {
+    "source_receipt": "newbase-ordinary-tail-receipt.json",
+    "artifact": "newbase-ordinary-tail-receipt.json",
+    "sha256": "93d09e36db88926315490589926d55ace5141a1a8331fab0db46c685f95d2e38"
+  },
+  {
+    "source_receipt": "newbase-ordinary-tail.log",
+    "artifact": "newbase-ordinary-tail.txt",
+    "sha256": "0fd0edc338a8de8f6b30e0134189005f7b46c8b7591d68780d0b59fcd123c3b3"
+  },
+  {
+    "source_receipt": "newbase-ordinary-tail2-receipt.json",
+    "artifact": "newbase-ordinary-tail2-receipt.json",
+    "sha256": "b879e1f658ae751c6a7b497c5cdbe4b6cdfec75fbc32b28fc6a0fabf0a21fb08"
+  },
+  {
+    "source_receipt": "newbase-ordinary-tail2.log",
+    "artifact": "newbase-ordinary-tail2.txt",
+    "sha256": "776b486ee6f42bd0e471ea50d9477ea4d5d5db42d31ce6dd14efa30f1e9ef4ff"
+  },
+  {
+    "source_receipt": "newbase-plugin-mcp-boot-receipt.json",
+    "artifact": "newbase-plugin-mcp-boot-receipt.json",
+    "sha256": "f4914bd0409fc7a65c5a1a40f9843934d5ef1257215ece7af8f2664e3063ee81"
+  },
+  {
+    "source_receipt": "newbase-plugin-mcp-boot.log",
+    "artifact": "newbase-plugin-mcp-boot.txt",
+    "sha256": "bf9f5d736acb11f3646ce15edb97659880a5fab7cddf5b23fa89ccf7ec367a28"
+  },
+  {
+    "source_receipt": "newbase-queue-capture-green-receipt.json",
+    "artifact": "newbase-queue-capture-green-receipt.json",
+    "sha256": "8f9ca144dcba3b056924d78e3fba2e497648504fb793a954f32cafaa03a5317c"
+  },
+  {
+    "source_receipt": "newbase-queue-capture-green.log",
+    "artifact": "newbase-queue-capture-green.txt",
+    "sha256": "eeb72344b94bf32fae928eab475a19f3c71f5254cce92e96fc9b1dce4862465b"
+  },
+  {
+    "source_receipt": "newbase-queue-capture-green2-receipt.json",
+    "artifact": "newbase-queue-capture-green2-receipt.json",
+    "sha256": "525c0e84a164ea15afbc28974370e5f62a969730b17cd50b107c232d786609b4"
+  },
+  {
+    "source_receipt": "newbase-queue-capture-green2.log",
+    "artifact": "newbase-queue-capture-green2.txt",
+    "sha256": "beb7b275afc8d4297d0f44b46caa3d9e638ec5fd469a9695e9332c2ddbd2db9f"
+  },
+  {
+    "source_receipt": "newbase-queue-capture-green3-receipt.json",
+    "artifact": "newbase-queue-capture-green3-receipt.json",
+    "sha256": "316b6af4d500bab505df6c1c116973071cab8e57a8d4e425216d04b0d0d297f5"
+  },
+  {
+    "source_receipt": "newbase-queue-capture-green3.log",
+    "artifact": "newbase-queue-capture-green3.txt",
+    "sha256": "03c8c3696a23560d711fe5bf3462123a8cb4bb694f1ebd09f8fca7fe6d8a2b05"
+  },
+  {
+    "source_receipt": "newbase-queue-primary-error-receipt.json",
+    "artifact": "newbase-queue-primary-error-receipt.json",
+    "sha256": "270b11e8d82d3af52501afd2f68f512ab1d6155e89e6d1c7ceb5551b035a2cc2"
+  },
+  {
+    "source_receipt": "newbase-queue-primary-error.log",
+    "artifact": "newbase-queue-primary-error.txt",
+    "sha256": "8f2c34b57445d9e18d93ac39a01d3a2220e3dd9ce869e6660a9a4381622ef459"
+  },
+  {
+    "source_receipt": "newbase-receiver-review-units-receipt.json",
+    "artifact": "newbase-receiver-review-units-receipt.json",
+    "sha256": "7f5c5f7d121e13e5ace3afca733233cbb044d933087fe7020e9b17de648d0a6c"
+  },
+  {
+    "source_receipt": "newbase-receiver-review-units.log",
+    "artifact": "newbase-receiver-review-units.txt",
+    "sha256": "2f64863eda9b96f2d79f5f6e178df14eeed7368bcaba1f915dbd72bf9a6cdceb"
+  },
+  {
+    "source_receipt": "newbase-scoped-ruff-attribution.json",
+    "artifact": "newbase-scoped-ruff-attribution.json",
+    "sha256": "436b90d7221086b09c9577bd76d14d3db8970709f643f6e4da56dba5248a5222"
+  },
+  {
+    "source_receipt": "newbase-scoped-ruff-current.json",
+    "artifact": "newbase-scoped-ruff-current.json",
+    "sha256": "a9d9f1f4a1ecfd0ff449062376fd8ce5547f08c1c6cc47d2dd8c9bbf96b36ddc"
+  },
+  {
+    "source_receipt": "newbase-scoped-ruff.json",
+    "artifact": "newbase-scoped-ruff.json",
+    "sha256": "0db1cc0752fab6bb2fc86c315c77c17494166181c293d85ef129f670f2bece41"
+  },
+  {
+    "source_receipt": "newbase-settlement-isolated-receipt.json",
+    "artifact": "newbase-settlement-isolated-receipt.json",
+    "sha256": "26e68b8ab67f3b34f202ad001fbd231527a9bdb3e564a65e915949dd007ca77d"
+  },
+  {
+    "source_receipt": "newbase-settlement-isolated.log",
+    "artifact": "newbase-settlement-isolated.txt",
+    "sha256": "ca1d52f8cafa1e0b4ddda9946d33686e29361f8d2d58ac39904478d60b1be4d1"
+  },
+  {
+    "source_receipt": "newbase-settlement-remaining-receipt.json",
+    "artifact": "newbase-settlement-remaining-receipt.json",
+    "sha256": "1af0f15f78c1953aa738364e3e628cb5f3f020a67f7aef586af04fa3d1c1f9df"
+  },
+  {
+    "source_receipt": "newbase-settlement-remaining.log",
+    "artifact": "newbase-settlement-remaining.txt",
+    "sha256": "15d536cbb35ce1ab1b2aa6b879b31c376a8118b5db497d2fe1f8d3002f41dc36"
+  },
+  {
+    "source_receipt": "newbase-style-fold-receipt.json",
+    "artifact": "newbase-style-fold-receipt.json",
+    "sha256": "e99cf544e10c5c3a00817541b891bc084a203fd783a9a01722419bdec53e23d2"
+  },
+  {
+    "source_receipt": "newbase-style-fold.log",
+    "artifact": "newbase-style-fold.txt",
+    "sha256": "0376fdd37f3308f6169071997dd2fc19f04b36df051008dcae645ab970c42b2f"
+  },
+  {
+    "source_receipt": "newbase-token-component-fold-receipt.json",
+    "artifact": "newbase-token-component-fold-receipt.json",
+    "sha256": "3db7dd81194bdb46d0817ef6213cafbac860fef1d6774223d95589364ea8747f"
+  },
+  {
+    "source_receipt": "newbase-token-component-fold.log",
+    "artifact": "newbase-token-component-fold.txt",
+    "sha256": "e36bd330eb6f790a4de00740c5d7e4e2ccd461eed7c58f5dbc5dd6092f853552"
+  },
+  {
+    "source_receipt": "newbase-ui-capture-branch-receipt.json",
+    "artifact": "newbase-ui-capture-branch-receipt.json",
+    "sha256": "9266e7fa45824c16782b98c1c121ca1980f6c343df4e087c33d22a2c59fefb82"
+  },
+  {
+    "source_receipt": "newbase-ui-capture-branch.log",
+    "artifact": "newbase-ui-capture-branch.txt",
+    "sha256": "fd5baa23d3f8197900283c6f65acb9e4ad4b2f67b668372e089fd4f8a7385c1a"
+  },
+  {
+    "source_receipt": "newbase-ui-controller-error-receipt.json",
+    "artifact": "newbase-ui-controller-error-receipt.json",
+    "sha256": "f18da7d8cef0d785b78a2bb1a5e18a4d2c4eaac213422ad8e60fc9cdeea4c636"
+  },
+  {
+    "source_receipt": "newbase-ui-controller-error.log",
+    "artifact": "newbase-ui-controller-error.txt",
+    "sha256": "27c2f14fb7df4e43e68926245b124fffda05737ca8b9b384f45f21b5e5b77807"
+  },
+  {
+    "source_receipt": "newbase-ui-direct-fixture-receipt.json",
+    "artifact": "newbase-ui-direct-fixture-receipt.json",
+    "sha256": "02a3013c7ee2e4f051d683b8b4217e8f5124fc4f6ea6e99886f8148fc27be72c"
+  },
+  {
+    "source_receipt": "newbase-ui-direct-fixture.log",
+    "artifact": "newbase-ui-direct-fixture.txt",
+    "sha256": "336e8f6ddd23531264a1cb5a652b03f84d316beb8d70c9e36dc95ca3608b9417"
+  },
+  {
+    "source_receipt": "newbase-ui-direct-mcp-branch-receipt.json",
+    "artifact": "newbase-ui-direct-mcp-branch-receipt.json",
+    "sha256": "336018e5c9f3dc39543e97605a9d35268450eb4cdf22f8331ed1e195176b82db"
+  },
+  {
+    "source_receipt": "newbase-ui-direct-mcp-branch.log",
+    "artifact": "newbase-ui-direct-mcp-branch.txt",
+    "sha256": "df587279f402ae9c8580f128923b6adb9e8b1c1748f3e47c4c924a3d7e765344"
+  },
+  {
+    "source_receipt": "newbase-ui-direct-profile-fixture-receipt.json",
+    "artifact": "newbase-ui-direct-profile-fixture-receipt.json",
+    "sha256": "71ff2fe784b9fa9e318bb2b9c89281ff989397e425aeb1be1bcc0e691d29ec56"
+  },
+  {
+    "source_receipt": "newbase-ui-direct-profile-fixture.log",
+    "artifact": "newbase-ui-direct-profile-fixture.txt",
+    "sha256": "727283b7e8c1230d46c352c6872420a1322e89fb22bab1d83c36a85c964be03b"
+  },
+  {
+    "source_receipt": "newbase-ui-direct-publication-green-receipt.json",
+    "artifact": "newbase-ui-direct-publication-green-receipt.json",
+    "sha256": "c4e38243164b415b28fa96eabcc53791a8e68a8fc438190494e82dd8a8f063b6"
+  },
+  {
+    "source_receipt": "newbase-ui-direct-publication-green.log",
+    "artifact": "newbase-ui-direct-publication-green.txt",
+    "sha256": "de39dcdc1049885c2fa1fd075df9857ed55ff83b8b3b2628a96328016f7adb4d"
+  },
+  {
+    "source_receipt": "newbase-ui-failure-diagnosis.md",
+    "artifact": "newbase-ui-failure-diagnosis.md",
+    "sha256": "f1c2b4a2717ac4500338618173836ea98b6436e45935048f2dd0e66e9067afcb"
+  },
+  {
+    "source_receipt": "newbase-ui-intersections-receipt.json",
+    "artifact": "newbase-ui-intersections-receipt.json",
+    "sha256": "841d05b32e794c531d9f7df32b15630eaaa05d53872f46167d10c1a05ef7ecbc"
+  },
+  {
+    "source_receipt": "newbase-ui-intersections.log",
+    "artifact": "newbase-ui-intersections.txt",
+    "sha256": "425ea09cb3ade775cfe03c771ea69865d4e80ce648d6390a2a3fdb6623fa7031"
+  },
+  {
+    "source_receipt": "newbase-ui-mcp-publication-receipt.json",
+    "artifact": "newbase-ui-mcp-publication-receipt.json",
+    "sha256": "ca9ce4250f58c6e98389762bd6253c2fb44a53468aa12444b966bed86ff4a9d4"
+  },
+  {
+    "source_receipt": "newbase-ui-mcp-publication.log",
+    "artifact": "newbase-ui-mcp-publication.txt",
+    "sha256": "7d69057e6efe9ca7bc025cce0a9f7eb34a03ace05d1ed6c2416907dfeacdb886"
+  },
+  {
+    "source_receipt": "newbase-ui-refusal-observed-receipt.json",
+    "artifact": "newbase-ui-refusal-observed-receipt.json",
+    "sha256": "29cdccfde69b591d22698dc55854a13fd9f4bef326e1108ac94ccdf32c2f7cd0"
+  },
+  {
+    "source_receipt": "newbase-ui-refusal-observed.log",
+    "artifact": "newbase-ui-refusal-observed.txt",
+    "sha256": "1271d37cecc79ed34e7dba770c82b9bede1aed6a8b6a12063a220e4d0ad203c5"
+  },
+  {
+    "source_receipt": "newbase-workflow-detach-fixed1-receipt.json",
+    "artifact": "newbase-workflow-detach-fixed1-receipt.json",
+    "sha256": "9ee19995991fa2dfca20f78c58c8a0c2cc9fffdc461b5d75cf619b9d2583ec7c"
+  },
+  {
+    "source_receipt": "newbase-workflow-detach-fixed1.log",
+    "artifact": "newbase-workflow-detach-fixed1.txt",
+    "sha256": "239d8207fdc83efd146e2026e5a852a24cc9d0cee6a17a18bce38a3f7ee2e4fc"
+  },
+  {
+    "source_receipt": "newbase-workflow-evidence-tail-receipt.json",
+    "artifact": "newbase-workflow-evidence-tail-receipt.json",
+    "sha256": "9592646cefb9b877455adc37e6ad595ef882677de41d2d0ff673738e47281902"
+  },
+  {
+    "source_receipt": "newbase-workflow-evidence-tail.log",
+    "artifact": "newbase-workflow-evidence-tail.txt",
+    "sha256": "ebf9a4e22c6cd6a45bc8a86595ef882a72d8ad5ec3fc1c371145c9b4e28aea21"
+  },
+  {
+    "source_receipt": "newbase-workflow-navigation-tail-receipt.json",
+    "artifact": "newbase-workflow-navigation-tail-receipt.json",
+    "sha256": "f05d522350e79c51ce614569fb2bd02a222419272f718229055db9fa747c83ba"
+  },
+  {
+    "source_receipt": "newbase-workflow-navigation-tail.log",
+    "artifact": "newbase-workflow-navigation-tail.txt",
+    "sha256": "af6587db73883b57b025e7c3295ded75db6e3d4f2bca9ac7fba409b761c4e653"
+  },
+  {
+    "source_receipt": "newbase-workflow-stale-isolated-receipt.json",
+    "artifact": "newbase-workflow-stale-isolated-receipt.json",
+    "sha256": "5e88112e64270ed94e8910bfb28af83ba42b71b82b6ee76841b46cf54290b8d4"
+  },
+  {
+    "source_receipt": "newbase-workflow-stale-isolated.log",
+    "artifact": "newbase-workflow-stale-isolated.txt",
+    "sha256": "6740ae9219f559d4540c86d8523cd93926486580f40436e82beb5d5c3bad1cd8"
+  },
+  {
+    "source_receipt": "newbase-workflow-ui-warnings-receipt.json",
+    "artifact": "newbase-workflow-ui-warnings-receipt.json",
+    "sha256": "f4db367af9b08d142557bae45126a4e53a3fb8246a158252c7aa1ae9f7943263"
+  },
+  {
+    "source_receipt": "newbase-workflow-ui-warnings.log",
+    "artifact": "newbase-workflow-ui-warnings.txt",
+    "sha256": "c231ea770c0d0ce8c047d767e3e45da31c24439038ac33e62760f106fb93da13"
+  },
+  {
+    "source_receipt": "newbase-workflow-units-receipt.json",
+    "artifact": "newbase-workflow-units-receipt.json",
+    "sha256": "974e9b54b5569633cc85e8322cc3459a6ee5c8b3d12cfdb1e597eb92cae8d060"
+  },
+  {
+    "source_receipt": "newbase-workflow-units.log",
+    "artifact": "newbase-workflow-units.txt",
+    "sha256": "b66479f658fd8a57d82b3fd12b8e6b5748f477b46205ba7dfa878f2f6a9b3005"
+  },
+  {
+    "source_receipt": "newbase-worktree-settlement-receivers-receipt.json",
+    "artifact": "newbase-worktree-settlement-receivers-receipt.json",
+    "sha256": "a173586b97e74b13673b483ccf8edf0dbd596a49d69dba5a08ecc058a1e65944"
+  },
+  {
+    "source_receipt": "newbase-worktree-settlement-receivers.log",
+    "artifact": "newbase-worktree-settlement-receivers.txt",
+    "sha256": "2b0c2c221f3b88c6ae4f64ded9c9f874d6d6531b7628666547d855afe288519f"
+  },
+  {
+    "source_receipt": "ordinary-child-official-resolution-receipt.json",
+    "artifact": "ordinary-child-official-resolution-receipt.json",
+    "sha256": "23ec4cd2b360e9abdf8544bccfbafea0328a15d43c039c8a7e7a33de8243b60c"
+  },
+  {
+    "source_receipt": "ordinary-child-official-resolution.log",
+    "artifact": "ordinary-child-official-resolution.txt",
+    "sha256": "12fb7b82333241a87066bc778c9d9b369b8f9340e44a04b38dfe40c360e8a895"
+  },
+  {
+    "source_receipt": "plugin-reference-focused-receipt.json",
+    "artifact": "plugin-reference-focused-receipt.json",
+    "sha256": "f0c77e1b19d2664099e60d6a9c78b100dc95b460e5399b7bbf7325d4e6b13728"
+  },
+  {
+    "source_receipt": "plugin-reference-focused.log",
+    "artifact": "plugin-reference-focused.txt",
+    "sha256": "9d3f3cb632d9b0846fa781856613bc85666a4ee78efd789e8514239391fe35cb"
+  },
+  {
+    "source_receipt": "postr17-check_index_plan_pins-receipt.json",
+    "artifact": "postr17-check_index_plan_pins-receipt.json",
+    "sha256": "61937de8724b642dd5bf6ab811b6c1f17e35b396ba2c1fe0a28491865a53667f"
+  },
+  {
+    "source_receipt": "postr17-check_index_plan_pins.log",
+    "artifact": "postr17-check_index_plan_pins.txt",
+    "sha256": "e7f47b1cb61886400797dd9675108a226ffc32b8ed4516fae0ef6e614ac620b3"
+  },
+  {
+    "source_receipt": "postr17-check_markup_interpolation-receipt.json",
+    "artifact": "postr17-check_markup_interpolation-receipt.json",
+    "sha256": "1399ac687a7540c63a341ca098bde7b16f2f2c09d311a38a0cd247fc153c2bcc"
+  },
+  {
+    "source_receipt": "postr17-check_markup_interpolation.log",
+    "artifact": "postr17-check_markup_interpolation.txt",
+    "sha256": "ce7687e4e0056d151f6463108f61d8677e7ff6c4f8af72c2eff44f3b7294e001"
+  },
+  {
+    "source_receipt": "postr17-check_persistent_diagnostic_inventory-receipt.json",
+    "artifact": "postr17-check_persistent_diagnostic_inventory-receipt.json",
+    "sha256": "24a6341ddc96b72443103faca1604674c346732651a9dbfdb4141a7c3dc2352c"
+  },
+  {
+    "source_receipt": "postr17-check_persistent_diagnostic_inventory.log",
+    "artifact": "postr17-check_persistent_diagnostic_inventory.txt",
+    "sha256": "eef1ce2691f2c9d580bfddf49a682e969f3c1865ad07f14baaec35def041ae17"
+  },
+  {
+    "source_receipt": "postr17-check_profile_owned_path_inventory-receipt.json",
+    "artifact": "postr17-check_profile_owned_path_inventory-receipt.json",
+    "sha256": "c3509604e6747873a9732105cd807b702140d70c3c4db0f5e430985d39700ecf"
+  },
+  {
+    "source_receipt": "postr17-check_profile_owned_path_inventory.log",
+    "artifact": "postr17-check_profile_owned_path_inventory.txt",
+    "sha256": "c1d4b52b3951c1e0333cbf5079a6a7ec3d1644bcb7341affb37e4ca3b618da40"
+  },
+  {
+    "source_receipt": "postr17-check_schema_table_allowlist-receipt.json",
+    "artifact": "postr17-check_schema_table_allowlist-receipt.json",
+    "sha256": "95833ed660422b04339e4a82202ec7184f4193d7adbac3a0839d3fcda72478c0"
+  },
+  {
+    "source_receipt": "postr17-check_schema_table_allowlist.log",
+    "artifact": "postr17-check_schema_table_allowlist.txt",
+    "sha256": "d239cae48defe59e58eba5717d9e468939bad0c6e553a53d73773634b1b41c3d"
+  },
+  {
+    "source_receipt": "postr17-check_textual_worker_contract-receipt.json",
+    "artifact": "postr17-check_textual_worker_contract-receipt.json",
+    "sha256": "a16784b3855c522460422333761ad23e3cd51f5e9fc360a61fd315e487f9f086"
+  },
+  {
+    "source_receipt": "postr17-check_textual_worker_contract.log",
+    "artifact": "postr17-check_textual_worker_contract.txt",
+    "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992"
+  },
+  {
+    "source_receipt": "postr17-check_timestamp_writers-receipt.json",
+    "artifact": "postr17-check_timestamp_writers-receipt.json",
+    "sha256": "e674442fd23ed8bf342536fb8754fd6d5d6a9c7aa44e84ef9363f21f1678baad"
+  },
+  {
+    "source_receipt": "postr17-check_timestamp_writers.log",
+    "artifact": "postr17-check_timestamp_writers.txt",
+    "sha256": "c7d9f8c695e6b6d5ffea7b08b9fdf60bec11ab91f2f79b97b6ead504b948b102"
+  },
+  {
+    "source_receipt": "postr17-check_ui_pr_gate_census-receipt.json",
+    "artifact": "postr17-check_ui_pr_gate_census-receipt.json",
+    "sha256": "0edd13ae3d416c3034e60c85dfb2b998e712564489f189b72ec4cef166ae9576"
+  },
+  {
+    "source_receipt": "postr17-check_ui_pr_gate_census.log",
+    "artifact": "postr17-check_ui_pr_gate_census.txt",
+    "sha256": "4dbfefa68610a422ecc32cec95e1fd29c181e5d3b0ee7f9039be36bae573ca85"
+  },
+  {
+    "source_receipt": "postr20-check_index_plan_pins-receipt.json",
+    "artifact": "postr20-check_index_plan_pins-receipt.json",
+    "sha256": "31e5dfc93fa6b8d36b5b9aaf5ee0fd62a801d027b906e37082ad0d40440b7ddc"
+  },
+  {
+    "source_receipt": "postr20-check_index_plan_pins.log",
+    "artifact": "postr20-check_index_plan_pins.txt",
+    "sha256": "e7f47b1cb61886400797dd9675108a226ffc32b8ed4516fae0ef6e614ac620b3"
+  },
+  {
+    "source_receipt": "postr20-check_markup_interpolation-receipt.json",
+    "artifact": "postr20-check_markup_interpolation-receipt.json",
+    "sha256": "91e9fec32a7b908a144a12e33dc2aec732dab6f7fc1cc4e93b1b1b68fc939373"
+  },
+  {
+    "source_receipt": "postr20-check_markup_interpolation.log",
+    "artifact": "postr20-check_markup_interpolation.txt",
+    "sha256": "ce7687e4e0056d151f6463108f61d8677e7ff6c4f8af72c2eff44f3b7294e001"
+  },
+  {
+    "source_receipt": "postr20-check_persistent_diagnostic_inventory-receipt.json",
+    "artifact": "postr20-check_persistent_diagnostic_inventory-receipt.json",
+    "sha256": "188df92da950f89942bb4462aa310451864749e723b346b97442c5931706ec20"
+  },
+  {
+    "source_receipt": "postr20-check_persistent_diagnostic_inventory.log",
+    "artifact": "postr20-check_persistent_diagnostic_inventory.txt",
+    "sha256": "eef1ce2691f2c9d580bfddf49a682e969f3c1865ad07f14baaec35def041ae17"
+  },
+  {
+    "source_receipt": "postr20-check_profile_owned_path_inventory-receipt.json",
+    "artifact": "postr20-check_profile_owned_path_inventory-receipt.json",
+    "sha256": "7104a93d7baa7420f140f387ee7f6a1ac81cc7f77713a6360098cff6acb6937e"
+  },
+  {
+    "source_receipt": "postr20-check_profile_owned_path_inventory.log",
+    "artifact": "postr20-check_profile_owned_path_inventory.txt",
+    "sha256": "c1d4b52b3951c1e0333cbf5079a6a7ec3d1644bcb7341affb37e4ca3b618da40"
+  },
+  {
+    "source_receipt": "postr20-check_schema_table_allowlist-receipt.json",
+    "artifact": "postr20-check_schema_table_allowlist-receipt.json",
+    "sha256": "f7eebd370d0183eb472baf565659f27187e6f9894cfbb52528d4aa22269c782e"
+  },
+  {
+    "source_receipt": "postr20-check_schema_table_allowlist.log",
+    "artifact": "postr20-check_schema_table_allowlist.txt",
+    "sha256": "d239cae48defe59e58eba5717d9e468939bad0c6e553a53d73773634b1b41c3d"
+  },
+  {
+    "source_receipt": "postr20-check_textual_worker_contract-receipt.json",
+    "artifact": "postr20-check_textual_worker_contract-receipt.json",
+    "sha256": "b7107d97bd585fa75a5f56e973fadce3bdfd967d85591d23537732279294a9c4"
+  },
+  {
+    "source_receipt": "postr20-check_textual_worker_contract.log",
+    "artifact": "postr20-check_textual_worker_contract.txt",
+    "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992"
+  },
+  {
+    "source_receipt": "postr20-check_timestamp_writers-receipt.json",
+    "artifact": "postr20-check_timestamp_writers-receipt.json",
+    "sha256": "e6a79260c2045226e64918ebbf2c4709fac7679de312716711802471863735b9"
+  },
+  {
+    "source_receipt": "postr20-check_timestamp_writers.log",
+    "artifact": "postr20-check_timestamp_writers.txt",
+    "sha256": "c7d9f8c695e6b6d5ffea7b08b9fdf60bec11ab91f2f79b97b6ead504b948b102"
+  },
+  {
+    "source_receipt": "postr20-check_ui_pr_gate_census-receipt.json",
+    "artifact": "postr20-check_ui_pr_gate_census-receipt.json",
+    "sha256": "79872b3120c9240ac9cf9948d3ee5d4a7a85c23b15d4f4f0b93e69db1a16e51f"
+  },
+  {
+    "source_receipt": "postr20-check_ui_pr_gate_census.log",
+    "artifact": "postr20-check_ui_pr_gate_census.txt",
+    "sha256": "4dbfefa68610a422ecc32cec95e1fd29c181e5d3b0ee7f9039be36bae573ca85"
+  },
+  {
+    "source_receipt": "r19-source-edit.json",
+    "artifact": "r19-source-edit.json",
+    "sha256": "6af78b1916a58eaeaf3d6ead4336d2095341abc3838d14c2054bad8e94b603c5"
+  },
+  {
+    "source_receipt": "r20-source-edit.json",
+    "artifact": "r20-source-edit.json",
+    "sha256": "74548c645eb7e3704050f657ab5eae5faa4bb1a65fc55bf63a16b8d2e97280e5"
+  },
+  {
+    "source_receipt": "r21-test-edit.json",
+    "artifact": "r21-test-edit.json",
+    "sha256": "fe5a06fd7af3384239803475def07fc3a6b4138fb9f63801421294176c71930a"
+  },
+  {
+    "source_receipt": "r21-test-followup.json",
+    "artifact": "r21-test-followup.json",
+    "sha256": "6a5919d676893bc48a5cc01cd3c2c3bcb205ff6178241b060b15134008ec9496"
+  },
+  {
+    "source_receipt": "r22-test-batch-followup.json",
+    "artifact": "r22-test-batch-followup.json",
+    "sha256": "b5ed4d4fe292ee763b94550afdb4d6e31e440dc55d14b1d9d24d9d5fbbe7f2b6"
+  },
+  {
+    "source_receipt": "r22-test-edit.json",
+    "artifact": "r22-test-edit.json",
+    "sha256": "cd131ecdb4e99943127ed09a9f38ec9a33033928e9942e77d26a208259e99728"
+  },
+  {
+    "source_receipt": "r22-test-followup.json",
+    "artifact": "r22-test-followup.json",
+    "sha256": "64529129a8b5f953085c50a5e169b3422acb3a0ac6b03c7db02057bbbb80b30f"
+  },
+  {
+    "source_receipt": "ready-publication.json",
+    "artifact": "ready-publication.json",
+    "sha256": "eb2ff01af16f5f714843d39bab07cb5f44d64f8de239c0bd1a64c4c5d2369405"
+  },
+  {
+    "source_receipt": "reference-tail-current-receipt.json",
+    "artifact": "reference-tail-current-receipt.json",
+    "sha256": "afdfd77eaf7061b09a39b47e4b67587e9cc5571be9b63355be9d5ca2d0fcd889"
+  },
+  {
+    "source_receipt": "reference-tail-current.log",
+    "artifact": "reference-tail-current.txt",
+    "sha256": "85b46ab83f7ca41a5b9940d79daac0b51818948b93e9ee9dac5321ee0b0d0f48"
+  },
+  {
+    "source_receipt": "review-fix-scoped-final.md",
+    "artifact": "review-fix-scoped-final.md",
+    "sha256": "1ed27cfa2a629285b733f1b09ce2a9afd1d08a3d5331f5fa365795977bc94a0e"
+  },
+  {
+    "source_receipt": "schema-catalog-current-receipt.json",
+    "artifact": "schema-catalog-current-receipt.json",
+    "sha256": "c278e81e66c07ac96ef3bb0b97050c44aeee05a3a9c0fb8f27a5033974fcec04"
+  },
+  {
+    "source_receipt": "schema-catalog-current.log",
+    "artifact": "schema-catalog-current.txt",
+    "sha256": "0959a81358c0c238f349d2bdfbae839886b6a8bb7075086bb6266a056f996aa0"
+  },
+  {
+    "source_receipt": "source-writer-final-newbase-identities.json",
+    "artifact": "source-writer-final-newbase-identities.json",
+    "sha256": "0d7b6cb73e787c3018db16bb367530586257a68d27f874bae82f2833e4dba140"
+  },
+  {
+    "source_receipt": "source-writer-final-qualified.json",
+    "artifact": "source-writer-final-qualified.json",
+    "sha256": "549432eba80ce5c7fec9326596107b05361ee3f927229315b9e8d0a4f554d77a"
+  },
+  {
+    "source_receipt": "source-writer-final-r22.json",
+    "artifact": "source-writer-final-r22.json",
+    "sha256": "9b0096bc858bb716ee3fa461b4040e705c3622bac74dd6b98c801508493fd4f7"
+  },
+  {
+    "source_receipt": "source-writer-r17-production-freeze.json",
+    "artifact": "source-writer-r17-production-freeze.json",
+    "sha256": "3a489bd50de1f806a8ef40e1a250334370b9379e92b91c0e94ba96a82d761efe"
+  },
+  {
+    "source_receipt": "source-writer-r20-production-freeze.json",
+    "artifact": "source-writer-r20-production-freeze.json",
+    "sha256": "39fed99931e84b85dacd65aa6237b0c728940d4041ac67b399d234b562769fd4"
+  },
+  {
+    "source_receipt": "source-writer-ui-handoff.json",
+    "artifact": "source-writer-ui-handoff.json",
+    "sha256": "9d0386ae662455c1274e197f173154f03a8fbbee118f0abb464e6ded868a10bf"
+  },
+  {
+    "source_receipt": "source-writer-ui-profile-handoff.json",
+    "artifact": "source-writer-ui-profile-handoff.json",
+    "sha256": "0899477d8e22d8a9bf4781b766585b17a1ddc30dd12f2f2053a3a0aeea159810"
+  },
+  {
+    "source_receipt": "static-source-devsync-after.json",
+    "artifact": "static-source-devsync-after.json",
+    "sha256": "0d57166a8348b97c96c91ca9fff01fe863135cf06c91764cfd0664a1cc98323d"
+  },
+  {
+    "source_receipt": "static-source-devsync-before.json",
+    "artifact": "static-source-devsync-before.json",
+    "sha256": "0d57166a8348b97c96c91ca9fff01fe863135cf06c91764cfd0664a1cc98323d"
+  },
+  {
+    "source_receipt": "static-source-postr17-after.json",
+    "artifact": "static-source-postr17-after.json",
+    "sha256": "b0aaf104d172e218073781df0da0a625a4b831453ce2b0ab77a955e6e5df9110"
+  },
+  {
+    "source_receipt": "static-source-postr17-before.json",
+    "artifact": "static-source-postr17-before.json",
+    "sha256": "b0aaf104d172e218073781df0da0a625a4b831453ce2b0ab77a955e6e5df9110"
+  },
+  {
+    "source_receipt": "static-source-postr20-after.json",
+    "artifact": "static-source-postr20-after.json",
+    "sha256": "8f9e1d7bf4bb008db0c41e08bba0cb6381234439e47f3958b93fa2d3e12bc0b6"
+  },
+  {
+    "source_receipt": "static-source-postr20-before.json",
+    "artifact": "static-source-postr20-before.json",
+    "sha256": "8f9e1d7bf4bb008db0c41e08bba0cb6381234439e47f3958b93fa2d3e12bc0b6"
+  },
+  {
+    "source_receipt": "ui-direct-fixture-edit.json",
+    "artifact": "ui-direct-fixture-edit.json",
+    "sha256": "1eec2a5bc41dffa067a400f7f399f2394dcb54d3979f14b34650e0f2ce4dc210"
+  },
+  {
+    "source_receipt": "ui-direct-profile-fixture-edit.json",
+    "artifact": "ui-direct-profile-fixture-edit.json",
+    "sha256": "7e96ed4aad6e704f13fc88dd517d9e5cabcd636854b559e6ec0d4c43bf4de1c8"
+  }
+]

@@ -165,16 +165,14 @@ def test_v24_upgrade_and_reopen_preserve_ordinary_history(tmp_path):
 
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    path = tmp_path / "upgrade.db"
-    db = AgentRunsDB(path, client_id="migration")
-    parent = db.create_run(conversation_id="chat", agent_kind="primary")
-    db.close()
-    with sqlite3.connect(path) as connection:
-        connection.execute("DROP TABLE automatic_review_boundary_claims")
-        connection.execute(
-            "ALTER TABLE automatic_wake_attempts DROP COLUMN review_boundary_id"
-        )
-        connection.execute("DELETE FROM schema_version WHERE version=25")
+    from Tests.Backup_Recovery.test_workflow_dev_integration import install
+    from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA
+
+    # Build the actual v24 catalog; removing v25 artifacts from today's database
+    # would manufacture a hybrid containing all later workflow tables/stamps.
+    schema = next(schema for version, schema in _AGENT_RUNS_SCHEMA if version == 24)
+    path = install(tmp_path / "upgrade.db", 24, schema)
+    parent = "retained"
     for _ in range(2):
         db = AgentRunsDB(path, client_id="migration")
         assert db.get_run(parent)["agent_kind"] == "primary"
@@ -183,7 +181,7 @@ def test_v24_upgrade_and_reopen_preserve_ordinary_history(tmp_path):
                 connection.execute(
                     "SELECT max(version) FROM schema_version"
                 ).fetchone()[0]
-                == 25
+                == 30
             )
             assert (
                 connection.execute(
@@ -201,7 +199,7 @@ def test_v24_upgrade_and_reopen_preserve_ordinary_history(tmp_path):
                 "SELECT sql FROM sqlite_master WHERE name='automatic_wake_attempts'"
             ).fetchone()[0]
             assert "'completion', 'progress', 'mixed'" in ddl
-            assert "'fleet_wake', 'goal_iteration'" in ddl
+            assert "'fleet_wake', 'goal_iteration', 'workflow_phase'" in ddl
         db.close()
 
 

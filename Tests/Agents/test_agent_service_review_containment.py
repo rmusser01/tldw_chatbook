@@ -369,14 +369,14 @@ def test_failed_spawn_returns_its_slot_only_when_no_child_ran(
     elif case == "after_return":
         from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
 
-        finished = set()
+        def returned_child(owner):
+            # Native inline custody now finishes exactly once, after _run_owned
+            # and its physical cleanup return. Inject at that actual boundary.
+            return owner.child and any(
+                actor.kind == "subagent" for actor, _ in c.calls
+            )
 
-        def second_finish(owner):
-            seen = owner in finished
-            finished.add(owner)
-            return owner.child and seen
-
-        fail_once(ExecutionOwner, "finish_root", second_finish)
+        fail_once(ExecutionOwner, "finish_root", returned_child)
     else:
         fail_once(
             AgentService, "_persist", lambda self, run_id, *a: run_id != "primary"

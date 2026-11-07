@@ -1,0 +1,5 @@
+{
+  "scope": "production py/sql/tcss, scripts py/tsv/txt/json, Docs/security json, pyproject.toml",
+  "files": 3228,
+  "sha256": "6d95ae371c98542a381ae707aafe3cfccf4bac759f9fad537d93b2443e3eedc3"
+}

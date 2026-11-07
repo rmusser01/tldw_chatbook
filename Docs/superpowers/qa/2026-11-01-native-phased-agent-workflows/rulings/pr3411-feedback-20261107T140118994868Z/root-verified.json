@@ -1,0 +1,38 @@
+{
+  "checked_utc": "2026-11-07T14:03:11.439362+00:00",
+  "literal_records": 57,
+  "prior56_records_exact": true,
+  "prior_snapshot_and_draft_exact_prefix": true,
+  "snapshot_is_current_ledger_prefix": true,
+  "current_ledger_literal_count": 57,
+  "source_UTF8_offsets_lines_complete_bodies_hashes_verified": true,
+  "uncovered_occurrences": 0,
+  "duplicate_ids": 0,
+  "scope": "OPEN14:01:18cutoff, all57literal decisions retained; text archival only, Source publication pending, no runtime or readiness claim.",
+  "artifacts": {
+    "snapshot.txt": {
+      "bytes": 135427,
+      "sha256": "bb04f14ff160ef6b2ef1eeee06fabf01650e22d32be130bd0266d7ddb9a7b3fa"
+    },
+    "snapshot-meta.json": {
+      "bytes": 622,
+      "sha256": "5ace7faedd40508ee253a2e1b9068700e2c3421fa6f4c6e9b207814e2abdb0c2"
+    },
+    "index.json": {
+      "bytes": 63434,
+      "sha256": "5ac4381850987b9a5e3f54e67ff86cd0c84b7f5dc9f5f06b0b1fab7806574773"
+    },
+    "draft.md": {
+      "bytes": 41917,
+      "sha256": "98158349ede63af68dbbac411599701865ae699cf7f2d1f298346a77a39bd9a0"
+    },
+    "report.md": {
+      "bytes": 3360,
+      "sha256": "173e0459de4a52aba4b00af98046546663186b0a5e068775d0812bcd33ff189e"
+    },
+    "agent-verified.json": {
+      "bytes": 6973,
+      "sha256": "d3c6a39dad4ab11ed33154ff74c9035f3a9226f7125ccce8defd07ceba19ff2c"
+    }
+  }
+}

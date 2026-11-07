@@ -18,6 +18,28 @@ async def run_legacy_trace_maintenance(
         tasks = getattr(controller, "_active_stream_tasks", None)
         return bool(tasks)
 
+    class MaintenanceReturnUnknown(RuntimeError):
+        """Cancellation of a DB proxy does not prove its worker returned."""
+
+    async def call_maintenance(operation, *args, **kwargs):
+        worker = _source.asyncio.create_task(
+            _source.run_owned_db_call(database, operation, *args, **kwargs)
+        )
+        cancelled = False
+        while not worker.done():
+            try:
+                await _source.asyncio.shield(worker)
+            except _source.asyncio.CancelledError:
+                cancelled = True
+            except Exception:  # inspect the original result below
+                break
+        if worker.cancelled():
+            raise MaintenanceReturnUnknown("maintenance worker return is unknown")
+        result = worker.result()
+        if cancelled:
+            raise _source.asyncio.CancelledError
+        return result
+
     from tldw_chatbook.Chat.console_trace_maintenance import (
         LegacyTraceMaintenance,
     )
@@ -64,8 +86,10 @@ async def run_legacy_trace_maintenance(
             maintenance.expect_work = True
         seen_work = current_work
         try:
-            result = await _source.run_owned_db_call(database, maintenance.run_batch)
+            result = await call_maintenance(maintenance.run_batch)
         except Exception as exc:  # noqa: BLE001 - retry remains restart-safe
+            if self._disposed or _source.asyncio.current_task().cancelling() or isinstance(exc, MaintenanceReturnUnknown):
+                raise
             _source.logger.warning(  # noqa: PLE1205 -- live Loguru owner uses brace formatting
                 "legacy trace maintenance paused after {}",
                 type(exc).__name__,
@@ -122,8 +146,8 @@ async def run_legacy_trace_maintenance(
                     None,
                 )
                 collector = TraceGarbageCollector(database)
-                current_epoch = await _source.run_owned_db_call(
-                    database, collector.current_graph_epoch
+                current_epoch = await call_maintenance(
+                    collector.current_graph_epoch
                 )
                 if (
                     pending_gc_result is not None
@@ -137,8 +161,7 @@ async def run_legacy_trace_maintenance(
                     if current_epoch == last_collected_epoch:
                         await _source.asyncio.sleep(1.0)
                         continue
-                    pending_gc_result = await _source.run_owned_db_call(
-                        database,
+                    pending_gc_result = await call_maintenance(
                         collector.collect,
                         request_id=f"auto-{new_opaque_id()}",
                     )
@@ -164,8 +187,7 @@ async def run_legacy_trace_maintenance(
                     resume_dispatch=resume,
                     cancel_requested=lambda: self._disposed,
                 )
-                outcome = await _source.run_owned_db_call(
-                    database,
+                outcome = await call_maintenance(
                     compactor.run_after_gc,
                     pending_gc_result,
                 )
@@ -178,9 +200,13 @@ async def run_legacy_trace_maintenance(
                 ):
                     pending_gc_result = None
             except ImportError:
+                if self._disposed or _source.asyncio.current_task().cancelling():
+                    raise
                 # Narrow test doubles may provide only the legacy worker.
                 pass
             except Exception as exc:  # noqa: BLE001 - durable retry state
+                if self._disposed or _source.asyncio.current_task().cancelling() or isinstance(exc, MaintenanceReturnUnknown):
+                    raise
                 _source.logger.warning(  # noqa: PLE1205 -- live Loguru owner uses brace formatting
                     "trace physical maintenance paused after {}",
                     type(exc).__name__,
@@ -191,3 +217,12 @@ async def run_legacy_trace_maintenance(
             await _source.asyncio.sleep(1.0)
             continue
         await _source.asyncio.sleep(0)
+
+
+# Definition-time records follow the actual extracted native receivers (ADR-285).
+from tldw_chatbook.Chat.console_ordinary_tree import _function_record as _native_record
+
+_NATIVE_WORKFLOW_RECEIVERS = tuple(
+    (name, _native_record(globals()[name]))
+    for name in ('run_legacy_trace_maintenance',)
+)

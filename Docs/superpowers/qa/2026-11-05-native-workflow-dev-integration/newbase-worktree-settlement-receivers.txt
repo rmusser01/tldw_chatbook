@@ -1,0 +1,28 @@
+................................................F
+=================================== FAILURES ===================================
+______________ test_stop_held_planner_never_publishes_a_late_plan ______________
+Tests/Chat/test_workflow_settlement_delivery.py:81: in test_stop_held_planner_never_publishes_a_late_plan
+    _run(
+Tests/Backup_Recovery/test_home_citation_retirement.py:332: in _run
+    assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E   AssertionError: -prep/native-phased-workflows-2026-11-05/integration/Tests/Chat/test_workflow_settlement_delivery.py", line 77, in journey
+E         await rig.close()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/Tests/Chat/workflow_rig.py", line 185, in close
+E         await self.runtime.dispose()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/tldw_chatbook/Chat/console_runtime.py", line 6916, in dispose
+E         workflow_cancellation = await coordinator.close(_runtime_disposal=self)
+E                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/tldw_chatbook/Chat/console_workflow_runs.py", line 3478, in close
+E         raise RuntimeError("workflow_original_shutdown_unresolved")
+E     RuntimeError: workflow_original_shutdown_unresolved
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12', '-X', 'utf8', '-c', '...ey\n    asyncio.run(journey(Path(os.environ["XDG_DATA_HOME"]).parent, None))\n', 'settlement', 'native'], returncode=1).returncode
+============================= slowest 25 durations =============================
+35.94s call     Tests/Chat/test_workflow_settlement_delivery.py::test_stop_held_planner_never_publishes_a_late_plan
+
+(24 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_workflow_settlement_delivery.py::test_stop_held_planner_never_publishes_a_late_plan
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 48 passed, 3 deselected in 40.49s

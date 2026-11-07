@@ -19,9 +19,6 @@ from loguru import logger
 from ..Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from ..config import get_cli_setting
 
-# Import the registration system and load all effects
-from ..UI.Splash_Screens import load_all_effects, get_effect_class
-from ..UI.Splash_Screens.card_definitions import get_all_card_definitions
 from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 
@@ -276,6 +273,8 @@ class SplashScreen(Container):
 
     def _get_predefined_cards(self) -> Dict[str, Dict[str, Any]]:
         """Get all predefined splash cards."""
+        from ..UI.Splash_Screens.card_definitions import get_all_card_definitions
+
         cards = get_all_card_definitions()
 
         # Handle custom image special case
@@ -363,6 +362,8 @@ class SplashScreen(Container):
         logger.debug(f"Starting animation with effect: {effect_type}")
 
         if effect_type:
+            from ..UI.Splash_Screens import get_effect_class, load_all_effects
+
             load_all_effects()
             # Get the effect class from the registry
             effect_class = get_effect_class(effect_type)

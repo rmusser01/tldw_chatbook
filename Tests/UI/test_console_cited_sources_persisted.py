@@ -199,15 +199,18 @@ def send_path(request, monkeypatch) -> _SendPath:
     return path
 
 
-def _build_app(db_path: Path, send_path: _SendPath):
+def _build_app(
+    db_path: Path, send_path: _SendPath, *, user_data_dir: Path | None = None
+):
     """Build a factory app over a file-backed ChaChaNotes DB.
 
     The citation services are composed by the app's own wiring, so the
     repository, its policy (the shipped default config) and its key provider
-    are the production ones.
+    are the production ones. Native capture callers may select their real
+    private profile directory through the existing factory option.
     """
 
-    app = _build_test_app()
+    app = _build_test_app(user_data_dir=user_data_dir)
     if send_path.direct:
         app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chat_api_provider_value = "llama_cpp"

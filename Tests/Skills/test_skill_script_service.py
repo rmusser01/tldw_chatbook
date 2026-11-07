@@ -831,3 +831,29 @@ async def test_plan_reports_the_canonical_skill_name_not_the_callers_spelling(
     service, name = script_service
     plan = await service.describe_skill_script("  DEMO-Skill ", "scripts/hello.py")
     assert plan.skill_name == name == "demo-skill"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_workflow_script_refuses_before_retained_scratch_creation(
+    script_service, tmp_path
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
+
+    # A phase context without private task custody must never regain ordinary script authority.
+    context = AutomaticWorkContext(
+        None,
+        "chain",
+        "owner",
+        "attempt",
+        attempt_kind="workflow_phase",
+        workflow=SimpleNamespace(),
+    )
+    service, name = script_service
+    output = tmp_path / "must-not-exist"
+    with context.scope(), pytest.raises(AutomaticWorkRefused):
+        await service.run_skill_script(name, "scripts/hello.py", [], output_root=output)
+    assert not output.exists()

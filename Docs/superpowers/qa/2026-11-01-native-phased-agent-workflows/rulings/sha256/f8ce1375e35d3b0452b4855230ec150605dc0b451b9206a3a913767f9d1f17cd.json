@@ -1,0 +1,99 @@
+{
+  "scope": "One root-authorized targeted read-only resolution of exact607 content identity within this plan scratch before cleanup; not recursive closure, census, source review or archive write.",
+  "expected_sha256": "60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb",
+  "status": "Exact complete existing file bytes found; no new historical source gap",
+  "match": {
+    "parent_file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-literal-adoption.md",
+    "parent_sha256": "60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb",
+    "parent_bytes": 31906,
+    "storage": "complete standalone existing Markdown file",
+    "byte_offset_start": 0,
+    "byte_offset_end_exclusive": 31906,
+    "matched_bytes": 31906,
+    "matched_sha256": "60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb",
+    "complete_original_file": true,
+    "json_field": null,
+    "base64_decoding": false,
+    "prefix_extraction": false,
+    "splicing_or_reconstruction": false
+  },
+  "bounded_method": [
+    "Search exact full607 hash references only within this plan scratch, excluding final-whole/root-final-whole output and own earlier final-retarget artifacts. No active reviewer output body was opened.",
+    "Read matching governance/evidence/source-report reference lines and directly named metadata only. Evidence-index line101 and capacity-source-analysis line94 explicitly name task-8g-fix1-direct-literal-adoption.md.",
+    "Hash the entire directly named existing31906-byte file and compare to the full expected SHA256. Full SHA is identical; stop identity resolution without trying prefixes, JSON-text extraction, reconstruction or other source versions."
+  ],
+  "prior_search_limit": "Earlier107 candidates were Task8G/root-direct Markdown filenames containing source/report/review. This exact file is named direct-literal-adoption and was outside that filter; the earlier bounded no-match never established missing-body status.",
+  "reference_receipts": [
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-cooperative-w-existing-evidence-index.md",
+      "parent_sha256": "b4ab1cf398219e671f1fc80b257ee00dfd58f9b594e9386755d9d0105f1d0856",
+      "parent_bytes": 40741,
+      "line": 101,
+      "full_citation": "| `.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-literal-adoption.md` | `60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb` | same | absent | absent |",
+      "citation_sha256": "05314d844eb3ffb52de8b8590fca8f127e13c219af06aac2db79d7a8a5a36022"
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-capacity-wait-source-analysis.md",
+      "parent_sha256": "1e76f46b14f12204de8acc7e8d2b5b15b01507ea114449131d9b2b4562301700",
+      "parent_bytes": 19680,
+      "line": 94,
+      "full_citation": "| .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-literal-adoption.md | `60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb` | `60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb` | untracked/ignored |",
+      "citation_sha256": "b304a385288e6e9b5459413d988d844a57d97e1041cfe8bfb486c84a4f361159"
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-governance-amendment.md",
+      "parent_sha256": "345c315351d8d3474e42c112bc35711fd9a5ef124d6fd4e5d081d8ef9752ea41",
+      "parent_bytes": 10015,
+      "line": 26,
+      "full_citation": "This amendment adopts the controller-accepted exact literal source proposal SHA60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb and full root267/67af/ffcd/13fc contracts, including the explicit seventh refinement. Full bodies and exact prospective bytes are retained in the task's source/evidence archive. Task38531 stays In Progress with acceptance criteria unchecked until the complete required review/gate.",
+      "citation_sha256": "2dde85ead23037f7d7805714bf4bf6b74f59fccecb38ea3fc61ee13ec2dee70e"
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-source.md",
+      "parent_sha256": "f16bf6d76c8906945a45935d748f9e45141d36178004cc14f782d1f6aefea038",
+      "parent_bytes": 409395,
+      "line": 1364,
+      "full_citation": "Direct-native source adoption/controller gate: fixed literal proposal60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb accepted with exact protected hunks. FULL seventh13fc retained. All26 prospective source/protection bytes were unchanged at pre-governance check; cached c5 preserved. Exact four-file amendment SHA345c315351d8d3474e42c112bc35711fd9a5ef124d6fd4e5d081d8ef9752ea41 appended and byte-exact readback passed before any direct product/test behavior. Receipt task-8g-fix1-direct-governance-readback.json, baseline/provenance task-8g-fix1-direct-adoption-provenance.json. No native run or direct implementation result yet; Q1 named evidence/self-review remains separate.",
+      "citation_sha256": "0c696ee2458a8dda74d3da79a36e16ae392919b70e603d8914762d511371ec25"
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-report.md",
+      "parent_sha256": "f52dd695f82fbc13140e679f75b31eb743fb3d6fac473837cc5bcb8b1b924b55",
+      "parent_bytes": 166818,
+      "line": 474,
+      "full_citation": "Direct-native source adoption/controller gate: fixed literal proposal60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb accepted with exact protected hunks. FULL seventh13fc retained. All26 prospective source/protection bytes were unchanged at pre-governance check; cached c5 preserved. Exact four-file amendment SHA345c315351d8d3474e42c112bc35711fd9a5ef124d6fd4e5d081d8ef9752ea41 appended and byte-exact readback passed before any direct product/test behavior. Receipt task-8g-fix1-direct-governance-readback.json, baseline/provenance task-8g-fix1-direct-adoption-provenance.json. No native run or direct implementation result yet; Q1 named evidence/self-review remains separate.",
+      "citation_sha256": "0c696ee2458a8dda74d3da79a36e16ae392919b70e603d8914762d511371ec25"
+    }
+  ],
+  "directly_named_metadata_readbacks": [
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-adoption-provenance.json",
+      "sha256": "838e8ba3d041d20286ba821bf45e65f507d88a3ac39a5cd67dd1cda27689470b",
+      "bytes": 96065,
+      "role": "directly named governance/provenance receipt only; not a reconstructed source body"
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-governance-readback.json",
+      "sha256": "83a6668adfec3e102591cf4cc457a2cfd8b6158377d764adcbea44d3e8ffa955",
+      "bytes": 1932,
+      "role": "directly named governance/provenance receipt only; not a reconstructed source body"
+    },
+    {
+      "file": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8g-fix1-direct-new-controls-pre-edit.json",
+      "sha256": "b430fdd220f981c8b58962596bf9c00aa868d404bf6198038c7173f23be10354",
+      "bytes": 336,
+      "role": "directly named governance/provenance receipt only; not a reconstructed source body"
+    }
+  ],
+  "current_archive_index_unchanged": {
+    "file": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/index.json",
+    "sha256": "1ec2f9fe116a5a5d7f805fb001d39da7682f27c8dbeb651fcafa9c8d59d34c71",
+    "note": "Exact full file is available in scratch but is not automatically archived by this resolution; root owns later archive/retarget."
+  },
+  "limits": [
+    "Full-byte identity only; no correctness judgment, controller-history reconstruction, implementation/native/test/Git/provider action, cleanup or gate claim.",
+    "No old65560 metadata re-search/reconstruction; five unpinned proposal identities and12 early driver bodies missing/null remain explicit.",
+    "Known813/8a reviews and completed310 task review are outside this new exact607 resolution. Active final whole review output was excluded.",
+    "Only the new root-final-607-source-resolution.json and concise.md artifacts are written; canonical/index/trio/progress/census/task/QA bytes are unchanged."
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "base": "29592ecc9bf3856957a8d9b70a270795b8f4348d",
+  "candidate_findings": 23,
+  "files_compared": [
+    {
+      "path": "tldw_chatbook/Agents/local_tool_provider.py",
+      "candidate": 1,
+      "upstream": 0,
+      "new_findings": [
+        {
+          "code": "F811",
+          "message": "Redefinition of unused `MappingProxyType` from line 24: `MappingProxyType` redefined here",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "path": "tldw_chatbook/Agents/virtual_cli_provider.py",
+      "candidate": 2,
+      "upstream": 2,
+      "new_findings": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/chat_persistence_service.py",
+      "candidate": 1,
+      "upstream": 1,
+      "new_findings": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_automatic_submission.py",
+      "candidate": 4,
+      "upstream": 0,
+      "new_findings": [
+        {
+          "code": "F821",
+          "message": "Undefined name `outcome`",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_provider_gateway.py",
+      "candidate": 3,
+      "upstream": 3,
+      "new_findings": []
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/change_review_provider.py",
+      "candidate": 12,
+      "upstream": 12,
+      "new_findings": []
+    }
+  ],
+  "new_findings": 5
+}

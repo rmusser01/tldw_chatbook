@@ -1,0 +1,14 @@
+{
+  "upstream": "29592ecc9bf3856957a8d9b70a270795b8f4348d",
+  "merge_tree": "e7a9f61eb7180f196dc45485a670b6ab3c87308f",
+  "old_checkpoint": "4af7f934ff25b4aa823ddfa407d81ed1053428ee",
+  "old_checkpoint_tree": "a5bd4a92d70e72b41f63be8ffad0be03c00f2c3c",
+  "old_base": "3c39215749a96d5c1b8c05972fdd2aeb7588b002",
+  "remote_expected_head": "f4e72e54078413c35e01ea52607afe76283cc972",
+  "backup_ref": "refs/codex/pr3411-before-dev-sync-20261105",
+  "resolved_docs": [
+    "backlog/docs/lessons-textual.md"
+  ],
+  "preserved_frozen_production_fixes": 8,
+  "qualification": "Git objects only; SOURCE not overlaid and topic not yet rebased."
+}

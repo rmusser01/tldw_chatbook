@@ -3,6 +3,7 @@
 import asyncio
 import dis
 import inspect
+import sys
 import threading
 from types import MethodType, SimpleNamespace
 
@@ -36,9 +37,41 @@ class _AdmittedBundleProbe(_MaximumProbe):
         super().__init__(*args, **kwargs)
         self.code = inspect.unwrap(LocalMCPStore.get_catalog_bundle).__code__
         self.first_entered = threading.Event()
+        self.selection_service = None
+        self.selection_code = None
+        self.selection_type = None
+        self.selection_returns = 0
+        self.selection_empty = False
 
     def observe(self, frame, event, arg):
         super().observe(frame, event, arg)
+        if self.selection_service is not None:
+            if (
+                event == "call"
+                and frame.f_code.co_name == "_capture_console_definition_selection"
+            ):
+                module = sys.modules.get("tldw_chatbook.MCP.console_snapshot")
+                if (
+                    module is not None
+                    and frame.f_globals is vars(module)
+                    and frame.f_code
+                    is getattr(
+                        vars(module).get("_capture_console_definition_selection"),
+                        "__code__",
+                        None,
+                    )
+                    and frame.f_locals.get("service") is self.selection_service
+                ):
+                    self.selection_code = frame.f_code
+                    self.selection_type = vars(module)["_DefinitionSelection"]
+            elif (
+                event == "return"
+                and frame.f_code is self.selection_code
+                and frame.f_locals.get("service") is self.selection_service
+                and type(arg) is self.selection_type
+            ):
+                self.selection_returns += 1
+                self.selection_empty = not bool(arg.definitions)
         if (
             event == "call"
             and frame.f_code is self.permission_code
@@ -294,6 +327,7 @@ async def test_source_dependency_retarget_during_native_body_is_refused(
     _loop_projection(case)
     observed = []
     probe = _AdmittedBundleProbe(case.source, case.permissions, hold=True)
+    probe.selection_service = case.service
     with probe.installed():
         pending = asyncio.create_task(
             case.controller.capture_turn_configuration_snapshot(case.session.id)
@@ -339,12 +373,15 @@ async def test_source_dependency_retarget_during_native_body_is_refused(
                     UnifiedMCPControlPlaneService, name, property(original.fget)
                 )
             probe.release.set()
-            captured = await pending
+            with pytest.raises(catalog_controls.bootstrap.RecoveryRequired) as error:
+                await pending
+            assert type(error.value) is catalog_controls.bootstrap.RecoveryRequired
+            assert str(error.value) == "console_snapshot_owner_changed"
             assert (
                 not observed
             ), "changed source callback ran before the ownership fence"
-            assert not captured.mcp_definition_maximum
-            assert all(
+            assert probe.selection_returns == 1 and probe.selection_empty
+            assert probe.leases and all(
                 lease not in storage_admission._live_leases for lease in probe.leases
             )
         finally:

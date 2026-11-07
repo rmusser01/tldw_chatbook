@@ -1,0 +1,63 @@
+ | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 6193672192.
+2026-11-04 19:47:52.067 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 6193672192.
+2026-11-04 19:47:52.067 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 6193672192.
+2026-11-04 19:47:52.067 | SUCCESS  | tldw_chatbook.config:get_chachanotes_db_lazy:11710 - ChaChaNotes_DB lazy-initialized successfully at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db
+INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService: Verified base directory: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user
+INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService initialized with unified DB template: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db
+2026-11-04 19:47:52.067 | INFO     | tldw_chatbook.app:_init_notes_service:2082 - NotesInteropService successfully initialized for user 'default_user'.
+2026-11-04 19:47:52.067 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3458 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=aea1c5cdf1c7 thread=6193672192.
+2026-11-04 19:47:52.067 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3464 - WAL checkpoint TRUNCATE executed db_sha256=aea1c5cdf1c7.
+2026-11-04 19:47:52.068 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3491 - Closed SQLite connection db_sha256=aea1c5cdf1c7 thread=6193672192.
+2026-11-04 19:47:52.068 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'notes_service' completed in 0.052s
+INFO:root:App __init__: Determined initial tab value: chat
+2026-11-04 19:47:52.100 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 19:47:52.132 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_workspaces.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 19:47:52.168 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_subscriptions.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 19:47:52.171 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ClientNotificationsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_notifications.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 19:47:52.172 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 19:47:52.172 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 19:47:52.203 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/tldw_chatbook_scheduled_tasks.db [Client: default]
+2026-11-04 19:47:52.242 | DEBUG    | tldw_chatbook.app:__init__:1460 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-11-04 19:47:52.242 | DEBUG    | tldw_chatbook.app:__init__:1463 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+INFO:root:Assigned prompts_interop.get_db_instance() to self.prompts_db
+INFO:root:Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback.
+2026-11-04 19:47:52.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3129 - Opened/Reopened SQLite connection db_sha256=aea1c5cdf1c7 thread=8461753728
+2026-11-04 19:47:52.280 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 8461753728.
+2026-11-04 19:47:52.280 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-11-04 19:47:52.284 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/config/eval_overrides.yaml
+2026-11-04 19:47:52.315 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/evals.db
+2026-11-04 19:47:52.315 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-11-04 19:47:52.342 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:_init_worker_handlers:2211 - Worker handler registry initialized with all handlers
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1653 - === STARTUP TIMING SUMMARY ===
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1654 - Total initialization time: 0.367 seconds
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1660 -   basic_init: 0.038s (10.3%)
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1660 -   attribute_init: 0.000s (0.0%)
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1660 -   parallel_init: 0.052s (14.3%)
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1673 -     - notes_service: 0.052s (99.5% of parallel_init)
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1673 -     - media_db: 0.041s (77.2% of parallel_init)
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1673 -     - prompts_service: 0.035s (67.5% of parallel_init)
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1673 -     - providers_models: 0.000s (0.7% of parallel_init)
+2026-11-04 19:47:52.342 | INFO     | tldw_chatbook.app:__init__:1677 - ==============================
+INFO:root:Splash screen enabled: False
+2026-11-04 19:47:52.530 | DEBUG    | tldw_chatbook.app:on_mount:3355 - Notes-sync start gate: no configuration evidence; runtime not constructed this boot.
+INFO:tldw_chatbook.diagnostics.app:event=app_started component=app
+INFO:root:--- _setup_logging START (from Logging_Config.py) ---
+INFO:root:Loguru: All pre-existing sinks removed.
+INFO:root:Loguru: Configured to forward its messages to standard Python logging system.
+2026-11-04 19:48:02.987 | DEBUG    | tldw_chatbook.config:<module>:150 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-11-04 19:48:03.020 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7069 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/config/config.toml
+2026-11-04 19:48:03.021 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7090 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/config/config.toml
+2026-11-04 19:48:03.022 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7174 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+2026-11-04 19:48:03.022 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7178 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-11-04 19:48:03.026 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 19:48:03.026 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 19:48:03.027 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-04 19:48:03.028 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-04 19:48:03.037 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-a152ogzl/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-04 19:48:03.037 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+2026-11-04 19:48:03.037 | INFO     | tldw_chatbook.config:<module>:11835 - Default API Endpoint (from config.py global scope): openai
+2026-11-04 19:48:03.037 | DEBUG    | tldw_chatbook.config:<module>:11858 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-11-04 19:48:03.311 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1554 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-11-04 19:48:03.340 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-11-04 19:48:03.510 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets

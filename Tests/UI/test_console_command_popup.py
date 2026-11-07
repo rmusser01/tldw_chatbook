@@ -168,6 +168,7 @@ async def test_escape_closes_popup_and_keeps_draft():
         assert composer.draft_text() == "/"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_entries_and_skills_arg_mode():
     app = _build_test_app()
@@ -179,15 +180,16 @@ async def test_skill_entries_and_skills_arg_mode():
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
-        # Test-level snapshot injection — production refreshes candidates via
-        # _refresh_console_skill_candidates; setting the tuple directly is
-        # deliberate here, not the production path.
+        console._focus_console_composer_if_needed(force=True)
+        await pilot.press("/", "w", "e", "b")
+        await pilot.pause()
+        assert composer.draft_text() == "/web"
+        # Publish this fixture's candidate after the actual draft change, just as skill discovery does.
         await pilot.app.workers.wait_for_complete()
         console._console_skill_candidates = (
             SkillCommandCandidate(name="web-search", description="Search the web"),
         )
-
-        await pilot.press("/", "w")
+        console._sync_console_command_popup()
         await pilot.pause()
         # Bare `/skill-name` is not dispatchable on dev (fallback resolver
         # removed), so the entry completes to the `/skills <name> ` form.

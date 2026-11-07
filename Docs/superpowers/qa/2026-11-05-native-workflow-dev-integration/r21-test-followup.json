@@ -1,0 +1,6 @@
+{
+  "before": "a3772bc3a3bb44c27fa1997086911523579990c6b47a1f8b8dabc33287419531",
+  "after": "686a31508844781111cc9d4f0ef939b9c40e2a79fb0a71b85ac978dce53a763a",
+  "ast_valid": true,
+  "proof": "original shutdown fences and nonempty returned/proven targets, same retained event/worker/execution; no legacy-cleanup-stage assumption"
+}

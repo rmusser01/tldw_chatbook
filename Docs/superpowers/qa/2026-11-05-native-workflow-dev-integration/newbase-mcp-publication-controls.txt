@@ -1,0 +1,11 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+4.19s call     Tests/Chat/test_console_ordinary_tree.py::test_deferred_native_mcp_permission_lazy_publication_keeps_original_source[False]
+1.79s setup    Tests/Chat/test_console_ordinary_tree.py::test_deferred_native_mcp_permission_lazy_publication_keeps_original_source[False]
+1.64s setup    Tests/Chat/test_console_ordinary_tree.py::test_direct_native_mcp_publication_replacement_refuses_before_provider[source]
+1.63s setup    Tests/Chat/test_console_ordinary_tree.py::test_deferred_native_mcp_permission_lazy_publication_keeps_original_source[True]
+1.53s setup    Tests/Chat/test_console_ordinary_tree.py::test_direct_native_mcp_publication_replacement_refuses_before_provider[candidate]
+1.23s call     Tests/Chat/test_console_ordinary_tree.py::test_deferred_native_mcp_permission_lazy_publication_keeps_original_source[True]
+
+(6 durations < 1s hidden.)
+4 passed in 13.24s

@@ -150,6 +150,7 @@ class HookSessionLifecycle:
         self._session_end_execution = None
         self._reservations = {}
         self._executions = {}
+        self._host_executions = {}
         self.turn_scope = None
         self._pending = set()
         self._handoff = None
@@ -220,23 +221,32 @@ class HookSessionLifecycle:
         return result
 
     def publish(self, token: str) -> None:
-        _event, result = self._reservations.pop(token)
-        if (
-            result is None
-            or not self.current()
-            or not result.allowed
-            or result.outstanding_cleanup
-        ):
-            raise HookCheckpointError("required session initialization failed")
-        self.checkpoints.accept(token, result)
-        self.checkpoints.assert_next_input_allowed(self.scope_id)
-        self.live = True
+        try:
+            _event, result = self._reservations.pop(token)
+            if (
+                result is None
+                or not self.current()
+                or not result.allowed
+                or result.outstanding_cleanup
+            ):
+                raise HookCheckpointError("required session initialization failed")
+            self.checkpoints.accept(token, result)
+            self.checkpoints.assert_next_input_allowed(self.scope_id)
+            self.live = True
+        finally:
+            self._host_done(token)
+
+    def _host_done(self, token):
+        scope = self._host_executions.pop(token, None)
+        if scope is not None:
+            scope.host_done()
 
     def cancel(self, token: str) -> None:
         self._reservations.pop(token, None)
         execution = self._executions.pop(token, None)
         if execution is not None:
             execution[1].close()
+        self._host_done(token)
 
     def open_scope(self, *, parent: str | None = None) -> str:
         scope = "operation:" + uuid4().hex
@@ -251,9 +261,12 @@ class HookSessionLifecycle:
         current: Callable[[], bool] = lambda: True,
         publish: bool = True,
         context_owner: str | None = None,
+        _execution=None,
     ) -> str:
-        scope = self.engine.begin_event(event)
+        scope = _execution or self.engine.begin_event(event)
         try:
+            if _execution is not None:
+                self.engine.consume_preheld(scope, event)
             plans = self.engine.plan_handlers(scope, event)
             required = tuple(
                 p.handler_id
@@ -285,6 +298,8 @@ class HookSessionLifecycle:
             retain_context=False,
             retirement_owner_id=context_owner or owner,
         )
+        scope.retain_host()
+        self._host_executions[token] = scope
         self._executions[token] = (event, scope, plans)
         return token
 
@@ -313,6 +328,7 @@ class HookSessionLifecycle:
         *,
         current: Callable[[], bool] = lambda: True,
         publish: bool = True,
+        _consume: Callable | None = None,
     ) -> HookEventOutcome:
         token = self.begin(event, owner, current=current, publish=publish)
         try:
@@ -326,7 +342,7 @@ class HookSessionLifecycle:
                 or result.outstanding_cleanup
             ):
                 raise HookCheckpointError("controlling lifecycle hook failed")
-            return result
+            return _consume(result) if _consume is not None else result
         except BaseException:
             # accept() can already have settled the requirement.
             try:
@@ -334,6 +350,8 @@ class HookSessionLifecycle:
             except HookCheckpointError:
                 pass
             raise
+        finally:
+            self._host_done(token)
 
     def install(
         self,
@@ -342,14 +360,27 @@ class HookSessionLifecycle:
         *,
         current: Callable[[], bool] = lambda: True,
         context_owner: str | None = None,
+        _execution=None,
     ) -> Future | None:
         """Install synchronously before publishing a durable completion."""
         if not self.checkpoints.is_current(owner):
             self.diagnostics["late_context"] += 1
             if event.event == "SubagentStop":
-                self.engine.notify(event)
+                if _execution is not None:
+                    self.engine.consume_preheld(_execution, event)
+                    self.engine._notify(event, teardown=False, execution=_execution)
+                else:
+                    self.engine.notify(event)
+            elif _execution is not None:
+                _execution.close()
             return None
-        token = self.begin(event, owner, current=current, context_owner=context_owner)
+        token = self.begin(
+            event,
+            owner,
+            current=current,
+            context_owner=context_owner,
+            _execution=_execution,
+        )
 
         async def complete():
             try:
@@ -366,6 +397,8 @@ class HookSessionLifecycle:
                 except HookCheckpointError:
                     pass
                 raise
+            finally:
+                self._host_done(token)
 
         future = asyncio.run_coroutine_threadsafe(complete(), self.engine.loop)
         self._pending.add(future)
@@ -387,6 +420,9 @@ class HookSessionLifecycle:
             required_handler_ids=required_handler_ids,
             should_cancel=lambda: not self.current(),
         )
+        self.context.refresh_sources(owner)
+        if self._handoff is not None:
+            self.context.refresh_sources(self._handoff[0])
 
     def close_scope(self, owner: str) -> None:
         if self.engine.mcp_executor is not None:
@@ -426,10 +462,13 @@ class HookSessionLifecycle:
                 else:
                     self.close_scope(candidate)
         self.checkpoints.close_owner(self.scope_id)
-        self._reservations.clear()
-        for _event, execution, _plans in self._executions.values():
-            execution.close()
-        self._executions.clear()
+        for token in tuple(self._executions):
+            self.cancel(token)
+        # Completed provisional results have no live callback. In-flight hosts
+        # keep their own finally through their original acceptance/discard.
+        for token, (_event, result) in tuple(self._reservations.items()):
+            if result is not None:
+                self.cancel(token)
         self._handoff = None
         self.terminal_budgets.clear()
         self.terminal_budget_times.clear()
@@ -476,6 +515,7 @@ class CompactionHooks:
         self.memory_current = memory_current
         self.post_future = None
         self.memory = None
+        self._post_hold = None
 
     async def before(
         self, candidate: tuple[Mapping[str, Any], ...], output_cap: int
@@ -486,46 +526,78 @@ class CompactionHooks:
             "PreCompact",
             data={"candidate": _json_projection(candidate), "reason": self.reason},
         )
-        result = await self.lifecycle.fire(
+
+        def consume(result):
+            # Candidate-only ledger: runtime blocks never enter the summary model.
+            ledger = ContextLedger()
+            ledger.bind(self.owner, event, current=self.current)
+            ledger.accept(event, result)
+            messages = tuple(candidate) + ledger.blocks(self.owner, "candidate")
+            from ..agent_models import check_host_context
+
+            check_host_context(messages, strip=False)
+            prepared = self.prepare(messages, output_cap)
+            if (
+                prepared.known_overflow
+                or not self.current()
+                or not self.lifecycle.engine.effects_current(event, result)
+            ):
+                raise HookCheckpointError(
+                    "hook compaction input exceeds current capacity"
+                )
+            return messages
+
+        prepared = await self.lifecycle.fire(
             event,
             self.owner,
             current=self.current,
             publish=False,
+            _consume=consume,
         )
-        # Candidate-only ledger: runtime blocks never enter the summary model.
-        ledger = ContextLedger()
-        ledger.bind(self.owner, event, current=self.current)
-        ledger.accept(event, result)
-        messages = tuple(candidate) + ledger.blocks(self.owner, "candidate")
-        from ..agent_models import check_host_context
+        from ..activation import worker_guard
 
-        check_host_context(messages, strip=False)
-        prepared = self.prepare(messages, output_cap)
-        if prepared.known_overflow or not self.current():
-            raise HookCheckpointError("hook compaction input exceeds current capacity")
-        return messages
+        event = self.lifecycle.event(
+            "PostCompact",
+            data={"reason": self.reason},
+        )
+        scope = await asyncio.to_thread(
+            worker_guard()(lambda: self.lifecycle.engine.prehold_event(event))
+        )
+        if scope is not None:
+            self._post_hold = (event, scope)
+        return prepared
 
     def committed(self, memory: Any) -> None:
         self.memory = memory
         current = lambda: self.memory_current(memory)
         owner = self.lifecycle.scope_id if self.reason == "manual" else self.owner
+        event = self.lifecycle.event(
+            "PostCompact",
+            data={
+                "reason": self.reason,
+                "memory_id": memory.memory_id,
+                "summarized_prefix_digest": memory.summarized_prefix_digest,
+            },
+        )
+        scope = None
+        if self._post_hold is not None:
+            original, scope = self._post_hold
+            self._post_hold = None
+            event = original.model_copy(update={"data": event.data})
         self.post_future = self.lifecycle.install(
-            self.lifecycle.event(
-                "PostCompact",
-                data={
-                    "reason": self.reason,
-                    "memory_id": memory.memory_id,
-                    "summarized_prefix_digest": memory.summarized_prefix_digest,
-                },
-            ),
+            event,
             owner,
             current=lambda: (
                 self.lifecycle.checkpoints.is_current(self.owner) and current()
             ),
             context_owner=self.owner,
+            _execution=scope,
         )
 
     async def finish(self) -> None:
+        if self._post_hold is not None:
+            self._post_hold[1].close()
+            self._post_hold = None
         if self.post_future is not None:
             result = await asyncio.wrap_future(self.post_future)
             if self.reason == "manual" and (

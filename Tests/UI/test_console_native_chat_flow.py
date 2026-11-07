@@ -6,6 +6,7 @@ import json
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -22,7 +23,7 @@ from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from Tests.fixtures.required_doubles import exploding_double
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI.app_factory import attach_chachanotes_db, persist_seeded_config
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.console_controller_stubs import stub_image_controller
 from Tests.UI.app_factory import _build_test_app as _build_production_app
@@ -229,10 +230,18 @@ def _build_console_send_test_app(*args, **kwargs):
     builds a real `ChatPersistenceService` from it), so every test here that
     drives a real send builds its app through this helper instead. Use
     `_build_test_app` directly for tests that are *about* the db-less shape.
-    See `attach_chachanotes_db` for why the attached DB is `:memory:`.
+    Native source capture needs file-backed SQL and canonical MCP sources.
+    Keep SQL unique per app and preserve these tests' provider-direct mode.
     """
+    kwargs.setdefault("user_data_dir", config_module.get_user_data_dir())
+    kwargs["isolate_databases"] = True
     app = _build_test_app(*args, **kwargs)
-    attach_chachanotes_db(app)
+    attach_chachanotes_db(
+        app, db_path=Path(app.local_workspace_db.db_path).parent / "chachanotes.sqlite"
+    )
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
+    app._test_prepare_console_send_sources = True
     return app
 
 
@@ -7362,6 +7371,7 @@ async def test_console_first_send_flag_switches_empty_state_to_quiet():
         assert "Connect a provider" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_accepted_send_records_first_send_flag():
     # Reuse the ready-provider send harness from
@@ -7388,13 +7398,52 @@ async def test_console_accepted_send_records_first_send_flag():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
-        console.query_one("#console-send-message", Button).press()
-        await _wait_for_reply(console, pilot)
+        import sys
+
+        runtime = console._console_runtime()
+        identity = config_module.current_config_identity()
+        expected = (
+            app.app_config,
+            runtime._chat_controller,
+            runtime._chat_store,
+            app,
+            config_module,
+        )
+        observed = []
+        code = type(runtime)._run_custodied_turn.__code__
+
+        def observe(frame, event, _arg):
+            if event == "call" and frame.f_code is code and not observed:
+                observed.append(frame.f_locals["first_send_source"])
+
+        sys.setprofile(observe)
+        try:
+            console.query_one("#console-send-message", Button).press()
+            await _wait_for_reply(console, pilot)
+        finally:
+            sys.setprofile(None)
+        assert len(observed) == 1 and observed[0][0] == identity
+        assert all(
+            actual is wanted for actual, wanted in zip(observed[0][1:], expected)
+        )
 
         onboarding = app.app_config.get("console", {}).get("onboarding", {})
         assert onboarding.get("first_send_completed") is True
+        runtime = console._console_runtime()
+        await asyncio.wait_for(asyncio.shield(runtime._first_send_task), 10)
+        assert runtime._first_send_pending_source is None
+        import tomllib
+
+        config_path = Path(config_module.current_config_identity()[1])
+        assert (
+            tomllib.loads(config_path.read_text())["console"]["onboarding"][
+                "first_send_completed"
+            ]
+            is True
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_failed_send_does_not_record_first_send_flag():
     """A FAILED first send must not set the one-time onboarding flag (task-182d)."""
@@ -9382,6 +9431,7 @@ async def test_console_sync_reconciles_hydrated_fork_eligibility(monkeypatch):
         assert not console.query_one(selector, Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_action_opens_modal():
     app = _build_test_app()
@@ -9400,6 +9450,7 @@ async def test_console_selected_message_save_as_action_opens_modal():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(

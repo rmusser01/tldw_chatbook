@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_profile_owned_path_inventory.py"
+  ],
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 51.295,
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/devsync-check_profile_owned_path_inventory.log",
+  "output_bytes": 122,
+  "qualification": "Production checkpoint announced stable; final before/after source receipt required."
+}

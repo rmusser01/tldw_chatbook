@@ -1,0 +1,17 @@
+{
+  "tldw_chatbook/Chat/console_ordinary_tree.py": {
+    "before": "dcbf11f72353588c9dab19da44c7c97e708a68749dc74c8421c123d4ac6f2d7c",
+    "after": "76305540965a1c0a9b8f7f5ea689da0cf8ea3931fabd03e0fefce6495ba000d0",
+    "ast_valid": true
+  },
+  "tldw_chatbook/Chat/console_configuration_preparation.py": {
+    "before": "7f8b2f2d4cd387b580687ab38524c5a9908877c164d51a6e2f79f03ff6b99738",
+    "after": "662f882fe0c10d3f38f5247693fa30bf5ca412f49a8de5c2d8264865d856af81",
+    "ast_valid": true
+  },
+  "tldw_chatbook/MCP/console_snapshot.py": {
+    "before": "cc0da119a3ce95686b7fb6c30dc8bd17f3fbe05602fdf6c55fd6df061b7ccb15",
+    "after": "1ed557ba3ed7adf6c77a7401d315914ad5023424beb694009c017d60ee71021b",
+    "ast_valid": true
+  }
+}

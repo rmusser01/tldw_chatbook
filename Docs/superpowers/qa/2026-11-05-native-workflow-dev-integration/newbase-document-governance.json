@@ -1,0 +1,30 @@
+{
+  "checks": [
+    {
+      "command": [
+        "scripts/check_backlog_task_files.py"
+      ],
+      "exit_code": 0,
+      "task_files": 6276
+    },
+    {
+      "command": [
+        "scripts/check_backlog_task_ids.py"
+      ],
+      "exit_code": 0,
+      "task_files": 6276,
+      "duplicates": 0,
+      "windows_compatible": true
+    },
+    {
+      "command": [
+        "scripts/check_adr_numbers.py"
+      ],
+      "exit_code": 0,
+      "decision_files": 310,
+      "duplicates": 0
+    }
+  ],
+  "source_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "qualification": "Observed complete command outputs; no elapsed-time or single-epoch aggregate claimed."
+}

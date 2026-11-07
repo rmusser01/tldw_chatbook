@@ -1,0 +1,30 @@
+{
+  "amendment_sha": "60998d03fbd3bc9893afe203131bca0c3ab7b20f865a51397c9e4e2a73b49819",
+  "proposal_sha": "06b5872dcc08115a5bd18a5ddaa0fd57480bc4af0f031663ffda7160a8135d64",
+  "paths": {
+    "backlog/decisions/285-native-phased-agent-workflows.md": {
+      "before": "1684c0eebe0f928f9cd764bfc2d63664c80bbbe5dd4def47dc0c261f8ab062c9",
+      "after": "728aaccd887c137896183eb5af0dbe869a8c584ec3fc0ca090a9197b976c2509",
+      "append_exact": true,
+      "index": "f239a7e050ad5ecb25c222bca6c3cb655dc1700a179a60a53dbab76cc2fe0094"
+    },
+    "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md": {
+      "before": "2f725b14804e51f4ec89146cbaad644fc83770943e855c0ef2633958f3766607",
+      "after": "050e97d8233806351deaed4bbe3903a6c6510d5799ccc4816b4bf9f52c61335a",
+      "append_exact": true,
+      "index": "cba03380757606d611deea4eb154349d1a36a4cacce47cbafc4883f38a4f352a"
+    },
+    "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md": {
+      "before": "036838eefd6bdd5502809d91f8f9c650cb92f72c73ae322863ff6f474392811e",
+      "after": "d4c6fd26f3e01fcd169ab70b94391125b2136c0de016e79ef512b859a66319df",
+      "append_exact": true,
+      "index": "6990870b62d98380a21532e6cac043b6a4a00b6c0ce04b36cab95a0e5c84f1ee"
+    },
+    "backlog/tasks/task-38531 - Schedule-approved-phases-through-the-existing-Console-runtime.md": {
+      "before": "0f03be90dc50b1e4a65814247f2db9a9dd251179e7d1f20ca5d8501f4adb941f",
+      "after": "8b3b0e436887fb2f6491642201bda911c6b7725f8ff5ce76ff1a1b3f701ba0ec",
+      "append_exact": true,
+      "index": "d08595e8b6d95f4b07da7c98ca502ecf32c812b526be7daca0c8b16ca86c89e4"
+    }
+  }
+}

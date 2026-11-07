@@ -1,0 +1,31 @@
+{
+  "captured_utc": "2026-11-05T06:48:13.716572+00:00",
+  "reviewed_code_head": "8fc02744869122f961cb92af0b069fccb7b7d6f2",
+  "final_scoped_review_sha256": "89efdf9c44c505ad309a0c9577b0e8b110efe42d654b72526cb2d546aaf8bf29",
+  "root_final_disclosure_audit_sha256": "ed5e572e6bfc01d91a381df4d12a2757fcce39488025152a55e59fd3422520cc",
+  "archive_index_sha256": "7dde30d540a30812b055d4e8e7e0046f7b729f066a3c2e2fce05d97cd786b94a",
+  "complete_rulings_sha256": "d28a2f434c4df5d320f044d1d40bcd7ab8f3c666a2f16b680a7719e96f8ccef4",
+  "frozen_ledger_sha256": "22f52b8e22845eace2d0b3230966f0a88ce512eee26235fbcbc53601e700748d",
+  "chronology": {
+    "records": 707,
+    "rulings": 434,
+    "nonindependent_contexts": 273
+  },
+  "all_ten_tasks_done_no_unchecked_acceptance_criteria": true,
+  "all8326_covering_python_hashes_still_current": true,
+  "original_staged61_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "original_protected279_verified": true,
+  "current_metadata_and_archive_navigation_local_links": 340,
+  "five_metadata_files_whitespace_check_exit": 0,
+  "final_targeted_case_count": 149,
+  "open_findings": {
+    "critical": 0,
+    "important": 0,
+    "minor": 1
+  },
+  "known_minor": "Unawaited ChatScreen._sync_native_console_chat_ui; origin/introduction/lifetime consequence unresolved; original and mounted recurrence retained.",
+  "historical_limits": "Adverse cohorts, Darwin-only physical evidence, composite source/live/cleanup epochs, dirty dependencies, inherited static/raw whitespace debt,5unpinned proposal identities, unavailable65560metadata and12earlydriverbodies remain qualified.",
+  "postcut_scope": "Only preauthorized mechanical audit/status/Git/cleanup; all substantive decisions in frozen ledger.",
+  "commit_scope": "Exact owned archive paths plus5canonical metadata files only; preserve unrelated worktree/index. Commit identity is provided by Git, avoiding selfhash recursion.",
+  "scratch_cleanup_condition": "Only this plan workspace after exact committed archive identities and staged61/protected279 are reverified; leave siblings/worktree intact."
+}

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.crypto import unwrap_recovery_bundle
-from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.validation import (
     validate_pull_pagination_state,
@@ -80,6 +79,8 @@ class SyncRestoreService:
         recovery_device_id: str | None = None,
         key_record_id: str | None = None,
     ) -> dict[str, Any]:
+        from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from tldw_chatbook.tldw_api import SyncV2Envelope
 

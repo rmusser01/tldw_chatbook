@@ -13,10 +13,38 @@ ROOT = Path(__file__).resolve().parents[2]
 CHAT = ROOT / "tldw_chatbook" / "Chat"
 PREPARATION = CHAT / "console_configuration_preparation.py"
 
-# Measured over tldw_chatbook/Chat/**/*.py (Attribute `X` + getattr(.., "X")):
-#   __code__ 60 -> 56, __defaults__ 28 -> 27, __kwdefaults__ 43 <- 44
-# (base 66155632ed -> head; console_configuration_preparation.py is the only file that moved).
+# backlog/decisions/285-native-phased-agent-workflows.md amends the 56/27/43 ceilings.
+# Counts cannot prove count-preserving substitutions or introspection outside this predicate.
+# Lower the test and ADR together on reductions; retire a row only at all zeros.
+# Increases and new listed owners require a fresh policy decision.
 PINS = {"__code__": 56, "__defaults__": 27, "__kwdefaults__": 43}
+OWNER_COUNTS = {
+    "archive_recovery/runtime.py": (11, 1, 1),
+    "chat_conversation_service.py": (2, 2, 4),
+    "console_activity_receipts.py": (1, 1, 1),
+    "console_agent_bridge.py": (9, 7, 9),
+    "console_agent_sources.py": (3, 3, 2),
+    "console_attention_preparation.py": (3, 3, 3),
+    "console_chat_controller.py": (23, 12, 18),
+    "console_configuration_preparation.py": (12, 4, 4),
+    "console_first_send_persistence.py": (1, 1, 1),
+    "console_fleet_attention.py": (1, 1, 1),
+    "console_fleet_wake.py": (1, 1, 1),
+    "console_hook_preparation.py": (3, 3, 3),
+    "console_ordinary_tree.py": (24, 11, 14),
+    "console_preparation_reads.py": (1, 1, 2),
+    "console_provider_gateway.py": (6, 3, 5),
+    "console_raw_cli_custody.py": (1, 1, 1),
+    "console_reference_preparation.py": (1, 1, 1),
+    "console_references.py": (1, 0, 0),
+    "console_runtime.py": (17, 13, 16),
+    "console_ssh_custody.py": (1, 1, 1),
+    "console_streaming_request.py": (1, 1, 1),
+    "console_workflow_preparation.py": (54, 24, 27),
+    "console_workflow_runs.py": (17, 8, 14),
+    "console_workflow_wave.py": (32, 26, 26),
+}
+ORDINARY_COUNTS = dict(zip(PINS, (19, 10, 17)))
 
 
 def _identity_attr(node: ast.AST) -> str | None:
@@ -34,23 +62,43 @@ def _identity_attr(node: ast.AST) -> str | None:
     return None
 
 
-def _counts() -> dict[str, int]:
-    counts = dict.fromkeys(PINS, 0)
-    for path in CHAT.rglob("*.py"):
+def _owner_counts(chat: Path) -> dict[str, dict[str, int]]:
+    owners = {}
+    for path in chat.rglob("*.py"):
+        counts = dict.fromkeys(PINS, 0)
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             name = _identity_attr(node)
             if name:
                 counts[name] += 1
-    return counts
+        owners[path.relative_to(chat).as_posix()] = counts
+    return owners
+
+
+def _counts() -> dict[str, int]:
+    owners = _owner_counts(CHAT)
+    return {attr: sum(counts[attr] for counts in owners.values()) for attr in PINS}
+
+
+def _check_census(chat, listed, ordinary, attr=None):
+    actual = _owner_counts(chat)
+    for name in [attr] if attr else PINS:
+        for owner, expected in listed.items():
+            count = actual.get(owner, {}).get(name, 0)
+            assert count == expected[name], (
+                f"{owner}: {name} is {count}, expected {expected[name]}"
+            )
+        count = sum(
+            counts[name] for owner, counts in actual.items() if owner not in listed
+        )
+        assert count == ordinary[name], (
+            f"ordinary: {name} is {count}, expected {ordinary[name]}"
+        )
 
 
 @pytest.mark.parametrize("attr", sorted(PINS))
 def test_chat_code_identity_references_do_not_rise(attr):
-    count = _counts()[attr]
-    assert count <= PINS[attr], (
-        f"Chat has {count} {attr} references (pin {PINS[attr]}); "
-        "signal stock collaborators explicitly instead of comparing code objects."
-    )
+    listed = {owner: dict(zip(PINS, counts)) for owner, counts in OWNER_COUNTS.items()}
+    _check_census(CHAT, listed, ORDINARY_COUNTS, attr)
 
 
 def _is_private(name: str) -> bool:
@@ -237,3 +285,45 @@ def test_is_stock_session_provider_accepts_only_the_stock_builder():
         )
     )
     assert not is_stock_session_provider(None)
+
+
+@pytest.mark.parametrize("attr", sorted(PINS))
+def test_identity_census_enforces_each_partition_and_reductions(tmp_path, attr):
+    listed = tmp_path / "listed.py"
+    listed.write_text(f"x.{attr}\n", encoding="utf-8")
+    ordinary = tmp_path / "ordinary.py"
+    ordinary.write_text(f"getattr(x, '{attr}')\n", encoding="utf-8")
+    owners = {"listed.py": {name: int(name == attr) for name in PINS}}
+    budget = {name: int(name == attr) for name in PINS}
+    _check_census(tmp_path, owners, budget)
+
+    listed.write_text(f"x.{attr}\nx.{attr}\n", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _check_census(tmp_path, owners, budget)
+    listed.write_text(f"x.{attr}\n", encoding="utf-8")
+    (tmp_path / "new.py").write_text(f"x.{attr}\n", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _check_census(tmp_path, owners, budget)
+    (tmp_path / "new.py").unlink()
+
+    listed.unlink()
+    with pytest.raises(AssertionError):
+        _check_census(tmp_path, owners, budget)
+    owners["listed.py"][attr] = 0
+    _check_census(tmp_path, owners, budget)
+    del owners["listed.py"]
+    _check_census(tmp_path, owners, budget)
+    ordinary.unlink()
+    with pytest.raises(AssertionError):
+        _check_census(tmp_path, owners, budget)
+    budget[attr] = 0
+    _check_census(tmp_path, owners, budget)
+
+
+@pytest.mark.parametrize("attr", sorted(PINS))
+def test_identity_census_rejects_growth_in_zero_valued_owner_dimension(tmp_path, attr):
+    (tmp_path / "listed.py").write_text(f"x.{attr}\n", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _check_census(
+            tmp_path, {"listed.py": dict.fromkeys(PINS, 0)}, dict.fromkeys(PINS, 0)
+        )

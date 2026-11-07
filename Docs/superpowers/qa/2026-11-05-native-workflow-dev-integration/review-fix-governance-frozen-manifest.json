@@ -1,0 +1,25 @@
+{
+  "base_head": "f4e72e54078413c35e01ea52607afe76283cc972",
+  "changes": [
+    {
+      "path": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "sha256": "54cf81377628bdcff19e0bc6ae6f6c715ff67ab3eb97568fd6ab6ea0619147fa"
+    },
+    {
+      "path": "backlog/docs/sqlite-private-owner-inventory.md",
+      "sha256": "f4c0b1c19b6d4c6465cfd5ee2c4c2b2b687c21fbb5605e2a875ba029f4777560"
+    },
+    {
+      "path": "Docs/Architecture/database-layer.md",
+      "sha256": "f4d03c9d70d08f01c5d8aa76caa50cc56cd07dc1d4e64a7dc15bedc8ac3b7839"
+    },
+    {
+      "path": "Docs/security/production-diagnostic-inventory.json",
+      "sha256": "9b7e31d8a7b0b5dc728a74163453ae1aae8bc218bee25e202b706af84b398d49"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-05-native-workflow-dev-integration/rulings.md",
+      "sha256": "623036e23a02c92c41e78781a3557a3cc0e1e34964371f6ff2fd6f1e04335798"
+    }
+  ]
+}

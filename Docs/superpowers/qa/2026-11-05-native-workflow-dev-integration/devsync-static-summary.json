@@ -1,0 +1,48 @@
+{
+  "base": "29592ecc9bf3856957a8d9b70a270795b8f4348d",
+  "checks": [
+    {
+      "check": "check_textual_worker_contract",
+      "exit_code": 0
+    },
+    {
+      "check": "check_profile_owned_path_inventory",
+      "exit_code": 0
+    },
+    {
+      "check": "check_timestamp_writers",
+      "exit_code": 0
+    },
+    {
+      "check": "check_markup_interpolation",
+      "exit_code": 0
+    },
+    {
+      "check": "check_schema_table_allowlist",
+      "exit_code": 0
+    },
+    {
+      "check": "check_index_plan_pins",
+      "exit_code": 0
+    },
+    {
+      "check": "check_persistent_diagnostic_inventory",
+      "exit_code": 0
+    },
+    {
+      "check": "check_ui_pr_gate_census",
+      "exit_code": 0
+    }
+  ],
+  "stable_inputs": true,
+  "source_before": {
+    "scope": "production py/sql/tcss, scripts py/tsv/txt/json, Docs/security json, pyproject.toml",
+    "files": 3228,
+    "sha256": "ce7b3c179c8ea960c55b95e0ddc421dac895ea3a750a9fd65bef85878c5ee817"
+  },
+  "source_after": {
+    "scope": "production py/sql/tcss, scripts py/tsv/txt/json, Docs/security json, pyproject.toml",
+    "files": 3228,
+    "sha256": "ce7b3c179c8ea960c55b95e0ddc421dac895ea3a750a9fd65bef85878c5ee817"
+  }
+}

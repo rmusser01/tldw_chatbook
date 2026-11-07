@@ -542,6 +542,10 @@ class ModelStep(SetupStep):
         discovery_state, probe_failure = model_discovery.classify_render(
             self, discovery_state, failure_category
         )
+        # Back can cancel this render while the visible status row mounts.
+        self._rendered_probe_failure = probe_failure
+        self._rendered_failure_category = failure_category
+        self._rendered_discovery_key = discovery_key
         model_discovery.show_provider_line(self, models, discovery_state)
         radio_set.set_class(not models, "-status")  # the box hugs a status line
         # A status is no Tab stop (06a drew it focused); loading keeps the stop.
@@ -619,11 +623,6 @@ class ModelStep(SetupStep):
             )
         if not self.is_attached:
             return
-        # TASK-21143: record the classified outcome for the trust chain
-        # (tracker "!", Model-step confirm gate, Summary override) before
-        # the retry-button lookup's early return can skip it.
-        self._rendered_probe_failure = probe_failure
-        self._rendered_failure_category = failure_category
         try:
             retry = self.query_one("#setup-model-retry", Button)
             # Retry shows for a failure a retry can fix (start the server, wait
@@ -633,7 +632,6 @@ class ModelStep(SetupStep):
             retry.set_class(not probe_failure or probe_failure in key_fix, "hidden")
         except NoMatches:
             return
-        self._rendered_discovery_key = discovery_key
         getattr(self.wizard, "_rebuild_progress", lambda: None)()  # review F4: '!' now
 
     @on(Button.Pressed, "#setup-model-retry")

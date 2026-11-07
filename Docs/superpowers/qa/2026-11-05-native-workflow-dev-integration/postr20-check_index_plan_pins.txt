@@ -1,0 +1,2 @@
+index plan pins: 333 index names declared under tldw_chatbook/DB, 333 census rows, 116 plan-pinned.
+check_index_plan_pins: OK

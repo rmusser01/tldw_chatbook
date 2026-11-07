@@ -479,6 +479,11 @@ class VirtualCliProvider:
         name = tool_id.split(":", 1)[-1]
         if name != VIRTUAL_CLI_TOOL_NAME:
             return ToolResult(ok=False, error=f"Unknown virtual CLI tool: {name}")
+        from ..Chat.console_ordinary_tree import current_ordinary_tree
+
+        ordinary = current_ordinary_tree()
+        if ordinary is not None:
+            ordinary.check_virtual_call(self, args)
         try:
             command, argv, authority = self._validated_args(args)
         except VirtualCliArgumentError as exc:
@@ -534,6 +539,15 @@ class VirtualCliProvider:
             return ToolResult.blocked(refusal, approval_decision=fact)
 
         def execute() -> ToolResult:
+            from .workflow_task_scope import check_task_provider
+
+            if ordinary is not None:
+                ordinary.check_virtual_call(self, args)
+
+            try:
+                check_task_provider(self, tool_id, dict(args))
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
             if not self._authority_is_valid(authority):
                 return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
             if not self._local_tools_are_enabled() or self._kill_switch_engaged():
@@ -544,6 +558,9 @@ class VirtualCliProvider:
                     if authority is None
                     else self._registries_by_alias[authority.alias]
                 )
+                from ..Chat.console_ssh_custody import bind_model_ssh
+
+                bind_model_ssh(self, authority, registry)
                 content = registry.execute(command, argv)
                 # Phase 3c (Task 17), recording Task 15's conclusion: the
                 # virtual CLI is executor-routed for remote roots (the
@@ -755,3 +772,55 @@ class VirtualCliProvider:
                 "Virtual CLI decision audit failed (exception_type={})",
                 type(exc).__name__,
             )
+
+
+# Original provider/parser bindings, read without invoking replacement descriptors.
+_NATIVE_VIRTUAL_CLASS = VirtualCliProvider
+_NATIVE_VIRTUAL_METHODS = tuple(
+    (name, value)
+    for name, value in vars(VirtualCliProvider).items()
+    if callable(value) or isinstance(value, (staticmethod, classmethod, property))
+)
+_NATIVE_VIRTUAL_IMPORTS = tuple(
+    (name, globals()[name])
+    for name in ("VirtualCliRegistry", "parse_request", "WorkspaceToolExecutor")
+)
+_NATIVE_VIRTUAL_FUNCTIONS = tuple(
+    (
+        fn,
+        fn.__code__,
+        fn.__defaults__,
+        fn.__kwdefaults__,
+        tuple((fn.__kwdefaults__ or {}).items()),
+        fn.__closure__,
+        tuple((cell, cell.cell_contents) for cell in fn.__closure__ or ()),
+    )
+    for fn in dict.fromkeys(
+        (
+            *(
+                value
+                for _name, value in _NATIVE_VIRTUAL_METHODS
+                if type(value).__name__ == "function"
+            ),
+            *(
+                value
+                for value in tuple(globals().values())
+                if type(value).__name__ == "function" and value.__module__ == __name__
+            ),
+        )
+    )
+)
+
+_NATIVE_VIRTUAL_CALLBACK_FIELDS = (
+    "_resolve_state",
+    "_local_tools_enabled",
+    "_kill_switch",
+    "_approval_callback",
+    "_is_session_approved",
+    "_persist_approval",
+    "_persist_arg_rule",
+    "_arg_rule_allows",
+    "_record_decision",
+    "_root_guard",
+    "_authority_scope",
+)

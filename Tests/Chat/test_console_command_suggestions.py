@@ -52,6 +52,7 @@ COMMANDS = [
     "/endpoint",
     "/compact",  # TASK-33621.4
     "/goal",
+    "/workflow",
 ]
 
 

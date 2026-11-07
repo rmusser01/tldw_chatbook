@@ -1,0 +1,386 @@
+{
+  "materialized_utc": "2026-11-05T21:08:15.560942+00:00",
+  "base": "29592ecc9bf3856957a8d9b70a270795b8f4348d",
+  "neutral_tree": "e7a9f61eb7180f196dc45485a670b6ab3c87308f",
+  "old_checkpoint": "4af7f934ff25b4aa823ddfa407d81ed1053428ee",
+  "paths": [
+    {
+      "path": ".github/workflows/derived-artifacts.yml",
+      "blob": "61d37df44aab81e5f860ba8f5ceb08bfdaaf8405",
+      "sha256": "e3fca7d0554e91215fc3001fc087762ef302cc55cb62f23f065a1b984235a5c8"
+    },
+    {
+      "path": ".github/workflows/perf-guard.yml",
+      "blob": "0376d9e60577146cf2841fe1a88f5d3c307ff8c5",
+      "sha256": "4999f38eec8ebc323dd3eff8f11aa13933e8962ae9067a12c1101f23daaf279f"
+    },
+    {
+      "path": "Tests/App/test_submit_library_ingest_job.py",
+      "blob": "de8628e5a7e7a74c6fdfe4d47bda96e90f1b2ae4",
+      "sha256": "c56f603306e30bc42f05936f36e4bd8d8081617950dbb099eb631ce9fd46b1a1"
+    },
+    {
+      "path": "Tests/Architecture/test_module_size_ratchet.py",
+      "blob": "6f65e139b9fc7854831f7d1f7b84422011752e6d",
+      "sha256": "8bc33ee39737ae20a65c24805c59c3d843c7e991a1c5fb4a69767f5c0ee0565f"
+    },
+    {
+      "path": "Tests/Architecture/test_screen_size_ratchet.py",
+      "blob": "1f9298c4685917640211800230ab5fb09fe7f46f",
+      "sha256": "83df29b8bf36027b9f681c16c998a8c788acafeb2c5ff7e7fa1daba58df1f368"
+    },
+    {
+      "path": "Tests/Architecture/test_zero_width_fold_guard.py",
+      "blob": "e8388a4155d84d49b12124d1b01db2f0184e855a",
+      "sha256": "8c9c35cf72d7950c06d0094e41617a643ec227aa37c524ce138e0708636cb3c1"
+    },
+    {
+      "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+      "blob": "b665c6dec4b1c12a9251c5f535bc0febc0562f6d",
+      "sha256": "d49d145fa07a7ed239578423137e82ebf69b4b83f081d59693914fecab8b1aca"
+    },
+    {
+      "path": "Tests/Chat/test_console_hook_admission.py",
+      "blob": "0a275af63bc7d3c9e6d72f1f31f7a82c9bed134b",
+      "sha256": "6613fb79fa1c3c6d23212add64adf01bf0ecbe80a5d39e36b3ee73b58350169e"
+    },
+    {
+      "path": "Tests/Chat/test_workspace_default_session.py",
+      "blob": "11c2a9003cdbc7d31b70b6bc5f4bb49b411f946a",
+      "sha256": "46eaaa02d1817f82934ba9b4f2931ee0605513c3cce0bf9280d0a854438742ae"
+    },
+    {
+      "path": "Tests/DB/test_connection_liveness_ping_gate.py",
+      "blob": "8c4141e35b1599883f9bf5a4ff341d02a85ebd56",
+      "sha256": "bb47e61983b50b60daf38809961bc5775c11f58e1250b82a8992c8699588e8f0"
+    },
+    {
+      "path": "Tests/Evals/test_orchestrator_offloop_writes.py",
+      "blob": "de48993a52d8b6f862f9b993a1a1da1cec45fdc9",
+      "sha256": "eaf4974a1767e779829e692c75aa8a8854a707d0d6438491960f494f8c565e04"
+    },
+    {
+      "path": "Tests/Performance/boot_budget_snapshots/boot_import_modules.txt",
+      "blob": "27e37d93dba5ba5e70539491961a2629e88861b0",
+      "sha256": "52076f9588869f31440134d46aaa65aebaad7edf8299ecab4a3815b363e99e37"
+    },
+    {
+      "path": "Tests/Performance/boot_budget_snapshots/preimport_payload.json",
+      "blob": "755ce30603b97a7e98ca68676d00eedbd58109a0",
+      "sha256": "254cfb5f35d7d53d3997b867390b8421a753529336616d7ff11dba5281ef60b2"
+    },
+    {
+      "path": "Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt",
+      "blob": "375c53e2f4175bc8adcf94acacb73a66438f2125",
+      "sha256": "0ae414d98b44644229dd3ca81d003c28b57aafee625184f7f742e562aff05eea"
+    },
+    {
+      "path": "Tests/Performance/test_app_import_weight.py",
+      "blob": "45a700cec8c553c768cbff39de79b9500a467e11",
+      "sha256": "543afacf1dcd59859f1e5cc344a2e3dc24ce4bce2cb52b544254d857e2a2fc13"
+    },
+    {
+      "path": "Tests/Performance/test_screen_preimport_payload_budget.py",
+      "blob": "ffd1a2116605585762fa18a6615bc3e089af5c86",
+      "sha256": "932dcba4adefd6ae66ea6e41b78ed1aefe83ef9c17c067f80b90601cd29600b1"
+    },
+    {
+      "path": "Tests/Performance/test_ui_latency_guardrails.py",
+      "blob": "21146fb63765874705500a021cd4eb888b422ec6",
+      "sha256": "83b6539e452142d620f8062353f211b95bd31283f2650745756bc2cc0c74442a"
+    },
+    {
+      "path": "Tests/Performance/test_ui_ready_module_census.py",
+      "blob": "27bc793740e36e1f873a058f1d921ca213e3b2af",
+      "sha256": "df753b409df901bcb3a6292de24ac3d448204c68ae26a1c9f214cdc1ec8bd1ea"
+    },
+    {
+      "path": "Tests/RAG_Search/test_keyword_leg_db_resolution.py",
+      "blob": "1d3d4defa5429c3c2f897695f99a2a390085056a",
+      "sha256": "75244ab5375e75ddbfb6db15ab37c006b5dc45fa82d6246bf609bc0c99939c2f"
+    },
+    {
+      "path": "Tests/UI/test_console_character_section_collapsed_render.py",
+      "blob": "ea879a2fd00f0e856f711b1dd06cc01a8275fb77",
+      "sha256": "546054d6dcb76a079334b38a4d55d0139e94cc142875820dec988e864026e3af"
+    },
+    {
+      "path": "Tests/UI/test_console_composer_state_restyle.py",
+      "blob": "627fec45e38f3bba6f4c351c2480c0d6e80c7480",
+      "sha256": "f5aa94214866645f0b7cafd91f33f20f24685d9f81df95ca47a5d5832d966df1"
+    },
+    {
+      "path": "Tests/UI/test_console_inspector_rail_deferral.py",
+      "blob": "73fdc1ddd92f6758a08a30c2c762e9ade6378145",
+      "sha256": "56604753e108e56924b9d95eb41485eb96b5e76823489752f587f9779c828f34"
+    },
+    {
+      "path": "Tests/UI/test_console_projection_reads_off_loop.py",
+      "blob": "0bb4cc37986e814db561a4ccf6f5a0671d1bf0d1",
+      "sha256": "38f5e8e624792108d4fe52d4c7998e6f526c93e99f3ef8fbc4567d8bc8e042a8"
+    },
+    {
+      "path": "Tests/UI/test_console_projection_restyles.py",
+      "blob": "66336d56c86b38760c5a3bb84e1b6f969e9ccdb7",
+      "sha256": "656743f213e1680d9bbe67b5c65ab6fbc21ff33afa0e18e9964414d40772902e"
+    },
+    {
+      "path": "Tests/UI/test_console_received_intent_feedback.py",
+      "blob": "209c75c25cb4d46ae37c1fa40e2efa00b89f07c1",
+      "sha256": "3e1841390ba8b40d00c95af8e79bca4073d72db8a22ea62ffe5aaab4cc24e2cf"
+    },
+    {
+      "path": "Tests/UI/test_console_send_acknowledgement.py",
+      "blob": "e996b7db2c50a67995cdbfa3afe1c1756a6dee4f",
+      "sha256": "dd823effba6096407dacce9cdc7cb39bad257cb86e7e385ddc0d506577ed2124"
+    },
+    {
+      "path": "Tests/UI/test_console_send_resend_guard.py",
+      "blob": "ff3300d43f9d7c00864e8d2e4560694f34efe6a3",
+      "sha256": "2c8ccca6127c8ae9763bf3f5fd2b851afdaddddad59be0b186265f4a835d3ad5"
+    },
+    {
+      "path": "Tests/UI/test_console_workspace_display_reads_off_loop.py",
+      "blob": "797f6826eb9ae8697c6082da73ecfdf9ea0cb829",
+      "sha256": "f11eda3e1da2a04664cc3547bfab6497b7515a0e4d38c7d22f27f7e008736cab"
+    },
+    {
+      "path": "Tests/UI/test_css_build_integrity.py",
+      "blob": "0361a83d830e0348e29d4aa664092075b9ea8afa",
+      "sha256": "47d2ce72bf7211ea0e71b2f61394964f7fbac87f572a1c41f4fb22bba3da10f9"
+    },
+    {
+      "path": "Tests/UI/test_destination_visual_parity_correction.py",
+      "blob": "e8591a2aa3f20feee4ab992ad1968f192e4636bc",
+      "sha256": "97a040007b002ea167974dbce43a45e3ee51197914085a9802c7f4bbc2be3bcf"
+    },
+    {
+      "path": "Tests/UI/test_library_file_notes_workspace.py",
+      "blob": "59fe39534b7ff3ccd3c2b8faf80cc9d99c7f0e24",
+      "sha256": "253f7930d3016b2462ea6afe2a43fcf162122b6b6a85237a1dc247949fb5b858"
+    },
+    {
+      "path": "Tests/UI/test_settings_agents_offloop_read.py",
+      "blob": "bb0c1e4f4c11548ec3eb580f56eb51e486310e47",
+      "sha256": "4cbc21ac1f2c35fd01251444bff77daa424b099d6359e3d192329c22077dafdb"
+    },
+    {
+      "path": "Tests/UI/test_settings_category_sweep.py",
+      "blob": "5ef62f0129c799aa244f87aa562e78d7cf8b1648",
+      "sha256": "569765f2bb3312124e4e2434e54b996112f793d8f182c9acc398906e943d93d6"
+    },
+    {
+      "path": "backlog/decisions/097-boot-budget-ratchets.md",
+      "blob": "a967377fea595ffede5047e1d75069c557fe7661",
+      "sha256": "b37d66f6bcd4a1141508064163d70dd3a32517189b825ee8f8681385f491f28f"
+    },
+    {
+      "path": "backlog/docs/lessons-console-wiring.md",
+      "blob": "3ab7340e8712b0f7ae085f2478153262ec3a495e",
+      "sha256": "200300b9c410ceaf1b971f02f2fe682a7f38c71f165efc79a49b9e2c2f930e36"
+    },
+    {
+      "path": "backlog/docs/lessons-testing-evidence.md",
+      "blob": "3ffc7b9e6a103457745dbc35a57bfc3e7a6e2a95",
+      "sha256": "8dabe80a7d7aaf1c458c1e66ee3e44fc74afd1f0b82222b118861ee630ffc5de"
+    },
+    {
+      "path": "backlog/docs/lessons-textual.md",
+      "blob": "b70edacabd8957e1cc5d46ccaf5dfb0b75522094",
+      "sha256": "de230e537ff035bbdd2f21f7314a5529db67112bba94a3ed240a957ce87f9890"
+    },
+    {
+      "path": "backlog/tasks/task-36511.1 - Console-left-rail-allocation-pass-restyles-for-up-to-250-ms-during-an-attach.md",
+      "blob": "e9dc8c2b814ba60fc5fdc0a5da153b7080a24f43",
+      "sha256": "9c1be70aace5fe927e97020017fa50d9407bae3a67b0c2b4be19f1abd66550b8"
+    },
+    {
+      "path": "backlog/tasks/task-36511.2 - Console-focus-restyles-and-the-control-bar-rail-state-build-hold-the-UI-thread-over-100-ms-under-load.md",
+      "blob": "30bfe949622702272152621bb661553e38e9239d",
+      "sha256": "f2abb2f1cc43766845eb444bf9390a9605ab9f408f4f0637d3c7a372a5165ad1"
+    },
+    {
+      "path": "backlog/tasks/task-36511.3 - Run-the-Console-compact-setup-gate-files-in-Perf-Guard.md",
+      "blob": "99840cefca4c4fadc3395881900c9844562284c0",
+      "sha256": "6e46ed50022bac3b6b724fc2ef450da8a93376b6d2681f76dc2f1df3354e8d1c"
+    },
+    {
+      "path": "backlog/tasks/task-36511.4 - Console-credential-readiness-poll-reads-cold-config-on-the-UI-loop.md",
+      "blob": "6b6470f624c47bc5c6200f57520ac7474a2cd123",
+      "sha256": "61abd617acf9f4a578e68cd5f17ecf6c5830b8de3eb6b01af951c87abfdb9162"
+    },
+    {
+      "path": "backlog/tasks/task-36511.5 - Console-first-mount-compose-and-screen-resume-CSS-pass-cost-150-420-ms-of-CPU.md",
+      "blob": "4084ec6dcad6719263e93eeb6670f389f18d95a7",
+      "sha256": "3b28f35b2f31df8839064e5954c6a3756d49aefd3d751849e4966e2a1bab578d"
+    },
+    {
+      "path": "backlog/tasks/task-38684 - Perf-Guard-does-not-run-when-only-tldw_chatbook-package-data-changes.md",
+      "blob": "48d71a3774f14891ab4fc141809621e209d39b8c",
+      "sha256": "f8bd375f55eb8f4a2458d8e9a7a47b2bb808a415b3218c78211739fcc96b393a"
+    },
+    {
+      "path": "backlog/tasks/task-38687 - Perf-Guard-s-destination-tour-fails-its-10-s-switch-budget-on-dev-pushes-and-PR-runs.md",
+      "blob": "e6cfb87bc0a2921a87cd2d9bfa23f2216f5b19e9",
+      "sha256": "83c7ae760ed5f7d7aaa1e519b98851f205986d9d8b904daa77397ffee943bed8"
+    },
+    {
+      "path": "backlog/tasks/task-38698 - Console-check-the-other-render-on-open-deferrals-for-the-paint-before-recompose-race-TASK-38650-fixed.md",
+      "blob": "f65865c7b8fd06fcff8e985ef37b0c3978600cfd",
+      "sha256": "29366e2540a29c2be8478e8254e236480076bff167685a06b461d34c9a7a4ea3"
+    },
+    {
+      "path": "backlog/tasks/task-38713 - Destination-visual-parity-tests-still-switch-Settings-categories-with-a-coordinate-click.md",
+      "blob": "6efa206b5058a0d0211a238c5a56b384cb8e9c9f",
+      "sha256": "1043b856265bcd048e0fddeff104287e095087ebcf4051ac8339e8793e14d972"
+    },
+    {
+      "path": "backlog/tasks/task-38714 - Audit-wrong-thread-closes-of-thread-affine-database-handles.md",
+      "blob": "8998bf6ae15a455267373278743faffa08d773b2",
+      "sha256": "0b13aabb76cabf5b36ddc5cb18f9133eb9aa71d2b108bb05f9e7abb63c006193"
+    },
+    {
+      "path": "backlog/tasks/task-38715 - File-Notes-Save-failed-and-Git-commit-error-stay-under-4-5-1-in-litestep-and-the-ANSI-themes.md",
+      "blob": "240e1170a2564d7f92b07d5f3645e9cdcadc0af0",
+      "sha256": "4ae426626c0773e8ac28e5e74c5c6de8c88b0d3eddb7dc1b8583a6497203a27d"
+    },
+    {
+      "path": "backlog/tasks/task-38718 - Console-send-path-reds-in-the-resend-guard-received-intent-and-hook-admission-tests.md",
+      "blob": "a9ffff163aa8d5d8d24326e9af41f4ca81f9f4ed",
+      "sha256": "42f53a41d08e284bf05e8107aa0d27e467539259cc29fe2d671d0a0185898af0"
+    },
+    {
+      "path": "backlog/tasks/task-38720 - Workspace-default-session-provider-recovery-test-is-red-on-dev-its-host-stand-in-has-no-_screen.md",
+      "blob": "90be0b1602619eff40d34e32b3fa38b3663f3821",
+      "sha256": "787f6dac81844db2202b4b0baf72757d6d345861eef72ffbd43fc660dce6b89e"
+    },
+    {
+      "path": "backlog/tasks/task-38740 - Audit-every-Button-rule-that-can-leave-a-label-zero-content-width-in-a-grid.md",
+      "blob": "2f9bbe43c5de549bca2a058fc8396c1a86ac2a08",
+      "sha256": "00ae3102cc2f76c21f2a38dac7a7d38ec8a1b3231669ace9f983a611ef8699da"
+    },
+    {
+      "path": "backlog/tasks/task-38765 - Perf-Guard-boot-budget-ratchets-red-on-dev-after-3396.md",
+      "blob": "adfa9772a6f55758b72637652d240cb0fa525a24",
+      "sha256": "56260d2b5f7329e92983f556c3d09eb46e2c689b46ce7255a12cc49f1790b11b"
+    },
+    {
+      "path": "scripts/check_ui_pr_gate_census.py",
+      "blob": "75f8daf215bcc71e2afd4ac43590b5f392939bcc",
+      "sha256": "e4672aa6ff752cf2893adbb8b05b9b88687409bc229b72a3f07d6a57c4a4e333"
+    },
+    {
+      "path": "scripts/ui_pr_gate_census.txt",
+      "blob": "470bf291c53fbc9d1634cf2069ca49dae11b5b75",
+      "sha256": "cc48ccdb618c438a92f373b828c715afd68eba100266af47be0fe65fc2667bdf"
+    },
+    {
+      "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
+      "blob": "e84c802c507805b8761d29ed6c9319c3b4c3fb24",
+      "sha256": "56494e065402faa1827e925f5b6ca203f2405a73dad57e1d4cdceeba926f1740"
+    },
+    {
+      "path": "tldw_chatbook/Evals/eval_orchestrator.py",
+      "blob": "8851d758a191a33f996ffd5c1d0f0c8473096626",
+      "sha256": "e5cd758cf68e0c6679f8131ebbac1dfd9de596c9954adca1a92babee619b5a48"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/db_connection_pool.py",
+      "blob": "21f441283cd8d63c83b243da43dea2c113aa1111",
+      "sha256": "d6637d375042fb6d8a5ba13705cbde28e44ea9d9570f2f82be62fbebba6ff053"
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "blob": "a7f6f64793dc91d761f3bd57352b7acf9c1c9184",
+      "sha256": "2aaae921b334c94eeecc287567bbd6637476f0f701ed63e3e18ba437097f1973"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/left_rail.py",
+      "blob": "b313f397e635d2cbe8f48fcb341ba7063ac81b01",
+      "sha256": "e0e09d834dc61e4440a94c3bad41a03b2197fbfadbfa671bce1ea373248264d1"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/send_acknowledgement.py",
+      "blob": "019af960aaae19ab868426339f472b2a5050f716",
+      "sha256": "78917e8aeb7320472d324e121380bfd59a4119ccf2861e320f524cc01bc2e446"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+      "blob": "075bed80dfc845b490c1625254ed298d95f9c0d8",
+      "sha256": "af6ce2789b095c6da1fa94d6db9ca301248a2826858a039f4faad168bcd7a801"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "blob": "c40bb205b61532e35e8a66ebe32a3dec999af9dd",
+      "sha256": "997c1af789274e9ff8a867eaa5463a950c86b2b4b0440c47938357eb9c222b5f"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_bounded_section.py",
+      "blob": "463cd518b0faccfc51bf640e384213e92231f5fc",
+      "sha256": "1995eacfa9bc13e753428edd40960db64f76ef9ec406599a2ef7d56b2fd62433"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+      "blob": "a23052badc20e3318de177696ade9b73abf71a88",
+      "sha256": "ea79d0b1c68b79474ae983cefdced4ec93a747805482e25205daa3881cb99328"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_inspector_section.py",
+      "blob": "25562b9f3d03a65817b0a81d0d0ff05d293361f7",
+      "sha256": "78c7a7732cb325a91d9b86585968af426345d046c9dc52262cae7aada1e1ca36"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_run_inspector.py",
+      "blob": "3e6115c2fceb0116be65f2f84f599349c9368e12",
+      "sha256": "0ef775bd4c58e71ac856c461a193ba8d45bea29829d8cb32aa8ff47d5c69d011"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
+      "blob": "48f20b3c1f304569dee466961e166d52aff73b58",
+      "sha256": "3c086bb7bf0371240dcab3e5d41befa401771bb50e6a2e759610896ea8c09a1d"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/settings_agents_panel.py",
+      "blob": "c6f10512e34bbba1e2aabc5d824a2c213c5e8005",
+      "sha256": "c828259eb761ab4d47d22b4d5eeb208e165f4ee8123e56161a6f04ac372de818"
+    },
+    {
+      "path": "tldw_chatbook/__init__.py",
+      "blob": "d15afdd98fd26d0f990173e884e2913c6e0c0e61",
+      "sha256": "09a570494cb77d5deeabd440ac9ec6188ee591e89bb8bcc6a80209fddd2ac50f"
+    },
+    {
+      "path": "tldw_chatbook/app_ingest_queue.py",
+      "blob": "68bf5f00b6b4a9b83584b1d4db7cb5f0360815b5",
+      "sha256": "eca88f6ea84fc0966cac46a5180514df93eff7fc50ee045e55cd2c5f9695875d"
+    },
+    {
+      "path": "tldw_chatbook/css/components/_agentic_terminal.tcss",
+      "blob": "14b86ec09553f8bd63bdc0545cd293b68d686d0f",
+      "sha256": "77c60883323ab29b656ac688a75e8925e47ac882b2b48be53e75d4306286ea2a"
+    },
+    {
+      "path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+      "blob": "616720aa052e402ff3d8349210e9e35090d30ca1",
+      "sha256": "abe24d02803684115f7d83799b068e28b68643f015d29c8c8317b5744fb2f442"
+    }
+  ],
+  "preserved_fix_and_fixture_paths": {
+    "Tests/Agents/test_workflow_run_service.py": "d8e58410df5cb7f752c8713278cf16dfd235d27708cea1c57ab03fb9e24e2f74",
+    "Tests/Backup_Recovery/test_workflow_dev_integration.py": "c3aad13fafa4694f4b7c06a603b2360c98b449709d2ba58d73aff1d1f8a6d150",
+    "Tests/Chat/test_console_ordinary_tree.py": "59ed82eb76fd6d641100cf177d7240550fffa1f8344e0d26b556b5e829bd2902",
+    "Tests/Chat/test_console_reference_custody.py": "f6e60ecf8a9022ff8844f38cb980e3dd9e504399138b911e3e5c04adaf7f7253",
+    "Tests/Chat/test_console_skill_substitution.py": "806897c97938e93f70ab1592aa05da2bebc4ca124db40f225b5b8cd92551a375",
+    "Tests/Plugins/test_plugin_context.py": "cd4cae996cfd8f46f63e35bf03c1221b839f4795385ccc27c39d96e343e51c23",
+    "tldw_chatbook/Agents/hooks_v2/command_executor.py": "5ef0c549b253b7c11f3c62708dde3825a5daa66833dac374a473eb9eabd8156d",
+    "tldw_chatbook/Agents/workflow_run_service.py": "7a2ab650fdae4f45c95f4a7ca9dcdf985bafa7c2505996ff4fabdb396d7726bb",
+    "tldw_chatbook/Chat/console_agent_sources.py": "f616a586a0d62367d99bf9afd1c116305f44f7a1a8da291ff4431b75af27536c",
+    "tldw_chatbook/Chat/console_chat_controller.py": "0c9583d2510717cc03f6ee10fabc8166fd11f1cbf117b82425b51661fa02b978",
+    "tldw_chatbook/Chat/console_plugin_context.py": "f45d8320935bc2140ae930ba37e8ac06a017d12626297930df1e5f48fe9840f8",
+    "tldw_chatbook/Chat/console_reference_preparation.py": "14d386a0ab20dc931b72f42c6572b324a1f63a787e94693fae6a1b394e72aad4",
+    "tldw_chatbook/DB/private_sqlite.py": "0cb314ed6cf3ecce4c5a94d9448a79b512e9d277ce7073a58edf87559e7af103",
+    "tldw_chatbook/DB/recovery_workflow_schema.py": "8acdf04fb95566b0185812020bc7a361a5e34a54699abbd28cad23a6b8f71dc1"
+  },
+  "pending_approved_new_paths": [],
+  "process_gate": "Source writer acknowledged no active pytest/helper; root process inventory also found none."
+}

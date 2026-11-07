@@ -59,6 +59,7 @@ class PreparedHookCall:
     dependency_requirements: tuple[str, ...] = ()
     pending_scope: object | None = field(default=None, compare=False, repr=False)
     pending_context: tuple[str, ...] = ()
+    host_scope: object | None = field(default=None, compare=False, repr=False)
 
 
 class HookPreparationError(RuntimeError):
@@ -85,6 +86,7 @@ def _prepare_steps(event, engine, definition, *, defer_context=False):
     original_bytes = freeze_candidate(original)
     identity = definition_digest(engine)
     scope = engine.begin_event(event)
+    scope.retain_host()
     outcomes = []
     effect_events = []
     candidate = original
@@ -150,12 +152,14 @@ def _prepare_steps(event, engine, definition, *, defer_context=False):
                 if defer_context
                 else ()
             ),
+            scope if defer_context else None,
         )
         retained = defer_context
         return prepared
     finally:
         if not retained:
             scope.close()
+            scope.host_done()
 
 
 async def prepare_tool(
@@ -240,6 +244,7 @@ class ToolHookRun:
         self.context_owner = context_owner
         self.containing_hook = containing_hook
         self._prepared = {}
+        self._post_holds = {}
         self._event_definitions = {}
         self._post_installed = set()
         self._preaccepted = set()
@@ -349,6 +354,10 @@ class ToolHookRun:
                 current=lambda: self._current(event),
                 additional_rows=self._accepted_rows + rows,
             )
+        from .engine import native_outcome_current
+
+        if not native_outcome_current(event, outcome):
+            raise HookPreparationError("tool hook source changed during acceptance")
         self._accepted_rows.extend(rows)
         self._rendered[event.event_id] = tuple(rows)
 
@@ -454,6 +463,36 @@ class ToolHookRun:
         final_call = replace(
             call, args=json.loads(prepared.final_arguments), raw_arguments=""
         )
+        holds = {}
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+        try:
+            for name in (
+                ("PostToolUse", "PostToolUseFailure")
+                if current_ordinary_tree() is not None
+                else ()
+            ):
+                data = {
+                    "tool_args": final_call.args,
+                    "status": "failed" if name == "PostToolUseFailure" else "success",
+                    "is_error": name == "PostToolUseFailure",
+                    "result": {"content": None, "error": None},
+                }
+                if name == "PostToolUseFailure":
+                    data["reason"] = "execution_failed"
+                event = self._event(name, prepared.definition, data)
+                scope = self.engine.prehold_event(event)
+                if scope is not None:
+                    holds[name] = (event, scope)
+            self._post_holds[prepared.event.event_id] = holds
+        except BaseException:
+            for _event, scope in holds.values():
+                scope.close()
+            if prepared.pending_scope is not None:
+                prepared.pending_scope.close()
+            if prepared.host_scope is not None:
+                prepared.host_scope.host_done()
+            raise
         self._prepared[id(final_call)] = (final_call, prepared)
         return final_call
 
@@ -535,11 +574,21 @@ class ToolHookRun:
                 stage_context=self._stage_context,
             )
             self.checkpoints.accept(token, prepared.outcome)
+            if not self.engine.effects_current(prepared.event, prepared.outcome):
+                raise HookPreparationError("tool hook source changed during checkpoint")
             self._preaccepted.add(prepared.event.event_id)
             self.checkpoints.assert_next_input_allowed(
                 self.run_id,
                 required_handler_ids=self.requirements_for(prepared.definition),
             )
+            if prepared.host_scope is not None:
+                prepared.host_scope.host_done()
+                for key, (retained_call, value) in tuple(self._prepared.items()):
+                    if value.host_scope is prepared.host_scope:
+                        self._prepared[key] = (
+                            retained_call,
+                            replace(value, host_scope=None),
+                        )
         return prepared.definition
 
     def install_result(self, call, result):
@@ -547,6 +596,11 @@ class ToolHookRun:
             getattr(result, "dispatch_state", None) is None
             and result.outcome == "blocked"
         ):
+            prepared = self._lookup(call)
+            for _event, scope in self._post_holds.pop(
+                prepared.event.event_id, {}
+            ).values():
+                scope.close()
             return
         prepared = self._lookup(call)
         if prepared.event.event_id in self._post_installed:
@@ -583,9 +637,16 @@ class ToolHookRun:
                 event = self._event(name, prepared.definition, event_data)
             events.append(event)
         planned = []
+        held = self._post_holds.pop(prepared.event.event_id, {})
         # Install BOTH events before any work can complete or publish a result.
         for event in events:
-            scope = self.engine.begin_event(event)
+            original = held.pop(event.event, None)
+            if original is None:
+                scope = self.engine.begin_event(event)
+            else:
+                original_event, scope = original
+                event = original_event.model_copy(update={"data": event.data})
+                self.engine.consume_preheld(scope, event)
             plans = self.engine.plan_handlers(scope, event)
             required = tuple(
                 plan.handler_id for plan in plans if plan.explicit_required
@@ -619,6 +680,8 @@ class ToolHookRun:
                     raise
                 return
             planned.append((event, scope, plans, token))
+        for _event, scope in held.values():
+            scope.close()
         if input_failure:
             for _event, scope, _plans, token in planned:
                 self.checkpoints.fail(token, "hook input too large")
@@ -672,6 +735,7 @@ class ToolHookRun:
         )
         rows = []
         if self.lifecycle is not None:
+            self.lifecycle.context.refresh_sources(self.run_id)
             rows.extend(self.lifecycle.context.blocks(self.run_id, "model"))
         for event, outcome in self.checkpoints.drain_context(self.run_id):
             if event.event not in {"PreToolUse", "PostToolUse", "PostToolUseFailure"}:
@@ -690,9 +754,19 @@ class ToolHookRun:
                 self.run_id, terminal=True, should_cancel=self.should_cancel
             )
         finally:
+            hosts = set()
             for _call, prepared in self._prepared.values():
                 if prepared.pending_scope is not None:
                     prepared.pending_scope.close()
+                if prepared.host_scope is not None:
+                    hosts.add(prepared.host_scope)
+            for scope in hosts:
+                scope.host_done()
+            for holds in self._post_holds.values():
+                for _event, scope in holds.values():
+                    scope.close()
+            self._post_holds.clear()
+            self._prepared.clear()
             if self.lifecycle is not None:
                 self.lifecycle.close_scope(self.run_id)
             else:

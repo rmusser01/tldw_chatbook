@@ -1,0 +1,25 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/UI/test_css_build_integrity.py",
+    "Tests/UI/test_css_bundle_sync_guard.py",
+    "Tests/UI/test_design_token_governance.py",
+    "Tests/UI/test_component_pattern_governance.py",
+    "Tests/Architecture/test_zero_width_fold_guard.py",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-newbase-style-fold"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 124,
+  "elapsed_seconds": 240.9946981249377,
+  "source_file_count": 9109,
+  "before_sha256": "6135b8861d91859f7a3367fa5c0c41e1e4ec051a067c0707c74080f0a2b089c7",
+  "after_sha256": "6135b8861d91859f7a3367fa5c0c41e1e4ec051a067c0707c74080f0a2b089c7",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-style-fold.log"
+}

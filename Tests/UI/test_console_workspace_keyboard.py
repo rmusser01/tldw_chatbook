@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Button
 
@@ -9,9 +11,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _wait_for_workspace_switcher_modal
 from tldw_chatbook.Widgets.Console import ConsoleWorkspaceSwitcherModal
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_w_opens_workspace_switcher() -> None:
     """The switcher must be reachable without the mouse."""
@@ -21,7 +25,8 @@ async def test_alt_w_opens_workspace_switcher() -> None:
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         await pilot.press("alt+w")
-        await pilot.pause(0.2)
+        async with asyncio.timeout(2.0):
+            await _wait_for_workspace_switcher_modal(host, pilot)
         assert isinstance(host.screen_stack[-1], ConsoleWorkspaceSwitcherModal)
         await pilot.press("escape")
         await pilot.pause(0.1)

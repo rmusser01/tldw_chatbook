@@ -1,0 +1,61 @@
+{
+  "commands": [
+    {
+      "command": [
+        "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/bin/python3.12",
+        "tldw_chatbook/css/build_css.py"
+      ],
+      "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+      "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+      "exit_code": 0,
+      "elapsed_seconds": 25.974857416935265,
+      "log": "dev-sync-css-build.log"
+    },
+    {
+      "command": [
+        "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/bin/python3.12",
+        "tldw_chatbook/css/check_bundle_sync.py"
+      ],
+      "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+      "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+      "exit_code": 0,
+      "elapsed_seconds": 13.387570625171065,
+      "log": "dev-sync-css-sync.log"
+    }
+  ],
+  "changed_generated_sheets": [],
+  "before": {
+    "tldw_chatbook/css/screen_agentic_library.tcss": "ee4e526e86352582e840e414ae5279c137642f26a18884af4a55b18e45186de0",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "453b9003c2af8fbf29740d90b947ab7305c503b7f435a1f416994cc05dad935d",
+    "tldw_chatbook/css/screen_css_scoped.tcss": "05c8d2e7f6faa755c93eb2fb0c076305cec0f9e2a07ba4303c5144c88d90d514",
+    "tldw_chatbook/css/screen_css_self.tcss": "5fda068f8d90a08d77619e6dd2df33dcf40f1902371a2d78c40d002b4e06f9f0",
+    "tldw_chatbook/css/screen_feature_evals.tcss": "e27db66a6e48bb4cafdc18dc238fb46b9a1178ac897f3901f4c49844df4214b7",
+    "tldw_chatbook/css/screen_feature_plugins.tcss": "965922ef6331c939e802c0dc78ddd72618931f585a94e46a2f829fdcd95f96cc",
+    "tldw_chatbook/css/screen_feature_roleplay.tcss": "23a0345b37ab093b0bcb2fbf344a137d258743fc2335e7175462e9443b3f195b",
+    "tldw_chatbook/css/screen_feature_scheduling.tcss": "d845105220a3c2d3a3ba64464b381cefa2056585f555315f17f7e058a054a69a",
+    "tldw_chatbook/css/screen_feature_watchlists.tcss": "8f5cfe839b66658bb2b21487354ed9ea48cb7773b55d8790d26cbd7397b0af17",
+    "tldw_chatbook/css/screen_feature_workflows.tcss": "90296748c6810fb7bb9ed8eb9d0365b6c0f8a0085d29dbaaf65416d869d341b7",
+    "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss": "bad54624eb8952a54083533ed075e1bef62b912467669ac87a742112735606ec",
+    "tldw_chatbook/css/screen_modal_file_notes_history.tcss": "3dfbca26bf4f3b51b6964b76f7a019518f262b1610a9f0ee0d5fbfaaed0aa552",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "abe24d02803684115f7d83799b068e28b68643f015d29c8c8317b5744fb2f442",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "33c76b1b0ee46c5dc888cd485bae7bb27077fac8ee3dbf1384cd345e0dc5b10f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "1ac3a50a4234decf24fa13dca61e7b9a1d67e04a3081a16af84fc1759e094afc"
+  },
+  "after": {
+    "tldw_chatbook/css/screen_agentic_library.tcss": "ee4e526e86352582e840e414ae5279c137642f26a18884af4a55b18e45186de0",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "453b9003c2af8fbf29740d90b947ab7305c503b7f435a1f416994cc05dad935d",
+    "tldw_chatbook/css/screen_css_scoped.tcss": "05c8d2e7f6faa755c93eb2fb0c076305cec0f9e2a07ba4303c5144c88d90d514",
+    "tldw_chatbook/css/screen_css_self.tcss": "5fda068f8d90a08d77619e6dd2df33dcf40f1902371a2d78c40d002b4e06f9f0",
+    "tldw_chatbook/css/screen_feature_evals.tcss": "e27db66a6e48bb4cafdc18dc238fb46b9a1178ac897f3901f4c49844df4214b7",
+    "tldw_chatbook/css/screen_feature_plugins.tcss": "965922ef6331c939e802c0dc78ddd72618931f585a94e46a2f829fdcd95f96cc",
+    "tldw_chatbook/css/screen_feature_roleplay.tcss": "23a0345b37ab093b0bcb2fbf344a137d258743fc2335e7175462e9443b3f195b",
+    "tldw_chatbook/css/screen_feature_scheduling.tcss": "d845105220a3c2d3a3ba64464b381cefa2056585f555315f17f7e058a054a69a",
+    "tldw_chatbook/css/screen_feature_watchlists.tcss": "8f5cfe839b66658bb2b21487354ed9ea48cb7773b55d8790d26cbd7397b0af17",
+    "tldw_chatbook/css/screen_feature_workflows.tcss": "90296748c6810fb7bb9ed8eb9d0365b6c0f8a0085d29dbaaf65416d869d341b7",
+    "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss": "bad54624eb8952a54083533ed075e1bef62b912467669ac87a742112735606ec",
+    "tldw_chatbook/css/screen_modal_file_notes_history.tcss": "3dfbca26bf4f3b51b6964b76f7a019518f262b1610a9f0ee0d5fbfaaed0aa552",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "abe24d02803684115f7d83799b068e28b68643f015d29c8c8317b5744fb2f442",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "33c76b1b0ee46c5dc888cd485bae7bb27077fac8ee3dbf1384cd345e0dc5b10f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "1ac3a50a4234decf24fa13dca61e7b9a1d67e04a3081a16af84fc1759e094afc"
+  }
+}

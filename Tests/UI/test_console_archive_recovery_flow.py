@@ -25,6 +25,7 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook import config
 from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
@@ -114,6 +115,7 @@ async def mounted_recovery(
     search_arguments=None,
     direct=True,
     gateway_override=None,
+    archive_only=False,
 ):
     services, target_id, db = recovery_stores
     message_id = db.add_message(
@@ -126,8 +128,13 @@ async def mounted_recovery(
     db.set_conversation_active_leaf(target_id, message_id)
     if prepare is not None:
         prepare(services, target_id, db)
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     _configure_native_ready_console(app)
+    # This fixture supplies its own completed configuration, so select the
+    # original local permission store before any admitted producer borrows it.
+    assert app.unified_mcp_service.permission_store is not None
 
     async def empty_skill_context(**_kwargs):
         return {"available_skills": []}
@@ -179,7 +186,9 @@ async def mounted_recovery(
         provider_gateway=gateway,
         agent_runtime_enabled=True,
         agent_bridge=bridge,
-        library_provider_factory=lambda context: (
+        library_provider_factory=None
+        if archive_only
+        else lambda context: (
             LibraryToolProvider(
                 LocalLibraryToolService(
                     conversation_service=app.local_chat_conversation_service
@@ -209,6 +218,7 @@ async def mounted_recovery(
             console._console_agent_bridge = bridge
 
             def configuration(sid):
+                session = next(item for item in store.sessions() if item.id == sid)
                 captured = _execution_configuration(
                     sid,
                     direct=direct,
@@ -218,6 +228,11 @@ async def mounted_recovery(
                 )
                 return replace(
                     captured,
+                    # Detached callers may omit this optional ceiling. In that
+                    # case the archive issuer uses the real executed SQL policy.
+                    library_policy_maximum=None
+                    if archive_only
+                    else session.library_policy_holder.snapshot,
                     provider_selection=replace(
                         captured.provider_selection, explicit_model="gpt-4o"
                     ),
@@ -1909,3 +1924,575 @@ async def test_stock_received_send_keeps_exact_recovery_user_proof(route, monkey
         case.probe.release.set()
         assert await _until(lambda: record.request is not None, 15)
         assert record.request.configuration.recovery_user_origin is proof
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "direct,archive_only", [(True, False), (False, False), (True, True)]
+)
+async def test_ordinary_archive_catalog_binds_only_the_original_native_capability(
+    recovery_stores, tmp_path, monkeypatch, direct, archive_only
+):
+    from Tests.Agents.test_archive_recovery_tools import admitted
+    from tldw_chatbook.Agents.library_rag_tool_provider import RAG_TOOL_NAME
+    from tldw_chatbook.Agents.tool_catalog import RECOVERY_RESERVED_TOOL_NAMES
+    from tldw_chatbook.Chat.archive_recovery.runtime import ArchiveRecoveryRuntime
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+    # An outstanding native model-requested confirmation keeps the original
+    # worker, provider, authority and registry alive throughout these cuts.
+    async with mounted_recovery(
+        recovery_stores,
+        tmp_path,
+        monkeypatch,
+        direct=direct,
+        entry="agent",
+        archive_only=archive_only,
+    ) as rig:
+        (tree,) = rig.owner._ordinary_turns
+        assert tree.footprint.opaque
+        with rig.owner.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as other:
+            assert other is None
+        (registry,) = (
+            r for r in tree.catalogs if r._archive_recovery_provider is not None
+        )
+        if not direct:
+            assert tree.library_maximum == {RAG_TOOL_NAME}
+            rag_id, rag_provider = registry.resolve_owner_for_name(RAG_TOOL_NAME)
+            assert rag_id == f"library:{RAG_TOOL_NAME}"
+            assert type(rag_provider) is LibraryRagToolProvider
+        provider = registry._archive_recovery_provider
+        assert provider._issuer is rig.recovery
+        assert provider.authority.turn_id in rig.owner._turn_custody
+        for name in RECOVERY_RESERVED_TOOL_NAMES:
+            assert registry.resolve_owner_for_name(name) == (
+                f"archive_recovery:{name}",
+                provider,
+            )
+            tree.check_catalog_call(registry, name, provider)
+        other_runtime = ArchiveRecoveryRuntime(rig.app)
+        other_runtime.is_answerable = lambda sid: sid == rig.source.id
+        for runtime in (rig.recovery, other_runtime):
+            other_provider = admitted(runtime, sid=rig.source.id)
+            assert (
+                other_provider
+                and other_provider.authority.turn_id != provider.authority.turn_id
+            )
+            try:
+                with pytest.raises(RuntimeError, match="ordinary archive"):
+                    tree.recovery.check_provider(tree, other_provider, registry)
+            finally:
+                await runtime.release(other_provider.authority)
+        calls = []
+        with monkeypatch.context() as edits:
+            edits.setattr(provider, "build_closures", lambda: calls.append("closures"))
+            with pytest.raises(RuntimeError, match="ordinary archive"):
+                tree.recovery.check_provider(tree, provider, registry)
+        with monkeypatch.context() as edits:
+            edits.setattr(provider, "load_schema", lambda _: calls.append("schema"))
+            with pytest.raises(RuntimeError, match="ordinary archive"):
+                tree.check_catalog_call(
+                    registry, "request_conversation_restore", provider
+                )
+        assert calls == [] and rig.db.get_conversation_by_id(rig.target_id)["archived"]
+        await click(rig, "#recovery-cancel")
+        await rig.turn
+        await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(tree.retired)), 15)
+        assert tree.retired.done()
+
+
+@pytest.mark.parametrize("cut", ["constructor", "capture", "declarations"])
+def test_archive_owner_refuses_changed_definitions_before_construction(
+    monkeypatch, cut
+):
+    from tldw_chatbook.Agents import archive_recovery_tool_provider as descriptor
+    from tldw_chatbook.Chat.archive_recovery import runtime as archive
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    owner = ConsoleRuntime(SimpleNamespace())
+    calls = []
+
+    def foreign(*args, **kwargs):
+        calls.append(cut)
+        raise AssertionError("replacement archive constructor or selector executed")
+
+    if cut == "constructor":
+        monkeypatch.setattr(archive, "ArchiveRecoveryRuntime", foreign)
+    elif cut == "capture":
+        monkeypatch.setattr(
+            archive.OrdinaryRecoverySelection, "capture", classmethod(foreign)
+        )
+    else:
+        monkeypatch.setattr(
+            descriptor, "_ORDINARY_DECLARATIONS", SimpleNamespace(), raising=False
+        )
+    with pytest.raises(RuntimeError, match="ordinary archive"):
+        owner.ensure_archive_recovery()
+    assert calls == [] and owner._archive_recovery is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cut",
+    [
+        "proof",
+        "owned-proof",
+        "package-after-preclaim",
+        "authority-getter",
+        "capture-code",
+        "eligibility",
+        "followup",
+        "closure",
+        "dispatch",
+    ],
+)
+async def test_original_archive_receivers_refuse_substitution_before_effect(
+    recovery_stores, tmp_path, monkeypatch, cut
+):
+    import sys
+    from contextlib import closing
+    from inspect import unwrap
+    from types import CodeType
+
+    from tldw_chatbook.Agents.agent_models import RUN_ERROR, STEP_AGENT_RUN_FAILED
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.archive_recovery_tool_provider import (
+        ArchiveRecoveryToolProvider,
+    )
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+    from tldw_chatbook.Chat import console_ordinary_tree
+    from tldw_chatbook.Chat.archive_recovery import runtime as archive
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    # Native recovery dispatch skips the generic registry.invoke path. Observe
+    # that particular closure's reservation, excluding genuine setup/other tools.
+    run_one = unwrap(AgentService._run_one)
+    local_codes = {
+        value.co_name: value
+        for value in run_one.__code__.co_consts
+        if isinstance(value, CodeType)
+    }
+    gate = local_codes["recovery_gate"]
+    dispatch = local_codes["recovery_invoke"]
+    admit = archive.ArchiveRecoveryRuntime.admit.__code__
+    release = archive.ArchiveRecoveryRuntime.release.__code__
+    activate = ArchiveRecoveryToolProvider.activate.__code__
+    reserve = ExecutionOwner.reserve_tool.__code__
+    search = archive.ArchiveRecoveryRuntime.search.__code__
+    accept = ConsoleRuntime.accept_turn.__code__
+    retire = ConsoleRuntime._release_custody.__code__
+    observations, foreign_calls, cuts = [], [], []
+    owned_proofs = []
+    capture_runtime = []
+    issued = []
+    closure_runs = []
+    proof_inputs = []
+    restores = []
+
+    def forbidden(*args, **kwargs):
+        foreign_calls.append(True)
+        raise AssertionError("replacement archive receiver ran")
+
+    def foreign_capture(cls, tree, runtime, record):
+        runtime._foreign_archive_capture_calls += 1
+        raise AssertionError("retained archive capture executed changed code")
+
+    def changed_getter(self):
+        self._foreign_getter_calls.append(True)
+        return self._authority
+
+    def observe(code, offset, *args):
+        frame = sys._getframe(1)
+        values = frame.f_locals
+        if (
+            code is accept
+            and not args
+            and not cuts
+            and cut in {"owned-proof", "capture-code"}
+        ):
+            owner = values["self"]
+            runtime = owner._archive_recovery
+            request = values["request"]
+            cuts.append(cut)
+            if cut == "owned-proof":
+                # B borrows a different, already accepted proof before its own
+                # admission. Leave it in B's frozen request through B's retirement.
+                other = runtime.issue_user_proof(request.session_id)
+                runtime.accept_user_proof(
+                    other, request.session_id, "owning-archive-turn"
+                )
+                owned_proofs.append((runtime, other, request.turn_id))
+                object.__setattr__(request.configuration, "recovery_user_origin", other)
+            else:
+                runtime._foreign_archive_capture_calls = 0
+                capture_runtime.append(runtime)
+                monkeypatch.setattr(
+                    archive.OrdinaryRecoverySelection.capture.__func__,
+                    "__code__",
+                    foreign_capture.__code__,
+                )
+        elif code is retire and args and owned_proofs:
+            runtime, other, wrong_turn = owned_proofs[0]
+            if values["turn_id"] == wrong_turn:
+                observations.append(
+                    (
+                        "retired",
+                        wrong_turn not in values["self"]._turn_custody,
+                        runtime._accepted_proofs.get(id(other))
+                        == (other, "owning-archive-turn"),
+                    )
+                )
+        elif code is reserve and frame.f_back.f_code is dispatch:
+            observations.append("dispatch-reserved")
+        elif code is search:
+            observations.append("archive-search")
+        elif (
+            code is admit
+            and not args
+            and cut in {"proof", "eligibility", "package-after-preclaim"}
+            and not cuts
+        ):
+            runtime = values["self"]
+            config = values["turn_context"].configuration
+            original = config.recovery_user_origin
+            if original is None:
+                return
+            cuts.append(cut)
+            if cut == "proof":
+                # Borrow a second genuine same-session proof immediately before
+                # the first issuer's pop; preserve both original memberships.
+                sid = values["session"].id
+                other = runtime.issue_user_proof(sid)
+                runtime.accept_user_proof(other, sid, "other-archive-turn")
+                proof_inputs.append((runtime, original, other))
+                object.__setattr__(config, "recovery_user_origin", other)
+                restores.append(
+                    lambda: object.__setattr__(config, "recovery_user_origin", original)
+                )
+            elif cut == "package-after-preclaim":
+                from types import ModuleType
+
+                chat = sys.modules["tldw_chatbook.Chat"]
+                original_package = vars(chat)["archive_recovery"]
+                package_name = "tldw_chatbook.Chat.archive_recovery"
+                fake = ModuleType(package_name)
+                # Keep the original public child so only package identity differs.
+                vars(fake).update(vars(original_package))
+                vars(fake)["__getattr__"] = forbidden
+                sys.modules[package_name] = vars(chat)["archive_recovery"] = fake
+
+                def restore_package():
+                    sys.modules[package_name] = vars(chat)["archive_recovery"] = (
+                        original_package
+                    )
+
+                restores.append(restore_package)
+            else:
+                monkeypatch.setattr(archive, "recovery_eligibility", forbidden)
+        elif (
+            code is admit
+            and args
+            and cut in {"followup", "authority-getter"}
+            and args[0] is not None
+            and not cuts
+        ):
+            cuts.append(cut)
+            if cut == "followup":
+                monkeypatch.setattr(archive, "prepare_archive_followup", forbidden)
+            else:
+                provider = args[0]
+                provider._foreign_getter_calls = foreign_calls
+                issued.append((values["self"], vars(provider)["_authority"]))
+                monkeypatch.setattr(
+                    ArchiveRecoveryToolProvider.authority.fget,
+                    "__code__",
+                    changed_getter.__code__,
+                )
+        elif (
+            code is release
+            and args
+            and issued
+            and frame.f_back.f_code.co_name == "_run_agent_reply"
+        ):
+            issuer, authority = issued[0]
+            if values["self"] is issuer and values["authority"] is authority:
+                observations.append(
+                    (
+                        "released-by-reply",
+                        authority.closed,
+                        id(authority) not in issuer._authorities,
+                    )
+                )
+        elif (
+            code is activate
+            and args
+            and args[0] is True
+            and cut == "closure"
+            and not cuts
+        ):
+            cuts.append(cut)
+            closure_runs.append(
+                (console_ordinary_tree.current_ordinary_tree(), values["run_id"])
+            )
+            monkeypatch.setattr(values["self"], "build_closures", forbidden)
+        elif code is gate and not args and cut == "dispatch" and not cuts:
+            cuts.append(cut)
+            registry = values["self"].registry
+            monkeypatch.setattr(registry, "resolve_owner_for_name", forbidden)
+            restores.append(
+                lambda: monkeypatch.delattr(registry, "resolve_owner_for_name")
+            )
+        elif code is dispatch and args and cut == "dispatch" and cuts:
+            result = args[0]
+            observations.append(result.error)
+            while restores:
+                restores.pop()()
+
+    def unwound(code, offset, error):
+        if (
+            cut == "authority-getter"
+            and code is archive.OrdinaryRecoverySelection.check_source.__code__
+        ):
+            observations.append(str(error))
+        if cut == "package-after-preclaim" and code is admit and restores:
+            observations.append(str(error))
+            restores.pop()()
+        if (
+            cut == "closure"
+            and code is archive.OrdinaryRecoverySelection.check_provider.__code__
+        ):
+            observations.append(str(error))
+        if (
+            cut == "capture-code"
+            and code is console_ordinary_tree._capture_other_providers.__code__
+        ) or (
+            cut == "owned-proof"
+            and code.co_name == "check_proof"
+            and code.co_filename == archive.__file__
+        ):
+            observations.append(str(error))
+        if code is admit and proof_inputs and restores:
+            runtime, original, other = proof_inputs[0]
+            observations.append(
+                (
+                    runtime._accepted_proofs.get(id(original), (None,))[0] is original,
+                    runtime._accepted_proofs.get(id(other), (None,))[0] is other,
+                    str(error),
+                )
+            )
+            restores.pop()()
+            runtime.release_user_proof(other)
+
+    mon = sys.monitoring
+    slot = next(i for i in range(5, -1, -1) if mon.get_tool(i) is None)
+    mon.use_tool_id(slot, "native archive source substitutions")
+    mon.register_callback(slot, mon.events.PY_START, observe)
+    mon.register_callback(slot, mon.events.PY_RETURN, observe)
+    mon.register_callback(slot, mon.events.PY_UNWIND, unwound)
+    mon.set_events(slot, mon.events.PY_UNWIND)
+    for code, events in (
+        (accept, mon.events.PY_START),
+        (retire, mon.events.PY_RETURN),
+        (admit, mon.events.PY_START | mon.events.PY_RETURN),
+        (release, mon.events.PY_RETURN),
+        (activate, mon.events.PY_RETURN),
+        (gate, mon.events.PY_START),
+        (dispatch, mon.events.PY_RETURN),
+        (search, mon.events.PY_START),
+        (reserve, mon.events.PY_START),
+    ):
+        mon.set_local_events(slot, code, events)
+    try:
+        with pytest.raises((AssertionError, RuntimeError)) as refused:
+            async with mounted_recovery(recovery_stores, tmp_path, monkeypatch):
+                pytest.fail("changed archive receiver reached a mounted result")
+        if type(refused.value) is RuntimeError:
+            assert cut == "capture-code" and "ordinary archive capture changed" in str(
+                refused.value
+            )
+    finally:
+        mon.set_events(slot, 0)
+        for code in (
+            accept,
+            retire,
+            admit,
+            release,
+            activate,
+            gate,
+            dispatch,
+            search,
+            reserve,
+        ):
+            mon.set_local_events(slot, code, 0)
+        for event in (mon.events.PY_START, mon.events.PY_RETURN, mon.events.PY_UNWIND):
+            mon.register_callback(slot, event, None)
+        mon.free_tool_id(slot)
+        while restores:
+            restores.pop()()
+    assert cuts == [cut]
+    assert foreign_calls == []
+    assert (
+        "archive-search" not in observations and "dispatch-reserved" not in observations
+    )
+    if cut == "proof":
+        assert (True, True, "ordinary archive proof changed") in observations
+    elif cut == "authority-getter":
+        assert "ordinary archive runtime changed" in observations
+        assert ("released-by-reply", True, True) in observations
+    elif cut == "package-after-preclaim":
+        assert "ordinary archive runtime changed" in observations
+    elif cut == "owned-proof":
+        assert "ordinary archive proof changed" in observations
+        assert ("retired", True, True) in observations
+    elif cut == "capture-code":
+        assert capture_runtime[0]._foreign_archive_capture_calls == 0
+        assert "ordinary archive capture changed" in observations
+    elif cut == "closure":
+        assert "ordinary archive provider changed" in observations
+        ((tree, run_id),) = closure_runs
+        assert tree.retired.done() and tree.retired.result() is None
+        # Reopen this exact file read-only after the host and its SQL owner closed.
+        uri = (tmp_path / "runs.sqlite").as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
+            assert connection.execute(
+                "SELECT status FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone() == (RUN_ERROR,)
+            assert connection.execute(
+                "SELECT COUNT(*) FROM agent_run_steps WHERE run_id = ? AND json_extract(payload, '$.kind') = ?",
+                (run_id, STEP_AGENT_RUN_FAILED),
+            ).fetchone() == (1,)
+    elif cut == "dispatch":
+        assert "ordinary archive registry changed" in observations
+    _, target_id, db = recovery_stores
+    assert db.get_conversation_by_id(target_id)["archived"]
+
+
+def _exercise_archive_first_use(case):
+    """Run in a fresh interpreter; exercise actual module publication and owner creation."""
+    import sys
+    from importlib import import_module, reload
+    from types import ModuleType, SimpleNamespace
+
+    root = import_module("tldw_chatbook")
+    chat = import_module("tldw_chatbook.Chat")
+    package_name = "tldw_chatbook.Chat.archive_recovery"
+    issuer_name = package_name + ".runtime"
+    descriptor_name = "tldw_chatbook.Agents.archive_recovery_tool_provider"
+    calls = []
+
+    def unexpected(name):
+        calls.append(name)
+        raise AssertionError("foreign archive metadata accessed")
+
+    if case == "early-chat-clone":
+        clone = ModuleType(chat.__name__)
+        vars(clone).update(vars(chat))
+        sys.modules[chat.__name__] = vars(root)["Chat"] = clone
+
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    owner = ConsoleRuntime(SimpleNamespace())
+    agents = sys.modules["tldw_chatbook.Agents"]
+    if case == "cold":
+        assert package_name not in sys.modules
+    assert issuer_name not in sys.modules
+    assert descriptor_name not in sys.modules
+    if case in {"cold", "issuer-first", "descriptor-first", "chat-reload"}:
+        if case == "issuer-first":
+            import_module(issuer_name)
+            assert descriptor_name not in sys.modules
+        elif case == "descriptor-first":
+            import_module(descriptor_name)
+            assert issuer_name not in sys.modules
+        runtime = owner.ensure_archive_recovery()
+        assert type(runtime) is vars(sys.modules[issuer_name])["ArchiveRecoveryRuntime"]
+        assert owner.ensure_archive_recovery() is runtime
+        if case == "chat-reload":
+            package = sys.modules[package_name]
+            assert reload(chat) is chat
+            second_runtime = ConsoleRuntime(SimpleNamespace()).ensure_archive_recovery()
+            assert second_runtime is not runtime
+            assert type(second_runtime) is type(runtime)
+            assert (
+                sys.modules[package_name] is vars(chat)["archive_recovery"] is package
+            )
+        return
+
+    fake = ModuleType("foreign")
+    vars(fake)["__getattr__"] = unexpected
+    if case == "agents-parent":
+        sys.modules["tldw_chatbook.Agents"] = vars(root)["Agents"] = fake
+    elif case == "package":
+        sys.modules[package_name] = vars(chat)["archive_recovery"] = fake
+    elif case != "early-chat-clone":
+        package = import_module(package_name)
+        key, parent, name = (
+            (issuer_name, package, "runtime")
+            if case.startswith("issuer")
+            else (descriptor_name, agents, "archive_recovery_tool_provider")
+        )
+        if case.endswith("missing"):
+            import_module(key)
+            del sys.modules[key]
+            del vars(parent)[name]
+        elif case.endswith("one-sided"):
+            vars(parent)[name] = fake
+        else:
+            sys.modules[key] = vars(parent)[name] = (
+                None if case.endswith("none") else fake
+            )
+
+    try:
+        owner.ensure_archive_recovery()
+    except RuntimeError as exc:
+        assert "ordinary archive" in str(exc)
+    else:
+        raise AssertionError("changed archive provenance reached the original owner")
+    assert not calls and owner._archive_recovery is None
+    if case.startswith("descriptor") or case in {
+        "package",
+        "agents-parent",
+        "early-chat-clone",
+    }:
+        assert issuer_name not in sys.modules
+    if case.startswith("issuer") or case in {
+        "package",
+        "agents-parent",
+        "early-chat-clone",
+    }:
+        assert descriptor_name not in sys.modules
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "cold",
+        "issuer-first",
+        "descriptor-first",
+        "chat-reload",
+        "early-chat-clone",
+        "agents-parent",
+        "package",
+        "issuer-foreign",
+        "descriptor-foreign",
+        "issuer-none",
+        "descriptor-none",
+        "issuer-one-sided",
+        "descriptor-one-sided",
+        "issuer-missing",
+        "descriptor-missing",
+    ],
+)
+def test_original_archive_first_use_requires_defining_packages(tmp_path, case):
+    from inspect import getsource
+
+    from Tests.Packaging.test_app_import_diet_closure import _run_isolated_python
+
+    script = (
+        getsource(_exercise_archive_first_use)
+        + f"\n_exercise_archive_first_use({case!r})"
+    )
+    outcome = _run_isolated_python(tmp_path, script)
+    assert outcome.returncode == 0, outcome.stderr

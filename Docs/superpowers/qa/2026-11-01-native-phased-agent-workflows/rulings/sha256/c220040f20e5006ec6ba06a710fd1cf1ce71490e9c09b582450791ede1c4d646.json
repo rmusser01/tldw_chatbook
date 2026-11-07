@@ -1,0 +1,23 @@
+{
+  "scope": "exactbodyidentity/freeze only; alreadygoverningcanonicalhashes, no newcontract/sourcecorrectness/native/verdictadoption",
+  "matches": [
+    {
+      "file": "task-8g-fix1-direct-literal-adoption.md",
+      "sha256": "60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb",
+      "bytes": 31906,
+      "frozen": "task-8g-fix1-direct-literal-adoption.frozen-60787f3be34958bb5411aec4147d47510ffd6a2231b9bda2828c5ee2be9b25eb.md"
+    },
+    {
+      "file": "task-8g-fix1-review.md",
+      "sha256": "813924bda92e6477885f520380f6cc03313b8dcd5a748499276107e113d53933",
+      "bytes": 12500,
+      "frozen": "task-8g-fix1-review.frozen-813924bda92e6477885f520380f6cc03313b8dcd5a748499276107e113d53933.md"
+    },
+    {
+      "file": "task-8g-fix2-review.md",
+      "sha256": "8a917921e1b6162cd452c075b7acd299d077961b50fed14a6bdea4a66abad91b",
+      "bytes": 7908,
+      "frozen": "task-8g-fix2-review.frozen-8a917921e1b6162cd452c075b7acd299d077961b50fed14a6bdea4a66abad91b.md"
+    }
+  ]
+}

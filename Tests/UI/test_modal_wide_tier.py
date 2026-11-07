@@ -38,6 +38,7 @@ from Tests.UI.modal_wide_tier_registry import (
     WIDE_TIER_WIDTH_PERCENT,
     WIDE_VIEWPORT_COLUMNS,
 )
+from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
 from tldw_chatbook.Agents.goal_models import (
     GoalBindingRef,
     GoalProviderRef,
@@ -80,6 +81,11 @@ from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     ConsoleSystemPromptModal,
+)
+from tldw_chatbook.Widgets.Console.console_workflow_setup import ConsoleWorkflowSetup
+from tldw_chatbook.Widgets.Console.console_workflow_status import (
+    ConsoleWorkflowHistory,
+    ConsoleWorkflowStatus,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     FileNotesHistoryDialog,
@@ -647,6 +653,51 @@ def _build_workflow_run_confirmation_modal(_app: object) -> WorkflowRunConfirmat
     return WorkflowRunConfirmation(_WORKFLOW_REVISION, binding, "Fixture note")  # type: ignore[arg-type]
 
 
+def _build_console_workflow_setup(_app: object) -> ConsoleWorkflowSetup:
+    binding = GoalBindingRef(
+        workspace_id="fixture", binding_id="fixture", locator="/fixture", access="rw"
+    )
+    return ConsoleWorkflowSetup(
+        None,
+        "fixture",
+        ("openai", "fixture"),
+        AutomaticWorkLimits(),
+        (((binding, 0),), (), None),
+    )
+
+
+def _geometry_workflow_coordinator():
+    async def no_workflow_store(*_args, **_kwargs):
+        raise RuntimeError("no workflow store in the geometry harness")
+
+    return SimpleNamespace(
+        subscribe=lambda _callback: lambda: None,
+        get=no_workflow_store,
+        service=SimpleNamespace(call=no_workflow_store, list_history=None),
+    )
+
+
+def _build_console_workflow_status(_app: object) -> ConsoleWorkflowStatus:
+    return ConsoleWorkflowStatus(
+        _geometry_workflow_coordinator(),
+        "fixture",
+        "fixture",
+        open_changes=lambda *_args: None,
+        open_fleet=lambda *_args: None,
+        pending_approvals=lambda *_args: False,
+        open_approval=lambda *_args: None,
+    )
+
+
+def _build_console_workflow_history(_app: object) -> ConsoleWorkflowHistory:
+    return ConsoleWorkflowHistory(
+        _geometry_workflow_coordinator(),
+        "fixture",
+        lambda *_args: None,
+        lambda *_args: None,
+    )
+
+
 #: One representative per cap tier: anchor -> (cap, base width rule).
 #: Base geometry is pinned here so the tier provably leaves it untouched:
 #: prompts ``90% / 104``, system prompt ``84 / 95%``, reaction ``76 / 100%``.
@@ -691,6 +742,13 @@ SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     ".workflow-run-dialog": (170, (100, 90)),
     "WorkflowRunSetup .workflow-run-dialog": (170, (100, 90)),
 }
+
+_SPOT_GEOMETRY = {
+    **SPOT_REPRESENTATIVES,
+    "ConsoleWorkflowSetup > .workflow-dialog": (150, (90, 100)),
+    "ConsoleWorkflowStatus > .workflow-dialog": (150, (90, 100)),
+    "#workflow-history": (120, (76, 100)),
+}
 SPOT_BUILDERS = {
     WIDE_TIER_CAPS[170]: _build_prompts_modal,
     WIDE_TIER_CAPS[150]: _build_system_prompt_modal,
@@ -714,6 +772,9 @@ SPOT_BUILDERS = {
     "#file-notes-history-dialog": _build_file_notes_history_modal,
     ".workflow-run-dialog": _build_workflow_run_confirmation_modal,
     "WorkflowRunSetup .workflow-run-dialog": _build_workflow_run_setup_modal,
+    "ConsoleWorkflowSetup > .workflow-dialog": _build_console_workflow_setup,
+    "ConsoleWorkflowStatus > .workflow-dialog": _build_console_workflow_status,
+    "#workflow-history": _build_console_workflow_history,
 }
 
 #: TASK-38641 / TASK-36522: every spot entry from the portrait dialogs on is
@@ -748,8 +809,12 @@ def _expected_base_width(
 )
 @pytest.mark.asyncio
 async def test_spot_modal_geometry_per_tier(anchor: str, size: tuple[int, int]) -> None:
+    await _assert_spot_modal_geometry(anchor, size)
+
+
+async def _assert_spot_modal_geometry(anchor: str, size: tuple[int, int]) -> None:
     """A representative per cap tier scales up wide and holds base narrow."""
-    cap, (base_max, base_percent) = SPOT_REPRESENTATIVES[anchor]
+    cap, (base_max, base_percent) = _SPOT_GEOMETRY[anchor]
     app = WideTierHarness()
     modal = SPOT_BUILDERS[anchor](app)
 
@@ -783,8 +848,14 @@ async def test_spot_modal_geometry_per_tier(anchor: str, size: tuple[int, int]) 
 async def test_spot_modal_wide_tier_tracks_live_resize(
     anchor: str, start_size: tuple[int, int], end_size: tuple[int, int]
 ) -> None:
+    await _assert_spot_modal_resize(anchor, start_size, end_size)
+
+
+async def _assert_spot_modal_resize(
+    anchor: str, start_size: tuple[int, int], end_size: tuple[int, int]
+) -> None:
     """An open modal re-syncs its tier when the viewport crosses the breakpoint."""
-    cap, (base_max, base_percent) = SPOT_REPRESENTATIVES[anchor]
+    cap, (base_max, base_percent) = _SPOT_GEOMETRY[anchor]
     app = WideTierHarness()
     modal = SPOT_BUILDERS[anchor](app)
 
@@ -812,3 +883,140 @@ async def test_spot_modal_wide_tier_tracks_live_resize(
             assert container.region.width == _expected_base_width(
                 end_size[0], base_max, base_percent
             )
+
+
+@pytest.mark.parametrize(
+    ("anchor", "size"),
+    [
+        pytest.param(
+            "ConsoleWorkflowSetup > .workflow-dialog",
+            (200, 50),
+            id="onsoleWorkflowSetup > .workflow-dialog-200x50",
+        ),
+        pytest.param(
+            "ConsoleWorkflowSetup > .workflow-dialog",
+            (120, 40),
+            id="onsoleWorkflowSetup > .workflow-dialog-120x40",
+        ),
+        pytest.param(
+            "ConsoleWorkflowSetup > .workflow-dialog",
+            (211, 44),
+            id="onsoleWorkflowSetup > .workflow-dialog-211x44",
+        ),
+        pytest.param(
+            "ConsoleWorkflowSetup > .workflow-dialog",
+            (235, 52),
+            id="onsoleWorkflowSetup > .workflow-dialog-235x52",
+        ),
+        pytest.param(
+            "ConsoleWorkflowSetup > .workflow-dialog",
+            (149, 44),
+            id="onsoleWorkflowSetup > .workflow-dialog-149x44",
+        ),
+        pytest.param(
+            "ConsoleWorkflowStatus > .workflow-dialog",
+            (200, 50),
+            id="onsoleWorkflowStatus > .workflow-dialog-200x50",
+        ),
+        pytest.param(
+            "ConsoleWorkflowStatus > .workflow-dialog",
+            (120, 40),
+            id="onsoleWorkflowStatus > .workflow-dialog-120x40",
+        ),
+        pytest.param(
+            "ConsoleWorkflowStatus > .workflow-dialog",
+            (211, 44),
+            id="onsoleWorkflowStatus > .workflow-dialog-211x44",
+        ),
+        pytest.param(
+            "ConsoleWorkflowStatus > .workflow-dialog",
+            (235, 52),
+            id="onsoleWorkflowStatus > .workflow-dialog-235x52",
+        ),
+        pytest.param(
+            "ConsoleWorkflowStatus > .workflow-dialog",
+            (149, 44),
+            id="onsoleWorkflowStatus > .workflow-dialog-149x44",
+        ),
+        pytest.param(
+            "#workflow-history",
+            (200, 50),
+            id="workflow-history-200x50",
+        ),
+        pytest.param(
+            "#workflow-history",
+            (120, 40),
+            id="workflow-history-120x40",
+        ),
+        pytest.param(
+            "#workflow-history",
+            (211, 44),
+            id="workflow-history-211x44",
+        ),
+        pytest.param(
+            "#workflow-history",
+            (235, 52),
+            id="workflow-history-235x52",
+        ),
+        pytest.param(
+            "#workflow-history",
+            (149, 44),
+            id="workflow-history-149x44",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_native_workflow_modal_geometry(
+    anchor: str, size: tuple[int, int]
+) -> None:
+    """Literal required-lane cases share the original geometry assertions."""
+    await _assert_spot_modal_geometry(anchor, size)
+
+
+@pytest.mark.parametrize(
+    ("anchor", "start_size", "end_size"),
+    [
+        pytest.param(
+            "ConsoleWorkflowSetup > .workflow-dialog",
+            (140, 40),
+            (200, 50),
+            id="ConsoleWorkflowSetup > .workflow-dialog-grow-past-threshold",
+        ),
+        pytest.param(
+            "ConsoleWorkflowSetup > .workflow-dialog",
+            (200, 50),
+            (120, 40),
+            id="ConsoleWorkflowSetup > .workflow-dialog-shrink-below-threshold",
+        ),
+        pytest.param(
+            "ConsoleWorkflowStatus > .workflow-dialog",
+            (140, 40),
+            (200, 50),
+            id="ConsoleWorkflowStatus > .workflow-dialog-grow-past-threshold",
+        ),
+        pytest.param(
+            "ConsoleWorkflowStatus > .workflow-dialog",
+            (200, 50),
+            (120, 40),
+            id="ConsoleWorkflowStatus > .workflow-dialog-shrink-below-threshold",
+        ),
+        pytest.param(
+            "#workflow-history",
+            (140, 40),
+            (200, 50),
+            id="#workflow-history-grow-past-threshold",
+        ),
+        pytest.param(
+            "#workflow-history",
+            (200, 50),
+            (120, 40),
+            id="#workflow-history-shrink-below-threshold",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_native_workflow_modal_resize(
+    anchor: str, start_size: tuple[int, int], end_size: tuple[int, int]
+) -> None:
+    """Literal required-lane cases share the original live-resize assertions."""
+    await _assert_spot_modal_resize(anchor, start_size, end_size)

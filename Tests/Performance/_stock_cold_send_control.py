@@ -89,6 +89,10 @@ async def observe_cold_send(app, screen, case, workspace_id, release_trust, fact
             console=screen,
             probe=probe,
             composer=composer,
+            session=session,
+            store=store,
+            runtime=runtime,
+            draft=draft,
         )
         preparing = _NaturalPreparingFrame(context)
 

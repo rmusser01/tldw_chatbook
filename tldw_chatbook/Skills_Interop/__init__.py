@@ -1,6 +1,9 @@
 """Exact lazy public exports; recovery declarations do not bootstrap runtime."""
 
+from contextvars import ContextVar
 from importlib import import_module
+
+_skill_trust_publisher = ContextVar("console_skill_trust_publisher", default=None)
 
 _EXPORTS = {
     "LocalSkillsService": (".local_skills_service", "LocalSkillsService"),

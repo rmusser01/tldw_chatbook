@@ -1,0 +1,20 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/observe-hook-read-stages.py",
+    "-s",
+    "-q",
+    "Tests/Chat/test_console_send_hook_read_sharing.py::test_an_approved_user_prompt_hook_is_selected_fresh_and_runs",
+    "--tb=short",
+    "--basetemp=../pytest-newbase-legacy-read-stages"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 1,
+  "elapsed_seconds": 9.533805791754276,
+  "source_file_count": 9109,
+  "before_sha256": "52de966f9863ea012e5038d49413b79b65fea4bb9a457aeb0bb8eb8d1a3facf0",
+  "after_sha256": "52de966f9863ea012e5038d49413b79b65fea4bb9a457aeb0bb8eb8d1a3facf0",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-legacy-read-stages.log"
+}

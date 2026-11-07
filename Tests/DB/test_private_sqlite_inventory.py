@@ -501,7 +501,87 @@ def _qualified_core_recovery_dispatch(source_path, symbol, call):
 
 
 def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
-    """Admit the six reviewed restore sites only with their fixed declarations."""
+    """Admit reviewed restore sites only with their exact installed declarations."""
+    if production_module == "tldw_chatbook/Backup_Recovery/detached_layout":
+        if symbol != "_normalize_sqlite" or ast.unparse(call) != (
+            "open_recovery_validation(installed.owner_id, main, writable=True, "
+            "with_restrictions=True, cancel=cancel)"
+        ):
+            return False
+        function = next(
+            (
+                node
+                for node in _parse_source(source_path).body
+                if isinstance(node, ast.FunctionDef) and node.name == symbol
+            ),
+            None,
+        )
+        if function is None or len(function.body) < 4:
+            return False
+        validation_import = ast.parse(
+            "from .sqlite_validation import _check as validate_connection"
+        ).body[0]
+        owner_import = ast.parse(
+            "from .sqlite_validation import _installed_owner, validated_schema_version"
+        ).body[0]
+        if not all(
+            any(ast.dump(node) == ast.dump(expected) for node in function.body)
+            for expected in (validation_import, owner_import)
+        ):
+            return False
+        scratch = ast.parse(
+            'scratch = destination.parent / ("normalize-" + hashlib.sha256(destination.name.encode()).hexdigest())'
+        ).body[0]
+        main = ast.parse('main = scratch / "source.sqlite3"').body[0]
+        attempt = function.body[-1]
+        if (
+            ast.dump(function.body[-4]) != ast.dump(scratch)
+            or ast.dump(function.body[-2]) != ast.dump(main)
+            or not isinstance(attempt, ast.Try)
+            or len(attempt.body) != 4
+        ):
+            return False
+        installed = ast.parse("installed = _installed_owner(owner.owner_id)").body[0]
+        inspection = attempt.body[2]
+        if (
+            ast.dump(attempt.body[1]) != ast.dump(installed)
+            or not isinstance(inspection, ast.With)
+            or len(inspection.items) != 1
+            or ast.dump(inspection.items[0].context_expr) != ast.dump(call)
+            or not isinstance(inspection.items[0].optional_vars, ast.Tuple)
+            or ast.unparse(inspection.items[0].optional_vars)
+            != "(connection, restrictions)"
+        ):
+            return False
+        validation = ast.parse(
+            "issues, _ = validate_connection(connection, installed, installed.schema_policy(), restrictions)"
+        ).body[0]
+        guard = ast.parse("if issues:\n    raise ValueError(issues[0])").body[0]
+        backup = ast.parse(
+            'backup_connection_to_private("recovery.detached_normalization", connection, main, destination, '
+            "progress_guard=progress, operation_deadline=restrictions.deadline)"
+        ).body[0]
+        bindings = Counter(
+            node.id
+            for node in ast.walk(function)
+            if isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id
+            in {"scratch", "main", "installed", "connection", "restrictions"}
+        )
+        return (
+            len(inspection.body) >= 3
+            and ast.dump(inspection.body[0]) == ast.dump(validation)
+            and ast.dump(inspection.body[1]) == ast.dump(guard)
+            and sum(ast.dump(node) == ast.dump(backup) for node in inspection.body[2:])
+            == 1
+            and bindings
+            == Counter(
+                dict.fromkeys(
+                    ("scratch", "main", "installed", "connection", "restrictions"), 1
+                )
+            )
+        )
     if production_module == "tldw_chatbook/DB/recovery_response_rules":
         if symbol != "prepare_imported_candidate" or ast.unparse(call) != (
             "open_recovery_validation(owner.owner_id, candidate, writable=True, "
@@ -807,12 +887,15 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 99) if number not in {8, 9, 10, 75, 97}
+        # C99-C102 construct installed workflow catalogs in memory; C103
+        # finalizes the validated detached copy's journal through its own owner.
+        for number in range(1, 104) if number not in {8, 9, 10, 75, 97}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
         f"B{number:02d}"
-        for number in range(1, 41)
+        # B41 copies only the restricted, validated detached staging connection.
+        for number in range(1, 42)
         if number not in {4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 34}
     ]
 
@@ -1288,6 +1371,89 @@ def test_validation_guard_rejects_unqualified_candidate_open(tmp_path):
     assert len(violations) == 1 and "unqualified recovery validation" in violations[0]
 
 
+def test_detached_normalization_policy_is_private_backup_without_capture():
+    policy = SQLITE_OWNER_REGISTRY["recovery.detached_normalization"]
+    assert policy.production_module == "tldw_chatbook/Backup_Recovery/detached_layout"
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.PRIVATE_FILE})
+    assert policy.centralized_backup_allowed
+    assert not policy.recovery_capture_allowed
+    assert not policy.foreign_read_only_source
+    assert not policy.preserve_read_only_source_mode
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "namespace",
+        "function",
+        "path",
+        "staged_path",
+        "lookup",
+        "reassign",
+        "validation",
+        "guard",
+        "order",
+        "restrictions",
+        "writable",
+        "cancel",
+        "binding",
+        "backup_path",
+    ],
+)
+def test_detached_normalization_dispatch_is_exact_and_validated(tmp_path, damage):
+    path = PROJECT_ROOT / "tldw_chatbook/Backup_Recovery/detached_layout.py"
+    module = "tldw_chatbook/Backup_Recovery/detached_layout"
+    _, clean = _private_sqlite_seam_violations(path, module)
+    assert clean == []
+    tree = ast.parse(path.read_text())
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_normalize_sqlite"
+    )
+    attempt = next(node for node in function.body if isinstance(node, ast.Try))
+    inspection = attempt.body[2]
+    call = inspection.items[0].context_expr
+    if damage == "namespace":
+        module += "_unreviewed"
+    elif damage == "function":
+        function.name = "unreviewed"
+    elif damage == "path":
+        call.args[1] = ast.Name(id="source", ctx=ast.Load())
+    elif damage == "staged_path":
+        function.body[-2].value = ast.Name(id="source", ctx=ast.Load())
+    elif damage == "lookup":
+        attempt.body[1].value.func.id = "requested_owner"
+    elif damage == "reassign":
+        attempt.body.insert(2, ast.parse("installed = requested_owner").body[0])
+    elif damage == "validation":
+        inspection.body[0] = ast.parse("issues = ()").body[0]
+    elif damage == "guard":
+        inspection.body[1].body = [ast.Pass()]
+    elif damage == "order":
+        inspection.body.append(inspection.body.pop(0))
+    elif damage in {"restrictions", "writable", "cancel"}:
+        keyword = "with_restrictions" if damage == "restrictions" else damage
+        next(
+            item for item in call.keywords if item.arg == keyword
+        ).value = ast.Constant(value=None if damage == "cancel" else False)
+    elif damage == "binding":
+        inspection.items[0].optional_vars.elts.reverse()
+    else:
+        backup = next(
+            node
+            for node in ast.walk(inspection)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "backup_connection_to_private"
+        )
+        backup.args[2] = ast.Name(id="source", ctx=ast.Load())
+    candidate = tmp_path / "changed.py"
+    candidate.write_text(ast.unparse(ast.fix_missing_locations(tree)))
+    _, violations = _private_sqlite_seam_violations(candidate, module)
+    assert any("unqualified recovery validation" in value for value in violations)
+
+
 def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
     # Selected by id, not by position: this row was the newest when the test
     # was written, but the inventory keeps growing (C51, task-21100) and the
@@ -1414,7 +1580,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
 
     assert Counter(row["operation"] for row in backup_rows) == Counter(
         {
-            "backup_connection_to_private": 3,
+            "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
             "copy_private_sqlite": 22,
@@ -1505,6 +1671,11 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
 
     expected_calls = Counter(
         {
+            (
+                "tldw_chatbook/Backup_Recovery/detached_layout",
+                "_normalize_sqlite",
+                "backup_connection_to_private",
+            ): 1,
             ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/TTS/recovery", "_Profiles.capture", "copy_private_sqlite"): 1,

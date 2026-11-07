@@ -2483,6 +2483,23 @@ The same current-dev integration retained a newer U report shortcut but initiall
 - To test a "before the first paint" claim, queue the screen's tick ahead of the change with `loop.call_soon(screen._on_timer_update)`, instead of hoping load produces the interleaving.
 - A frame recorder patched onto `Screen._compositor_refresh` sees two calls for each tick that has both a layout and a repaint pending.
 
+## Trace the coroutine allocation and follow stored refresh aliases (TASK-38614, 2026-11-05)
+
+The native mounted workflow warning printed textual/cache.py, but coroutine
+origin tracking and tracemalloc identified ChatScreen's finally replay as the
+allocation site. An uninstrumented run passed, while actual Textual cancellation
+before worker entry deterministically left three eager native refresh coroutines
+unawaited. Pass async callables for view-refresh work; Textual invokes them only
+inside its worker. Synchronous lambdas returning coroutines need an async
+late-binding forwarder, preserving the original result.
+
+The first review found another exact native callback stored as
+ConsoleContextReadSnapshot.refresh. Name-only searching missed it. Its real-worker
+cancellation case failed before the same one-line correction and passed afterward,
+with a separate admitted-publication control. Follow the callback binding and
+consumer, capture warnings/GC inside child processes, and preserve distinct failed
+and passing source epochs; the printed warning receiver is not allocation proof.
+
 ## A Button label raises at two content cells, and no CSS rule fixes it without moving labels (TASK-38740, 2026-11-05)
 
 **Incident.** TASK-38710 crashed File Notes with `ValueError: range() arg 3 must not be zero`. Button's `line-pad: 1` a side leaves a fold width of 0 when the content box is 2 cells, and both Textual's no-wrap fold (`range(0, length, width)`) and Rich's `chop_cells` raise at 0. The audit first looked for Button rules with `min-width: 0`. The two crashes it then found on dev had no such rule: Settings' Workspaces row at 44 columns and Console behavior's jump button at 46. Both keep Textual's `min-width: 16`, but `max-width: 100%` of a 2-cell parent won, because max is applied after min. A grid's auto row ignores `min-width` as well. The Settings Theme list (an OptionList) raised the same way at a zero-width box.

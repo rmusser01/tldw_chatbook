@@ -1927,6 +1927,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         # they can never snapshot the durable/live gap. Counts make nested
         # message helpers safe without extending this lock across SQLite I/O.
         self._fork_source_transitions: dict[str, int] = {}
+        self._active_leaf_publications: dict[str, int] = {}
         self._roleplay_fork_transition_leases: dict[str, str] = {}
         # Generation terminal commits can run on the controller event-loop
         # thread while late agent settlement runs in ``to_thread``. Entries
@@ -7138,7 +7139,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
     @_fork_session_transition
     def publish_durable_turn_identity(
-        self, session_id: str, commit: ConsoleDurableTurnCommit
+        self,
+        session_id: str,
+        commit: ConsoleDurableTurnCommit,
+        *,
+        _original_policy_result: list | None = None,
     ) -> None:
         """Publish committed identity, policy, and first-send settings bases."""
 
@@ -7158,6 +7163,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             raise RuntimeError("Committed Console Library policy is unavailable.")
         session.library_policy_holder.snapshot = result.snapshot
         session.library_policy_holder.explicitly_staged = False
+        if type(_original_policy_result) is list:
+            _original_policy_result.append((session, session.library_policy_holder, result))
         generation_base_installed = False
         context_base_installed = False
         if commit.first_persist:
@@ -7441,10 +7448,17 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             raise TypeError("identity must be ConsoleStagedConversationIdentity")
         session = self._session_or_raise(session_id)
         first_binding = session.persisted_conversation_id is None
+        from .console_ordinary_tree import current_ordinary_tree
+
+        tree = current_ordinary_tree()
+        if tree is not None:
+            tree.check()
         self.publish_first_persisted_conversation(
             session_id,
             identity.conversation_id,
         )
+        if tree is not None:
+            tree.persisted(self, session, identity)
         # Existing saved titles are owned by committed rename publication,
         # not the title snapshot captured by an older send or retry.
         if first_binding:
@@ -12128,6 +12142,43 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         node = self._nodes_by_session.get(session_id, {}).get(native_message_id)
         return node.persisted_message_id if node is not None else None
 
+    def capture_change_review_failure_notice(
+        self, session_id: str, assistant_message_id: str, text: str
+    ) -> Callable[[], None]:
+        """Capture one original transient display target without persistence."""
+        session = self._session_or_raise(session_id)
+        anchor = self._nodes_by_session.get(session_id, {}).get(assistant_message_id)
+        if anchor is None or anchor.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("original assistant target required")
+
+        def notice() -> None:
+            if self._sessions.get(session_id) is not session:
+                return
+            with self._fork_source_transition(session_id):
+                if (
+                    self._sessions.get(session_id) is not session
+                    or self._nodes_by_session.get(session_id, {}).get(
+                        assistant_message_id
+                    )
+                    is not anchor
+                ):
+                    return
+                marker = ConsoleChatMessage(
+                    id=str(uuid4()),
+                    role=ConsoleMessageRole.TOOL,
+                    content=text,
+                    status=self._initial_status(
+                        role=ConsoleMessageRole.TOOL, content=text
+                    ),
+                )
+                self._message_session_index[marker.id] = session_id
+                self._tool_markers_by_session.setdefault(session_id, []).append(
+                    (assistant_message_id, marker)
+                )
+                self._recompute_active_path(session_id)
+
+        return notice
+
     def update_tool_marker(
         self,
         session_id: str,
@@ -14054,7 +14105,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         and the persistence adapter exposes a raw ``db`` seam -- write-throughs
         the local-only ``conversations.active_leaf_message_id`` pointer (mapped
         to the leaf node's *persisted* id, or ``None`` when the leaf is cleared
-        or not yet persisted). An ownership refusal leaves both cursors intact.
+        or not yet persisted). Reaffirming the already-selected pending assistant
+        refreshes its native path while its first durable owner publishes the
+        cursor. An ownership refusal leaves both cursors intact.
         Other durable write failures retain the existing in-memory write-through
         convention and are logged.
 
@@ -14074,10 +14127,30 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             raise KeyError(f"Unknown Console message: {message_id}")
         if message_id != self._active_leaf_by_session.get(session_id):
             self.invalidate_response_rule_source(session_id, "branch_changed")
-        if not self._persist_active_leaf(session_id, message_id):
-            raise RuntimeError("Conversation cursor change was refused.")
-        previous_leaf = self._active_leaf_by_session.get(session_id)
-        self._active_leaf_by_session[session_id] = message_id
+        # A pending assistant may first acquire its durable row while this
+        # explicit cursor write is committed but its native leaf is still old.
+        reaffirming_pending = (
+            message_id is not None
+            and message_id == self._active_leaf_by_session.get(session_id)
+            and nodes[message_id].role is ConsoleMessageRole.ASSISTANT
+            and nodes[message_id].persisted_message_id is None
+        )
+        if not reaffirming_pending:
+            with self._fork_source_lock:
+                self._active_leaf_publications[session_id] = (
+                    self._active_leaf_publications.get(session_id, 0) + 1
+                )
+        try:
+            if not reaffirming_pending and not self._persist_active_leaf(session_id, message_id):
+                raise RuntimeError("Conversation cursor change was refused.")
+            previous_leaf = self._active_leaf_by_session.get(session_id)
+            self._active_leaf_by_session[session_id] = message_id
+        finally:
+            if not reaffirming_pending:
+                with self._fork_source_lock:
+                    self._active_leaf_publications[session_id] -= 1
+                    if not self._active_leaf_publications[session_id]:
+                        del self._active_leaf_publications[session_id]
         self._recompute_active_path(session_id)
         self._bump_payload_revision(session_id)
         if message_id != previous_leaf:
@@ -22443,3 +22516,42 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         if role is ConsoleMessageRole.ASSISTANT and not content:
             return "pending"
         return "complete"
+
+
+from .console_ordinary_tree import _function_record as _ordinary_function_record
+
+_NATIVE_FIRST_LIBRARY_STORE = (
+    ConsoleChatStore,
+    _ordinary_function_record(ConsoleChatStore.publish_durable_turn_identity),
+    _ordinary_function_record(
+        ConsoleChatStore.publish_durable_turn_identity.__wrapped__
+    ),
+    _ordinary_function_record(ConsoleChatStore.publish_committed_identity),
+    _ordinary_function_record(ConsoleChatStore.publish_committed_identity.__wrapped__),
+    _ordinary_function_record(ConsoleChatStore._session_or_raise),
+)
+
+
+# Planning's pre-request producer consumes the original native persistence return.
+_NATIVE_PLANNING_PERSISTENCE_STORE = tuple(
+    (
+        name,
+        method,
+        tuple(
+            _ordinary_function_record(function)
+            for function in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in (
+        "persist_session_if_needed",
+        "_persist_session_if_needed",
+        "stage_first_persistence",
+        "publish_committed_identity",
+        "publish_first_persisted_conversation",
+        "_session_or_raise",
+    )
+    for method in (vars(ConsoleChatStore)[name],)
+)

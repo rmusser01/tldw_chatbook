@@ -314,3 +314,148 @@ def test_owner_inputs_are_read_once_at_construction_not_at_use():
 def test_mixin_safe_reader_lives_on_service_wiring_mixin():
     """The reader is part of the app's composition surface, not the screen's."""
     assert "_read_notes_sync_runtime_owner_safe" in vars(ServiceWiringMixin)
+
+
+def test_missing_and_invalid_paths_do_not_import_notes_state_owner(tmp_path):
+    import subprocess
+    import sys
+
+    script = """
+import builtins
+import sys
+from pathlib import Path
+from tldw_chatbook.app_service_wiring import _notes_sync_state_db_has_configured_roots as probe
+name = "tldw_chatbook.Notes.notes_device_state_store"
+assert name not in sys.modules
+original = builtins.__import__
+attempts = []
+def observed(module, *args, **kwargs):
+    if module == name:
+        attempts.append(module)
+    return original(module, *args, **kwargs)
+builtins.__import__ = observed
+missing = Path(sys.argv[1])
+assert probe(missing) is False and not missing.exists()
+try:
+    probe(object())
+except TypeError:
+    pass
+else:
+    raise AssertionError("invalid path accepted")
+original_exists = Path.exists
+def denied(self):
+    raise PermissionError("denied")
+Path.exists = denied
+try:
+    try:
+        probe(missing)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("exists error swallowed")
+finally:
+    Path.exists = original_exists
+assert not attempts and name not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "missing.db")],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "outcome", ["row", "empty", "query_error", "open_error", "close_error"]
+)
+def test_state_probe_keeps_connect_query_and_close_boundaries(
+    tmp_path, monkeypatch, outcome
+):
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    path = tmp_path / "existing.db"
+    path.touch()
+    events = []
+    failure = RuntimeError(outcome)
+
+    class Connection:
+        def execute(self, sql):
+            events.append(("query", sql))
+            if outcome == "query_error":
+                raise sqlite3.OperationalError("query failure")
+            return self
+
+        def fetchone(self):
+            return (1,) if outcome == "row" else None
+
+        def close(self):
+            events.append(("close",))
+            if outcome == "close_error":
+                raise failure
+
+    def connect(self, *, read_only, must_exist):
+        events.append(("connect", self.db_path, read_only, must_exist))
+        if outcome == "open_error":
+            raise failure
+        return Connection()
+
+    monkeypatch.setattr(NotesDeviceStateStore, "_connect", connect)
+    if outcome in {"open_error", "close_error"}:
+        with pytest.raises(RuntimeError) as caught:
+            _notes_sync_state_db_has_configured_roots(path)
+        assert caught.value is failure
+    else:
+        assert _notes_sync_state_db_has_configured_roots(path) is (outcome == "row")
+    assert events[0] == ("connect", path, True, True)
+    if outcome == "open_error":
+        assert len(events) == 1
+    else:
+        assert events[1:] == [
+            ("query", "SELECT 1 FROM notes_sync_roots LIMIT 1"),
+            ("close",),
+        ]
+
+
+def test_both_notes_evidence_callers_use_live_wiring_predicate(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook import app_service_wiring as wiring
+    from tldw_chatbook.Notes import notes_sync_runtime
+
+    path = tmp_path / "selected.db"
+    monkeypatch.setattr(wiring, "get_notes_sync_state_db_path", lambda: path)
+    monkeypatch.setattr(
+        wiring, "get_chachanotes_db_path", lambda: tmp_path / "other.db"
+    )
+    monkeypatch.setattr(
+        notes_sync_runtime, "build_notes_sync_legacy_migrator", lambda **_: None
+    )
+    monkeypatch.setattr(
+        notes_sync_runtime, "build_notes_sync_runtime_owner", lambda **kwargs: kwargs
+    )
+    seen = []
+    monkeypatch.setattr(
+        wiring,
+        "_notes_sync_state_db_has_configured_roots",
+        lambda value: seen.append(value) or True,
+    )
+    app = SimpleNamespace(
+        app_config={},
+        notes_user_id="user",
+        chachanotes_db=None,
+        _notes_sync_file_notes_binding=None,
+        _notes_sync_scope_service=None,
+        _instance_lock_status=SimpleNamespace(acquired=True),
+    )
+    assert wiring._notes_sync_boot_start_evidence(app) is True
+    arguments = ServiceWiringMixin._construct_notes_sync_runtime_owner(app)
+    app.app_config = {"notes": {"sync_directory": "/new"}}
+    monkeypatch.setattr(
+        wiring,
+        "_notes_sync_state_db_has_configured_roots",
+        lambda value: seen.append(value) or False,
+    )
+    assert arguments["start_evidence"]() is False
+    assert seen == [path, path]

@@ -24,6 +24,9 @@ if TYPE_CHECKING:
     )
     from .server_chat_loop_service import ServerChatLoopService as ServerChatLoopService
 
+# Published by the original deferred archive package at its own definition.
+globals().setdefault("_ordinary_archive_package", None)
+
 _EXPORTS = {
     "ChatConversationScopeService": "chat_conversation_scope_service",
     "ChatConversationService": "chat_conversation_service",

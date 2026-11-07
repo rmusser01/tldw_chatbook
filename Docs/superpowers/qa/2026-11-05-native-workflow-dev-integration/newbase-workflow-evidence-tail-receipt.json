@@ -1,0 +1,23 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Agents/test_workflow_run_service.py",
+    "-k",
+    "original_failed_launch or required_checkpoint_archives or forged_receipt or recovery_close or completed_task_handoff or partial_quiescent or native_done or checkpoint_keeps",
+    "--tb=short",
+    "-x",
+    "--basetemp=../pytest-newbase-workflow-evidence-tail"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 0,
+  "elapsed_seconds": 89.325929292012,
+  "source_file_count": 9109,
+  "before_sha256": "69dbbe0cf762c493cc35449ce2095c73415e41c24885ad9ac2b945b51d78ad72",
+  "after_sha256": "69dbbe0cf762c493cc35449ce2095c73415e41c24885ad9ac2b945b51d78ad72",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-workflow-evidence-tail.log"
+}

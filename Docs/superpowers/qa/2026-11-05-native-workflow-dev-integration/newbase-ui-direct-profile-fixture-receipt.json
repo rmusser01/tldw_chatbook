@@ -1,0 +1,25 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/UI/test_console_projection_reads_off_loop.py::test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection[direct]",
+    "--tb=short",
+    "-x",
+    "-W",
+    "error::RuntimeWarning",
+    "-W",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "--basetemp=../pytest-newbase-ui-direct-profile-fixture"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 1,
+  "elapsed_seconds": 39.960543625056744,
+  "source_file_count": 9109,
+  "before_sha256": "6135b8861d91859f7a3367fa5c0c41e1e4ec051a067c0707c74080f0a2b089c7",
+  "after_sha256": "6135b8861d91859f7a3367fa5c0c41e1e4ec051a067c0707c74080f0a2b089c7",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-ui-direct-profile-fixture.log"
+}

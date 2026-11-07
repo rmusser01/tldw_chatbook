@@ -1,0 +1,1283 @@
+﻿2026-11-05T20:26:56.4083462Z Current runner version: '2.338.2'
+2026-11-05T20:26:56.4111425Z ##[group]Runner Image Provisioner
+2026-11-05T20:26:56.4112234Z Hosted Compute Agent
+2026-11-05T20:26:56.4112693Z Version: 20261021.618
+2026-11-05T20:26:56.4113505Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-11-05T20:26:56.4114259Z Build Date: 2026-10-21T00:45:21Z
+2026-11-05T20:26:56.4114788Z Worker ID: {2f863d7e-918d-47b1-a014-9a24dec4e441}
+2026-11-05T20:26:56.4115312Z Region: westus2
+2026-11-05T20:26:56.4115778Z Cloud: Azure
+2026-11-05T20:26:56.4116188Z ##[endgroup]
+2026-11-05T20:26:56.4117341Z ##[group]Operating System
+2026-11-05T20:26:56.4117856Z Microsoft Windows Server 2025
+2026-11-05T20:26:56.4118341Z 10.0.26100
+2026-11-05T20:26:56.4118748Z Datacenter
+2026-11-05T20:26:56.4119191Z ##[endgroup]
+2026-11-05T20:26:56.4119589Z ##[group]Runner Image
+2026-11-05T20:26:56.4120055Z Image: windows-2025-vs2026
+2026-11-05T20:26:56.4120511Z Version: 20261030.294.1
+2026-11-05T20:26:56.4121900Z Included Software: https://github.com/actions/runner-images/blob/win25-vs2026/20261030.294/images/windows/Windows2025-VS2026-Readme.md
+2026-11-05T20:26:56.4123214Z Image Release: https://github.com/actions/runner-images/releases/tag/win25-vs2026%2F20261030.294
+2026-11-05T20:26:56.4123973Z ##[endgroup]
+2026-11-05T20:26:56.4124891Z ##[group]GITHUB_TOKEN Permissions
+2026-11-05T20:26:56.4126568Z Contents: read
+2026-11-05T20:26:56.4127019Z Metadata: read
+2026-11-05T20:26:56.4127468Z ##[endgroup]
+2026-11-05T20:26:56.4129358Z Secret source: Actions
+2026-11-05T20:26:56.4130104Z Cache mode: write
+2026-11-05T20:26:56.4131108Z Prepare workflow directory
+2026-11-05T20:26:56.4555764Z Prepare all required actions
+2026-11-05T20:26:56.4604564Z Getting action download info
+2026-11-05T20:26:56.7929750Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-05T20:26:56.9349464Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-11-05T20:26:57.0667248Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-11-05T20:26:57.4465857Z Complete job name: qualify (windows-latest)
+2026-11-05T20:26:57.5927101Z ##[group]Run git config --global core.longpaths true
+2026-11-05T20:26:57.5927954Z [36;1mgit config --global core.longpaths true[0m
+2026-11-05T20:26:57.7367120Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-11-05T20:26:57.7368056Z env:
+2026-11-05T20:26:57.7368500Z   PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+2026-11-05T20:26:57.7369028Z   TLDW_TEST_MODE: 1
+2026-11-05T20:26:57.7369372Z   HF_HUB_OFFLINE: 1
+2026-11-05T20:26:57.7369793Z   TLDW_TEST_GC_EVERY: 1
+2026-11-05T20:26:57.7370393Z   PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
+2026-11-05T20:26:57.7370924Z ##[endgroup]
+2026-11-05T20:26:58.5939046Z ##[group]Run actions/checkout@v4
+2026-11-05T20:26:58.5939935Z with:
+2026-11-05T20:26:58.5940535Z   repository: rmusser01/tldw_chatbook
+2026-11-05T20:26:58.5947231Z   token: ***
+2026-11-05T20:26:58.5947807Z   ssh-strict: true
+2026-11-05T20:26:58.5948377Z   ssh-user: git
+2026-11-05T20:26:58.5948972Z   persist-credentials: true
+2026-11-05T20:26:58.5949621Z   clean: true
+2026-11-05T20:26:58.5950213Z   sparse-checkout-cone-mode: true
+2026-11-05T20:26:58.5950926Z   fetch-depth: 1
+2026-11-05T20:26:58.5951495Z   fetch-tags: false
+2026-11-05T20:26:58.5952074Z   show-progress: true
+2026-11-05T20:26:58.5952656Z   lfs: false
+2026-11-05T20:26:58.5953199Z   submodules: false
+2026-11-05T20:26:58.5953972Z   set-safe-directory: true
+2026-11-05T20:26:58.5954710Z   allow-unsafe-pr-checkout: false
+2026-11-05T20:26:58.5955443Z env:
+2026-11-05T20:26:58.5956101Z   PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+2026-11-05T20:26:58.5956959Z   TLDW_TEST_MODE: 1
+2026-11-05T20:26:58.5957586Z   HF_HUB_OFFLINE: 1
+2026-11-05T20:26:58.5958165Z   TLDW_TEST_GC_EVERY: 1
+2026-11-05T20:26:58.5958930Z   PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
+2026-11-05T20:26:58.5961415Z ##[endgroup]
+2026-11-05T20:26:58.7334570Z Syncing repository: rmusser01/tldw_chatbook
+2026-11-05T20:26:58.7336697Z ##[group]Getting Git version info
+2026-11-05T20:26:58.7337628Z Working directory is 'D:\a\tldw_chatbook\tldw_chatbook'
+2026-11-05T20:26:58.7856453Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-11-05T20:26:58.8153938Z git version 2.56.0.windows.4
+2026-11-05T20:26:58.8198107Z ##[endgroup]
+2026-11-05T20:26:58.8209613Z Copying 'C:\Users\runneradmin\.gitconfig' to 'D:\a\_temp\d93659e6-12cb-4243-81b8-a19434091a04\.gitconfig'
+2026-11-05T20:26:58.8226846Z Temporarily overriding HOME='D:\a\_temp\d93659e6-12cb-4243-81b8-a19434091a04' before making global git config changes
+2026-11-05T20:26:58.8229784Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-05T20:26:58.8236919Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\tldw_chatbook\tldw_chatbook
+2026-11-05T20:26:58.8555757Z Deleting the contents of 'D:\a\tldw_chatbook\tldw_chatbook'
+2026-11-05T20:26:58.8563461Z ##[group]Initializing the repository
+2026-11-05T20:26:58.8570096Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\tldw_chatbook\tldw_chatbook
+2026-11-05T20:26:58.9564050Z Initialized empty Git repository in D:/a/tldw_chatbook/tldw_chatbook/.git/
+2026-11-05T20:26:58.9608136Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/rmusser01/tldw_chatbook
+2026-11-05T20:26:59.0224577Z ##[endgroup]
+2026-11-05T20:26:59.0225982Z ##[group]Disabling automatic garbage collection
+2026-11-05T20:26:59.0233396Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+2026-11-05T20:26:59.0568852Z ##[endgroup]
+2026-11-05T20:26:59.0569744Z ##[group]Setting up auth
+2026-11-05T20:26:59.0578719Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T20:26:59.0908777Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-11-05T20:27:00.5760662Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T20:27:00.6090632Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-11-05T20:27:01.1337988Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T20:27:01.1700541Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-11-05T20:27:01.6715190Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+2026-11-05T20:27:01.7076920Z ##[endgroup]
+2026-11-05T20:27:01.7077505Z ##[group]Fetching the repository
+2026-11-05T20:27:01.7088241Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ca0dcafa3fe0ae6d447cdcb1422fa1bb8a2bf6c3:refs/remotes/pull/3411/merge
+2026-11-05T20:27:23.3601274Z From https://github.com/rmusser01/tldw_chatbook
+2026-11-05T20:27:23.3601965Z  * [new ref]           ca0dcafa3fe0ae6d447cdcb1422fa1bb8a2bf6c3 -> pull/3411/merge
+2026-11-05T20:27:23.3647809Z ##[endgroup]
+2026-11-05T20:27:23.3651123Z ##[group]Determining the checkout info
+2026-11-05T20:27:23.3651632Z ##[endgroup]
+2026-11-05T20:27:23.3662699Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+2026-11-05T20:27:23.4796255Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+2026-11-05T20:27:23.5143105Z ##[group]Checking out the ref
+2026-11-05T20:27:23.5151200Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force refs/remotes/pull/3411/merge
+2026-11-05T20:27:24.9992875Z Updating files:   9% (3731/40893)
+2026-11-05T20:27:25.0783531Z Updating files:  10% (4090/40893)
+2026-11-05T20:27:25.1950339Z Updating files:  11% (4499/40893)
+2026-11-05T20:27:25.8043044Z Updating files:  12% (4908/40893)
+2026-11-05T20:27:25.9078163Z Updating files:  13% (5317/40893)
+2026-11-05T20:27:25.9278993Z Updating files:  14% (5726/40893)
+2026-11-05T20:27:26.0560323Z Updating files:  14% (5779/40893)
+2026-11-05T20:27:26.1798911Z Updating files:  15% (6134/40893)
+2026-11-05T20:27:26.3082379Z Updating files:  16% (6543/40893)
+2026-11-05T20:27:26.4389824Z Updating files:  17% (6952/40893)
+2026-11-05T20:27:26.5547880Z Updating files:  18% (7361/40893)
+2026-11-05T20:27:26.6535969Z Updating files:  19% (7770/40893)
+2026-11-05T20:27:27.1255587Z Updating files:  20% (8179/40893)
+2026-11-05T20:27:27.2269143Z Updating files:  20% (8235/40893)
+2026-11-05T20:27:27.3454688Z Updating files:  21% (8588/40893)
+2026-11-05T20:27:27.4942996Z Updating files:  22% (8997/40893)
+2026-11-05T20:27:27.5888924Z Updating files:  23% (9406/40893)
+2026-11-05T20:27:27.6933481Z Updating files:  24% (9815/40893)
+2026-11-05T20:27:27.7991395Z Updating files:  25% (10224/40893)
+2026-11-05T20:27:27.9005773Z Updating files:  26% (10633/40893)
+2026-11-05T20:27:27.9317835Z Updating files:  27% (11042/40893)
+2026-11-05T20:27:28.0065663Z Updating files:  27% (11160/40893)
+2026-11-05T20:27:28.5902771Z Updating files:  28% (11451/40893)
+2026-11-05T20:27:28.6957033Z Updating files:  29% (11859/40893)
+2026-11-05T20:27:28.7988715Z Updating files:  30% (12268/40893)
+2026-11-05T20:27:28.8997255Z Updating files:  31% (12677/40893)
+2026-11-05T20:27:28.9333723Z Updating files:  32% (13086/40893)
+2026-11-05T20:27:29.0085112Z Updating files:  32% (13161/40893)
+2026-11-05T20:27:29.0899721Z Updating files:  33% (13495/40893)
+2026-11-05T20:27:29.1735991Z Updating files:  34% (13904/40893)
+2026-11-05T20:27:29.2524128Z Updating files:  35% (14313/40893)
+2026-11-05T20:27:29.9521974Z Updating files:  36% (14722/40893)
+2026-11-05T20:27:30.0719973Z Updating files:  36% (15087/40893)
+2026-11-05T20:27:30.3129308Z Updating files:  37% (15131/40893)
+2026-11-05T20:27:30.5519659Z Updating files:  38% (15540/40893)
+2026-11-05T20:27:30.6980461Z Updating files:  39% (15949/40893)
+2026-11-05T20:27:30.8108624Z Updating files:  40% (16358/40893)
+2026-11-05T20:27:30.9434374Z Updating files:  41% (16767/40893)
+2026-11-05T20:27:31.0777899Z Updating files:  41% (16914/40893)
+2026-11-05T20:27:31.2847039Z Updating files:  42% (17176/40893)
+2026-11-05T20:27:31.4287446Z Updating files:  43% (17584/40893)
+2026-11-05T20:27:31.5187893Z Updating files:  44% (17993/40893)
+2026-11-05T20:27:31.6237682Z Updating files:  45% (18402/40893)
+2026-11-05T20:27:31.7394059Z Updating files:  46% (18811/40893)
+2026-11-05T20:27:31.9259435Z Updating files:  47% (19220/40893)
+2026-11-05T20:27:31.9446462Z Updating files:  48% (19629/40893)
+2026-11-05T20:27:32.2373693Z Updating files:  48% (19663/40893)
+2026-11-05T20:27:32.3151015Z Updating files:  49% (20038/40893)
+2026-11-05T20:27:32.4187001Z Updating files:  50% (20447/40893)
+2026-11-05T20:27:32.5105183Z Updating files:  51% (20856/40893)
+2026-11-05T20:27:32.7918323Z Updating files:  52% (21265/40893)
+2026-11-05T20:27:32.9465056Z Updating files:  53% (21674/40893)
+2026-11-05T20:27:32.9975280Z Updating files:  53% (21904/40893)
+2026-11-05T20:27:33.2215679Z Updating files:  54% (22083/40893)
+2026-11-05T20:27:33.3342427Z Updating files:  55% (22492/40893)
+2026-11-05T20:27:33.4836258Z Updating files:  56% (22901/40893)
+2026-11-05T20:27:33.6437431Z Updating files:  57% (23310/40893)
+2026-11-05T20:27:33.7726818Z Updating files:  58% (23718/40893)
+2026-11-05T20:27:33.9264766Z Updating files:  59% (24127/40893)
+2026-11-05T20:27:33.9448977Z Updating files:  60% (24536/40893)
+2026-11-05T20:27:34.0399848Z Updating files:  60% (24604/40893)
+2026-11-05T20:27:34.1377370Z Updating files:  61% (24945/40893)
+2026-11-05T20:27:34.2392585Z Updating files:  62% (25354/40893)
+2026-11-05T20:27:34.3519255Z Updating files:  63% (25763/40893)
+2026-11-05T20:27:34.4580492Z Updating files:  64% (26172/40893)
+2026-11-05T20:27:34.5634569Z Updating files:  65% (26581/40893)
+2026-11-05T20:27:34.6777407Z Updating files:  66% (26990/40893)
+2026-11-05T20:27:34.7954260Z Updating files:  67% (27399/40893)
+2026-11-05T20:27:34.9715531Z Updating files:  68% (27808/40893)
+2026-11-05T20:27:34.9815384Z Updating files:  68% (28182/40893)
+2026-11-05T20:27:35.1014907Z Updating files:  69% (28217/40893)
+2026-11-05T20:27:35.2051341Z Updating files:  70% (28626/40893)
+2026-11-05T20:27:35.3048107Z Updating files:  71% (29035/40893)
+2026-11-05T20:27:35.3963146Z Updating files:  72% (29443/40893)
+2026-11-05T20:27:35.5024719Z Updating files:  73% (29852/40893)
+2026-11-05T20:27:35.5840233Z Updating files:  74% (30261/40893)
+2026-11-05T20:27:35.6669665Z Updating files:  75% (30670/40893)
+2026-11-05T20:27:35.7555815Z Updating files:  76% (31079/40893)
+2026-11-05T20:27:35.8387894Z Updating files:  77% (31488/40893)
+2026-11-05T20:27:35.9236486Z Updating files:  78% (31897/40893)
+2026-11-05T20:27:35.9562909Z Updating files:  79% (32306/40893)
+2026-11-05T20:27:36.0059778Z Updating files:  79% (32472/40893)
+2026-11-05T20:27:36.0913530Z Updating files:  80% (32715/40893)
+2026-11-05T20:27:36.1750297Z Updating files:  81% (33124/40893)
+2026-11-05T20:27:36.2636903Z Updating files:  82% (33533/40893)
+2026-11-05T20:27:36.4207839Z Updating files:  83% (33942/40893)
+2026-11-05T20:27:36.5110315Z Updating files:  84% (34351/40893)
+2026-11-05T20:27:36.5936275Z Updating files:  85% (34760/40893)
+2026-11-05T20:27:36.6784212Z Updating files:  86% (35168/40893)
+2026-11-05T20:27:36.7629412Z Updating files:  87% (35577/40893)
+2026-11-05T20:27:36.8477755Z Updating files:  88% (35986/40893)
+2026-11-05T20:27:36.9293484Z Updating files:  89% (36395/40893)
+2026-11-05T20:27:36.9644398Z Updating files:  90% (36804/40893)
+2026-11-05T20:27:37.0135141Z Updating files:  90% (36977/40893)
+2026-11-05T20:27:37.1218611Z Updating files:  91% (37213/40893)
+2026-11-05T20:27:37.2602302Z Updating files:  92% (37622/40893)
+2026-11-05T20:27:37.3695066Z Updating files:  93% (38031/40893)
+2026-11-05T20:27:37.4915388Z Updating files:  94% (38440/40893)
+2026-11-05T20:27:37.5998689Z Updating files:  95% (38849/40893)
+2026-11-05T20:27:37.8403357Z Updating files:  96% (39258/40893)
+2026-11-05T20:27:37.9740295Z Updating files:  97% (39667/40893)
+2026-11-05T20:27:37.9763389Z Updating files:  98% (40076/40893)
+2026-11-05T20:27:38.0867665Z Updating files:  98% (40086/40893)
+2026-11-05T20:27:38.2764833Z Updating files:  99% (40485/40893)
+2026-11-05T20:27:38.2765174Z Updating files: 100% (40893/40893)
+2026-11-05T20:27:38.2765468Z Updating files: 100% (40893/40893), done.
+2026-11-05T20:27:38.3261327Z Note: switching to 'refs/remotes/pull/3411/merge'.
+2026-11-05T20:27:38.3261674Z 
+2026-11-05T20:27:38.3261916Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-05T20:27:38.3262500Z changes and commit them, and you can discard any commits you make in this
+2026-11-05T20:27:38.3263058Z state without impacting any branches by switching back to a branch.
+2026-11-05T20:27:38.3263374Z 
+2026-11-05T20:27:38.3263598Z If you want to create a new branch to retain commits you create, you may
+2026-11-05T20:27:38.3264098Z do so (now or later) by using -c with the switch command. Example:
+2026-11-05T20:27:38.3264399Z 
+2026-11-05T20:27:38.3264544Z   git switch -c <new-branch-name>
+2026-11-05T20:27:38.3264749Z 
+2026-11-05T20:27:38.3264860Z Or undo this operation with:
+2026-11-05T20:27:38.3265043Z 
+2026-11-05T20:27:38.3265128Z   git switch -
+2026-11-05T20:27:38.3265278Z 
+2026-11-05T20:27:38.3265544Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-05T20:27:38.3266109Z 
+2026-11-05T20:27:38.3266524Z HEAD is now at ca0dcafa Merge f4e72e54078413c35e01ea52607afe76283cc972 into 3c39215749a96d5c1b8c05972fdd2aeb7588b002
+2026-11-05T20:27:38.3763863Z ##[endgroup]
+2026-11-05T20:27:38.4120091Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+2026-11-05T20:27:38.4416408Z ca0dcafa3fe0ae6d447cdcb1422fa1bb8a2bf6c3
+2026-11-05T20:27:38.4790836Z ##[group]Run actions/setup-python@v5
+2026-11-05T20:27:38.4791120Z with:
+2026-11-05T20:27:38.4791283Z   python-version: 3.12
+2026-11-05T20:27:38.4791456Z   cache: pip
+2026-11-05T20:27:38.4791611Z   check-latest: false
+2026-11-05T20:27:38.4793904Z   token: ***
+2026-11-05T20:27:38.4794079Z   update-environment: true
+2026-11-05T20:27:38.4794286Z   allow-prereleases: false
+2026-11-05T20:27:38.4794456Z   freethreaded: false
+2026-11-05T20:27:38.4794614Z env:
+2026-11-05T20:27:38.4794803Z   PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+2026-11-05T20:27:38.4795043Z   TLDW_TEST_MODE: 1
+2026-11-05T20:27:38.4795191Z   HF_HUB_OFFLINE: 1
+2026-11-05T20:27:38.4795341Z   TLDW_TEST_GC_EVERY: 1
+2026-11-05T20:27:38.4795556Z   PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
+2026-11-05T20:27:38.4795812Z ##[endgroup]
+2026-11-05T20:27:38.6170306Z ##[group]Installed versions
+2026-11-05T20:27:38.9130710Z (node:6208) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-05T20:27:38.9131287Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-05T20:27:38.9131672Z Successfully set up CPython (3.12.10)
+2026-11-05T20:27:38.9132257Z ##[endgroup]
+2026-11-05T20:27:44.8363682Z pip cache is not found
+2026-11-05T20:27:44.8673682Z ##[group]Run python -m pip install -e ".[dev]"
+2026-11-05T20:27:44.8674034Z [36;1mpython -m pip install -e ".[dev]"[0m
+2026-11-05T20:27:44.8735063Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-11-05T20:27:44.8735346Z env:
+2026-11-05T20:27:44.8735554Z   PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+2026-11-05T20:27:44.8735800Z   TLDW_TEST_MODE: 1
+2026-11-05T20:27:44.8735957Z   HF_HUB_OFFLINE: 1
+2026-11-05T20:27:44.8736129Z   TLDW_TEST_GC_EVERY: 1
+2026-11-05T20:27:44.8736346Z   PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
+2026-11-05T20:27:44.8736656Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:27:44.8737028Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-11-05T20:27:44.8737397Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:27:44.8737702Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:27:44.8738053Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:27:44.8738297Z ##[endgroup]
+2026-11-05T20:27:47.4456704Z Obtaining file:///D:/a/tldw_chatbook/tldw_chatbook
+2026-11-05T20:27:47.4505014Z   Installing build dependencies: started
+2026-11-05T20:27:49.8672014Z   Installing build dependencies: finished with status 'done'
+2026-11-05T20:27:49.8688073Z   Checking if build backend supports build_editable: started
+2026-11-05T20:27:50.3868389Z   Checking if build backend supports build_editable: finished with status 'done'
+2026-11-05T20:27:50.3890824Z   Getting requirements to build editable: started
+2026-11-05T20:27:51.3476788Z   Getting requirements to build editable: finished with status 'done'
+2026-11-05T20:27:51.3503517Z   Preparing editable metadata (pyproject.toml): started
+2026-11-05T20:27:52.0044367Z   Preparing editable metadata (pyproject.toml): finished with status 'done'
+2026-11-05T20:27:52.3098226Z Collecting chardet<6,>=3.0.2 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:52.4756891Z   Downloading chardet-5.2.0-py3-none-any.whl.metadata (3.4 kB)
+2026-11-05T20:27:52.5377034Z Collecting httpx (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:52.5502507Z   Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+2026-11-05T20:27:52.6033066Z Collecting loguru (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:52.6135317Z   Downloading loguru-0.7.3-py3-none-any.whl.metadata (22 kB)
+2026-11-05T20:27:52.7171718Z Collecting textual==8.2.8 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:52.7267427Z   Downloading textual-8.2.8-py3-none-any.whl.metadata (9.1 kB)
+2026-11-05T20:27:52.7896818Z Collecting textual-diff-view==0.1.5 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:52.8028883Z   Downloading textual_diff_view-0.1.5-py3-none-any.whl.metadata (48 kB)
+2026-11-05T20:27:52.8992619Z Collecting requests (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:52.9101864Z   Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+2026-11-05T20:27:52.9848125Z Collecting rich (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:52.9952157Z   Downloading rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+2026-11-05T20:27:53.0585439Z Collecting pyte==0.8.2 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:53.0685597Z   Downloading pyte-0.8.2-py3-none-any.whl.metadata (3.0 kB)
+2026-11-05T20:27:53.4564142Z Collecting regex==2026.4.4 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:53.4663332Z   Downloading regex-2026.4.4-cp312-cp312-win_amd64.whl.metadata (41 kB)
+2026-11-05T20:27:53.5265824Z Collecting wcwidth<1,>=0.2.14 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:53.5364005Z   Downloading wcwidth-0.9.4-cp310-abi3-win_amd64.whl.metadata (24 kB)
+2026-11-05T20:27:53.6098021Z Collecting rich-pixels>=3.0.0 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:53.6203923Z   Downloading rich_pixels-3.0.1-py3-none-any.whl.metadata (2.2 kB)
+2026-11-05T20:27:54.0056234Z Collecting pillow>=10.4 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:54.0147787Z   Downloading pillow-13.0.0-cp312-cp312-win_amd64.whl.metadata (9.3 kB)
+2026-11-05T20:27:54.0806480Z Collecting PyYAML (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:54.0895891Z   Downloading pyyaml-6.0.3-cp312-cp312-win_amd64.whl.metadata (2.4 kB)
+2026-11-05T20:27:54.3998369Z Collecting pydantic<3,>=2.4 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:54.4095734Z   Downloading pydantic-2.14.3-py3-none-any.whl.metadata (141 kB)
+2026-11-05T20:27:54.5671215Z Collecting jsonschema<5,>=4.26 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:54.5771909Z   Downloading jsonschema-4.26.0-py3-none-any.whl.metadata (7.6 kB)
+2026-11-05T20:27:54.6344894Z Collecting referencing<1,>=0.37 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:54.6481221Z   Downloading referencing-0.37.0-py3-none-any.whl.metadata (2.8 kB)
+2026-11-05T20:27:54.7911414Z Collecting rfc8785==0.1.4 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:54.8005811Z   Downloading rfc8785-0.1.4-py3-none-any.whl.metadata (3.4 kB)
+2026-11-05T20:27:54.9888450Z Collecting cryptography (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:54.9989012Z   Downloading cryptography-50.0.2-cp311-abi3-win_amd64.whl.metadata (4.4 kB)
+2026-11-05T20:27:55.0475994Z Collecting portalocker==3.2.0 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.0561570Z   Downloading portalocker-3.2.0-py3-none-any.whl.metadata (8.7 kB)
+2026-11-05T20:27:55.1468978Z Collecting psutil (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.1566556Z   Downloading psutil-7.2.2-cp37-abi3-win_amd64.whl.metadata (22 kB)
+2026-11-05T20:27:55.2271470Z Collecting toml (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.2369345Z   Downloading toml-0.10.2-py2.py3-none-any.whl.metadata (7.1 kB)
+2026-11-05T20:27:55.2892364Z Collecting pyperclip (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.2980792Z   Downloading pyperclip-1.11.0-py3-none-any.whl.metadata (2.4 kB)
+2026-11-05T20:27:55.4143993Z Collecting emoji (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.4229059Z   Downloading emoji-2.16.0-py3-none-any.whl.metadata (5.7 kB)
+2026-11-05T20:27:55.4774338Z Collecting jinja2 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.4864311Z   Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+2026-11-05T20:27:55.5867492Z Collecting pycryptodomex (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.5957652Z   Downloading pycryptodomex-3.24.2-cp37-abi3-win_amd64.whl.metadata (3.5 kB)
+2026-11-05T20:27:55.7363236Z Collecting keyring (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.7482945Z   Downloading keyring-25.7.0-py3-none-any.whl.metadata (21 kB)
+2026-11-05T20:27:55.8027482Z Collecting markdownify (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.8117838Z   Downloading markdownify-1.2.3-py3-none-any.whl.metadata (9.9 kB)
+2026-11-05T20:27:55.8677136Z Collecting beautifulsoup4 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.8776054Z   Downloading beautifulsoup4-4.15.0-py3-none-any.whl.metadata (3.8 kB)
+2026-11-05T20:27:55.9285955Z Collecting aiofiles (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:55.9401423Z   Downloading aiofiles-25.1.0-py3-none-any.whl.metadata (6.3 kB)
+2026-11-05T20:27:55.9956213Z Collecting croniter>=1.4.0 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:56.0062689Z   Downloading croniter-6.2.4-py3-none-any.whl.metadata (23 kB)
+2026-11-05T20:27:56.0650301Z Collecting textual-image (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:56.0760296Z   Downloading textual_image-0.14.2-py3-none-any.whl.metadata (14 kB)
+2026-11-05T20:27:56.1980809Z Collecting tiktoken==0.14.0 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:56.2092984Z   Downloading tiktoken-0.14.0-cp312-cp312-win_amd64.whl.metadata (6.8 kB)
+2026-11-05T20:27:56.2575660Z Collecting defusedxml (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:56.2678456Z   Downloading defusedxml-0.7.1-py2.py3-none-any.whl.metadata (32 kB)
+2026-11-05T20:27:56.3202049Z Collecting html5lib<2,>=1.1 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:56.3290659Z   Downloading html5lib-1.1-py2.py3-none-any.whl.metadata (16 kB)
+2026-11-05T20:27:56.3791295Z Collecting tinycss2<2,>=1.4 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:56.3881406Z   Downloading tinycss2-1.5.1-py3-none-any.whl.metadata (3.0 kB)
+2026-11-05T20:27:56.8630830Z Collecting aiohttp<4,>=3.9 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:56.8722664Z   Downloading aiohttp-3.14.5-cp312-cp312-win_amd64.whl.metadata (8.5 kB)
+2026-11-05T20:27:57.0018348Z Collecting sherpa-onnx<2,>=1.13 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:57.0124435Z   Downloading sherpa_onnx-1.13.8-cp312-cp312-win_amd64.whl.metadata (54 kB)
+2026-11-05T20:27:57.2866729Z Collecting numpy (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:57.2964312Z   Downloading numpy-2.5.4-cp312-cp312-win_amd64.whl.metadata (6.6 kB)
+2026-11-05T20:27:57.3620200Z Collecting pytest (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:57.3708910Z   Downloading pytest-9.2.0-py3-none-any.whl.metadata (7.9 kB)
+2026-11-05T20:27:57.4441139Z Collecting pytest-timeout (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:57.4737275Z   Downloading pytest_timeout-2.4.0-py3-none-any.whl.metadata (20 kB)
+2026-11-05T20:27:57.5296488Z Collecting pytest-xdist (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:57.5398161Z   Downloading pytest_xdist-3.8.0-py3-none-any.whl.metadata (3.0 kB)
+2026-11-05T20:27:57.5985262Z Collecting pytest-mock (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:57.6072244Z   Downloading pytest_mock-3.17.0-py3-none-any.whl.metadata (3.9 kB)
+2026-11-05T20:27:57.6565514Z Collecting pytest-cov (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:57.6656854Z   Downloading pytest_cov-7.1.0-py3-none-any.whl.metadata (32 kB)
+2026-11-05T20:27:57.7191364Z Collecting textual-dev (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:57.7297521Z   Downloading textual_dev-1.8.0-py3-none-any.whl.metadata (1.7 kB)
+2026-11-05T20:27:58.1119252Z Collecting hypothesis (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.1210291Z   Downloading hypothesis-6.170.14-cp312-cp312-win_amd64.whl.metadata (5.6 kB)
+2026-11-05T20:27:58.1833122Z Collecting pytest-asyncio (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.1932499Z   Downloading pytest_asyncio-1.4.1.post1-py3-none-any.whl.metadata (4.4 kB)
+2026-11-05T20:27:58.2622419Z Collecting build (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.2713948Z   Downloading build-1.6.1-py3-none-any.whl.metadata (5.6 kB)
+2026-11-05T20:27:58.6145295Z Collecting uv<1,>=0.8.0 (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.6238670Z   Downloading uv-0.13.7-py3-none-win_amd64.whl.metadata (11 kB)
+2026-11-05T20:27:58.6807426Z Collecting twine (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.6897867Z   Downloading twine-7.0.0-py3-none-any.whl.metadata (3.5 kB)
+2026-11-05T20:27:58.7448146Z Collecting wheel (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.7536353Z   Downloading wheel-0.48.0-py3-none-any.whl.metadata (2.3 kB)
+2026-11-05T20:27:58.8108438Z Collecting prometheus_client (from tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.8194334Z   Downloading prometheus_client-0.26.0-py3-none-any.whl.metadata (2.1 kB)
+2026-11-05T20:27:58.8908112Z Collecting pywin32>=226 (from portalocker==3.2.0->tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.9000701Z   Downloading pywin32-312-cp312-cp312-win_amd64.whl.metadata (11 kB)
+2026-11-05T20:27:58.9604560Z Collecting markdown-it-py>=2.1.0 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-11-05T20:27:58.9705370Z   Downloading markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+2026-11-05T20:27:59.0271801Z Collecting mdit-py-plugins (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.0364911Z   Downloading mdit_py_plugins-0.6.1-py3-none-any.whl.metadata (2.9 kB)
+2026-11-05T20:27:59.0655781Z Requirement already satisfied: platformdirs<5,>=3.6.0 in C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages (from textual==8.2.8->tldw_chatbook==0.2.3) (4.14.0)
+2026-11-05T20:27:59.0988548Z Collecting pygments<3.0.0,>=2.19.2 (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.1077674Z   Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+2026-11-05T20:27:59.1658540Z Collecting typing-extensions<5.0.0,>=4.4.0 (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.1752464Z   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+2026-11-05T20:27:59.2301717Z Collecting aiohappyeyeballs>=2.5.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.2404474Z   Downloading aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+2026-11-05T20:27:59.2856481Z Collecting aiosignal>=1.4.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.2995963Z   Downloading aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+2026-11-05T20:27:59.3519970Z Collecting attrs>=17.3.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.3643329Z   Downloading attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+2026-11-05T20:27:59.4632348Z Collecting frozenlist>=1.1.1 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.4723954Z   Downloading frozenlist-1.8.0-cp312-cp312-win_amd64.whl.metadata (21 kB)
+2026-11-05T20:27:59.7425295Z Collecting multidict<8.0,>=4.5 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.7513887Z   Downloading multidict-7.2.1-cp312-cp312-win_amd64.whl.metadata (6.3 kB)
+2026-11-05T20:27:59.8575412Z Collecting propcache>=0.2.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-11-05T20:27:59.8668408Z   Downloading propcache-0.5.4-cp312-cp312-win_amd64.whl.metadata (25 kB)
+2026-11-05T20:28:00.2108402Z Collecting yarl<2.0,>=1.25.1 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-11-05T20:28:00.2202696Z   Downloading yarl-1.25.1-cp312-cp312-win_amd64.whl.metadata (115 kB)
+2026-11-05T20:28:00.3062542Z Collecting six>=1.9 (from html5lib<2,>=1.1->tldw_chatbook==0.2.3)
+2026-11-05T20:28:00.3155823Z   Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-11-05T20:28:00.3668932Z Collecting webencodings (from html5lib<2,>=1.1->tldw_chatbook==0.2.3)
+2026-11-05T20:28:00.3756398Z   Downloading webencodings-0.6.1-py3-none-any.whl.metadata (3.4 kB)
+2026-11-05T20:28:00.4481060Z Collecting jsonschema-specifications>=2023.03.6 (from jsonschema<5,>=4.26->tldw_chatbook==0.2.3)
+2026-11-05T20:28:00.4570664Z   Downloading jsonschema_specifications-2025.9.1-py3-none-any.whl.metadata (2.9 kB)
+2026-11-05T20:28:00.7183634Z Collecting rpds-py>=0.25.0 (from jsonschema<5,>=4.26->tldw_chatbook==0.2.3)
+2026-11-05T20:28:00.7275009Z   Downloading rpds_py-2026.9.1-cp312-cp312-win_amd64.whl.metadata (4.2 kB)
+2026-11-05T20:28:00.7785046Z Collecting annotated-types>=0.6.0 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-11-05T20:28:00.7873909Z   Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+2026-11-05T20:28:01.4690671Z Collecting pydantic-core==2.50.4 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-11-05T20:28:01.4784516Z   Downloading pydantic_core-2.50.4-cp312-cp312-win_amd64.whl.metadata (6.7 kB)
+2026-11-05T20:28:01.5318632Z Collecting typing-inspection>=0.4.4 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-11-05T20:28:01.5465149Z   Downloading typing_inspection-0.4.5-py3-none-any.whl.metadata (2.6 kB)
+2026-11-05T20:28:01.6247520Z Collecting sherpa-onnx-core==1.13.8 (from sherpa-onnx<2,>=1.13->tldw_chatbook==0.2.3)
+2026-11-05T20:28:01.6358718Z   Downloading sherpa_onnx_core-1.13.8-py3-none-win_amd64.whl.metadata (532 bytes)
+2026-11-05T20:28:01.7373478Z Collecting idna>=2.0 (from yarl<2.0,>=1.25.1->aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-11-05T20:28:01.7469246Z   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+2026-11-05T20:28:01.8759517Z Collecting python-dateutil (from croniter>=1.4.0->tldw_chatbook==0.2.3)
+2026-11-05T20:28:01.8868334Z   Downloading python_dateutil-4.0.0-py3-none-any.whl.metadata (7.3 kB)
+2026-11-05T20:28:01.9976882Z Collecting mdurl~=0.1 (from markdown-it-py>=2.1.0->markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-11-05T20:28:02.0074186Z   Downloading mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+2026-11-05T20:28:02.1713657Z Collecting linkify-it-py<3,>=1 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-11-05T20:28:02.1802223Z   Downloading linkify_it_py-2.2.0-py3-none-any.whl.metadata (8.6 kB)
+2026-11-05T20:28:02.2456629Z Collecting soupsieve>=1.6.1 (from beautifulsoup4->tldw_chatbook==0.2.3)
+2026-11-05T20:28:02.2556677Z   Downloading soupsieve-4.0.1-py3-none-any.whl.metadata (4.4 kB)
+2026-11-05T20:28:02.3964871Z Requirement already satisfied: packaging>=24.0 in C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages (from build->tldw_chatbook==0.2.3) (26.3)
+2026-11-05T20:28:02.4255674Z Collecting pyproject_hooks (from build->tldw_chatbook==0.2.3)
+2026-11-05T20:28:02.4370938Z   Downloading pyproject_hooks-1.3.3-py3-none-any.whl.metadata (1.3 kB)
+2026-11-05T20:28:02.4582329Z Requirement already satisfied: colorama in C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages (from build->tldw_chatbook==0.2.3) (0.4.6)
+2026-11-05T20:28:02.5640941Z Collecting cffi>=2.0.0 (from cryptography->tldw_chatbook==0.2.3)
+2026-11-05T20:28:02.5749797Z   Downloading cffi-2.1.1-cp312-cp312-win_amd64.whl.metadata (2.6 kB)
+2026-11-05T20:28:02.8420565Z Collecting pycparser (from cffi>=2.0.0->cryptography->tldw_chatbook==0.2.3)
+2026-11-05T20:28:02.8511802Z   Downloading pycparser-3.12-py3-none-any.whl.metadata (9.7 kB)
+2026-11-05T20:28:02.9125918Z Collecting anyio (from httpx->tldw_chatbook==0.2.3)
+2026-11-05T20:28:02.9218238Z   Downloading anyio-4.16.0-py3-none-any.whl.metadata (4.7 kB)
+2026-11-05T20:28:03.0624363Z Collecting certifi (from httpx->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.0715176Z   Downloading certifi-2026.10.23-py3-none-any.whl.metadata (2.5 kB)
+2026-11-05T20:28:03.1610600Z Collecting httpcore==1.* (from httpx->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.1720652Z   Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+2026-11-05T20:28:03.2436020Z Collecting h11>=0.16 (from httpcore==1.*->httpx->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.2531611Z   Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+2026-11-05T20:28:03.3145700Z Collecting sortedcontainers<3.0.0,>=2.1.0 (from hypothesis->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.3239888Z   Downloading sortedcontainers-2.4.0-py2.py3-none-any.whl.metadata (10 kB)
+2026-11-05T20:28:03.4131090Z Collecting MarkupSafe>=2.0 (from jinja2->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.4235319Z   Downloading markupsafe-3.0.4-cp312-cp312-win_amd64.whl.metadata (2.8 kB)
+2026-11-05T20:28:03.4700766Z Collecting pywin32-ctypes>=0.2.0 (from keyring->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.4795087Z   Downloading pywin32_ctypes-0.2.3-py3-none-any.whl.metadata (3.9 kB)
+2026-11-05T20:28:03.5297940Z Collecting jaraco.classes (from keyring->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.5385919Z   Downloading jaraco.classes-3.4.0-py3-none-any.whl.metadata (2.6 kB)
+2026-11-05T20:28:03.5953897Z Collecting jaraco.functools (from keyring->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.6043216Z   Downloading jaraco_functools-4.6.0-py3-none-any.whl.metadata (2.9 kB)
+2026-11-05T20:28:03.6750394Z Collecting jaraco.context (from keyring->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.6844830Z   Downloading jaraco_context-6.1.2-py3-none-any.whl.metadata (4.2 kB)
+2026-11-05T20:28:03.7422134Z Collecting more-itertools (from jaraco.classes->keyring->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.7520269Z   Downloading more_itertools-11.2.1-py3-none-any.whl.metadata (42 kB)
+2026-11-05T20:28:03.8024043Z Collecting win32-setctime>=1.0.0 (from loguru->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.8121641Z   Downloading win32_setctime-1.2.1-py3-none-any.whl.metadata (2.7 kB)
+2026-11-05T20:28:03.8739116Z Collecting iniconfig>=2 (from pytest->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.8829862Z   Downloading iniconfig-2.3.1-py3-none-any.whl.metadata (2.8 kB)
+2026-11-05T20:28:03.9399916Z Collecting pluggy<2,>=1.6 (from pytest->tldw_chatbook==0.2.3)
+2026-11-05T20:28:03.9491069Z   Downloading pluggy-1.7.0-py3-none-any.whl.metadata (5.0 kB)
+2026-11-05T20:28:04.3354386Z Collecting coverage>=7.10.6 (from coverage[toml]>=7.10.6->pytest-cov->tldw_chatbook==0.2.3)
+2026-11-05T20:28:04.3449185Z   Downloading coverage-7.17.2-cp312-cp312-win_amd64.whl.metadata (8.3 kB)
+2026-11-05T20:28:04.4792865Z Collecting execnet>=2.1 (from pytest-xdist->tldw_chatbook==0.2.3)
+2026-11-05T20:28:04.4886716Z   Downloading execnet-2.1.2-py3-none-any.whl.metadata (2.9 kB)
+2026-11-05T20:28:04.5454444Z Collecting tzdata (from python-dateutil->croniter>=1.4.0->tldw_chatbook==0.2.3)
+2026-11-05T20:28:04.5554109Z   Downloading tzdata-2026.6-py2.py3-none-any.whl.metadata (1.4 kB)
+2026-11-05T20:28:04.7858881Z Collecting charset_normalizer<4,>=2 (from requests->tldw_chatbook==0.2.3)
+2026-11-05T20:28:04.7993281Z   Downloading charset_normalizer-3.5.2-cp312-cp312-win_amd64.whl.metadata (47 kB)
+2026-11-05T20:28:04.9559228Z Collecting urllib3<3,>=1.26 (from requests->tldw_chatbook==0.2.3)
+2026-11-05T20:28:04.9651153Z   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+2026-11-05T20:28:04.9955875Z Requirement already satisfied: click>=8.1.2 in C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages (from textual-dev->tldw_chatbook==0.2.3) (8.5.0)
+2026-11-05T20:28:05.0918653Z Collecting msgpack>=1.0.3 (from textual-dev->tldw_chatbook==0.2.3)
+2026-11-05T20:28:05.1310066Z   Downloading msgpack-1.2.4-cp312-cp312-win_amd64.whl.metadata (8.5 kB)
+2026-11-05T20:28:05.1960758Z Collecting textual_serve>=1.0.3 (from textual-dev->tldw_chatbook==0.2.3)
+2026-11-05T20:28:05.2083355Z   Downloading textual_serve-1.1.3-py3-none-any.whl.metadata (4.0 kB)
+2026-11-05T20:28:05.2678885Z Collecting aiohttp-jinja2>=1.6 (from textual_serve>=1.0.3->textual-dev->tldw_chatbook==0.2.3)
+2026-11-05T20:28:05.2769658Z   Downloading aiohttp_jinja2-1.6-py3-none-any.whl.metadata (8.2 kB)
+2026-11-05T20:28:05.3412559Z Collecting readme-renderer>=35.0 (from twine->tldw_chatbook==0.2.3)
+2026-11-05T20:28:05.3507829Z   Downloading readme_renderer-46.0-py3-none-any.whl.metadata (3.0 kB)
+2026-11-05T20:28:07.0776803Z Collecting requests-toolbelt!=0.9.0,>=0.8.0 (from twine->tldw_chatbook==0.2.3)
+2026-11-05T20:28:07.0868684Z   Downloading requests_toolbelt-1.0.0-py2.py3-none-any.whl.metadata (14 kB)
+2026-11-05T20:28:07.1606999Z Collecting rfc3986>=1.4.0 (from twine->tldw_chatbook==0.2.3)
+2026-11-05T20:28:07.1701062Z   Downloading rfc3986-2.0.0-py2.py3-none-any.whl.metadata (6.6 kB)
+2026-11-05T20:28:07.2350713Z Collecting id (from twine->tldw_chatbook==0.2.3)
+2026-11-05T20:28:07.2482456Z   Downloading id-1.6.1-py3-none-any.whl.metadata (5.1 kB)
+2026-11-05T20:28:07.3271885Z Collecting nh3>=0.2.14 (from readme-renderer>=35.0->twine->tldw_chatbook==0.2.3)
+2026-11-05T20:28:07.3361514Z   Downloading nh3-0.3.7-cp38-abi3-win_amd64.whl.metadata (2.0 kB)
+2026-11-05T20:28:07.5446742Z Collecting docutils>=0.21.2 (from readme-renderer>=35.0->twine->tldw_chatbook==0.2.3)
+2026-11-05T20:28:07.5547048Z   Downloading docutils-0.23-py3-none-any.whl.metadata (15 kB)
+2026-11-05T20:28:07.5980675Z Downloading portalocker-3.2.0-py3-none-any.whl (22 kB)
+2026-11-05T20:28:07.6229726Z Downloading pyte-0.8.2-py3-none-any.whl (31 kB)
+2026-11-05T20:28:07.8151081Z Downloading regex-2026.4.4-cp312-cp312-win_amd64.whl (277 kB)
+2026-11-05T20:28:07.8503453Z Downloading rfc8785-0.1.4-py3-none-any.whl (9.2 kB)
+2026-11-05T20:28:08.0643050Z Downloading textual-8.2.8-py3-none-any.whl (731 kB)
+2026-11-05T20:28:08.1269921Z    ---------------------------------------- 731.4/731.4 kB 10.0 MB/s  0:00:00
+2026-11-05T20:28:08.1378435Z Downloading textual_diff_view-0.1.5-py3-none-any.whl (25 kB)
+2026-11-05T20:28:08.3190843Z Downloading tiktoken-0.14.0-cp312-cp312-win_amd64.whl (941 kB)
+2026-11-05T20:28:08.3878169Z    ---------------------------------------- 941.2/941.2 kB 10.8 MB/s  0:00:00
+2026-11-05T20:28:08.3982910Z Downloading aiohttp-3.14.5-cp312-cp312-win_amd64.whl (506 kB)
+2026-11-05T20:28:08.4495483Z Downloading chardet-5.2.0-py3-none-any.whl (199 kB)
+2026-11-05T20:28:08.6058966Z Downloading html5lib-1.1-py2.py3-none-any.whl (112 kB)
+2026-11-05T20:28:08.6363031Z Downloading jsonschema-4.26.0-py3-none-any.whl (90 kB)
+2026-11-05T20:28:08.6622454Z Downloading multidict-7.2.1-cp312-cp312-win_amd64.whl (95 kB)
+2026-11-05T20:28:08.6895887Z Downloading pydantic-2.14.3-py3-none-any.whl (494 kB)
+2026-11-05T20:28:08.7314386Z Downloading pydantic_core-2.50.4-cp312-cp312-win_amd64.whl (2.3 MB)
+2026-11-05T20:28:08.9101932Z    ---------------------------------------- 2.3/2.3 MB 11.6 MB/s  0:00:00
+2026-11-05T20:28:08.9209708Z Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+2026-11-05T20:28:08.9631883Z    ---------------------------------------- 1.3/1.3 MB 21.0 MB/s  0:00:00
+2026-11-05T20:28:08.9716263Z Downloading referencing-0.37.0-py3-none-any.whl (26 kB)
+2026-11-05T20:28:09.0009134Z Downloading sherpa_onnx-1.13.8-cp312-cp312-win_amd64.whl (2.3 MB)
+2026-11-05T20:28:09.2114971Z    ---------------------------------------- 2.3/2.3 MB 10.0 MB/s  0:00:00
+2026-11-05T20:28:09.2210970Z Downloading sherpa_onnx_core-1.13.8-py3-none-win_amd64.whl (16.9 MB)
+2026-11-05T20:28:09.4749028Z    ---------------------------------------- 16.9/16.9 MB 66.6 MB/s  0:00:00
+2026-11-05T20:28:09.4838456Z Downloading tinycss2-1.5.1-py3-none-any.whl (28 kB)
+2026-11-05T20:28:09.5125415Z Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+2026-11-05T20:28:09.7452537Z Downloading uv-0.13.7-py3-none-win_amd64.whl (15.3 MB)
+2026-11-05T20:28:09.9773722Z    ---------------------------------------- 15.3/15.3 MB 68.8 MB/s  0:00:00
+2026-11-05T20:28:09.9886435Z Downloading wcwidth-0.9.4-cp310-abi3-win_amd64.whl (597 kB)
+2026-11-05T20:28:10.0229832Z    ---------------------------------------- 597.8/597.8 kB 21.0 MB/s  0:00:00
+2026-11-05T20:28:10.0341220Z Downloading yarl-1.25.1-cp312-cp312-win_amd64.whl (102 kB)
+2026-11-05T20:28:10.0634651Z Downloading aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+2026-11-05T20:28:10.1097632Z Downloading aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+2026-11-05T20:28:10.1356506Z Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+2026-11-05T20:28:10.1663912Z Downloading attrs-26.1.0-py3-none-any.whl (67 kB)
+2026-11-05T20:28:10.1954261Z Downloading croniter-6.2.4-py3-none-any.whl (46 kB)
+2026-11-05T20:28:10.2207023Z Downloading frozenlist-1.8.0-cp312-cp312-win_amd64.whl (44 kB)
+2026-11-05T20:28:10.2507033Z Downloading idna-3.20-py3-none-any.whl (69 kB)
+2026-11-05T20:28:10.2810098Z Downloading jsonschema_specifications-2025.9.1-py3-none-any.whl (18 kB)
+2026-11-05T20:28:10.3081824Z Downloading markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+2026-11-05T20:28:10.3369131Z Downloading mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+2026-11-05T20:28:10.3662565Z Downloading linkify_it_py-2.2.0-py3-none-any.whl (21 kB)
+2026-11-05T20:28:10.3998903Z Downloading pillow-13.0.0-cp312-cp312-win_amd64.whl (7.3 MB)
+2026-11-05T20:28:10.4694709Z    ---------------------------------------- 7.3/7.3 MB 111.3 MB/s  0:00:00
+2026-11-05T20:28:10.4786734Z Downloading propcache-0.5.4-cp312-cp312-win_amd64.whl (46 kB)
+2026-11-05T20:28:10.5037098Z Downloading pywin32-312-cp312-cp312-win_amd64.whl (6.9 MB)
+2026-11-05T20:28:10.6042358Z    ---------------------------------------- 6.9/6.9 MB 61.0 MB/s  0:00:00
+2026-11-05T20:28:10.6139483Z Downloading rich-15.0.0-py3-none-any.whl (310 kB)
+2026-11-05T20:28:10.6480411Z Downloading rich_pixels-3.0.1-py3-none-any.whl (6.0 kB)
+2026-11-05T20:28:10.7707266Z Downloading rpds_py-2026.9.1-cp312-cp312-win_amd64.whl (222 kB)
+2026-11-05T20:28:10.7988269Z Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+2026-11-05T20:28:10.8229688Z Downloading typing_inspection-0.4.5-py3-none-any.whl (14 kB)
+2026-11-05T20:28:10.8501216Z Downloading webencodings-0.6.1-py3-none-any.whl (8.7 kB)
+2026-11-05T20:28:10.8744735Z Downloading aiofiles-25.1.0-py3-none-any.whl (14 kB)
+2026-11-05T20:28:10.9071022Z Downloading beautifulsoup4-4.15.0-py3-none-any.whl (109 kB)
+2026-11-05T20:28:10.9382983Z Downloading soupsieve-4.0.1-py3-none-any.whl (50 kB)
+2026-11-05T20:28:11.2113204Z Downloading build-1.6.1-py3-none-any.whl (31 kB)
+2026-11-05T20:28:11.3005987Z Downloading cryptography-50.0.2-cp311-abi3-win_amd64.whl (3.8 MB)
+2026-11-05T20:28:11.5163368Z    ---------------------------------------- 3.8/3.8 MB 16.3 MB/s  0:00:00
+2026-11-05T20:28:11.5247313Z Downloading cffi-2.1.1-cp312-cp312-win_amd64.whl (185 kB)
+2026-11-05T20:28:11.5525139Z Downloading defusedxml-0.7.1-py2.py3-none-any.whl (25 kB)
+2026-11-05T20:28:11.5866341Z Downloading emoji-2.16.0-py3-none-any.whl (610 kB)
+2026-11-05T20:28:11.7441784Z    ---------------------------------------- 610.9/610.9 kB 2.2 MB/s  0:00:00
+2026-11-05T20:28:11.7525434Z Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+2026-11-05T20:28:11.9309612Z Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+2026-11-05T20:28:11.9627867Z Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+2026-11-05T20:28:12.0018140Z Downloading anyio-4.16.0-py3-none-any.whl (134 kB)
+2026-11-05T20:28:12.0320588Z Downloading certifi-2026.10.23-py3-none-any.whl (135 kB)
+2026-11-05T20:28:12.1857640Z Downloading hypothesis-6.170.14-cp312-cp312-win_amd64.whl (691 kB)
+2026-11-05T20:28:12.2135471Z    ---------------------------------------- 691.0/691.0 kB 13.4 MB/s  0:00:00
+2026-11-05T20:28:12.2222443Z Downloading sortedcontainers-2.4.0-py2.py3-none-any.whl (29 kB)
+2026-11-05T20:28:12.2558522Z Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+2026-11-05T20:28:12.2823456Z Downloading markupsafe-3.0.4-cp312-cp312-win_amd64.whl (14 kB)
+2026-11-05T20:28:12.3218997Z Downloading keyring-25.7.0-py3-none-any.whl (39 kB)
+2026-11-05T20:28:12.3508729Z Downloading pywin32_ctypes-0.2.3-py3-none-any.whl (30 kB)
+2026-11-05T20:28:12.3811769Z Downloading jaraco.classes-3.4.0-py3-none-any.whl (6.8 kB)
+2026-11-05T20:28:12.4135793Z Downloading jaraco_context-6.1.2-py3-none-any.whl (7.9 kB)
+2026-11-05T20:28:12.6161411Z Downloading jaraco_functools-4.6.0-py3-none-any.whl (11 kB)
+2026-11-05T20:28:12.6434864Z Downloading loguru-0.7.3-py3-none-any.whl (61 kB)
+2026-11-05T20:28:12.6733153Z Downloading win32_setctime-1.2.1-py3-none-any.whl (4.2 kB)
+2026-11-05T20:28:12.7028573Z Downloading markdownify-1.2.3-py3-none-any.whl (15 kB)
+2026-11-05T20:28:12.7308977Z Downloading mdit_py_plugins-0.6.1-py3-none-any.whl (66 kB)
+2026-11-05T20:28:12.7626767Z Downloading more_itertools-11.2.1-py3-none-any.whl (74 kB)
+2026-11-05T20:28:12.7896633Z Downloading numpy-2.5.4-cp312-cp312-win_amd64.whl (12.6 MB)
+2026-11-05T20:28:12.8817788Z    ---------------------------------------- 12.6/12.6 MB 157.8 MB/s  0:00:00
+2026-11-05T20:28:12.8901664Z Downloading prometheus_client-0.26.0-py3-none-any.whl (64 kB)
+2026-11-05T20:28:12.9173765Z Downloading psutil-7.2.2-cp37-abi3-win_amd64.whl (137 kB)
+2026-11-05T20:28:13.1024471Z Downloading pycparser-3.12-py3-none-any.whl (62 kB)
+2026-11-05T20:28:13.1349397Z Downloading pycryptodomex-3.24.2-cp37-abi3-win_amd64.whl (1.8 MB)
+2026-11-05T20:28:13.1731466Z    ---------------------------------------- 1.8/1.8 MB 50.4 MB/s  0:00:00
+2026-11-05T20:28:13.1818252Z Downloading pyperclip-1.11.0-py3-none-any.whl (11 kB)
+2026-11-05T20:28:13.2079028Z Downloading pyproject_hooks-1.3.3-py3-none-any.whl (10 kB)
+2026-11-05T20:28:13.2333754Z Downloading pytest-9.2.0-py3-none-any.whl (411 kB)
+2026-11-05T20:28:13.2978386Z Downloading pluggy-1.7.0-py3-none-any.whl (27 kB)
+2026-11-05T20:28:13.3249128Z Downloading iniconfig-2.3.1-py3-none-any.whl (7.6 kB)
+2026-11-05T20:28:13.3527372Z Downloading pytest_asyncio-1.4.1.post1-py3-none-any.whl (17 kB)
+2026-11-05T20:28:13.3873294Z Downloading pytest_cov-7.1.0-py3-none-any.whl (22 kB)
+2026-11-05T20:28:13.4396065Z Downloading coverage-7.17.2-cp312-cp312-win_amd64.whl (230 kB)
+2026-11-05T20:28:13.4692382Z Downloading pytest_mock-3.17.0-py3-none-any.whl (11 kB)
+2026-11-05T20:28:13.4968298Z Downloading pytest_timeout-2.4.0-py3-none-any.whl (14 kB)
+2026-11-05T20:28:13.5256016Z Downloading pytest_xdist-3.8.0-py3-none-any.whl (46 kB)
+2026-11-05T20:28:13.5540149Z Downloading execnet-2.1.2-py3-none-any.whl (40 kB)
+2026-11-05T20:28:13.5849860Z Downloading python_dateutil-4.0.0-py3-none-any.whl (92 kB)
+2026-11-05T20:28:13.6459151Z Downloading pyyaml-6.0.3-cp312-cp312-win_amd64.whl (154 kB)
+2026-11-05T20:28:13.6815512Z Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+2026-11-05T20:28:13.7148386Z Downloading charset_normalizer-3.5.2-cp312-cp312-win_amd64.whl (207 kB)
+2026-11-05T20:28:13.7498887Z Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+2026-11-05T20:28:13.8851410Z Downloading textual_dev-1.8.0-py3-none-any.whl (27 kB)
+2026-11-05T20:28:13.9156850Z Downloading msgpack-1.2.4-cp312-cp312-win_amd64.whl (77 kB)
+2026-11-05T20:28:13.9418723Z Downloading textual_serve-1.1.3-py3-none-any.whl (447 kB)
+2026-11-05T20:28:13.9765225Z Downloading aiohttp_jinja2-1.6-py3-none-any.whl (11 kB)
+2026-11-05T20:28:14.0034002Z Downloading textual_image-0.14.2-py3-none-any.whl (183 kB)
+2026-11-05T20:28:14.1465536Z Downloading toml-0.10.2-py2.py3-none-any.whl (16 kB)
+2026-11-05T20:28:14.1716142Z Downloading twine-7.0.0-py3-none-any.whl (43 kB)
+2026-11-05T20:28:14.2202884Z Downloading readme_renderer-46.0-py3-none-any.whl (14 kB)
+2026-11-05T20:28:14.3054891Z Downloading docutils-0.23-py3-none-any.whl (634 kB)
+2026-11-05T20:28:14.3372275Z    ---------------------------------------- 634.7/634.7 kB 11.6 MB/s  0:00:00
+2026-11-05T20:28:14.3458781Z Downloading nh3-0.3.7-cp38-abi3-win_amd64.whl (644 kB)
+2026-11-05T20:28:14.3772881Z    ---------------------------------------- 644.5/644.5 kB 12.3 MB/s  0:00:00
+2026-11-05T20:28:14.3858341Z Downloading requests_toolbelt-1.0.0-py2.py3-none-any.whl (54 kB)
+2026-11-05T20:28:14.4139385Z Downloading rfc3986-2.0.0-py2.py3-none-any.whl (31 kB)
+2026-11-05T20:28:14.4396400Z Downloading id-1.6.1-py3-none-any.whl (14 kB)
+2026-11-05T20:28:14.4676901Z Downloading tzdata-2026.6-py2.py3-none-any.whl (348 kB)
+2026-11-05T20:28:14.5047723Z Downloading wheel-0.48.0-py3-none-any.whl (33 kB)
+2026-11-05T20:28:14.9281563Z Building wheels for collected packages: tldw_chatbook
+2026-11-05T20:28:14.9311917Z   Building editable for tldw_chatbook (pyproject.toml): started
+2026-11-05T20:28:15.9925622Z   Building editable for tldw_chatbook (pyproject.toml): finished with status 'done'
+2026-11-05T20:28:15.9963557Z   Created wheel for tldw_chatbook: filename=tldw_chatbook-0.2.3-0.editable-py3-none-any.whl size=29668 sha256=e775b1b199185e731984b26fd63d993571b2e68bbe716bfbc25c5f6ab02d170c
+2026-11-05T20:28:15.9965160Z   Stored in directory: C:\Users\runneradmin\AppData\Local\Temp\pip-ephem-wheel-cache-47vi6u_8\wheels\ae\83\8b\5e4813150b874c77e95a6aba4fb66c9af9bf523d28baf2bdf6
+2026-11-05T20:28:16.0029085Z Successfully built tldw_chatbook
+2026-11-05T20:28:16.1870049Z Installing collected packages: sortedcontainers, sherpa-onnx-core, pyperclip, win32-setctime, wheel, webencodings, wcwidth, uv, urllib3, tzdata, typing-extensions, toml, soupsieve, six, sherpa-onnx, rpds-py, rfc8785, rfc3986, regex, PyYAML, pywin32-ctypes, pywin32, pyproject_hooks, pygments, pycryptodomex, pycparser, psutil, propcache, prometheus_client, pluggy, pillow, numpy, nh3, multidict, msgpack, more-itertools, mdurl, MarkupSafe, linkify-it-py, jaraco.context, iniconfig, idna, hypothesis, h11, frozenlist, execnet, emoji, docutils, defusedxml, coverage, charset_normalizer, chardet, certifi, attrs, annotated-types, aiohappyeyeballs, aiofiles, yarl, typing-inspection, tinycss2, requests, referencing, readme-renderer, python-dateutil, pytest, pyte, pydantic-core, portalocker, markdown-it-py, loguru, jinja2, jaraco.functools, jaraco.classes, id, httpcore, html5lib, cffi, build, beautifulsoup4, anyio, aiosignal, tiktoken, rich, requests-toolbelt, pytest-xdist, pytest-timeout, pytest-mock, pytest-cov, pytest-asyncio, pydantic, mdit-py-plugins, markdownify, keyring, jsonschema-specifications, httpx, cryptography, croniter, aiohttp, twine, textual-image, textual, rich-pixels, jsonschema, aiohttp-jinja2, textual_serve, textual-diff-view, tldw_chatbook, textual-dev
+2026-11-05T20:28:47.7398515Z 
+2026-11-05T20:28:47.7477677Z Successfully installed MarkupSafe-3.0.4 PyYAML-6.0.3 aiofiles-25.1.0 aiohappyeyeballs-2.7.1 aiohttp-3.14.5 aiohttp-jinja2-1.6 aiosignal-1.4.0 annotated-types-0.8.0 anyio-4.16.0 attrs-26.1.0 beautifulsoup4-4.15.0 build-1.6.1 certifi-2026.10.23 cffi-2.1.1 chardet-5.2.0 charset_normalizer-3.5.2 coverage-7.17.2 croniter-6.2.4 cryptography-50.0.2 defusedxml-0.7.1 docutils-0.23 emoji-2.16.0 execnet-2.1.2 frozenlist-1.8.0 h11-0.16.0 html5lib-1.1 httpcore-1.0.9 httpx-0.28.1 hypothesis-6.170.14 id-1.6.1 idna-3.20 iniconfig-2.3.1 jaraco.classes-3.4.0 jaraco.context-6.1.2 jaraco.functools-4.6.0 jinja2-3.1.6 jsonschema-4.26.0 jsonschema-specifications-2025.9.1 keyring-25.7.0 linkify-it-py-2.2.0 loguru-0.7.3 markdown-it-py-4.2.0 markdownify-1.2.3 mdit-py-plugins-0.6.1 mdurl-0.1.2 more-itertools-11.2.1 msgpack-1.2.4 multidict-7.2.1 nh3-0.3.7 numpy-2.5.4 pillow-13.0.0 pluggy-1.7.0 portalocker-3.2.0 prometheus_client-0.26.0 propcache-0.5.4 psutil-7.2.2 pycparser-3.12 pycryptodomex-3.24.2 pydantic-2.14.3 pydantic-core-2.50.4 pygments-2.21.0 pyperclip-1.11.0 pyproject_hooks-1.3.3 pyte-0.8.2 pytest-9.2.0 pytest-asyncio-1.4.1.post1 pytest-cov-7.1.0 pytest-mock-3.17.0 pytest-timeout-2.4.0 pytest-xdist-3.8.0 python-dateutil-4.0.0 pywin32-312 pywin32-ctypes-0.2.3 readme-renderer-46.0 referencing-0.37.0 regex-2026.4.4 requests-2.34.2 requests-toolbelt-1.0.0 rfc3986-2.0.0 rfc8785-0.1.4 rich-15.0.0 rich-pixels-3.0.1 rpds-py-2026.9.1 sherpa-onnx-1.13.8 sherpa-onnx-core-1.13.8 six-1.17.0 sortedcontainers-2.4.0 soupsieve-4.0.1 textual-8.2.8 textual-dev-1.8.0 textual-diff-view-0.1.5 textual-image-0.14.2 textual_serve-1.1.3 tiktoken-0.14.0 tinycss2-1.5.1 tldw_chatbook-0.2.3 toml-0.10.2 twine-7.0.0 typing-extensions-4.16.0 typing-inspection-0.4.5 tzdata-2026.6 urllib3-2.8.0 uv-0.13.7 wcwidth-0.9.4 webencodings-0.6.1 wheel-0.48.0 win32-setctime-1.2.1 yarl-1.25.1
+2026-11-05T20:28:47.7495400Z 
+2026-11-05T20:28:47.7496714Z [notice] A new release of pip is available: 26.2.2 -> 26.3
+2026-11-05T20:28:47.7497179Z [notice] To update, run: python.exe -m pip install --upgrade pip
+2026-11-05T20:28:48.6130239Z ##[group]Run import json, os, sys, tempfile
+2026-11-05T20:28:48.6130595Z [36;1mimport json, os, sys, tempfile[0m
+2026-11-05T20:28:48.6130810Z [36;1mfrom pathlib import Path[0m
+2026-11-05T20:28:48.6131049Z [36;1msys.path.insert(0, str(Path.cwd().resolve()))[0m
+2026-11-05T20:28:48.6131387Z [36;1mfrom Tests.windows_private_fixture_runner import user_fixture_default_owner[0m
+2026-11-05T20:28:48.6131708Z [36;1mwith user_fixture_default_owner():[0m
+2026-11-05T20:28:48.6131944Z [36;1m    ancestor = Path(os.environ["RUNNER_TEMP"])[0m
+2026-11-05T20:28:48.6132169Z [36;1m    if os.name == "nt":[0m
+2026-11-05T20:28:48.6132464Z [36;1m        ancestor = Path(os.environ["USERPROFILE"]) / "AppData" / "Local" / "Temp"[0m
+2026-11-05T20:28:48.6132957Z [36;1m    profile = Path(tempfile.mkdtemp(prefix="plugin-qualification-", dir=ancestor)).resolve(strict=True)[0m
+2026-11-05T20:28:48.6133556Z [36;1m    profile.chmod(0o700)[0m
+2026-11-05T20:28:48.6134728Z [36;1m    for name in ("home", "config", "data", "data/user", "cache", "tmp"):[0m
+2026-11-05T20:28:48.6135047Z [36;1m        (profile / name).mkdir(parents=True, mode=0o700)[0m
+2026-11-05T20:28:48.6135306Z [36;1m    config = profile / "config/config.toml"[0m
+2026-11-05T20:28:48.6135734Z [36;1m    config.write_text('[general]\nusers_name = "user"\n[paths]\ndata_dir = ' + json.dumps(str(profile / "data")) + '\n')[0m
+2026-11-05T20:28:48.6136117Z [36;1m    config.chmod(0o600)[0m
+2026-11-05T20:28:48.6136394Z [36;1m    values = {"HOME": str(profile / "home"), "USERPROFILE": str(profile / "home"),[0m
+2026-11-05T20:28:48.6136812Z [36;1m              "TMPDIR": str(profile / "tmp"), "TEMP": str(profile / "tmp"), "TMP": str(profile / "tmp"),[0m
+2026-11-05T20:28:48.6137159Z [36;1m              "XDG_CONFIG_HOME": str(profile / "config"),[0m
+2026-11-05T20:28:48.6137502Z [36;1m              "XDG_DATA_HOME": str(profile / "data"), "XDG_CACHE_HOME": str(profile / "cache"),[0m
+2026-11-05T20:28:48.6137892Z [36;1m              "TLDW_CONFIG_PATH": str(config), "TLDW_TEST_CONFIG_ROOT": str(profile),[0m
+2026-11-05T20:28:48.6138234Z [36;1m              "QUALIFICATION_DATA_ROOT": str(profile / "data/user")}[0m
+2026-11-05T20:28:48.6138577Z [36;1m    with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:[0m
+2026-11-05T20:28:48.6138880Z [36;1m        for key, value in values.items():[0m
+2026-11-05T20:28:48.6139342Z [36;1m            output.write(key + "=" + value + "\n")[0m
+2026-11-05T20:28:48.6143331Z shell: C:\hostedtoolcache\windows\Python\3.12.10\x64\python.EXE {0}
+2026-11-05T20:28:48.6143595Z env:
+2026-11-05T20:28:48.6143782Z   PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+2026-11-05T20:28:48.6144014Z   TLDW_TEST_MODE: 1
+2026-11-05T20:28:48.6144156Z   HF_HUB_OFFLINE: 1
+2026-11-05T20:28:48.6144302Z   TLDW_TEST_GC_EVERY: 1
+2026-11-05T20:28:48.6144508Z   PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
+2026-11-05T20:28:48.6144817Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.6145303Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-11-05T20:28:48.6145657Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.6145957Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.6146249Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.6146479Z ##[endgroup]
+2026-11-05T20:28:48.7052925Z ##[group]Run import importlib.metadata, json, os, platform, sys
+2026-11-05T20:28:48.7053380Z [36;1mimport importlib.metadata, json, os, platform, sys[0m
+2026-11-05T20:28:48.7053658Z [36;1mfrom pathlib import Path[0m
+2026-11-05T20:28:48.7053933Z [36;1mPath("qualification-identity.json").write_text(json.dumps({[0m
+2026-11-05T20:28:48.7054248Z [36;1m    "revision": os.environ["GITHUB_SHA"],[0m
+2026-11-05T20:28:48.7054526Z [36;1m    "platform": platform.platform(), "python": sys.version,[0m
+2026-11-05T20:28:48.7054789Z [36;1m    "executable": sys.executable,[0m
+2026-11-05T20:28:48.7055092Z [36;1m    "configuration": "core+dev; private pytest profiles; null keyring; offline",[0m
+2026-11-05T20:28:48.7055466Z [36;1m    "packages": {name: importlib.metadata.version(name) for name in[0m
+2026-11-05T20:28:48.7055854Z [36;1m                 ("textual", "pydantic", "httpx", "portalocker", "jsonschema", "referencing")},[0m
+2026-11-05T20:28:48.7056332Z [36;1m    "qualification": "Only executed passing boundaries qualify; skips remain unqualified."[0m
+2026-11-05T20:28:48.7056669Z [36;1m}, indent=2))[0m
+2026-11-05T20:28:48.7060344Z shell: C:\hostedtoolcache\windows\Python\3.12.10\x64\python.EXE {0}
+2026-11-05T20:28:48.7060605Z env:
+2026-11-05T20:28:48.7060787Z   PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+2026-11-05T20:28:48.7061187Z   TLDW_TEST_MODE: 1
+2026-11-05T20:28:48.7061333Z   HF_HUB_OFFLINE: 1
+2026-11-05T20:28:48.7061481Z   TLDW_TEST_GC_EVERY: 1
+2026-11-05T20:28:48.7061684Z   PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
+2026-11-05T20:28:48.7061977Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.7062312Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-11-05T20:28:48.7062640Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.7062963Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.7063395Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.7063819Z   HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\home
+2026-11-05T20:28:48.7064400Z   USERPROFILE: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\home
+2026-11-05T20:28:48.7064888Z   TMPDIR: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:28:48.7065341Z   TEMP: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:28:48.7065850Z   TMP: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:28:48.7066333Z   XDG_CONFIG_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\config
+2026-11-05T20:28:48.7066860Z   XDG_DATA_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\data
+2026-11-05T20:28:48.7067365Z   XDG_CACHE_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\cache
+2026-11-05T20:28:48.7067908Z   TLDW_CONFIG_PATH: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\config\config.toml
+2026-11-05T20:28:48.7068644Z   TLDW_TEST_CONFIG_ROOT: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel
+2026-11-05T20:28:48.7069341Z   QUALIFICATION_DATA_ROOT: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\data\user
+2026-11-05T20:28:48.7070145Z ##[endgroup]
+2026-11-05T20:28:48.8748246Z ##[group]Run import os, runpy, sys
+2026-11-05T20:28:48.8748590Z [36;1mimport os, runpy, sys[0m
+2026-11-05T20:28:48.8748800Z [36;1mfrom pathlib import Path[0m
+2026-11-05T20:28:48.8749018Z [36;1mcheckout = Path.cwd().resolve()[0m
+2026-11-05T20:28:48.8749239Z [36;1msys.path.insert(0, str(checkout))[0m
+2026-11-05T20:28:48.8749493Z [36;1mfrom Tests import network_guard, real_profile_guard[0m
+2026-11-05T20:28:48.8749836Z [36;1mfrom Tests.windows_private_fixture_runner import user_fixture_default_owner[0m
+2026-11-05T20:28:48.8750268Z [36;1mallowed = ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT",[0m
+2026-11-05T20:28:48.8750709Z [36;1m           "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "XDG_CONFIG_HOME", "XDG_DATA_HOME",[0m
+2026-11-05T20:28:48.8751192Z [36;1m           "XDG_CACHE_HOME", "TLDW_CONFIG_PATH", "TLDW_TEST_CONFIG_ROOT", "QUALIFICATION_DATA_ROOT", "PYTHON_KEYRING_BACKEND",[0m
+2026-11-05T20:28:48.8751743Z [36;1m           "TLDW_TEST_MODE", "TLDW_TEST_GC_EVERY", "HF_HUB_OFFLINE", "PLUGIN_COLLECTION_ARTIFACT")[0m
+2026-11-05T20:28:48.8752152Z [36;1menvironment = {key: os.environ[key] for key in allowed if key in os.environ}[0m
+2026-11-05T20:28:48.8752473Z [36;1mwith user_fixture_default_owner():[0m
+2026-11-05T20:28:48.8752702Z [36;1m    os.environ.clear()[0m
+2026-11-05T20:28:48.8752898Z [36;1m    os.environ.update(environment)[0m
+2026-11-05T20:28:48.8753111Z [36;1m    real_profile_guard.install()[0m
+2026-11-05T20:28:48.8753315Z [36;1m    network_guard.install()[0m
+2026-11-05T20:28:48.8753511Z [36;1m    import keyring[0m
+2026-11-05T20:28:48.8753690Z [36;1m    import tldw_chatbook[0m
+2026-11-05T20:28:48.8753923Z [36;1m    from tldw_chatbook.config import get_user_data_dir[0m
+2026-11-05T20:28:48.8754298Z [36;1m    assert Path(tldw_chatbook.__file__).resolve() == checkout / "tldw_chatbook/__init__.py"[0m
+2026-11-05T20:28:48.8754918Z [36;1m    assert type(keyring.get_keyring()).__module__ == "keyring.backends.null"[0m
+2026-11-05T20:28:48.8755266Z [36;1m    data_root = Path(environment["QUALIFICATION_DATA_ROOT"])[0m
+2026-11-05T20:28:48.8755569Z [36;1m    assert data_root.is_dir()[0m
+2026-11-05T20:28:48.8755800Z [36;1m    assert get_user_data_dir().resolve() == data_root[0m
+2026-11-05T20:28:48.8756035Z [36;1m    sys.argv = ["pytest",[0m
+2026-11-05T20:28:48.8756252Z [36;1m        'Tests/Plugins/test_plugin_end_to_end.py',[0m
+2026-11-05T20:28:48.8756514Z [36;1m        'Tests/Plugins/test_owned_hook_acceptance.py',[0m
+2026-11-05T20:28:48.8756760Z [36;1m        'Tests/Plugins/test_recovery.py',[0m
+2026-11-05T20:28:48.8756987Z [36;1m        'Tests/Plugins/test_data_cleanup.py',[0m
+2026-11-05T20:28:48.8757235Z [36;1m        'Tests/Agents/test_hooks_v2_mcp_execution.py',[0m
+2026-11-05T20:28:48.8757513Z [36;1m        'Tests/Performance/test_app_startup_performance.py',[0m
+2026-11-05T20:28:48.8757792Z [36;1m        'Tests/DB/test_private_sqlite_inventory.py',[0m
+2026-11-05T20:28:48.8758051Z [36;1m        'Tests/Plugins/test_runtime_owner.py',[0m
+2026-11-05T20:28:48.8758288Z [36;1m        'Tests/Plugins/test_package_files.py',[0m
+2026-11-05T20:28:48.8758519Z [36;1m        'Tests/Plugins/test_git_acquisition.py',[0m
+2026-11-05T20:28:48.8758763Z [36;1m        'Tests/Plugins/test_source_service.py',[0m
+2026-11-05T20:28:48.8759026Z [36;1m        'Tests/Plugins/test_revocation_persistence.py',[0m
+2026-11-05T20:28:48.8759324Z [36;1m        'Tests/Plugins/test_credential_authority.py',[0m
+2026-11-05T20:28:48.8759630Z [36;1m        'Tests/Plugins/test_cursor_adapter.py',[0m
+2026-11-05T20:28:48.8760127Z [36;1m        'Tests/Plugins/test_codex_adapter.py',[0m
+2026-11-05T20:28:48.8760377Z [36;1m        'Tests/Plugins/test_vendor_hook_adapters.py',[0m
+2026-11-05T20:28:48.8760631Z [36;1m        'Tests/Agents/test_hooks_v2_execution.py',[0m
+2026-11-05T20:28:48.8760876Z [36;1m        'Tests/Agents/test_hooks_v2_budgets.py',[0m
+2026-11-05T20:28:48.8762437Z [36;1m        'Tests/Agents/test_hooks_v2_post_checkpoints.py',[0m
+2026-11-05T20:28:48.8762749Z [36;1m        'Tests/Agents/test_run_hooks.py',[0m
+2026-11-05T20:28:48.8763006Z [36;1m        "Tests/Plugins/test_platform_selection.py",[0m
+2026-11-05T20:28:48.8763272Z [36;1m        "-p", "Tests.Plugins.platform_support",[0m
+2026-11-05T20:28:48.8763542Z [36;1m        "-q", "-ra", "--junitxml=plugin-qualification.xml"][0m
+2026-11-05T20:28:48.8763816Z [36;1m    runpy.run_module("pytest", run_name="__main__")[0m
+2026-11-05T20:28:48.8767764Z shell: C:\hostedtoolcache\windows\Python\3.12.10\x64\python.EXE {0}
+2026-11-05T20:28:48.8768032Z env:
+2026-11-05T20:28:48.8768225Z   PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+2026-11-05T20:28:48.8768453Z   TLDW_TEST_MODE: 1
+2026-11-05T20:28:48.8768602Z   HF_HUB_OFFLINE: 1
+2026-11-05T20:28:48.8768745Z   TLDW_TEST_GC_EVERY: 1
+2026-11-05T20:28:48.8768949Z   PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
+2026-11-05T20:28:48.8769261Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.8769596Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-11-05T20:28:48.8769928Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.8770227Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.8770516Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:28:48.8770858Z   HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\home
+2026-11-05T20:28:48.8771261Z   USERPROFILE: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\home
+2026-11-05T20:28:48.8771666Z   TMPDIR: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:28:48.8772046Z   TEMP: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:28:48.8772415Z   TMP: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:28:48.8773634Z   XDG_CONFIG_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\config
+2026-11-05T20:28:48.8774074Z   XDG_DATA_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\data
+2026-11-05T20:28:48.8774496Z   XDG_CACHE_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\cache
+2026-11-05T20:28:48.8774973Z   TLDW_CONFIG_PATH: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\config\config.toml
+2026-11-05T20:28:48.8775448Z   TLDW_TEST_CONFIG_ROOT: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel
+2026-11-05T20:28:48.8775918Z   QUALIFICATION_DATA_ROOT: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\data\user
+2026-11-05T20:28:48.8776271Z ##[endgroup]
+2026-11-05T20:28:52.4329903Z 2026-11-05 20:28:52.432 | DEBUG    | tldw_chatbook.config:<module>:141 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-11-05T20:28:52.6665587Z 2026-11-05 20:28:52.666 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4192 - Attempting to load CLI config from: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\config\config.toml
+2026-11-05T20:28:52.6747465Z 2026-11-05 20:28:52.674 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4213 - Successfully loaded and merged CLI config from C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\config\config.toml
+2026-11-05T20:28:52.6753185Z 2026-11-05 20:28:52.674 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4297 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths']
+2026-11-05T20:28:52.6760858Z 2026-11-05 20:28:52.674 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4301 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'strata', 'polystrata', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-11-05T20:28:52.7638013Z 2026-11-05 20:28:52.762 | INFO     | tldw_chatbook.config:_load_settings_uncached:1991 - Determined ACTUAL_PROJECT_ROOT for general paths: D:\a\tldw_chatbook\tldw_chatbook\tldw_chatbook
+2026-11-05T20:28:52.7639003Z 2026-11-05 20:28:52.762 | INFO     | tldw_chatbook.config:_load_settings_uncached:1994 - Determined APP_COMPONENT_ROOT for config files: D:\a\tldw_chatbook\tldw_chatbook\tldw_chatbook
+2026-11-05T20:28:52.7672019Z 2026-11-05 20:28:52.766 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2017 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-05T20:28:52.8972638Z 2026-11-05 20:28:52.895 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3582 - Ensured chat dictionaries folder exists: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\data\user\chat_dicts
+2026-11-05T20:28:52.8973637Z 2026-11-05 20:28:52.895 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3613 - load_settings: Configuration cached for future use
+2026-11-05T20:28:52.8974467Z 2026-11-05 20:28:52.895 | INFO     | tldw_chatbook.config:<module>:8670 - Default API Endpoint (from config.py global scope): openai
+2026-11-05T20:28:52.8975157Z 2026-11-05 20:28:52.895 | DEBUG    | tldw_chatbook.config:<module>:8693 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-11-05T20:28:57.0270905Z C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages\pytest_asyncio\plugin.py:300: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+2026-11-05T20:28:57.0272429Z The event loop scope for asynchronous fixtures will default to the "fixture" caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to "function" scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+2026-11-05T20:28:57.0273411Z 
+2026-11-05T20:28:57.0273592Z   warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+2026-11-05T20:29:06.1665911Z ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [  9%]
+2026-11-05T20:29:14.1946621Z ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 18%]
+2026-11-05T20:31:21.2457846Z sssssssss..................................ssssssssssssss............... [ 27%]
+2026-11-05T20:31:36.9074452Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-11-05T20:31:36.9075260Z Loguru: All pre-existing sinks removed.
+2026-11-05T20:31:36.9075580Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-11-05T20:33:50.4003608Z ........F.........F...................F.............................sss [ 37%]
+2026-11-05T20:34:04.1934995Z s.....sssss.ssssssssssssssssssss....ssssssssssssssssssssssssssssssssssss [ 46%]
+2026-11-05T20:34:25.5847498Z ssssssssssssssssssssssssssssssssssssssssssssssssssssss.sssssssssssssssss [ 55%]
+2026-11-05T20:34:28.4086207Z ssssssssssssssssssss......ssssssssssssssssssssssssssssssssssssssssssssss [ 64%]
+2026-11-05T20:34:36.5342045Z ss.ssssssssssss.......ss...ssssss..........ssssssssssssssssssssss....sss [ 74%]
+2026-11-05T20:34:50.6637985Z ss.s.ssssssssss.ssss.sssssssss.s...........s..ss.ss...sssss............. [ 83%]
+2026-11-05T20:35:14.8051375Z ....sssssss.sssss....................................................... [ 92%]
+2026-11-05T20:35:39.8442827Z ..........ss....................................s........                [100%]
+2026-11-05T20:35:39.8443465Z ================================== FAILURES ===================================
+2026-11-05T20:35:39.8444031Z ________ test_raw_connection_census_is_qualified_and_transition_aware _________
+2026-11-05T20:35:39.8444463Z 
+2026-11-05T20:35:39.8444759Z     def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
+2026-11-05T20:35:39.8445327Z         documented_legacy = Counter(
+2026-11-05T20:35:39.8445803Z             (row["module"], row["symbol"]) for row in _inventory_rows("C")
+2026-11-05T20:35:39.8446272Z         )
+2026-11-05T20:35:39.8446622Z         current = _current_direct_connect_sites()
+2026-11-05T20:35:39.8447090Z         seam_module = "tldw_chatbook/DB/private_sqlite"
+2026-11-05T20:35:39.8447608Z         seam_tree = _parse_source(PROJECT_ROOT / f"{seam_module}.py")
+2026-11-05T20:35:39.8448091Z         seam_exists = any(
+2026-11-05T20:35:39.8448696Z             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+2026-11-05T20:35:39.8449553Z             and node.name == "connect_private_sqlite"
+2026-11-05T20:35:39.8450341Z             for node in seam_tree.body
+2026-11-05T20:35:39.8450793Z         )
+2026-11-05T20:35:39.8451036Z     
+2026-11-05T20:35:39.8451270Z         if not seam_exists:
+2026-11-05T20:35:39.8451670Z             assert len({module for module, _symbol in current}) == 18
+2026-11-05T20:35:39.8452115Z >       _assert_raw_connection_census(
+2026-11-05T20:35:39.8452479Z             documented_legacy,
+2026-11-05T20:35:39.8452799Z             current,
+2026-11-05T20:35:39.8453176Z             seam_exists=seam_exists,
+2026-11-05T20:35:39.8453500Z         )
+2026-11-05T20:35:39.8453626Z 
+2026-11-05T20:35:39.8453816Z Tests\DB\test_private_sqlite_inventory.py:835: 
+2026-11-05T20:35:39.8454259Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+2026-11-05T20:35:39.8454543Z 
+2026-11-05T20:35:39.8455741Z documented_legacy = Counter({('tldw_chatbook/DB/recovery_core', '_CoreAdapter.validate / _CoreAdapter.validate_dependencies'): 5, ('tldw_c...(contract tests)'): 1, ('tldw_chatbook/DB/Workspace_Project_Index_DB', 'WorkspaceProjectIndexDB._open_connection'): 1})
+2026-11-05T20:35:39.8458216Z current = Counter({('tldw_chatbook/DB/private_sqlite', '_connect_registered_sqlite'): 4, ('tldw_chatbook/Backup_Recovery/detache...icy', 'require_native_close_policy_support'): 1, ('tldw_chatbook/TTS/profile_sqlite_proof', 'TTSProof.initialize'): 1})
+2026-11-05T20:35:39.8459616Z seam_exists = True
+2026-11-05T20:35:39.8459791Z 
+2026-11-05T20:35:39.8459966Z     def _assert_raw_connection_census(
+2026-11-05T20:35:39.8460418Z         documented_legacy: Counter[tuple[str, str]],
+2026-11-05T20:35:39.8460888Z         current: Counter[tuple[str, str]],
+2026-11-05T20:35:39.8461273Z         *,
+2026-11-05T20:35:39.8461564Z         seam_exists: bool,
+2026-11-05T20:35:39.8461895Z     ) -> None:
+2026-11-05T20:35:39.8462366Z         seam_site = ("tldw_chatbook/DB/private_sqlite", "_connect_registered_sqlite")
+2026-11-05T20:35:39.8463250Z         runtime_probe_site = (
+2026-11-05T20:35:39.8463682Z             "tldw_chatbook/TTS/profile_sqlite_policy",
+2026-11-05T20:35:39.8464180Z             "require_native_close_policy_support",
+2026-11-05T20:35:39.8464595Z         )
+2026-11-05T20:35:39.8465098Z         child_proof_site = ("tldw_chatbook/TTS/profile_sqlite_proof", "TTSProof.initialize")
+2026-11-05T20:35:39.8465715Z         if not seam_exists:
+2026-11-05T20:35:39.8466088Z             assert sum(current.values()) == 31
+2026-11-05T20:35:39.8466528Z             assert current == documented_legacy
+2026-11-05T20:35:39.8466933Z             return
+2026-11-05T20:35:39.8467237Z     
+2026-11-05T20:35:39.8467673Z         # The seam owns a prepared file open, a filesystem-free memory open, and
+2026-11-05T20:35:39.8468483Z         # separate POSIX and Windows descriptor views. The ordinary file open keeps sqlite3's
+2026-11-05T20:35:39.8469272Z         # factory seam; only descriptor views use the captured original callable.
+2026-11-05T20:35:39.8469868Z         assert current[seam_site] == 4
+2026-11-05T20:35:39.8470685Z         # The TTS runtime probe is a separate, fixed, argument-free capability
+2026-11-05T20:35:39.8471390Z         # check. Its one raw call is admitted only by the strict source guard below.
+2026-11-05T20:35:39.8471939Z         assert current[runtime_probe_site] == 1
+2026-11-05T20:35:39.8472364Z >       assert current == Counter(
+2026-11-05T20:35:39.8472807Z             {seam_site: 4, runtime_probe_site: 1, child_proof_site: 1}
+2026-11-05T20:35:39.8473282Z         )
+2026-11-05T20:35:39.8473826Z E       AssertionError: assert Counter({('tl...tialize'): 1}) == Counter({('tl...tialize'): 1})
+2026-11-05T20:35:39.8474432Z E         
+2026-11-05T20:35:39.8474771Z E         Omitting 3 identical items, use -vv to show
+2026-11-05T20:35:39.8475220Z E         Left contains 5 more items:
+2026-11-05T20:35:39.8475746Z E         {('tldw_chatbook/Backup_Recovery/detached_layout', '_normalize_sqlite'): 1,
+2026-11-05T20:35:39.8476662Z E          ('tldw_chatbook/DB/recovery_workflow_schema', 'workflow_admission_catalog'): 1,
+2026-11-05T20:35:39.8477430Z E          ('tldw_chatbook/DB/recovery_workflow_schema', 'workflow_checkpoint_catalog'): 1,
+2026-11-05T20:35:39.8478211Z E          ('tldw_chatbook/DB/recovery_workflow_schema', 'workflow_repair_input_catalog'): 1,
+2026-11-05T20:35:39.8478989Z E          ('tldw_chatbook/DB/recovery_workflow_schema', 'workflow_window_catalog'): 1}
+2026-11-05T20:35:39.8479557Z E         Use -v to get more diff
+2026-11-05T20:35:39.8479779Z 
+2026-11-05T20:35:39.8480032Z Tests\DB\test_private_sqlite_inventory.py:722: AssertionError
+2026-11-05T20:35:39.8480671Z _________ test_private_sqlite_seam_calls_use_literal_module_owned_ids _________
+2026-11-05T20:35:39.8481120Z 
+2026-11-05T20:35:39.8481389Z     def test_private_sqlite_seam_calls_use_literal_module_owned_ids() -> None:
+2026-11-05T20:35:39.8481945Z         total_calls = 0
+2026-11-05T20:35:39.8482290Z         violations: list[str] = []
+2026-11-05T20:35:39.8482702Z         for source_path in PRODUCTION_ROOT.rglob("*.py"):
+2026-11-05T20:35:39.8483314Z             module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
+2026-11-05T20:35:39.8483938Z             calls, source_violations = _private_sqlite_seam_violations(
+2026-11-05T20:35:39.8484419Z                 source_path,
+2026-11-05T20:35:39.8484748Z                 module,
+2026-11-05T20:35:39.8485047Z             )
+2026-11-05T20:35:39.8485347Z             total_calls += len(calls)
+2026-11-05T20:35:39.8485752Z             violations.extend(source_violations)
+2026-11-05T20:35:39.8486139Z     
+2026-11-05T20:35:39.8486424Z         assert total_calls > 0
+2026-11-05T20:35:39.8486770Z >       assert violations == []
+2026-11-05T20:35:39.8487256Z E       AssertionError: assert ['tldw_chatbo...y validation'] == []
+2026-11-05T20:35:39.8487730Z E         
+2026-11-05T20:35:39.8489404Z E         Left contains one more item: 'tldw_chatbook/Backup_Recovery/detached_layout:_normalize_sqlite: unqualified recovery validation'
+2026-11-05T20:35:39.8490504Z E         Use -v to get more diff
+2026-11-05T20:35:39.8490759Z 
+2026-11-05T20:35:39.8490973Z Tests\DB\test_private_sqlite_inventory.py:1025: AssertionError
+2026-11-05T20:35:39.8491620Z ____ test_backup_inventory_matches_current_sqlite_and_settings_operations _____
+2026-11-05T20:35:39.8492059Z 
+2026-11-05T20:35:39.8492359Z     def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> None:
+2026-11-05T20:35:39.8492978Z >       _assert_direct_backup_census(
+2026-11-05T20:35:39.8493323Z             (
+2026-11-05T20:35:39.8493741Z                 source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix(),
+2026-11-05T20:35:39.8494258Z                 _parse_source(source_path),
+2026-11-05T20:35:39.8494627Z             )
+2026-11-05T20:35:39.8494957Z             for source_path in PRODUCTION_ROOT.rglob("*.py")
+2026-11-05T20:35:39.8495382Z         )
+2026-11-05T20:35:39.8495556Z 
+2026-11-05T20:35:39.8495719Z Tests\DB\test_private_sqlite_inventory.py:1498: 
+2026-11-05T20:35:39.8496220Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+2026-11-05T20:35:39.8496556Z 
+2026-11-05T20:35:39.8497132Z sources = <generator object test_backup_inventory_matches_current_sqlite_and_settings_operations.<locals>.<genexpr> at 0x0000015F93593CA0>
+2026-11-05T20:35:39.8497838Z 
+2026-11-05T20:35:39.8498006Z     def _assert_direct_backup_census(
+2026-11-05T20:35:39.8498438Z         sources: Iterable[tuple[str, ast.Module]],
+2026-11-05T20:35:39.8498859Z     ) -> None:
+2026-11-05T20:35:39.8499221Z         calls: Counter[tuple[str, str, str]] = Counter()
+2026-11-05T20:35:39.8499676Z         for module, tree in sources:
+2026-11-05T20:35:39.8500095Z             visitor = _QualifiedCallNodeVisitor(
+2026-11-05T20:35:39.8500525Z                 lambda call: (
+2026-11-05T20:35:39.8501051Z                     isinstance(call.func, ast.Attribute) and call.func.attr == "backup"
+2026-11-05T20:35:39.8501783Z                 )
+2026-11-05T20:35:39.8502074Z             )
+2026-11-05T20:35:39.8502368Z             visitor.visit(tree)
+2026-11-05T20:35:39.8502730Z             calls.update(
+2026-11-05T20:35:39.8503112Z                 (module, symbol, ast.unparse(call.func.value))
+2026-11-05T20:35:39.8503634Z                 for symbol, call in visitor.calls
+2026-11-05T20:35:39.8504013Z             )
+2026-11-05T20:35:39.8504427Z         # The wrapper reserves the source for the existing seam operation; it does
+2026-11-05T20:35:39.8505072Z         # not create a destination or grant another owner backup authority.
+2026-11-05T20:35:39.8505615Z >       assert calls == Counter(
+2026-11-05T20:35:39.8505963Z             {
+2026-11-05T20:35:39.8506382Z                 ("tldw_chatbook/DB/private_sqlite", "_backup_pages", "source"): 1,
+2026-11-05T20:35:39.8506899Z                 (
+2026-11-05T20:35:39.8507222Z                     "tldw_chatbook/DB/base_db",
+2026-11-05T20:35:39.8507692Z                     "_QuiescentSQLiteConnection.backup",
+2026-11-05T20:35:39.8508383Z                     "super()",
+2026-11-05T20:35:39.8508712Z                 ): 1,
+2026-11-05T20:35:39.8509013Z             }
+2026-11-05T20:35:39.8509285Z         )
+2026-11-05T20:35:39.8509813Z E       AssertionError: assert Counter({('tl...'source'): 1}) == Counter({('tl...super()'): 1})
+2026-11-05T20:35:39.8510404Z E         
+2026-11-05T20:35:39.8510738Z E         Omitting 2 identical items, use -vv to show
+2026-11-05T20:35:39.8511152Z E         Left contains 1 more item:
+2026-11-05T20:35:39.8511837Z E         {('tldw_chatbook/Backup_Recovery/detached_layout', '_normalize_sqlite', 'connection'): 1}
+2026-11-05T20:35:39.8512442Z E         Use -v to get more diff
+2026-11-05T20:35:39.8512650Z 
+2026-11-05T20:35:39.8512896Z Tests\DB\test_private_sqlite_inventory.py:1447: AssertionError
+2026-11-05T20:35:39.8513466Z ============================ slowest 25 durations =============================
+2026-11-05T20:35:39.8514561Z 35.45s call     Tests/DB/test_private_sqlite_inventory.py::test_private_sqlite_seam_calls_use_literal_module_owned_ids
+2026-11-05T20:35:39.8515572Z 35.43s call     Tests/DB/test_private_sqlite_inventory.py::test_raw_connection_census_is_qualified_and_transition_aware
+2026-11-05T20:35:39.8516592Z 25.06s call     Tests/DB/test_private_sqlite_inventory.py::test_backup_inventory_matches_current_sqlite_and_settings_operations
+2026-11-05T20:35:39.8517736Z 15.35s call     Tests/Performance/test_app_startup_performance.py::test_ui_ready_before_nonessential_startup_services_finish
+2026-11-05T20:35:39.8518945Z 14.37s call     Tests/Performance/test_app_startup_performance.py::test_deferred_migration_drains_bounded_batches_and_multiple_conversations
+2026-11-05T20:35:39.8520218Z 11.21s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_admitted_agent_service_uses_same_mcp_hook_executor_and_parent_context
+2026-11-05T20:35:39.8521430Z 5.86s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_real_stdio_normal_registry_preserves_original_hook_payload[False]
+2026-11-05T20:35:39.8522602Z 5.74s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_real_stdio_normal_registry_preserves_original_hook_payload[True]
+2026-11-05T20:35:39.8723706Z 5.38s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_stdio_required_initializer_runs_through_existing_tool_pipeline[success]
+2026-11-05T20:35:39.8724997Z 5.33s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload0-True-http]
+2026-11-05T20:35:39.8725703Z 5.32s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload1-True-http]
+2026-11-05T20:35:39.8726381Z 5.26s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload0-True-stdio]
+2026-11-05T20:35:39.8727235Z 5.21s call     Tests/Performance/test_app_startup_performance.py::test_tts_handler_initializes_on_first_use
+2026-11-05T20:35:39.8728733Z 5.14s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload1-True-stdio]
+2026-11-05T20:35:39.8729652Z 4.77s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload2-False-http]
+2026-11-05T20:35:39.8730355Z 4.75s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload3-False-http]
+2026-11-05T20:35:39.8731387Z 4.74s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload4-False-http]
+2026-11-05T20:35:39.8732442Z 4.67s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload2-False-stdio]
+2026-11-05T20:35:39.8733514Z 4.62s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload3-False-stdio]
+2026-11-05T20:35:39.8734612Z 4.61s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_transport_engine_result_boundary[payload4-False-stdio]
+2026-11-05T20:35:39.8735652Z 4.48s call     Tests/Performance/test_app_startup_performance.py::test_stts_handler_initializes_on_first_use
+2026-11-05T20:35:39.8736759Z 4.35s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_actual_stdio_required_initializer_runs_through_existing_tool_pipeline[cyclic_post]
+2026-11-05T20:35:39.8737872Z 4.27s call     Tests/DB/test_private_sqlite_inventory.py::test_parent_creator_inventory_is_checked_and_has_a_disposition
+2026-11-05T20:35:39.8738890Z 4.08s call     Tests/Performance/test_app_startup_performance.py::test_app_import_does_not_load_legacy_feature_windows
+2026-11-05T20:35:39.8739971Z 3.39s call     Tests/Agents/test_hooks_v2_mcp_execution.py::test_restricted_actual_local_boundary_refuses_disconnected_reconnect
+2026-11-05T20:35:39.8740747Z =========================== short test summary info ===========================
+2026-11-05T20:35:39.8741805Z SKIPPED [2] Tests\Plugins\test_plugin_end_to_end.py:211: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8742881Z SKIPPED [1] Tests\Plugins\test_plugin_end_to_end.py:231: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8743862Z SKIPPED [9] Tests\Plugins\test_plugin_end_to_end.py:249: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8745015Z SKIPPED [8] Tests\Plugins\test_owned_hook_acceptance.py:104: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8746175Z SKIPPED [2] Tests\Plugins\test_owned_hook_acceptance.py:104: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8747350Z SKIPPED [1] Tests\Plugins\test_owned_hook_acceptance.py:283: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8748344Z SKIPPED [19] Tests\Plugins\platform_support.py:37: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8749320Z SKIPPED [3] Tests\Plugins\test_owned_hook_acceptance.py:887: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8750768Z SKIPPED [6] Tests\Plugins\test_owned_hook_acceptance.py:984: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8751884Z SKIPPED [5] Tests\Plugins\test_owned_hook_acceptance.py:1561: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8753057Z SKIPPED [3] Tests\Plugins\test_owned_hook_acceptance.py:1853: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8754350Z SKIPPED [1] Tests\Plugins\test_owned_hook_acceptance.py:1862: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8755531Z SKIPPED [2] Tests\Plugins\test_owned_hook_acceptance.py:1862: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8756967Z SKIPPED [4] Tests\Plugins\test_owned_hook_acceptance.py:1877: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8758146Z SKIPPED [1] Tests\Plugins\test_owned_hook_acceptance.py:2066: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8759361Z SKIPPED [3] Tests\Plugins\test_owned_hook_acceptance.py:2066: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8760742Z SKIPPED [1] Tests\Plugins\test_owned_hook_acceptance.py:2082: Windows command hooks refuse with unsupported_platform; command effects are unexercised.
+2026-11-05T20:35:39.8761965Z SKIPPED [1] Tests\Plugins\test_owned_hook_acceptance.py:2082: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8763042Z SKIPPED [1] Tests\Plugins\test_owned_hook_acceptance.py:2098: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8764123Z SKIPPED [1] Tests\Plugins\test_owned_hook_acceptance.py:2129: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8765223Z SKIPPED [1] Tests\Plugins\test_owned_hook_acceptance.py:2143: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8766330Z SKIPPED [3] Tests\Plugins\test_owned_hook_acceptance.py:2200: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8767309Z SKIPPED [5] Tests\Plugins\test_recovery.py:41: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8768187Z SKIPPED [2] Tests\Plugins\test_recovery.py:77: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8769099Z SKIPPED [1] Tests\Plugins\test_recovery.py:122: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8770242Z SKIPPED [1] Tests\Plugins\test_recovery.py:149: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8771408Z SKIPPED [1] Tests\Plugins\test_recovery.py:171: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8772377Z SKIPPED [6] Tests\Plugins\test_recovery.py:267: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8773382Z SKIPPED [4] Tests\Plugins\test_recovery.py:304: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8774352Z SKIPPED [1] Tests\Plugins\test_recovery.py:356: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8775280Z SKIPPED [1] Tests\Plugins\test_recovery.py:383: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8776219Z SKIPPED [1] Tests\Plugins\test_recovery.py:401: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8777184Z SKIPPED [1] Tests\Plugins\test_recovery.py:431: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8778153Z SKIPPED [1] Tests\Plugins\test_recovery.py:449: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8779083Z SKIPPED [1] Tests\Plugins\test_recovery.py:482: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8780068Z SKIPPED [1] Tests\Plugins\test_recovery.py:505: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8781040Z SKIPPED [1] Tests\Plugins\test_recovery.py:530: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8781995Z SKIPPED [4] Tests\Plugins\test_recovery.py:555: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8782978Z SKIPPED [3] Tests\Plugins\test_recovery.py:625: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8783925Z SKIPPED [1] Tests\Plugins\test_recovery.py:669: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8784887Z SKIPPED [1] Tests\Plugins\test_recovery.py:755: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8786093Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:64: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8787103Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:156: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8788047Z SKIPPED [5] Tests\Plugins\test_data_cleanup.py:199: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8788988Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:243: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8790149Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:275: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8791131Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:311: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8792130Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:366: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8793170Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:402: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8794162Z SKIPPED [4] Tests\Plugins\test_data_cleanup.py:429: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8795175Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:498: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8796179Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:557: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8797163Z SKIPPED [4] Tests\Plugins\test_data_cleanup.py:577: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8798150Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:616: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8799177Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:650: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8801387Z SKIPPED [3] Tests\Plugins\test_data_cleanup.py:681: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8802446Z SKIPPED [2] Tests\Plugins\test_data_cleanup.py:734: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8803501Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:790: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8804491Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:831: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8805484Z SKIPPED [3] Tests\Plugins\test_data_cleanup.py:840: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8806476Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:886: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8807509Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:930: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8808511Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:973: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8809535Z SKIPPED [1] Tests\Plugins\test_data_cleanup.py:1030: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8810753Z SKIPPED [1] Tests\Agents\test_hooks_v2_mcp_execution.py:998: standalone v2 command execution refuses Windows
+2026-11-05T20:35:39.8811725Z SKIPPED [13] Tests\Agents\test_hooks_v2_mcp_execution.py:1118: standalone v2 command execution refuses Windows
+2026-11-05T20:35:39.8812681Z SKIPPED [1] Tests\Plugins\test_runtime_owner.py:49: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8813572Z SKIPPED [2] Tests\Plugins\test_runtime_owner.py:62: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8814412Z SKIPPED [1] Tests\Plugins\test_runtime_owner.py:93: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8815212Z SKIPPED [1] Tests\Plugins\test_runtime_owner.py:147: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8816050Z SKIPPED [1] Tests\Plugins\test_runtime_owner.py:165: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8816628Z SKIPPED [1] Tests\Plugins\test_runtime_owner.py:181: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8817187Z SKIPPED [1] Tests\Plugins\test_runtime_owner.py:236: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8817753Z SKIPPED [1] Tests\Plugins\test_runtime_owner.py:288: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8818382Z SKIPPED [1] Tests\Plugins\test_package_files.py:12: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8819012Z SKIPPED [1] Tests\Plugins\test_package_files.py:34: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8819633Z SKIPPED [4] Tests\Plugins\test_package_files.py:51: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8820553Z SKIPPED [1] Tests\Plugins\test_package_files.py:77: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8821177Z SKIPPED [4] Tests\Plugins\test_package_files.py:93: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8821803Z SKIPPED [1] Tests\Plugins\test_package_files.py:115: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8822459Z SKIPPED [1] Tests\Plugins\test_package_files.py:127: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8823080Z SKIPPED [1] Tests\Plugins\test_package_files.py:141: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8823699Z SKIPPED [1] Tests\Plugins\test_package_files.py:163: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8824452Z SKIPPED [1] Tests\Plugins\test_package_files.py:186: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8825090Z SKIPPED [1] Tests\Plugins\test_package_files.py:220: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8825973Z SKIPPED [2] Tests\Plugins\test_package_files.py:231: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8826644Z SKIPPED [1] Tests\Plugins\test_package_files.py:261: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8827271Z SKIPPED [1] Tests\Plugins\test_git_acquisition.py:37: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8827867Z SKIPPED [7] Tests\Plugins\test_git_acquisition.py:77: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8828449Z SKIPPED [1] Tests\Plugins\test_git_acquisition.py:137: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8829049Z SKIPPED [1] Tests\Plugins\test_git_acquisition.py:168: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8829620Z SKIPPED [2] Tests\Plugins\test_git_acquisition.py:188: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8830213Z SKIPPED [4] Tests\Plugins\test_git_acquisition.py:264: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8830786Z SKIPPED [7] Tests\Plugins\test_git_acquisition.py:295: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8831361Z SKIPPED [3] Tests\Plugins\test_git_acquisition.py:378: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8831966Z SKIPPED [1] Tests\Plugins\test_git_acquisition.py:418: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8832540Z SKIPPED [1] Tests\Plugins\test_git_acquisition.py:443: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8833241Z SKIPPED [1] Tests\Plugins\test_source_service.py:13: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8833807Z SKIPPED [2] Tests\Plugins\test_source_service.py:45: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8834394Z SKIPPED [6] Tests\Plugins\test_source_service.py:82: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8834986Z SKIPPED [1] Tests\Plugins\test_source_service.py:209: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8835555Z SKIPPED [1] Tests\Plugins\test_source_service.py:251: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8836130Z SKIPPED [1] Tests\Plugins\test_source_service.py:271: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8836693Z SKIPPED [1] Tests\Plugins\test_source_service.py:312: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8837260Z SKIPPED [1] Tests\Plugins\test_source_service.py:339: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8837841Z SKIPPED [1] Tests\Plugins\test_source_service.py:384: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8838403Z SKIPPED [1] Tests\Plugins\test_source_service.py:431: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8838964Z SKIPPED [1] Tests\Plugins\test_source_service.py:475: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8839529Z SKIPPED [1] Tests\Plugins\test_source_service.py:502: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8840091Z SKIPPED [1] Tests\Plugins\test_source_service.py:535: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8840655Z SKIPPED [1] Tests\Plugins\test_source_service.py:617: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8868247Z SKIPPED [1] Tests\Plugins\test_source_service.py:659: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8869243Z SKIPPED [1] Tests\Plugins\test_source_service.py:679: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8870050Z SKIPPED [1] Tests\Plugins\test_source_service.py:693: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8870636Z SKIPPED [1] Tests\Plugins\test_source_service.py:771: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8871213Z SKIPPED [1] Tests\Plugins\test_source_service.py:816: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8871797Z SKIPPED [1] Tests\Plugins\test_source_service.py:882: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8872365Z SKIPPED [1] Tests\Plugins\test_source_service.py:924: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8872944Z SKIPPED [1] Tests\Plugins\test_source_service.py:948: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8873541Z SKIPPED [2] Tests\Plugins\test_source_service.py:996: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8874169Z SKIPPED [4] Tests\Plugins\test_source_service.py:1066: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8874756Z SKIPPED [3] Tests\Plugins\test_source_service.py:1144: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8875336Z SKIPPED [1] Tests\Plugins\test_source_service.py:1209: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8875911Z SKIPPED [1] Tests\Plugins\test_source_service.py:1246: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8876497Z SKIPPED [1] Tests\Plugins\test_source_service.py:1281: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8877217Z SKIPPED [1] Tests\Plugins\test_source_service.py:1313: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8877829Z SKIPPED [1] Tests\Plugins\test_source_service.py:1361: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8878441Z SKIPPED [6] Tests\Plugins\test_revocation_persistence.py:155: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8879080Z SKIPPED [1] Tests\Plugins\test_revocation_persistence.py:205: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8879681Z SKIPPED [1] Tests\Plugins\test_revocation_persistence.py:221: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8880326Z SKIPPED [1] Tests\Plugins\test_revocation_persistence.py:284: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8880923Z SKIPPED [1] Tests\Plugins\test_revocation_persistence.py:311: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8881537Z SKIPPED [1] Tests\Plugins\test_revocation_persistence.py:346: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8882132Z SKIPPED [6] Tests\Plugins\test_revocation_persistence.py:373: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8882739Z SKIPPED [1] Tests\Plugins\test_revocation_persistence.py:412: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8883352Z SKIPPED [1] Tests\Plugins\test_revocation_persistence.py:443: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8884188Z SKIPPED [1] Tests\Plugins\test_revocation_persistence.py:471: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8885111Z SKIPPED [1] Tests\Plugins\test_credential_authority.py:80: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8886390Z SKIPPED [9] Tests\Plugins\test_credential_authority.py:127: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8887438Z SKIPPED [1] Tests\Plugins\test_credential_authority.py:189: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8888396Z SKIPPED [2] Tests\Plugins\test_credential_authority.py:201: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8889380Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:14: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8890436Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:33: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8891505Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:46: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8892515Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:69: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8893530Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:95: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8894548Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:132: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8895461Z SKIPPED [2] Tests\Plugins\test_cursor_adapter.py:145: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8896467Z SKIPPED [8] Tests\Plugins\test_cursor_adapter.py:192: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8897544Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:231: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8898523Z SKIPPED [2] Tests\Plugins\test_cursor_adapter.py:243: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8899563Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:258: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8900729Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:277: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8901758Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:290: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8902828Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:304: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8903946Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:346: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8905006Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:387: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8906305Z SKIPPED [2] Tests\Plugins\test_cursor_adapter.py:427: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8907372Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:455: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8908434Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:464: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8909500Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:496: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8910585Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:529: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8911629Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:565: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8912670Z SKIPPED [24] Tests\Plugins\test_cursor_adapter.py:580: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8913679Z SKIPPED [2] Tests\Plugins\test_cursor_adapter.py:635: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8914920Z SKIPPED [12] Tests\Plugins\test_cursor_adapter.py:665: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8915994Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:724: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8917064Z SKIPPED [1] Tests\Plugins\test_cursor_adapter.py:764: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8918131Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:16: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8919183Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:36: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8920192Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:54: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:39.8921194Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:76: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8922180Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:104: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8923186Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:131: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8924216Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:171: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8925235Z SKIPPED [2] Tests\Plugins\test_codex_adapter.py:209: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8926533Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:219: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8927627Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:227: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8928683Z SKIPPED [1] Tests\Plugins\test_codex_adapter.py:246: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8929909Z SKIPPED [1] Tests\Plugins\test_vendor_hook_adapters.py:78: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:39.8930960Z SKIPPED [1] Tests\Plugins\test_vendor_hook_adapters.py:97: managed runtime ownership is qualified only on 64-bit Darwin
+2026-11-05T20:35:39.8931899Z SKIPPED [1] Tests\Plugins\test_vendor_hook_adapters.py:209: standalone v2 command execution refuses Windows
+2026-11-05T20:35:39.8932851Z SKIPPED [2] Tests\Plugins\test_vendor_hook_adapters.py:233: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:39.8933887Z SKIPPED [2] Tests\Plugins\test_vendor_hook_adapters.py:271: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:39.8934843Z SKIPPED [1] Tests\Plugins\test_vendor_hook_adapters.py:295: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:39.8935830Z SKIPPED [2] Tests\Plugins\test_vendor_hook_adapters.py:362: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:39.8936793Z SKIPPED [4] Tests\Plugins\test_vendor_hook_adapters.py:393: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:40.5349256Z SKIPPED [5] Tests\Plugins\test_vendor_hook_adapters.py:423: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:40.5350324Z SKIPPED [1] Tests\Plugins\test_vendor_hook_adapters.py:471: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:40.5355776Z SKIPPED [1] Tests\Plugins\test_vendor_hook_adapters.py:522: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:40.5358664Z SKIPPED [3] Tests\Plugins\test_vendor_hook_adapters.py:615: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:40.5361914Z SKIPPED [2] Tests\Plugins\test_vendor_hook_adapters.py:679: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:40.5362858Z SKIPPED [4] Tests\Plugins\test_vendor_hook_adapters.py:738: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:40.5363480Z SKIPPED [1] Tests\Plugins\test_vendor_hook_adapters.py:830: vendor command normalization is qualified only on Darwin
+2026-11-05T20:35:40.5364127Z SKIPPED [1] Tests\Plugins\test_vendor_hook_adapters.py:858: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:40.5364802Z SKIPPED [3] Tests\Plugins\test_vendor_hook_adapters.py:890: package capture requires POSIX descriptor-relative no-follow operations
+2026-11-05T20:35:40.5365395Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:70: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5365917Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:85: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5366435Z SKIPPED [4] Tests\Agents\test_hooks_v2_execution.py:94: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5366993Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:122: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5367798Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:136: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5368326Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:157: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5368850Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:201: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5369363Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:242: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5369885Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:305: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5370425Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:343: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5370943Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:374: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5371650Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:413: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5372172Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:479: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5372681Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:502: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5373199Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:528: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5373712Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:565: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5374257Z SKIPPED [4] Tests\Agents\test_hooks_v2_execution.py:598: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5374772Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:660: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5375291Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:677: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5375809Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:793: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5376326Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:857: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5376840Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:888: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5377350Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:957: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5377886Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:970: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5378406Z SKIPPED [1] Tests\Agents\test_hooks_v2_execution.py:1079: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5378927Z SKIPPED [2] Tests\Agents\test_hooks_v2_execution.py:1110: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5379526Z SKIPPED [2] Tests\Agents\test_hooks_v2_execution.py:1147: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5380097Z SKIPPED [2] Tests\Agents\test_hooks_v2_post_checkpoints.py:219: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5380660Z SKIPPED [2] Tests\Agents\test_hooks_v2_post_checkpoints.py:292: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5381243Z SKIPPED [3] Tests\Agents\test_hooks_v2_post_checkpoints.py:365: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5381799Z SKIPPED [1] Tests\Agents\test_hooks_v2_post_checkpoints.py:447: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5382345Z SKIPPED [4] Tests\Agents\test_hooks_v2_post_checkpoints.py:527: standalone v2 command execution refuses Windows
+2026-11-05T20:35:40.5382827Z SKIPPED [1] Tests\Agents\test_run_hooks.py:699: POSIX process-group test
+2026-11-05T20:35:40.5383215Z SKIPPED [1] Tests\Agents\test_run_hooks.py:739: POSIX process-group test
+2026-11-05T20:35:40.5383627Z SKIPPED [1] Tests\Agents\test_run_hooks.py:1297: POSIX process group contract
+2026-11-05T20:35:40.5384189Z FAILED Tests/DB/test_private_sqlite_inventory.py::test_raw_connection_census_is_qualified_and_transition_aware
+2026-11-05T20:35:40.5384770Z FAILED Tests/DB/test_private_sqlite_inventory.py::test_private_sqlite_seam_calls_use_literal_module_owned_ids
+2026-11-05T20:35:40.5385400Z FAILED Tests/DB/test_private_sqlite_inventory.py::test_backup_inventory_matches_current_sqlite_and_settings_operations
+2026-11-05T20:35:40.5385911Z 3 failed, 306 passed, 468 skipped in 402.76s (0:06:42)
+2026-11-05T20:35:42.3312549Z ##[error]Process completed with exit code 1.
+2026-11-05T20:35:42.3518730Z ##[group]Run actions/upload-artifact@v4
+2026-11-05T20:35:42.3519200Z with:
+2026-11-05T20:35:42.3519551Z   name: plugin-qualification-windows-latest
+2026-11-05T20:35:42.3520317Z   path: qualification-identity.json
+plugin-qualification.xml
+plugin-collected-nodes.json
+
+2026-11-05T20:35:42.3521193Z   if-no-files-found: warn
+2026-11-05T20:35:42.3521539Z   compression-level: 6
+2026-11-05T20:35:42.3521862Z   overwrite: false
+2026-11-05T20:35:42.3522175Z   include-hidden-files: false
+2026-11-05T20:35:42.3522505Z env:
+2026-11-05T20:35:42.3522865Z   PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+2026-11-05T20:35:42.3523315Z   TLDW_TEST_MODE: 1
+2026-11-05T20:35:42.3523626Z   HF_HUB_OFFLINE: 1
+2026-11-05T20:35:42.3523928Z   TLDW_TEST_GC_EVERY: 1
+2026-11-05T20:35:42.3524331Z   PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
+2026-11-05T20:35:42.3524903Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:35:42.3525630Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-11-05T20:35:42.3526271Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:35:42.3526839Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:35:42.3527398Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-11-05T20:35:42.3528278Z   HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\home
+2026-11-05T20:35:42.3529061Z   USERPROFILE: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\home
+2026-11-05T20:35:42.3529870Z   TMPDIR: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:35:42.3530612Z   TEMP: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:35:42.3531336Z   TMP: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\tmp
+2026-11-05T20:35:42.3532119Z   XDG_CONFIG_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\config
+2026-11-05T20:35:42.3532960Z   XDG_DATA_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\data
+2026-11-05T20:35:42.3533765Z   XDG_CACHE_HOME: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\cache
+2026-11-05T20:35:42.3534682Z   TLDW_CONFIG_PATH: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\config\config.toml
+2026-11-05T20:35:42.3535619Z   TLDW_TEST_CONFIG_ROOT: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel
+2026-11-05T20:35:42.3536521Z   QUALIFICATION_DATA_ROOT: C:\Users\runneradmin\AppData\Local\Temp\plugin-qualification-9k96miel\data\user
+2026-11-05T20:35:42.3537190Z ##[endgroup]
+2026-11-05T20:35:42.5146227Z (node:1460) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-05T20:35:42.5147240Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-05T20:35:42.5185334Z Multiple search paths detected. Calculating the least common ancestor of all paths
+2026-11-05T20:35:42.5188099Z The least common ancestor is D:\a\tldw_chatbook\tldw_chatbook. This will be the root directory of the artifact
+2026-11-05T20:35:42.5188697Z With the provided path, there will be 3 files uploaded
+2026-11-05T20:35:42.5192680Z Artifact name is valid!
+2026-11-05T20:35:42.5194016Z Root directory input is valid!
+2026-11-05T20:35:42.8782226Z Beginning upload of artifact content to blob storage
+2026-11-05T20:35:42.9123700Z (node:1460) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-11-05T20:35:43.2361848Z Uploaded bytes 44567
+2026-11-05T20:35:43.3095007Z Finished uploading artifact content to blob storage!
+2026-11-05T20:35:43.3096040Z SHA256 digest of uploaded artifact zip is 66bfdb0e6c78c360b242756ced85fba30ad9b44b6193f6c61e46a578233a61c6
+2026-11-05T20:35:43.3100811Z Finalizing artifact upload
+2026-11-05T20:35:43.7868102Z Artifact plugin-qualification-windows-latest.zip successfully finalized. Artifact ID 13450499476
+2026-11-05T20:35:43.7869067Z Artifact plugin-qualification-windows-latest has been successfully uploaded! Final size is 44567 bytes. Artifact ID is 13450499476
+2026-11-05T20:35:43.7877754Z Artifact download URL: https://github.com/rmusser01/tldw_chatbook/actions/runs/42102336487/artifacts/13450499476
+2026-11-05T20:35:43.8180188Z Post job cleanup.
+2026-11-05T20:35:43.9557618Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-11-05T20:35:43.9838853Z git version 2.56.0.windows.4
+2026-11-05T20:35:43.9899920Z Temporarily overriding HOME='D:\a\_temp\4ac24f09-8c04-44e5-bd67-6a2b26afdaa5' before making global git config changes
+2026-11-05T20:35:43.9900793Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-05T20:35:43.9912575Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\tldw_chatbook\tldw_chatbook
+2026-11-05T20:35:44.0333476Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T20:35:44.0753711Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-11-05T20:35:44.5769571Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T20:35:44.6058197Z http.https://github.com/.extraheader
+2026-11-05T20:35:44.6099830Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+2026-11-05T20:35:44.6439528Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-11-05T20:35:45.1836752Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T20:35:45.2131488Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-11-05T20:35:45.8006863Z Cleaning up orphan processes
+2026-11-05T20:35:45.9011042Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

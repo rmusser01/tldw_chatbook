@@ -1,0 +1,11 @@
+{
+  "files": 266,
+  "exit_code": 1,
+  "selected_rules": [
+    "F821",
+    "F811",
+    "F823"
+  ],
+  "scope": "changed Python source/tests/scripts only",
+  "output": "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/bin/python3.12: No module named ruff\n"
+}

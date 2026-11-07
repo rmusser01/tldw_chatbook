@@ -80,6 +80,7 @@ def build_goal_rig(stores, monkeypatch, provider=None, *, resolved=None):
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
+    runtime.set_agent_bridge(bridge)
     controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
     coordinator = mod.ConsoleGoalCoordinator(controller, owner)
     controller._goal_coordinator = coordinator
@@ -333,7 +334,6 @@ async def test_failed_startup_audit_is_shared_and_never_allows_goal_calls(
 @pytest.mark.asyncio
 async def test_lazy_goal_service_attachment_does_not_revoke_live_fleet_owner(tmp_path):
     import asyncio
-    from types import SimpleNamespace
 
     from Tests.Chat.test_automatic_wake_budget import (
         close_rig,
@@ -341,11 +341,15 @@ async def test_lazy_goal_service_attachment_does_not_revoke_live_fleet_owner(tmp
         result_for,
     )
     from Tests.Chat.test_console_fleet_wake import _controller_rig, _settle
-    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
     rig = _controller_rig(tmp_path)
     controller, ledger, gateway = rig[7], rig[2].automatic_work, rig[5]
+    runtime = ConsoleRuntime(controller.app)
+    runtime.set_chat_store(rig[3])
+    runtime.set_provider_gateway(gateway)
+    runtime.set_agent_bridge(rig[6])
+    runtime.set_chat_controller(controller)
     gateway.stream_gate = asyncio.Event()
     controller.fleet_wake.start_recovery()
     assert await controller.fleet_wake.wait_for_recovery()
@@ -353,9 +357,6 @@ async def test_lazy_goal_service_attachment_does_not_revoke_live_fleet_owner(tmp
     queue_result(rig, result_for(rig, chain))
     try:
         assert await _settle(lambda: gateway.payloads)
-        rig[3].persistence = ChatPersistenceService(rig[0])
-        runtime = ConsoleRuntime(SimpleNamespace())
-        runtime._chat_controller = controller
         goal_coordinator = runtime.ensure_goal_coordinator()
         assert goal_coordinator._owner_id == controller.fleet_wake._owner_id
         assert (
@@ -364,8 +365,8 @@ async def test_lazy_goal_service_attachment_does_not_revoke_live_fleet_owner(tmp
         )
         assert runtime.ensure_goal_coordinator() is goal_coordinator
     finally:
-        rig[3].persistence = None
         gateway.stream_gate.set()
+        await runtime.dispose()
         await close_rig(rig)
 
 

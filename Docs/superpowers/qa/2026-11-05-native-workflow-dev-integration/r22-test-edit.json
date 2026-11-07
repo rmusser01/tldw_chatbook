@@ -1,0 +1,6 @@
+{
+  "path": ".superpowers/pr-prep/native-phased-workflows-2026-11-05/integration/Tests/Chat/test_console_send_hook_read_sharing.py",
+  "before": "40464f1da99405f4809eb5dfc87a7d53a54651c815205f20ceb2507087325064",
+  "after": "4c2b54d655526795976ebf0caf9b6ac3a1e15f621d37d30b4134532c2a473fbe",
+  "ast_valid": true
+}

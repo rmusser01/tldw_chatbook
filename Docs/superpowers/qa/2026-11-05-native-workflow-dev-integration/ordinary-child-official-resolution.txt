@@ -1,0 +1,8 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+3.59s call     Tests/Chat/test_console_ordinary_tree.py::test_actual_child_joins_original_claim_before_its_row[1-normal]
+2.58s call     Tests/Chat/test_console_ordinary_tree.py::test_conflicting_actual_reference_refuses_other_turn_before_row_or_model
+1.35s setup    Tests/Chat/test_console_ordinary_tree.py::test_actual_child_joins_original_claim_before_its_row[1-normal]
+
+(3 durations < 1s hidden.)
+2 passed in 9.26s

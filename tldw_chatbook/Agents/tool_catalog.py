@@ -8,6 +8,8 @@ providers here — the runtime never changes. May import tool_executor
 
 from __future__ import annotations
 
+from tldw_chatbook.Chat.console_ordinary_tree import _NATIVE_CURRENTNESS_SOURCE as _ORIGINAL_CURRENTNESS_SOURCE
+
 import asyncio
 import json
 import re
@@ -1149,6 +1151,7 @@ class GateableTool(NamedTuple):
     tool_name: str
     title: str
     blurb: str
+    worktree_effect: str = "opaque"
 
 
 #: Built-ins registered unconditionally -- no gate, cannot be turned off.
@@ -1167,6 +1170,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "read_file",
         "Read file",
         "Read a file you point the assistant at. Asks before running unless you approve a longer scope.",
+        worktree_effect='read',
     ),
     GateableTool(
         "list_directory_enabled",
@@ -1175,6 +1179,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "list_directory",
         "List directory",
         "Browse the contents of a folder. Asks before running unless you approve a longer scope.",
+        worktree_effect='read',
     ),
     GateableTool(
         "write_file_enabled",
@@ -1183,6 +1188,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "write_file",
         "Write file",
         "⚠ Creates or overwrites files on disk.",
+        worktree_effect='write',
     ),
     GateableTool(
         "create_note_enabled",
@@ -1191,6 +1197,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "create_note",
         "Create note",
         "⚠ Adds new notes to your notebook.",
+        worktree_effect='none',
     ),
     GateableTool(
         "update_note_enabled",
@@ -1199,6 +1206,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "update_note",
         "Update note",
         "⚠ Edits your existing notes.",
+        worktree_effect='none',
     ),
     GateableTool(
         "glob_files_enabled",
@@ -1207,6 +1215,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "glob_files",
         "Find files",
         "Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.",
+        worktree_effect='read',
     ),
     GateableTool(
         "grep_files_enabled",
@@ -1215,6 +1224,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "grep_files",
         "Search in files",
         "Search inside files for text. Asks before running unless you approve a longer scope.",
+        worktree_effect='read',
     ),
     GateableTool(
         "expand_document_enabled",
@@ -1223,6 +1233,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "expand_document",
         "Expand document",
         "Read the whole document behind a search result. Asks before running unless you approve a longer scope.",
+        worktree_effect='none',
     ),
 )
 
@@ -1423,7 +1434,38 @@ class BuiltinToolProvider:
         # [tools] gates that already govern them, which default to DISABLED:
         # this changes reachability, not the default posture. TASK-545 P2 adds
         # the mutating tools on the same terms.
-        for entry in _GATEABLE_BUILTINS:
+        from types import ModuleType as _currentness_module_type
+
+        from tldw_chatbook.Chat import (
+            console_chat_controller as _currentness_controller,
+        )
+        from tldw_chatbook.Chat import console_runtime as _currentness_runtime
+
+        _currentness_source = _ORIGINAL_CURRENTNESS_SOURCE
+        if (
+            type(_currentness_runtime) is not _currentness_module_type
+            or type(_currentness_controller) is not _currentness_module_type
+            or _currentness_source is not vars(_currentness_runtime).get("_ORIGINAL_CURRENTNESS_SOURCE")
+            or _currentness_source is not vars(_currentness_controller).get("_ORIGINAL_CURRENTNESS_SOURCE")
+            or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_runtime") is not _currentness_runtime
+            or _currentness_source[6].modules.get("tldw_chatbook.Chat.console_chat_controller") is not _currentness_controller
+        ):
+            raise RuntimeError("original native currentness consumer changed")
+        _currentness_record = _currentness_source[4][-1][1]
+        _currentness_reader, _currentness_code, _currentness_defaults, _currentness_kwdefaults, _currentness_entries, _currentness_closure, _currentness_cells = _currentness_record
+        if (
+            _currentness_reader.__code__ is not _currentness_code
+            or _currentness_reader.__defaults__ is not _currentness_defaults
+            or _currentness_reader.__kwdefaults__ is not _currentness_kwdefaults
+            or tuple((_currentness_kwdefaults or {}).items()) != _currentness_entries
+            or _currentness_reader.__closure__ is not _currentness_closure
+            or any(cell.cell_contents is not value for cell, value in _currentness_cells)
+        ):
+            raise RuntimeError("original native currentness dispatcher changed")
+
+        for entry in (
+            () if _currentness_reader(_currentness_source, 'planning') is not None else _GATEABLE_BUILTINS
+        ):
             try:
                 from ..config import coerce_bool_setting, get_cli_setting
 
@@ -1615,6 +1657,12 @@ class BuiltinToolProvider:
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         name = tool_id.split(":", 1)[1]
+        from .workflow_task_scope import check_task_provider
+
+        try:
+            check_task_provider(self, tool_id, args)
+        except Exception:  # noqa: BLE001 - authority failures must refuse
+            return ToolResult.blocked("workflow task scope refused")
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(ok=False, error=f"Unknown builtin tool: {name}")
@@ -1687,6 +1735,10 @@ class BuiltinToolProvider:
                     binding_authority=self._workspace_binding_authority,
                 ),
             ):
+                try:
+                    check_task_provider(self, tool_id, args)
+                except Exception:  # noqa: BLE001 - authority failures must refuse
+                    return ToolResult.blocked("workflow task scope refused")
                 execution_started = True
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
@@ -2171,6 +2223,30 @@ class ToolCatalogRegistry:
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         entries = self._ensure_catalog_cache().entries
+        from .workflow_task_scope import (
+            current_planning_authorization,
+            current_task_authorization,
+        )
+
+        planning = current_planning_authorization()
+        if planning is not None:
+            planning.check_preparation()
+            entries = tuple(
+                e
+                for e in entries
+                if planning.registry is self and planning.permits_name(e.name)
+            )
+        task = current_task_authorization()
+        if task is not None:
+            if task._binding_state:
+                task._check_continuation()
+            else:
+                task.check_preparation()
+            entries = tuple(
+                e
+                for e in entries
+                if task.registry is self and task.permits_name(e.name)
+            )
         provider = self._canvas_provider
         return [
             entry
@@ -2341,6 +2417,13 @@ class ToolCatalogRegistry:
 
     def snapshot_for_hook(self, name: str) -> ToolDefinitionSnapshot:
         """Resolve current host identity and schema under the catalog lock."""
+        from .workflow_task_scope import current_planning_authorization
+
+        planning = current_planning_authorization()
+        if planning is not None:
+            if planning.registry is not self or not planning.permits_name(name):
+                raise ValueError("Tool outside workflow planning scope")
+            planning.check_preparation()
         with self._catalog_lock:
             record = self._owner_record_for_name(name)
             if record is None:
@@ -2382,10 +2465,27 @@ class ToolCatalogRegistry:
             )
 
     def load_schema(self, tool_id: str) -> ToolSchema:
+        from .workflow_task_scope import current_planning_authorization
+
+        planning = current_planning_authorization()
+        if planning is not None:
+            if planning.registry is not self or not any(
+                owner[0] == tool_id for _name, owner in planning.owners
+            ):
+                raise KeyError("Tool outside workflow planning scope")
+            planning.check_preparation()
         provider = self._owner_and_id(tool_id)
         if provider is None:
             raise KeyError(f"Unknown tool id: {tool_id}")
-        return provider.load_schema(tool_id)
+        schema = provider.load_schema(tool_id)
+        from .workflow_task_scope import current_task_authorization
+
+        task = current_task_authorization()
+        if task is not None and (
+            task.registry is not self or not task.permits_name(schema.name)
+        ):
+            raise KeyError("Tool outside workflow task scope")
+        return schema
 
     def resolve_name(self, name: str) -> str | None:
         record = self._ensure_catalog_cache().by_name.get(name)
@@ -2531,6 +2631,13 @@ class ToolCatalogRegistry:
             "code_review_submit",
         }:
             return ToolResult(ok=False, error="role_denied", dispatch_state="not_started")
+        from .workflow_task_scope import current_planning_authorization
+
+        planning = current_planning_authorization()
+        if planning is not None and (
+            planning.registry is not self or not planning.permits_name(name)
+        ):
+            return ToolResult.blocked("Tool outside workflow planning scope")
         with self._catalog_lock:
             if expected_definition is not None:
                 try:
@@ -2549,6 +2656,29 @@ class ToolCatalogRegistry:
             and not self._authenticated_review_provider(provider)
         ):
             return ToolResult.blocked("Review authority is unavailable.")
+        from ..Chat.console_ordinary_tree import current_ordinary_tree
+
+        ordinary = current_ordinary_tree()
+        if ordinary is not None and self in ordinary.catalogs:
+            try:
+                ordinary.check_catalog_call(self, name, provider)
+            except RuntimeError as error:
+                return ToolResult.blocked(str(error))
+        if ordinary is not None and provider in ordinary.builtin_providers:
+            try:
+                ordinary.check_builtin_call(provider, name)
+            except RuntimeError as exc:
+                return ToolResult.blocked(str(exc))
+        if ordinary is not None and provider in ordinary.library_providers:
+            try:
+                ordinary.check_library_call(provider, name)
+            except RuntimeError as error:
+                return ToolResult.blocked(str(error))
+        if ordinary is not None and provider in ordinary.local_providers:
+            try:
+                ordinary.check_local_call(provider, name)
+            except RuntimeError as exc:
+                return ToolResult.blocked(str(exc))
         if name in CANVAS_RESERVED_TOOL_NAMES:
             if not self._authenticated_canvas_name(provider, name):
                 from .canvas_tool_provider import CanvasToolProvider
@@ -2604,8 +2734,16 @@ class ToolCatalogRegistry:
         # see an exception out of tool invocation.
         def invoke_current() -> ToolResult:
             from .automatic_work_runtime import current_automatic_work
+            from .workflow_task_scope import check_current_task_call
+
+            try:
+                check_current_task_call(ToolCall(name, args), registry=self)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
 
             automatic = current_automatic_work()
+            if automatic is not None and automatic.workflow is not None:
+                automatic.check()
             if automatic is not None and automatic.goal is not None:
                 automatic.check()
                 if tool_id not in automatic.goal.goal.request.tool_scope.catalog_tools:
@@ -2616,6 +2754,12 @@ class ToolCatalogRegistry:
                         return ToolResult.blocked("reviewed tool definition changed")
                 except Exception:  # noqa: BLE001 -- fail closed
                     return ToolResult.blocked("reviewed tool definition unavailable")
+            if automatic is not None and automatic.workflow is not None:
+                automatic.ledger.resume_workflow_phase(
+                    automatic.attempt_id,
+                    owner_id=automatic.owner_id,
+                    _dispatch=automatic._workflow_dispatch(),
+                )
             return provider.invoke(tool_id, args)
 
         if self._ephemeral:
@@ -2730,3 +2874,95 @@ def __getattr__(name: str):
 
         return getattr(fleet_message_tools, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+_NATIVE_SSH_CATALOG_METHODS = {
+    name: getattr(ToolCatalogRegistry, name)
+    for name in ("invoke_by_name", "resolve_owner_for_name")
+}
+
+_NATIVE_ORDINARY_BUILTIN_PROVIDER = BuiltinToolProvider
+_NATIVE_ORDINARY_BUILTIN_DECLARATIONS = _GATEABLE_BUILTINS
+_NATIVE_ORDINARY_BUILTIN_FACTORY = (build_gateable_tool, build_gateable_tool.__code__)
+_NATIVE_ORDINARY_BUILTIN_METHODS = tuple(
+    (name, descriptor)
+    for name, descriptor in vars(BuiltinToolProvider).items()
+    if callable(descriptor)
+    or isinstance(descriptor, (staticmethod, classmethod, property))
+)
+
+_NATIVE_ORDINARY_ALWAYS_ON_CLASSES = (CalculatorTool, DateTimeTool)
+
+_NATIVE_ORDINARY_BUILTIN_DECLARATION_VALUES = tuple(
+    (
+        entry.gate_key,
+        entry.module_name,
+        entry.factory_name,
+        entry.tool_name,
+        entry.worktree_effect,
+    )
+    for entry in _GATEABLE_BUILTINS
+)
+_NATIVE_ORDINARY_BUILTIN_IMPLEMENTATIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        build_gateable_tool,
+        *(
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor.fget
+            if isinstance(descriptor, property)
+            else descriptor
+            for _name, descriptor in _NATIVE_ORDINARY_BUILTIN_METHODS
+        ),
+    )
+    if isinstance(function, type(lambda: None))
+)
+
+
+# Planning qualifies only these original always-on implementations; no optional
+# builtin is constructed to supply a planning schema or prospective descriptor.
+_PLANNING_PURE_TOOL_METHODS = tuple(
+    (cls, name, descriptor)
+    for cls in _NATIVE_ORDINARY_ALWAYS_ON_CLASSES
+    for name, descriptor in vars(cls).items()
+    if callable(descriptor) or isinstance(descriptor, property)
+)
+_PLANNING_PURE_TOOL_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for _cls, _name, descriptor in _PLANNING_PURE_TOOL_METHODS
+    for function in (
+        descriptor.fget if isinstance(descriptor, property) else descriptor,
+    )
+    if hasattr(function, "__code__")
+)
+
+
+# Exact catalog receiver used by an ordinary archive capability.
+_ORDINARY_RECOVERY_REGISTRY = ToolCatalogRegistry
+_ORDINARY_RECOVERY_REGISTRY_METHODS = tuple(
+    (name, vars(ToolCatalogRegistry)[name], vars(ToolCatalogRegistry)[name].__code__)
+    for name in (
+        "register_archive_recovery_provider",
+        "_authenticated_recovery_name",
+        "check_archive_recovery_call",
+        "resolve_owner_for_name",
+        "_source_for",
+    )
+)

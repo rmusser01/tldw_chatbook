@@ -516,3 +516,29 @@ def test_bom_prefixed_diff(tmp_path):
     (ws / "notes.txt").write_text("alpha\nbeta\ngamma\n")
     patch_files("\ufeff" + MODIFY_DIFF, workspace_root=ws)
     assert (ws / "notes.txt").read_text() == "alpha\nBETA\ngamma\n"
+
+
+@pytest.mark.bootstrap_profile
+def test_patch_direct_cas_failure_names_retained_effects(tmp_path, monkeypatch):
+    from tldw_chatbook.Tools import patch_tool_impls
+
+    ws = _ws(tmp_path)
+    (ws / "notes.txt").write_bytes(b"alpha\nbeta\ngamma\n")
+    (ws / "second.txt").write_bytes(b"alpha\nbeta\ngamma\n")
+    writer = patch_tool_impls._atomic_write_target
+
+    def peer_change(target, *args, **kwargs):
+        if target.name == "second.txt":
+            target.write_bytes(b"peer\n")
+        return writer(target, *args, **kwargs)
+
+    monkeypatch.setattr(patch_tool_impls, "_atomic_write_target", peer_change)
+    with pytest.raises(
+        LocalToolError, match="second.txt.*precondition failed.*patched notes.txt"
+    ):
+        patch_files(
+            MODIFY_DIFF + MODIFY_DIFF.replace("notes.txt", "second.txt"),
+            workspace_root=ws,
+        )
+    assert (ws / "notes.txt").read_bytes() == b"alpha\nBETA\ngamma\n"
+    assert (ws / "second.txt").read_bytes() == b"peer\n"

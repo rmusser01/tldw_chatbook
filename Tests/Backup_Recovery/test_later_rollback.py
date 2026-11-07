@@ -26,7 +26,7 @@ from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 
 
 @contextmanager
-def _completed(tmp_path, monkeypatch, helper, *, control_root=None):
+def _completed(tmp_path, monkeypatch, helper, *, control_root=None, extras=None):
     from Tests.RuntimePolicy.test_server_credentials import FakeKeyring
     from tldw_chatbook.Backup_Recovery import credentials
     from tldw_chatbook.runtime_policy.server_credentials import (
@@ -36,7 +36,7 @@ def _completed(tmp_path, monkeypatch, helper, *, control_root=None):
     store = KeyringServerCredentialStore(keyring_backend=FakeKeyring())
     monkeypatch.setattr(credentials, "_credential_store", lambda: store)
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper)
-    with replacement_case(tmp_path, monkeypatch, prepared=False) as case:
+    with replacement_case(tmp_path, monkeypatch, prepared=False, extras=extras) as case:
         candidate, plan, _, _, source, selector = case
         original_config = selector.read_bytes()
         operation = replacement.replace(
@@ -691,3 +691,32 @@ def test_later_rollback_restores_receipt_bound_file_absence(
             row.owner_id == "research.local"
             for row in archive_reader.verify_sealed(acquired).files
         )
+
+
+def test_analyzed_agent_runs_joins_replacement_and_later_rollback(tmp_path, monkeypatch, helper_resource_root):
+    from tldw_chatbook.Backup_Recovery.later_rollback import preview_rollback
+    from tldw_chatbook.Backup_Recovery.models import StorageItem
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    def extras(live):
+        path = live / "data" / "Local" / "agent_runs.db"
+        path.parent.mkdir(mode=0o700, parents=True)
+        with closing(AgentRunsDB(path)) as db:
+            db.create_run(conversation_id="preserved-chat", agent_kind="primary", run_id="old")
+            with db.connection() as conn:
+                conn.execute("ANALYZE")
+        path.chmod(0o600)
+        return (StorageItem("db.agent_runs", "profile:profile:db.agent_runs", path, "included", ("profile:profile:config",)),)
+
+    with _completed(tmp_path, monkeypatch, helper_resource_root, extras=extras) as (case, operation, _):
+        path = case[4].parent / "data" / "Local" / "agent_runs.db"
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("UPDATE agent_runs SET conversation_id='after' WHERE id='old'")
+            conn.commit()
+        control = tmp_path / "control"
+        plan = preview_rollback(operation, control_root=control, old_password=b"original", target=case[1].target, cancel=Event())
+        next_id = recovery_copies.rollback(operation, control_root=control, old_password=b"original", new_password=b"new safety", approved_plan=plan, cancel=Event())
+        assert next_id != operation
+        with closing(sqlite3.connect(path)) as conn:
+            assert conn.execute("SELECT conversation_id FROM agent_runs WHERE id='old'").fetchone() == ("preserved-chat",)
+            assert conn.execute("SELECT 1 FROM sqlite_stat1 WHERE tbl='agent_runs'").fetchone() == (1,)

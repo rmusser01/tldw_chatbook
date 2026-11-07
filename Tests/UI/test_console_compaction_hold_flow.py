@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from types import FunctionType
 from xml.etree import ElementTree
 
 import pytest
@@ -28,6 +29,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.private_profile import private_profile_test
+from tldw_chatbook import app_service_wiring, app_skill_wiring
 from tldw_chatbook import config as config_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
@@ -39,6 +41,8 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.console_turn_preparation import ConsolePreparationPauseKind
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     TraceCallRecoveryCallout,
 )
@@ -60,7 +64,9 @@ def _frame(host) -> str:
 async def _held_console(monkeypatch, tmp_path):
     """Yield (host, console, controller, adapter_calls, held_draft) at a hold."""
 
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config_module.get_user_data_dir(), isolate_databases=True
+    )
     database = CharactersRAGDB(tmp_path / "chat.sqlite", "compaction-hold")
     app.chachanotes_db = database
     # The production app wires this in app_service_wiring; sends after the
@@ -80,6 +86,7 @@ async def _held_console(monkeypatch, tmp_path):
         {"console": {"exchange_capture": False}}
     )
     app.app_config = config_module.load_settings(force_reload=True)
+    app._test_prepare_console_send_sources = True
     host = ConsoleHarness(app)
     host.CSS_PATH = TldwCli.CSS_PATH
     adapter_calls: list[dict] = []
@@ -103,15 +110,28 @@ async def _held_console(monkeypatch, tmp_path):
 async def _send(console, host, runtime_tasks, draft: str) -> None:
     console._session._sync_console_session_draft()
     console._console_composer_or_none().load_draft(draft)
+    runtime = console._console_runtime()
+    session_id = console._ensure_console_chat_controller().store.active_session_id
+    custody_ids = set(runtime._turn_custody)
     before = len(runtime_tasks)
     await asyncio.wait_for(
-        console._send_console_message_from_visible_action(
-            session_id=console._ensure_console_chat_controller().store.active_session_id
-        ),
+        console._send_console_message_from_visible_action(session_id=session_id),
         10,
     )
+    for turn_id, record in runtime._turn_custody.items():
+        if (
+            turn_id not in custody_ids
+            and record.session_id == session_id
+            and record.received_intent is not None
+            and record.task is not None
+            and record.task not in runtime_tasks
+        ):
+            runtime_tasks.append(record.task)
     for task in runtime_tasks[before:]:
         await asyncio.wait_for(asyncio.shield(task), 30)
+    first_send = runtime._first_send_task
+    if first_send is not None:
+        await asyncio.wait_for(asyncio.shield(first_send), 10)
     await console._sync_native_console_chat_ui()
 
 
@@ -122,8 +142,35 @@ async def _ask_console(host, pilot, monkeypatch, adapter):
         ``(console, controller, session, runtime, runtime_tasks)``; every
         accepted turn's task is appended to ``runtime_tasks``.
     """
+    from Tests.UI.test_console_approval_compact_layout import (
+        _wait_for_reconciled_console,
+    )
+    from tldw_chatbook.MCP.console_snapshot import standard_console_sources
+    from tldw_chatbook.UI.Console_Modules import emergency_stop_hold
+
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
+    await _wait_for_reconciled_console(console, pilot)
+    await asyncio.wait_for(emergency_stop_hold.refresh(console), 5)
+    assert console._console_emergency_stop_path is not None
+    assert console._console_emergency_stop_copy == ""
+    app = host.app_instance
+    assert standard_console_sources(app.unified_mcp_service)
+    trust = vars(app)["_local_skill_trust_service"]
+    assert type(trust) is SkillTrustService
+    assert "current_fingerprint_digest" not in vars(trust)
+    local = vars(app)["_local_skills_service"]
+    assert type(local) is LocalSkillsService
+    assert vars(local)["_trust_service"] is trust
+    assert vars(app)["_skills_scope_service"].local_service is local
+    factory = vars(local)["_trust_service_factory"]
+    assert type(factory) is FunctionType
+    assert factory.__code__ is app_service_wiring._CONSOLE_SKILL_TRUST_FACTORY_CODE
+    assert factory.__globals__ is vars(app_skill_wiring)
+    assert factory.__defaults__ is None and factory.__kwdefaults__ is None
+    assert factory.__code__.co_freevars == ("self",)
+    assert type(factory.__closure__) is tuple and len(factory.__closure__) == 1
+    assert factory.__closure__[0].cell_contents is app
     controller = console._ensure_console_chat_controller()
     gateway = controller.provider_gateway
     monkeypatch.setattr(gateway, "_chat_api_call_fn", adapter)
@@ -473,7 +520,7 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
             assert console._native_run_status_copy() == "Pauses for compaction"
             chip = console._context_spend._build_console_cost_state()
             assert chip.label.startswith(COMPACTION_PAUSE_FORECAST_COPY)
-            assert "Next send pauses for compaction approval" in chip.tooltip
+            assert "Estimated next send pauses for compaction approval" in chip.tooltip
     finally:
         if console is not None:
             await console._console_runtime().dispose()

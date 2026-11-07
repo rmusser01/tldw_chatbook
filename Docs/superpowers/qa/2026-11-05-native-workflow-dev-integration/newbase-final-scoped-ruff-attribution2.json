@@ -1,0 +1,37 @@
+{
+  "files_checked": 267,
+  "rules": [
+    "F821",
+    "F811",
+    "F823"
+  ],
+  "upstream": "29592ecc9bf3856957a8d9b70a270795b8f4348d",
+  "findings": 18,
+  "introduced_findings": 0,
+  "comparisons": [
+    {
+      "path": "tldw_chatbook/Agents/virtual_cli_provider.py",
+      "current": 2,
+      "upstream": 2,
+      "introduced": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/chat_persistence_service.py",
+      "current": 1,
+      "upstream": 1,
+      "introduced": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_provider_gateway.py",
+      "current": 3,
+      "upstream": 3,
+      "introduced": []
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/change_review_provider.py",
+      "current": 12,
+      "upstream": 12,
+      "introduced": []
+    }
+  ]
+}

@@ -34,6 +34,7 @@ ruling that `leave_console` never cancels an in-flight `AGENT_WAKE` turn).
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -44,19 +45,25 @@ from textual.widgets import Button
 
 from Tests.Chat.test_console_fleet_wake import _drain, _settle, _survivor
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
+from tldw_chatbook import config
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
-from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
+from tldw_chatbook.UI.Console_Modules.wiring import (
+    _admit_console_turn_to_runtime,
+    _precapture_turn_authority,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+pytestmark = pytest.mark.bootstrap_profile
 
 SEEDED_USER = "first user message"
 SEEDED_REPLY = "assistant one"
@@ -193,28 +200,45 @@ async def _navigate(
     )
 
 
+async def _wait_for_console_reattachment(chat: ChatScreen, pilot) -> None:
+    """Observe the original returning view's reconciliation before its rows."""
+    deadline = time.monotonic() + 3.0
+    while not (
+        chat._console_attach_reconciled
+        and not chat._console_attach_reconcile_running
+    ):
+        assert time.monotonic() < deadline, "Returning Console did not reconcile"
+        await pilot.pause(0.01)
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_manual_stream_completes_once_across_real_navigation(tmp_path):
     """A production-admitted manual turn survives a real route change."""
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
     # Keep this harness on its explicit in-memory configuration instead of
     # letting the live-config freshness heuristic reload the default file.
     app.app_config.pop("logging", None)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48)) as pilot:
         chat, controller, store, session_id, _conversation_id = await _seed_console(
             app, pilot, gateway
         )
+        assert app.screen_stack == [app.screen_stack[0], chat]
         runtime = chat._console_runtime()
         gateway.reply = "MANUAL-NAVIGATION-REPLY"
         gateway.stall_stream = True
 
-        turn_id = _admit_console_turn_to_runtime(
+        turn_id = await _admit_prepared_console_turn(
             chat, "turn that survives navigation", session_id
         )
         record = runtime._turn_custody[turn_id]
@@ -244,7 +268,7 @@ async def test_manual_stream_completes_once_across_real_navigation(tmp_path):
 
         chat2 = await _navigate(app, pilot, "chat", expect="ChatScreen")
         await _wait_for_selector(chat2, pilot, "#console-native-composer")
-        await pilot.pause()
+        await _wait_for_console_reattachment(chat2, pilot)
 
         terminal_rows = [
             message
@@ -260,33 +284,52 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
     tmp_path, monkeypatch
 ):
     """A failed first repaint is isolated and the next full sync converges."""
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
     app.app_config.pop("logging", None)
 
     original_sync = ChatScreen._sync_native_console_chat_ui
+    reconcile_code = ChatScreen._reconcile_console_after_attach.__code__
     original_set_timer = ChatScreen.set_timer
-    inject = {"armed": False, "failed": False, "sync_succeeded": False}
+    inject = {"armed": False, "sync_succeeded": False}
     first_failure = asyncio.Event()
     allow_retry = asyncio.Event()
     retry_succeeded = asyncio.Event()
     ordinary_timer_after_sync: list[bool] = []
 
-    async def fail_first_reattach_sync(screen):
-        if inject["armed"]:
-            if not inject["failed"]:
-                inject["failed"] = True
+    failed_visit = None
+
+    async def fail_first_reattach_sync(screen, *, _preparing_poll=False):
+        nonlocal failed_visit
+        reconciling = sys._getframe(1).f_code is reconcile_code
+        returning_full_sync = (
+            inject["armed"] and screen is not chat and runtime.view is screen
+            and not _preparing_poll
+        )
+        if returning_full_sync:
+            if reconciling and failed_visit is None:
+                failed_visit = screen._current_console_attach_visit()
                 first_failure.set()
                 raise RuntimeError("injected first reattach render failure")
             await allow_retry.wait()
-        await original_sync(screen)
-        if inject["armed"]:
+        completed = await original_sync(screen, _preparing_poll=_preparing_poll)
+        if (
+            returning_full_sync
+            and completed is True
+            and screen._console_attach_sync_complete
+            and failed_visit is not None
+            and failed_visit.can_complete(screen._current_console_attach_visit())
+        ):
             inject["sync_succeeded"] = True
             retry_succeeded.set()
+        return completed
 
     def record_ordinary_timer(screen, delay, callback, *args, **kwargs):
         if (
@@ -301,6 +344,7 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
     )
     monkeypatch.setattr(ChatScreen, "set_timer", record_ordinary_timer)
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48)) as pilot:
         chat, _controller, store, session_id, _conversation_id = await _seed_console(
             app, pilot, gateway
@@ -308,7 +352,7 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
         runtime = chat._console_runtime()
         gateway.reply = "REATTACH-RETRY-TERMINAL"
         gateway.stall_stream = True
-        turn_id = _admit_console_turn_to_runtime(
+        turn_id = await _admit_prepared_console_turn(
             chat, "turn completes while first repaint is broken", session_id
         )
         task = runtime._turn_custody[turn_id].task
@@ -331,19 +375,24 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
 
         runtime.remount_pending_approval = record_remount
         inject["armed"] = True
-        reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
-        await asyncio.wait_for(first_failure.wait(), timeout=2)
+        try:
+            reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
+            await asyncio.wait_for(first_failure.wait(), timeout=2)
 
-        assert remount_after_sync == []
-        assert ordinary_timer_after_sync == []
-        assert not task.done()
+            assert failed_visit.view is reopened
+            assert reopened._console_attach_reconcile_retry_count == 1
+            assert remount_after_sync == []
+            assert ordinary_timer_after_sync == []
+            assert not task.done()
 
-        gateway.release_stream.set()
-        outcome = await asyncio.wait_for(task, timeout=3)
-        assert outcome.accepted
-        allow_retry.set()
+            gateway.release_stream.set()
+            outcome = await asyncio.wait_for(task, timeout=3)
+            assert outcome.accepted
+        finally:
+            gateway.release_stream.set()
+            allow_retry.set()
         await asyncio.wait_for(retry_succeeded.wait(), timeout=3)
-        await pilot.pause()
+        await _wait_for_console_reattachment(reopened, pilot)
 
         terminal_rows = [
             message
@@ -366,8 +415,19 @@ def _step(label: str) -> None:
     logger.warning("STEP {}", label)
 
 
+async def _admit_prepared_console_turn(
+    chat: ChatScreen, draft: str, session_id: str
+) -> str:
+    """Use the queue's original preparation before synchronous custody transfer."""
+    prepared = await _precapture_turn_authority(chat, session_id)
+    with prepared():
+        return _admit_console_turn_to_runtime(chat, draft, session_id)
+
+
 async def _seed_console(app, pilot, gateway):
     """Mount a real Console, send once, return the live handles."""
+    trust = await app.ensure_local_skill_trust_service()
+    assert app.local_skills_service.trust_service is trust
     _step("seed: constructing screen")
     chat = ChatScreen(app)
     await app.push_screen(chat)
@@ -501,13 +561,17 @@ async def test_a_wake_that_ran_while_console_was_unmounted_is_in_the_transcript(
     ChaChaNotes and stamped `agent_runs.wake_delivered_at`. Returning to
     Console rebuilt the store from a snapshot taken BEFORE any of it.
     """
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48)) as pilot:
         (
             chat2,
@@ -567,13 +631,17 @@ async def test_transcript_payload_db_and_active_leaf_all_agree(tmp_path):
     look-alike rebuild cannot pass -- and then proves the next append extends
     the same chain instead of forking away from it.
     """
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48)) as pilot:
         (
             chat2,
@@ -779,13 +847,17 @@ async def test_rapid_route_switching_leaves_console_interactive(tmp_path):
     its state, a real click lands, and the transcript repaints new content
     appended after the churn.
     """
-    app = _build_test_app()
+    app = _build_test_app(
+        user_data_dir=config.get_user_data_dir(), isolate_databases=True
+    )
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    persist_seeded_config(app, "console")
 
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48)) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
             app, pilot, gateway

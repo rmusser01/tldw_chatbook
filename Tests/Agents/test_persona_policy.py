@@ -136,7 +136,7 @@ def test_invalid_rules_are_dropped_with_metadata_only_warnings():
             self.records = []
 
         def __call__(self, message):
-            self.records.append(str(message))
+            self.records.append(message.record["message"])
 
     handler = _Handler()
     logger_id = logger.add(handler, level="WARNING")
@@ -154,7 +154,10 @@ def test_invalid_rules_are_dropped_with_metadata_only_warnings():
     assert policy.kinds == frozenset({"mcp_tool"})
     assert len(policy.rules) == 1
     dropped = [record for record in handler.records if "Dropping" in record]
-    assert len(dropped) == 2, handler.records
+    assert dropped == [
+        "Dropping non-mapping persona policy rule",
+        "Dropping malformed persona policy rule",
+    ]
     rendered = "".join(dropped)
     assert "PRIVATE_NON_MAPPING_RULE" not in rendered
     assert "PRIVATE_MALFORMED_RULE" not in rendered

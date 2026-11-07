@@ -104,6 +104,12 @@ def test_standalone_goal_migration_matches_runtime_catalog(tmp_path):
                 "tldw_chatbook/DB/migrations/agent_runs_v24_to_v25_review_boundaries.sql"
             ).read_text()
         )
+        # Compare both routes at the same installed target, preserving exact DDL.
+        conn.executescript(
+            Path(
+                "tldw_chatbook/DB/migrations/agent_runs_v24_to_v25_workflow_runs.sql"
+            ).read_text()
+        )
     AgentRunsDB(paths[0]).close()
     catalogs = []
     for path in paths:

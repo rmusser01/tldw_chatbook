@@ -28,15 +28,17 @@ async def test_child_narrowing_and_post_context_use_real_owner(
 ):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="h4")
     observed = tmp_path / "start.json"
+    stopped = tmp_path / "stop.txt"
     start = command(
         "import json,sys;from pathlib import Path;event=json.load(sys.stdin);"
-        f"Path({str(observed)!r}).write_text(json.dumps(event));"
+        f"Path({str(observed)!r}).open('a').write(json.dumps(event) + '\\n');"
         'print(json.dumps({"version":2,"decision":"pass","child_limits":{"tool_ids":[],"budget_caps":{"max_model_turns":3,"max_total_tokens":5000}}}))',
         name="SubagentStart",
         effects=["child_limits"],
         id="child-start",
     )
     post = command(
+        f"from pathlib import Path;Path({str(stopped)!r}).open('a').write('stop\\n');"
         'print(\'{"version":2,"decision":"pass","context":[{"text":"child settled instruction","lifetime":"turn"}]}\')',
         name="SubagentStop",
         effects=["context"],
@@ -65,7 +67,10 @@ async def test_child_narrowing_and_post_context_use_real_owner(
         )
         assert outcome.final_text == "done"
         assert db.count_subagent_runs("c") == 1
-        event = json.loads(observed.read_text())
+        starts = observed.read_text().splitlines()
+        assert len(starts) == 1
+        assert stopped.read_text().splitlines() == ["stop"]
+        event = json.loads(starts[0])
         assert event["data"]["model"] == FLEET_CFG.model
         assert event["data"]["budget_caps"]["max_subagents"] == 0
         assert event["data"]["tool_ids"]

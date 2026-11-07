@@ -1,0 +1,47 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_________ test_raw_connection_census_is_qualified_and_transition_aware _________
+Tests/DB/test_private_sqlite_inventory.py:835: in test_raw_connection_census_is_qualified_and_transition_aware
+    _assert_raw_connection_census(
+Tests/DB/test_private_sqlite_inventory.py:722: in _assert_raw_connection_census
+    assert current == Counter(
+E   AssertionError: assert Counter({('tl..._sqlite'): 1}) == Counter({('tl...tialize'): 1})
+E     
+E     Omitting 3 identical items, use -vv to show
+E     Left contains 1 more item:
+E     {('tldw_chatbook/Backup_Recovery/detached_layout', '_normalize_sqlite'): 1}
+E     Use -v to get more diff
+---------------------------- Captured stderr setup -----------------------------
+2026-11-05 12:51:18.022 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-05 12:51:18.083 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-05 12:51:18.092 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-05 12:51:18.093 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_________ test_private_sqlite_seam_calls_use_literal_module_owned_ids __________
+Tests/DB/test_private_sqlite_inventory.py:1025: in test_private_sqlite_seam_calls_use_literal_module_owned_ids
+    assert violations == []
+E   AssertionError: assert ['tldw_chatbo...y validation'] == []
+E     
+E     Left contains one more item: 'tldw_chatbook/Backup_Recovery/detached_layout:_normalize_sqlite: unqualified recovery validation'
+E     Use -v to get more diff
+_____ test_backup_inventory_matches_current_sqlite_and_settings_operations _____
+Tests/DB/test_private_sqlite_inventory.py:1498: in test_backup_inventory_matches_current_sqlite_and_settings_operations
+    _assert_direct_backup_census(
+Tests/DB/test_private_sqlite_inventory.py:1447: in _assert_direct_backup_census
+    assert calls == Counter(
+E   AssertionError: assert Counter({('tl...nection'): 1}) == Counter({('tl...super()'): 1})
+E     
+E     Omitting 2 identical items, use -vv to show
+E     Left contains 1 more item:
+E     {('tldw_chatbook/Backup_Recovery/detached_layout', '_normalize_sqlite', 'connection'): 1}
+E     Use -v to get more diff
+============================= slowest 25 durations =============================
+17.37s call     Tests/DB/test_private_sqlite_inventory.py::test_private_sqlite_seam_calls_use_literal_module_owned_ids
+15.56s call     Tests/DB/test_private_sqlite_inventory.py::test_raw_connection_census_is_qualified_and_transition_aware
+12.79s call     Tests/DB/test_private_sqlite_inventory.py::test_backup_inventory_matches_current_sqlite_and_settings_operations
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/DB/test_private_sqlite_inventory.py::test_raw_connection_census_is_qualified_and_transition_aware
+FAILED Tests/DB/test_private_sqlite_inventory.py::test_private_sqlite_seam_calls_use_literal_module_owned_ids
+FAILED Tests/DB/test_private_sqlite_inventory.py::test_backup_inventory_matches_current_sqlite_and_settings_operations
+3 failed in 46.14s

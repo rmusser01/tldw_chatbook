@@ -33,6 +33,181 @@ def select(harness, monkeypatch, *, enabled=True, session_id="session-1"):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selection",
+    [
+        "pending",
+        "parent",
+        "other",
+        "before_first",
+        "existing",
+        "rollback",
+        "publishing_parent",
+        "renaming",
+        "reaffirm_before",
+        "reaffirm_after",
+    ],
+)
+async def test_pending_mixin_anchor_preserves_selected_cursor(
+    trace_harness, monkeypatch, selection
+):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_prompt_mixins import (
+        MixinAttemptSnapshot,
+        MixinAttemptWrite,
+        MixinSnapshotUnavailableError,
+    )
+
+    h = trace_harness
+    session = h.store._sessions["session-1"]
+    conversation = session.persisted_conversation_id
+    root = h.store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="Question", persist=True
+    )
+    parent = h.store.append_message(
+        session.id, role=ConsoleMessageRole.SYSTEM, content="Wake notice", persist=True
+    )
+    assistant = h.store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    service = ConsolePromptMixinService(
+        store=h.store, prompt_scope_service=None, persistence=h.store.persistence
+    )
+    batch = MixinAttemptWrite("first", root.id, assistant.id, MixinAttemptSnapshot(()))
+    parent_cursor = (parent.persisted_message_id, None)
+    assert h.db.get_conversation_active_cursor(conversation) == parent_cursor
+    assert h.store.active_leaf(session.id) == assistant.id
+
+    if selection == "rollback":
+        with h.db.transaction() as cursor:
+            cursor.execute(
+                "CREATE TRIGGER fail_mixin_attempt BEFORE INSERT "
+                "ON console_prompt_mixin_attempts "
+                "BEGIN SELECT RAISE(ABORT, 'forced attempt rollback'); END"
+            )
+        with pytest.raises(
+            MixinSnapshotUnavailableError, match="mixin_attempt_save_failed"
+        ):
+            await service.accept_attempt(session.id, batch)
+        assert h.db.get_message_by_id(assistant.id) is None
+        assert h.db.get_conversation_active_cursor(conversation) == parent_cursor
+        with h.db.transaction() as cursor:
+            assert (
+                cursor.execute(
+                    "SELECT count(*) FROM console_prompt_mixin_attempts WHERE conversation_id=?",
+                    (conversation,),
+                ).fetchone()[0]
+                == 0
+            )
+        return
+
+    expected = (assistant.id, None)
+    if selection == "parent":
+        # Reselecting the durable parent changes the resident selection only.
+        h.store.set_active_leaf(session.id, parent.id)
+        expected = parent_cursor
+    elif selection == "other":
+        # A second durable selector can move independently of this resident store.
+        h.db.set_conversation_active_leaf(conversation, root.persisted_message_id)
+        expected = (root.persisted_message_id, None)
+    elif selection == "before_first":
+        assert h.db.set_conversation_active_cursor(
+            conversation,
+            active_leaf_message_id=None,
+            before_message_id=root.persisted_message_id,
+        )
+        expected = (None, root.persisted_message_id)
+    elif selection == "existing":
+        await service.accept_attempt(session.id, batch)
+        h.store.set_active_leaf(session.id, parent.id)
+        batch = replace(batch, attempt_id="retry", retry_of_attempt_id=batch.attempt_id)
+        expected = parent_cursor
+
+    if selection == "publishing_parent":
+        import asyncio
+        from threading import Event
+
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+
+        entered, release = Event(), Event()
+        persist_leaf = h.store._persist_active_leaf
+
+        def hold_published_parent(session_id, message_id):
+            accepted = persist_leaf(session_id, message_id)
+            entered.set()
+            assert release.wait(5)
+            return accepted
+
+        monkeypatch.setattr(h.store, "_persist_active_leaf", hold_published_parent)
+        move = asyncio.create_task(
+            run_owned_db_call(h.db, h.store.set_active_leaf, session.id, parent.id)
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            assert h.store.active_leaf(session.id) == assistant.id
+            assert h.db.get_conversation_active_cursor(conversation) == parent_cursor
+            await service.accept_attempt(session.id, batch)
+        finally:
+            release.set()
+            await move
+        expected = parent_cursor
+        assert h.store.active_leaf(session.id) == parent.id
+    elif selection in ("reaffirm_before", "reaffirm_after"):
+        import asyncio
+        from threading import Event
+
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+
+        entered, release = Event(), Event()
+        save_attempt = h.store.persistence.save_conversation_mixin_attempt
+
+        def hold_save(*args, **kwargs):
+            if selection == "reaffirm_before":
+                entered.set()
+                assert release.wait(5)
+            result = save_attempt(*args, **kwargs)
+            if selection == "reaffirm_after":
+                entered.set()
+                assert release.wait(5)
+            return result
+
+        monkeypatch.setattr(
+            h.store.persistence, "save_conversation_mixin_attempt", hold_save
+        )
+        saving = asyncio.create_task(service.accept_attempt(session.id, batch))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            observed_cursor = (
+                parent_cursor if selection == "reaffirm_before" else expected
+            )
+            assert h.db.get_conversation_active_cursor(conversation) == observed_cursor
+            assert h.store.get_message(assistant.id).persisted_message_id is None
+            revision = h.store.payload_revision(session.id)
+            await run_owned_db_call(
+                h.db, h.store.set_active_leaf, session.id, assistant.id
+            )
+            assert h.store.active_leaf(session.id) == assistant.id
+            assert h.store.payload_revision(session.id) == revision + 1
+            assert h.db.get_conversation_active_cursor(conversation) == observed_cursor
+        finally:
+            release.set()
+            await saving
+    elif selection == "renaming":
+        with h.store.conversation_title_transition(conversation):
+            await service.accept_attempt(session.id, batch)
+    else:
+        await service.accept_attempt(session.id, batch)
+    assert h.store.get_message(assistant.id).persisted_message_id == assistant.id
+    assert (
+        h.store.persistence.get_conversation_mixin_attempt(
+            conversation, assistant_message_id=assistant.id, attempt_id=batch.attempt_id
+        ).status
+        == "recorded"
+    )
+    assert h.db.get_conversation_active_cursor(conversation) == expected
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("capture", [False, True])
 async def test_retry_original_regenerate_current_and_clean_history(
     trace_harness, monkeypatch, capture

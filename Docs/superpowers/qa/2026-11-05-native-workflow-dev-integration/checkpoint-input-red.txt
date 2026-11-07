@@ -1,0 +1,25 @@
+F
+=================================== FAILURES ===================================
+_ test_checkpoint_keeps_original_read_only_inputs_across_native_return[external-edit] _
+Tests/Agents/test_workflow_run_service.py:1049: in test_checkpoint_keeps_original_read_only_inputs_across_native_return
+    assert checkpoint.input_manifest is None
+E   AssertionError: assert '0a620f42feadf83ebca6a28514b9c028411c044abd2b6c0506ae6c70270a6239' is None
+E    +  where '0a620f42feadf83ebca6a28514b9c028411c044abd2b6c0506ae6c70270a6239' = WorkflowCheckpoint(workflow_id='f98a8b06-6313-4a55-b0a3-8b4d35adee74', attempt_id='e6b4b7c73e734ed8ba91657b80c0c14f', ...capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee.').input_manifest
+---------------------------- Captured stderr setup -----------------------------
+2026-11-05 12:28:49.845 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-05 12:28:49.928 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-05 12:28:49.949 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-05 12:28:49.955 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-11-05 12:28:50.320 | INFO     | tldw_chatbook.DB.base_db:__init__:1070 - AgentRunsDB initialized with path: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/pytest-checkpoint-input-red/test_checkpoint_keeps_original0/runs-0.db [Client: default]
+2026-11-05 12:28:52.272 | INFO     | tldw_chatbook.DB.base_db:__init__:1070 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_jtu4hcxv/home/.local/share/tldw_cli/default_user/tldw_chatbook_workspaces.db [Client: file-tools]
+2026-11-05 12:28:52.364 | INFO     | tldw_chatbook.Agents.agent_request_execution:call_model:123 - agent schema request active=2 runtime=0 find_tools=0 load_tools=0 native=0 run=ffae3a299ee0420392be78277fad7f03
+2026-11-05 12:28:53.432 | INFO     | tldw_chatbook.Agents.agent_request_execution:call_model:123 - agent schema request active=2 runtime=0 find_tools=0 load_tools=0 native=0 run=ffae3a299ee0420392be78277fad7f03
+============================= slowest 25 durations =============================
+3.35s call     Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[external-edit]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Agents/test_workflow_run_service.py::test_checkpoint_keeps_original_read_only_inputs_across_native_return[external-edit]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 4.69s

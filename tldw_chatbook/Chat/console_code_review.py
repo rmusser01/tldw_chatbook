@@ -1356,3 +1356,24 @@ def compose_native_review_provider(
     )
     service.native_conversation_id = conversation_id
     return CodeReviewToolProvider(service)
+
+
+# Original metadata parser and receiving functions for ordinary worktree admission.
+# These records restrict the maximum; they never accept a review or a skill binding.
+from .console_ordinary_tree import _function_record as _review_function_record
+
+_ORDINARY_REVIEW_FUNCTIONS = tuple(
+    (name, _review_function_record(globals()[name]))
+    for name in (
+        "_explicit_stages", "_review_tools_enabled", "classify_review_turn",
+        "compose_native_review_provider",
+    )
+)
+_ORDINARY_REVIEW_VALUES = tuple(
+    (name, globals()[name])
+    for name in ("re", "_QUALIFICATION", "_VERIFY_REQUEST", "_NEGATION", "_RESUME_REVIEW", "_OFFER_ACCEPT")
+)
+_ORDINARY_REVIEW_RE_FUNCTIONS = tuple(
+    (name, _review_function_record(getattr(re, name)))
+    for name in ("match", "search", "sub")
+)

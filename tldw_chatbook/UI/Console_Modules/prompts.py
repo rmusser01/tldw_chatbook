@@ -126,7 +126,6 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
     TAB_LIBRARY,
 )
-from ...Library.library_prompts_state import classify_prompt_save_error
 from ...Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
 from ...Prompt_Management.prompt_artifact_models import BlockArtifactDefinition
 from ...Prompt_Management.prompt_improvement_models import (
@@ -134,7 +133,6 @@ from ...Prompt_Management.prompt_improvement_models import (
     fingerprint_block_definition,
     fingerprint_text,
 )
-from ...Prompt_Management.prompt_improvement_service import PromptImprovementService
 from ...Prompt_Management.prompt_scope_service import PromptDraftShelfFullError
 from ...Prompt_Management.prompt_variables import (
     PromptVariableApplication,
@@ -1715,6 +1713,9 @@ class ConsolePromptsController:
         this method's scope; see each class's docstring for why they split
         where they do.
         """
+        from ...Prompt_Management.prompt_improvement_service import (
+            PromptImprovementService,
+        )
         from ...Widgets.Console.console_prompt_improve_view import (
             ConsolePromptImprovementContext,
         )
@@ -2597,6 +2598,8 @@ class ConsolePromptsController:
         Returns:
             User-facing outcome copy to display inline in the modal.
         """
+        from ...Library.library_prompts_state import classify_prompt_save_error
+
         name = name.strip()
         if not name:
             return "Enter a name to save this system prompt to Library."

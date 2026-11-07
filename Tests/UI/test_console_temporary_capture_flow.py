@@ -57,6 +57,9 @@ async def _temporary_tab(case) -> str:
     console, store = case.console, case.store
     first = case.session.id
     case.probe.release.set()  # nothing here waits on the original read
+    app = console.app_instance
+    trust = await app.ensure_local_skill_trust_service()
+    assert app.local_skills_service.trust_service is trust
     console.action_new_temporary_console_tab()
     assert await _until(
         lambda: (

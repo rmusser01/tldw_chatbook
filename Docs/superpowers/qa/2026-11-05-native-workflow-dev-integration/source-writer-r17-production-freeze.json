@@ -1,0 +1,50 @@
+{
+  "production_paths": [
+    {
+      "path": "tldw_chatbook/Agents/hooks_v2/command_executor.py",
+      "sha256": "5ef0c549b253b7c11f3c62708dde3825a5daa66833dac374a473eb9eabd8156d",
+      "prior_frozen_sha256": "5ef0c549b253b7c11f3c62708dde3825a5daa66833dac374a473eb9eabd8156d"
+    },
+    {
+      "path": "tldw_chatbook/Agents/workflow_run_service.py",
+      "sha256": "7a2ab650fdae4f45c95f4a7ca9dcdf985bafa7c2505996ff4fabdb396d7726bb",
+      "prior_frozen_sha256": "7a2ab650fdae4f45c95f4a7ca9dcdf985bafa7c2505996ff4fabdb396d7726bb"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_sources.py",
+      "sha256": "f616a586a0d62367d99bf9afd1c116305f44f7a1a8da291ff4431b75af27536c",
+      "prior_frozen_sha256": "f616a586a0d62367d99bf9afd1c116305f44f7a1a8da291ff4431b75af27536c"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "sha256": "0c9583d2510717cc03f6ee10fabc8166fd11f1cbf117b82425b51661fa02b978",
+      "prior_frozen_sha256": "0c9583d2510717cc03f6ee10fabc8166fd11f1cbf117b82425b51661fa02b978"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_plugin_context.py",
+      "sha256": "f45d8320935bc2140ae930ba37e8ac06a017d12626297930df1e5f48fe9840f8",
+      "prior_frozen_sha256": "f45d8320935bc2140ae930ba37e8ac06a017d12626297930df1e5f48fe9840f8"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_reference_preparation.py",
+      "sha256": "14d386a0ab20dc931b72f42c6572b324a1f63a787e94693fae6a1b394e72aad4",
+      "prior_frozen_sha256": "14d386a0ab20dc931b72f42c6572b324a1f63a787e94693fae6a1b394e72aad4"
+    },
+    {
+      "path": "tldw_chatbook/DB/private_sqlite.py",
+      "sha256": "0cb314ed6cf3ecce4c5a94d9448a79b512e9d277ce7073a58edf87559e7af103",
+      "prior_frozen_sha256": "0cb314ed6cf3ecce4c5a94d9448a79b512e9d277ce7073a58edf87559e7af103"
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_workflow_schema.py",
+      "sha256": "8acdf04fb95566b0185812020bc7a361a5e34a54699abbd28cad23a6b8f71dc1",
+      "prior_frozen_sha256": "8acdf04fb95566b0185812020bc7a361a5e34a54699abbd28cad23a6b8f71dc1"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_ordinary_tree.py",
+      "sha256": "dcbf11f72353588c9dab19da44c7c97e708a68749dc74c8421c123d4ac6f2d7c",
+      "new_delta": "R17 existing captured marker after original admitted selection"
+    }
+  ],
+  "unexpected_prior_fix_changes": []
+}

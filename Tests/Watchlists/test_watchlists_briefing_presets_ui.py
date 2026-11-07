@@ -54,7 +54,7 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 # the UI job runs `Tests/UI` plus `Tests -m ui --ignore=Tests/UI`, so an
 # unmarked test in `Tests/Watchlists` is collected by nothing (matches
 # `test_watchlists_artifacts_pane.py`'s own header note).
-pytestmark = pytest.mark.ui
+pytestmark = [pytest.mark.ui, pytest.mark.bootstrap_profile]
 
 
 def _db(tmp_path) -> SubscriptionsDB:
@@ -895,7 +895,19 @@ async def test_open_briefing_preset_manager_passes_built_options_to_the_modal():
         assert modal.character_options == [("Ada", 5)]
         assert modal.voice_options == [("Warm", "v1")]
 
-        await pilot.click("#bpm-close")
+        close = modal.query_one("#bpm-close", Button)
+
+        def close_is_painted():
+            region = close.region
+            return (
+                host.screen is modal and modal.is_mounted and close.is_mounted
+                and close.visible and not close.disabled
+                and region.width > 0 and region.height > 0
+                and host.get_widget_at(*region.center)[0] is close
+            )
+
+        assert await _wait_until(pilot, close_is_painted)
+        assert await pilot.click("#bpm-close")
         assert await _wait_until(
             pilot, lambda: not isinstance(host.screen, BriefingPresetModal)
         )

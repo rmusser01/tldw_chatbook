@@ -2,11 +2,12 @@
 
 import inspect
 import sys
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
-from types import FunctionType, ModuleType
+from types import FunctionType, MethodType, ModuleType
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
 from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
@@ -53,7 +54,12 @@ def _sources(service):
     paths.append(("agents.history", sandbox or data / "tool_sandbox"))
     writer = getattr(service, "run_log_writer", None)
     log_dir = getattr(writer, "log_dir", None)
-    if log_dir is not None:
+    from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+
+    source = console_writer_source(writer)
+    if source is not None:
+        paths.append(("agents.history", source.root))
+    elif log_dir is not None:
         paths.append(("agents.history", log_dir))
     catalog = getattr(service, "registry", getattr(service, "_registry", None))
     for provider in getattr(catalog, "_providers", ()):
@@ -88,9 +94,11 @@ _guard = RecoveryAdmissionGuard(
 )
 
 
-def execution(service=None, *, sources=()):
+def execution(service=None, *, sources=(), _refusal_return=None):
     """Retain admission through final persistence in this native task/thread."""
-    return _guard.execution(service, sources=sources)
+    if _refusal_return is None:
+        return _guard.execution(service, sources=sources)
+    return _guard.execution(service, sources=sources, _refusal_return=_refusal_return)
 
 
 def _explicit_writer_root(service):
@@ -108,7 +116,7 @@ def _explicit_writer_root(service):
         type(AgentService) is not type
         or type(writer_class) is not type
         or type(methods) is not tuple
-        or len(methods) != 3
+        or len(methods) != 12
         or not all(
             type(row) is tuple
             and len(row) == 4
@@ -187,8 +195,14 @@ def guarded(function):
             for name in ("builtin_gate", "mcp_provider")
             for source in _permission_sources(kwargs.get(name))
         )
-        log_dir = getattr(kwargs.get("run_log_writer"), "log_dir", None)
-        if log_dir is not None:
+        writer = kwargs.get("run_log_writer")
+        from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+
+        source = console_writer_source(writer)
+        log_dir = getattr(writer, "log_dir", None)
+        if source is not None:
+            sources += (("agents.history", source.root),)
+        elif log_dir is not None:
             sources += (("agents.history", profile_paths.lexical_path(log_dir)),)
         # Passive stock-source observation joins the initial fresh admission;
         # custom writers still resolve global history inside the admitted scope.
@@ -229,13 +243,91 @@ def _worker_databases(service):
     )
 
 
-def worker_guard(service=None):
+def worker_guard(service=None, *, _refusal_return=None):
     """Capture sources, then acquire independently inside the actual worker."""
     sources = _guard.captured_sources(service)
 
     def decorate(function):
         @wraps(function)
         def call(*args, **kwargs):
+            if _refusal_return is not None:
+                from tldw_chatbook.Backup_Recovery.admission_runtime import (
+                    _AdmissionRefusalReturn,
+                )
+
+                isolation = _guard.worker_isolation
+                invocation_execution = _guard.execution
+                if (
+                    type(isolation) is not MethodType
+                    or type(invocation_execution) is not MethodType
+                    or isolation.__self__ is not _guard
+                    or getattr(isolation, "__func__", None)
+                    is not _CHILD_REFUSAL_SOURCES[7]
+                    or getattr(invocation_execution, "__self__", None) is not _guard
+                    or type(_refusal_return) is not _AdmissionRefusalReturn
+                    or _refusal_return.used
+                    or _refusal_return.error is not None
+                    or _guard is not _CHILD_REFUSAL_SOURCES[0]
+                    or _guard.sources is not _CHILD_REFUSAL_SOURCES[1]
+                    or _guard.sources.__code__ is not _CHILD_REFUSAL_SOURCES[2]
+                    or _guard.owners is not _CHILD_REFUSAL_SOURCES[3]
+                    or _guard.owners.__code__ is not _CHILD_REFUSAL_SOURCES[4]
+                    or execution is not _CHILD_REFUSAL_SOURCES[5]
+                    or execution.__code__ is not _CHILD_REFUSAL_SOURCES[6]
+                    or RecoveryAdmissionGuard.worker_isolation
+                    is not _CHILD_REFUSAL_SOURCES[7]
+                    or _CHILD_REFUSAL_SOURCES[7].__wrapped__.__code__
+                    is not _CHILD_REFUSAL_SOURCES[8]
+                    or _CHILD_REFUSAL_SOURCES[7].__code__
+                    is not _CHILD_REFUSAL_EXECUTION[4]
+                    or _CHILD_REFUSAL_SOURCES[7].__wrapped__
+                    is not _CHILD_REFUSAL_EXECUTION[5]
+                    or getattr(invocation_execution, "__func__", None)
+                    is not _CHILD_REFUSAL_EXECUTION[0]
+                    or _CHILD_REFUSAL_EXECUTION[0].__code__
+                    is not _CHILD_REFUSAL_EXECUTION[1]
+                    or _CHILD_REFUSAL_EXECUTION[0].__wrapped__
+                    is not _CHILD_REFUSAL_EXECUTION[2]
+                    or _CHILD_REFUSAL_EXECUTION[2].__code__
+                    is not _CHILD_REFUSAL_EXECUTION[3]
+                ):
+                    raise AgentActivationRequired()
+                _refusal_return.used = True
+                _refusal_return.thread = threading.current_thread()
+                _refusal_return.guard = _guard
+                candidate = None
+                with isolation():
+                    try:
+                        with invocation_execution(
+                            service, sources=sources, _refusal_return=_refusal_return
+                        ):
+                            existing = {
+                                db
+                                for db in _worker_databases(service)
+                                if getattr(db._thread_local, "conn", None) is not None
+                            }
+                            try:
+                                return function(*args, **kwargs)
+                            finally:
+                                for db in _worker_databases(service):
+                                    if db not in existing:
+                                        db.close()
+                    except BaseException as error:
+                        if (
+                            error is not _refusal_return.error
+                            or not _refusal_return.guard_returned
+                        ):
+                            raise
+                        candidate = error
+                if (
+                    isolation.__func__.__code__ is not _CHILD_REFUSAL_EXECUTION[4]
+                    or invocation_execution.__func__.__code__
+                    is not _CHILD_REFUSAL_EXECUTION[1]
+                    or call.__code__ is not call_code
+                ):
+                    raise AgentActivationRequired()
+                _refusal_return.returned = True
+                raise candidate
             with _guard.worker_isolation():
                 with execution(service, sources=sources):
                     existing = {
@@ -253,6 +345,7 @@ def worker_guard(service=None):
                             if db not in existing:
                                 db.close()
 
+        call_code = call.__code__
         return call
 
     return decorate
@@ -272,3 +365,25 @@ def async_worker_guard(service=None):
         return call
 
     return decorate
+
+
+_CHILD_REFUSAL_SOURCES = (
+    _guard,
+    _guard.sources,
+    _guard.sources.__code__,
+    _guard.owners,
+    _guard.owners.__code__,
+    execution,
+    execution.__code__,
+    RecoveryAdmissionGuard.worker_isolation,
+    RecoveryAdmissionGuard.worker_isolation.__wrapped__.__code__,
+)
+
+_CHILD_REFUSAL_EXECUTION = (
+    RecoveryAdmissionGuard.execution,
+    RecoveryAdmissionGuard.execution.__code__,
+    RecoveryAdmissionGuard.execution.__wrapped__,
+    RecoveryAdmissionGuard.execution.__wrapped__.__code__,
+    RecoveryAdmissionGuard.worker_isolation.__code__,
+    RecoveryAdmissionGuard.worker_isolation.__wrapped__,
+)

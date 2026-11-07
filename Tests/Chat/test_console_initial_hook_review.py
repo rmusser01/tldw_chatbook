@@ -612,3 +612,54 @@ async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime
     assert new_modal._runtime_result(HookReviewResult("cancel"))
     assert (await waiter).kind == "cancel"
     assert state.controller.pending_decision_projection(state.session.id) is None
+
+
+def test_hook_review_entries_are_directly_owned_by_existing_review_module():
+    import inspect
+
+    from tldw_chatbook.Chat import console_hook_review
+
+    names = (
+        "request_initial_hook_review",
+        "_hook_review_presentation_current",
+        "_await_hook_review_work",
+        "_execute_hook_review_operation",
+        "_start_hook_review_operation",
+        "apply_hook_review_action",
+        "resolve_initial_hook_review",
+        "_drain_hook_review_operations",
+    )
+    for name in names:
+        descriptor = inspect.getattr_static(ConsoleRuntime, name)
+        function = (
+            descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor
+        )
+        assert getattr(console_hook_review, name, None) is function
+        assert isinstance(descriptor, staticmethod) is (
+            name == "_await_hook_review_work"
+        )
+
+
+async def test_hook_review_wait_reads_runtime_exception_binding_after_suspension(
+    monkeypatch,
+):
+    from tldw_chatbook.Chat import console_runtime
+
+    future = asyncio.get_running_loop().create_future()
+    waiter = asyncio.create_task(ConsoleRuntime._await_hook_review_work(future))
+    try:
+        await asyncio.sleep(0)
+        monkeypatch.setattr(
+            console_runtime,
+            "asyncio",
+            SimpleNamespace(shield=asyncio.shield, CancelledError=RuntimeError),
+        )
+        waiter.cancel()
+        with pytest.raises(asyncio.InvalidStateError):
+            await waiter
+    finally:
+        if not future.done():
+            future.set_result(None)
+        if not waiter.done():
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)

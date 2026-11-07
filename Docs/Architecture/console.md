@@ -12,6 +12,7 @@ This document describes the Console (`chat` destination): the screen layout, the
 | Checked configuration | `Chat/console_configuration_capture.py`, `console_configuration_preparation.py` | Current source-owned configuration capture and finite checked preparation before claim promotion |
 | Finite native work | `Chat/console_preparation_reads.py`, `console_native_commit.py` | Exact callback/handle custody through cancellation, retained save outcomes and terminal settlement |
 | Controller (turn orchestration) | `Chat/console_chat_controller.py` | `ConsoleChatController`: `submit_draft()`, `_run_agent_reply()`, `retry_message()`, `request_mcp_approvals()`, `_set_run_state()` |
+| Agent reply execution | `Chat/console_agent_reply.py` | Actual `_run_agent_reply()` implementation delegated to by the controller |
 | Data models | `Chat/console_chat_models.py` | `ConsoleMessageRole`, `ConsoleRunStatus`, `ConsoleRunState`, `ConsoleChatMessage`, `ConsoleVariantSet`, `ConsoleDispatchRecoveryState` |
 | Store (state + persistence) | `Chat/console_chat_store.py` | `ConsoleChatStore`, `ConsoleChatSession`, `append_message()`, `append_stream_chunk()`, `persist_message_if_needed()` |
 | Agent bridge | `Chat/console_agent_bridge.py` | `ConsoleAgentBridge.run_reply()`, the `_StreamingModelAdapter`, fleet coordination, tool marker projection |
@@ -44,6 +45,8 @@ Cold context and cost estimates share tokenizer preparation with `ConsoleReadine
 
 
 Console attention event callbacks use `ConsoleRuntime.request_console_attention_refresh` (TASK-35592). Stock file-backed unseen-mark queries are coalesced through finite runtime preparation reads with operation-owned connections. Existing read revisions invalidate results after newer refreshes or exact receipt acknowledgements; source, store, runtime and disposal checks gate publication. Visibility, receipt-outcome classification, notifications and projection still run on the caller loop. Explicit `recompute_console_attention` and custom readers retain their synchronous contract; no durable mark or permission cache is added.
+
+`console_attention_preparation._enter_receipt_storage` retains the original stock database and marks types for finite fleet callback I/O. Runtime and fleet attention bind its original source tuple before the receipt implementation loads. The exact lazy proxy keeps its whole-callback scope; exact concrete `ConsoleActivityReceiptService.publish_fleet_drain` and `ensure_fleet_mark` enter their own operation scopes. Custom and borrowed receivers gain no storage discovery. Canonical-module and retained-source checks precede storage access, while close failures remain visible to the existing fan-out (ADR285).
 
 Ordinary resume prepares the original active-workspace registry read after successful FULL sync and before restoring runtime answerability (TASK-35593). `prepare_console_workspace_reconciliation` supplies a single-use result to the original synchronous reconciler in that resume stack. Native admission, current registry generation, source/session/view checks and physical retirement remain intact; workspace repair and subsequent resume actions retain their order. Explicit saved-chat resume and custom callbacks keep their original routes. The prepared result is discarded at the end of the stack and is not a reusable display or authority cache.
 
@@ -196,6 +199,14 @@ window in the shared resume operation used by the rail, Library handoff and Ctrl
 switcher. Enter and Send visibly refuse during that window, preserving the draft
 until activation settles (TASK-35310).
 
+Native Console view-refresh workers receive async callables through Textual's
+existing worker API. Creating the coroutine before worker entry can abandon it
+when work is refused, replaced or cancelled before starting. Controller proxy
+callbacks retain late lookup and the original completion result through their
+existing async wiring forwarder. This applies to view refresh; accepted turns
+retain their separate app-owned lifetime (ADR-094). See the
+[allocation and worker regression evidence](../superpowers/qa/2026-11-05-console-sync-coroutine-warning/README.md).
+
 ## Send lifecycle (dataflow)
 
 Runtime staging belongs to an exact session. `_on_active_session_changed`
@@ -243,6 +254,231 @@ per-session lookup have retired (TASK-35311).
 
 Streaming details, transforms (skills → chat dictionaries → world info), swipes/branching, and the non-agent plain path are covered in [chat-pipeline.md](./chat-pipeline.md).
 
+## First-send onboarding persistence (ADR-285)
+
+A successful manual parent updates the app's onboarding flag immediately. The
+runtime retains the original intake config identity and app/controller/store
+objects for one deferred native one-key save. Received and mounted capture,
+direct submission, every queued/claimed prompt, original ordinary trees, and
+the original admitted RawCLI/Undo pending members block that save until their
+source lifetimes return. RawCLI fences trusted raw classification before draft
+transfer and independently before native generation capture; other command
+routes keep their existing parsing. RawCLI/Undo pending membership carries
+the same metadata count through physical/required/host cleanup and canonical
+finish return, then wakes the save after original root/claim settlement. Lost
+original pending membership conservatively retains the count. Election shares a metadata
+lock with capture; asynchronous intake waits before capture and synchronous
+intake refuses before input transfer during the actual write. The native config
+transaction rechecks the original objects and definitions under its own lock.
+After quiescence it merges the completion fact into the locked original file,
+preserving unrelated settings even if their generation advanced. A failed save
+retains the original intent for a later successful manual turn or one final
+disposal attempt; memory visibility alone does not mean it reached disk.
+
+A parent can return while children or hooks survive. The same tree retains its
+source through native callbacks, canonical settlement, execution and DB scope
+unwind; uncertain close retains protection. Disposal drains the save before
+storage close. No Stop-specific generation exception or full-config snapshot is
+used. External source changes remain strict refusals. A crash before deferred
+persistence can show onboarding again on the next launch.
+
+## Direct-user native RawCLI (ADR-094/285)
+
+`UI/Console_Modules/raw_cli.py` attaches to the original Runtime's private
+`console_raw_cli_custody` source. Before scratch allocation and the existing
+nonexclusive Textual worker, it reserves one manual non-child OPAQUE owner and
+one tool operation. Original app, store, session incarnation/binding, profile,
+DB and selected folder or leased scratch stay pinned; source loss refuses and
+banks the original draft rather than selecting a replacement. The existing
+persistence gate still refuses temporary chats, and only the real local_command
+row binds the owner. Required terminal settlement uses native write success or
+exact original row/status/canonical-step readback. False and a prior terminal
+status alone are insufficient; no retry or write replay is introduced.
+
+The existing executor joins its actual admission/queue-relay threads for
+qualified native calls. Model and Task7 callers hand off their exact original
+catalog/provider/runtime and already-reserved operation, adding no owner or
+charge. Standalone calls keep bounded helper waits and report missing proof.
+Host custody ends at actual synchronous acceptance or source-validated discard,
+and the original source/storage scopes and scratch lease remain live through
+actual operation.finish return. Storage scopes then exit, followed by scratch
+release and root/activity settlement. Cancellation before worker entry seals an original
+start fence; wrapper cancellation alone cannot retire a callback that started.
+Disposal seals new admission and drains original callbacks before storage close.
+Unknown physical cleanup or required-write outcome can retain the worker,
+original storage/scratch and OPAQUE protection indefinitely. Raw shell remains
+an unsafe host-user command facility; containment is not a security sandbox.
+
+## Confirmed historical Undo (ADR-084/089/285)
+
+`Workspaces/change_revert_ownership.py` binds the original Runtime/bridge/provider
+to Review single-file/Undo All and the Console turn card. Their actual positive
+modal callback confirms only captured rows, paths and fingerprints. Finite native
+preflight retires before human wait. Each confirmed batch obtains one complete
+OPAQUE manual nonchild tool operation before its original worker is enqueued;
+`run_preparation_read` supplies only the source/DB/capacity admission hop. Source
+loss, native conflicts or changed rows/files refuse without selecting replacements.
+Direct app-owned provider mutation requires that same active confirmed call.
+
+Historical checkout and filters use the existing native Git process transport,
+independently of snapshot qualification. Every attempted mutation requires the
+post-revert snapshot; successful paths also require exact original DB readback.
+Unprovable settlement reports partial results and retains the original worker,
+storage and claim indefinitely. There is no replay, repair journal or polling.
+Original source scopes, DB handles and any captured scratch-generation lease stay
+live through original host acceptance/discard and operation.finish return. A
+metadata-only scratch lookup cannot allocate or replace revoked generations.
+
+The synchronous host marshaller uses the captured original host context: Textual
+copies ContextVars, so native Undo authority is also restricted to the original
+worker thread. Disposal seals new/unstarted work and drains already-started
+obligations before closing storage. Proven activation-entry refusal can retire
+unused work only after partial scopes unwind and finish returns; callback-body,
+unwind or finish uncertainty never qualifies as unused work.
+
+## Finite explicit references (ADR-285)
+
+`console_reference_preparation.prepare_reference_expansion` wraps the original
+controller's first-pass expansion in `run_preparation_read`. It freezes existing
+explicit-reference registry/workspace/run-scope roots, launch cwd and exclusions;
+this authority is separate from model tools and per-Chat scratch. A missing
+configured reference sandbox contributes no root and is never created. Stock
+file/folder reads hold complete READ roots; reachable Git or custom callbacks
+hold initially OPAQUE activity. One non-child native tool operation survives
+actual worker return, original controller assignment/discard and operation.finish
+return. Runtime/controller read observers retain original close custody through
+repeated cancellation; there are no required durable writes for this finite read.
+
+File validation remains first, including for enumerated child names. Captured
+exclusions never widen on live removal; changed roots, selections or added
+exclusions refuse stale output. Git uses `Workspaces/native_git.py` qualification
+and physical transport shared with real ShadowRepo. It checks both captured cwd
+and actual repo top-level inside the same roots, then renders existing exclusion
+pathspecs and whole-repo diff at the top-level. Every version/config/command launch
+retains managed-tree and stream proof; unavailable cleanup can retain original
+worker/storage and block disposal indefinitely. Raw draft/refusal records remain,
+and received/voice/queued consumers use the same seam without duplicate expansion.
+Later ordinary tree admission must consume its original covering claim before
+reference enqueue; no unused future borrowing API or workflow entry is enabled.
+
+## Shared native preparation (ADR-285)
+
+App-owned Change Review uses the existing coordinator's fixed filesystem workers
+and publisher with finite native snapshot ownership. Each discover/B/E/survivor
+job admits opaque worktree activity and a native tool operation; inherited Git
+configuration/include/ignore files are outside a bounded root-only footprint.
+Actual worker and original publisher scope return are both required to retire
+the operation. `baseline_completion` and `completion` retain the original typed
+disposition; `await_baseline` timeouts and `wait_idle` alone are not drain or phase
+proof. Both publication failures retire only physical observation, with an
+unresolved disposition. Borrowing requires the original open owner's opaque
+claim and never settles its parent/task claim.
+
+Pending snapshot admission retries on existing activity releases and actual tool
+slot releases/explicit limit increases through the existing publisher channel.
+Editing capacity settings on disk alone is observed at the next ordinary native
+admission; no settings poller was added. Native Git qualification requires >=2.36,
+refuses configured external filters and promisor/partial-clone remotes before
+helper-capable entry, and suppresses hooks,
+signing, fsmonitor, automatic GC/maintenance and external diff/textconv per command.
+Global ignores and old history/restore semantics remain intact. Source mismatch
+cannot fall back to standalone legacy capture. This qualification covers the
+coordinated Console path and the app-owned consent initializer. The initializer
+uses its existing bounded workers, a separate original configuration/registry/
+binding source, finite opaque activity and one native tool operation through
+actual readiness or discard return. Settings enable/retry is manual; lazy and
+binding-triggered preparation is automatic. Busy work remains failed with an
+explicit Settings retry. Shutdown seals ingress before capacity closes and
+retains admitted workers/storage through physical return, even after a bounded
+join or cancelled waiter. Configuration selection is metadata-only until an
+admitted worker verifies and secures that same selected data path.
+
+Native version/config/command launches share the original ticket and use
+`Notes/git_process_containment.ProcessTreeController` via an asyncio Runner on
+the actual synchronous callback thread. Direct-child return is insufficient:
+stream completion, actual group-empty proof and handle close precede worker/host
+return and operation.finish return, then root/claim retirement. Bounded TERM/KILL
+failure retains that same worker and storage while the controller waits for late
+proof. Genuinely unavailable proof retains cleanup-unproven custody indefinitely,
+which can hold shutdown. Initial native attachment uses the existing platform
+qualification; ordinary unsupported-platform behavior remains available and
+qualified source loss never falls back. No new executor/reaper is involved. A future borrowing producer must keep its
+covering root/source/storage live through the original `ticket.retired`; this
+slice does not qualify premature parent completion.
+
+Task 8D2's ordinary/phase admission remains incomplete. Its ordinary producer
+must borrow the original covering opaque claim and reserve each initializer hold
+before enqueue and parent finish; independent feature admission cannot be carried
+unchanged into an already-owned ordinary tree.
+
+D1 snapshot issuer construction is metadata-only. Its first pending admission resolves the
+same lazy runtime capacity under captured activation on the existing publisher,
+then subscribes before reserving; publisher close removes those subscriptions.
+Never-admitted discover/B/E/survivor jobs retain UNADMITTED and send one transient
+display-only failure to the original store/session/assistant. The notice follows
+that assistant's path across navigation, performs no trajectory or snapshot DB
+write, and cannot substitute for D2's required durable window disclosure.
+
+`ConsoleAgentBridge.run_reply` keeps its ordinary execution/generation guards and
+consumes `_prepare_native_reply`, the shared native preparation/finalizer frame.
+The frame yields `_PreparedNativeReply` before its once-only `run_primary` call.
+It retains the original service, first request plan, session/progress owner,
+provider adapter, client lifeline, instruction/review callbacks and optional log
+writer. No transaction, active review scope or context-variable token crosses
+that yield; ordinary cleanup and Change Review still use the original frame.
+
+The private `_prepare_workflow_reply(phase, task_id, binding, resolution, ...)`
+consumer in `console_workflow_preparation.py` uses the same catalog composition
+once, then original task authorization and Task7's complete task-only seed,
+then the same first-request planner/service. It never consumes a draft, creates
+a primary message/run/marker, starts the primary model loop, or publishes over
+the ordinary latest-service slot. A seed that cannot fit is refused. Native
+startup instructions are read under the finite root claim, confirmed outside
+the claim, and revalidated before `_prepare_workflow_child` captures them.
+
+Each finite callback uses `run_preparation_read`, fresh owned database/activation
+scopes and an actual automatic execution owner with its reserved tool operation.
+Cold composition uses a conservative OPAQUE finite claim before constructors;
+it does not infer a bounded maximum from the requested task tools alone.
+It rechecks identities after acquisition and ends with the callback;
+later scheduling must batch eligible preparation before disjoint writes or
+derive narrower complete read scopes. Cancellation/profile shutdown waits for
+physical callback retirement. The returned original object must be retained
+until the native child drains and its required durable checkpoint exists, then
+`await prepared.close()` retires the original resources once. This does not
+assert snapshot workers have drained. The existing gateway provider worker
+re-enters workflow activation through `worker_guard` using the original ledger
+and source while preserving native task/run ownership.
+
+`console_workflow_wave.run_workflow_wave` consumes a fixed set of these original
+preparations. It checks native capacity and complete task footprints, installs an
+ordering fence under the existing WorktreeActivity admission mutex, and publishes
+the required active window before activating the existing coordinator's B job.
+Actual B callback/handoff retirement precedes concurrent native child launch.
+The first committed member binds the durable anchor; no coordinator AgentRun is
+created. At quiescence each child drains and checkpoints before the same
+coordinator captures and publishes E. A later wave takes a fresh B, including
+intervening manual effects as its baseline. Original consent-disabled preparation
+keeps capture off. The app-owned ConsoleWorkflowCoordinator composes these waves
+behind explicit phase approvals.
+
+The fence grants no file access or capacity. Conflicting ordinary intake refuses
+before acquiring a physical claim, and the existing ready manual queue wins
+before a new wave. Finite snapshot jobs use the original native source and
+physical admission without becoming ordinary trees. Native model/tool workers,
+frame close, and launch return retain the original source and storage lifetime;
+the unused primary model loop is not constructed for workflow preparation.
+Required E failure retains the original window, fence and configuration source.
+An observational worker may retire after proven physical return even when both
+required publications fail; that does not make the missing E durable.
+
+Final Task7 launch freshness reads run under the actual
+native owner and complete host-only footprint before child row creation,
+dispatch or allowance commit (see [agent-runtime.md](./agent-runtime.md#native-workflow-admission-adr-285)).
+Human approval, result review and phase settlement belong to the app-owned public
+coordinator. Mounted Console setup/detail views consume its bounded read and
+command APIs. Full qualification receipts retain their source and platform scope.
+
 ## Run states and gating
 
 `ConsoleRunStatus`: idle / validating / streaming / checking_citations / completed / blocked / stopped / failed / retrying. New sends are only allowed from idle/blocked/completed/failed/stopped; Stop is only allowed during streaming/citation-checking. `_set_run_state` is the single writer of run state.
@@ -254,6 +490,14 @@ Approval requests surface as `ChatApprovalCard` widgets in the session surface's
 ## Saved archive recovery (ADR166)
 
 `Chat/archive_recovery/runtime.py` owns bounded session-partitioned result references, search handles and the shared restoration coordinator. `Agents/archive_recovery_tool_provider.py` authenticates app-issued capabilities separately from Library tools. The real visible Send producer issues an opaque user-origin proof; received intent, checked configuration and exact current runtime admission retain it without granting authority to generic or unattended callers. Direct and RAG-only runs still require Library Allowed, destination, Persona, kill-switch and primary-run gates.
+
+Ordinary native preparation includes reachable archive work in its opaque claim
+before admission. Its catalog accepts only the two original reserved descriptors
+and the exact authority issued to that turn; another turn cannot consume or
+release an accepted proof. Provider and registry qualification precede closure
+construction and tool reservation. A closure-construction refusal enters the
+existing durable error handler, so worker return alone cannot leave a primary
+run without its required terminal record (ADR285).
 
 Recovery runtime, provider implementation and native cards load on first use, after the initial interactive frame. Reserved tool names stay in the resident catalog. An optional disposable `prepare_view` hook mounts controls only after runtime custody has captured a manual or queued turn, then rechecks custody before submission; current answerability still gates admission. View syncs serialize initialization and require actual DOM attachment before and after awaited mounts; Textual's latched `is_mounted` flag alone is insufficient during app exit. Trace-transform validators live in `console_prepared_request.py` with the controller class/static call seams and live controller-global reads retained; recovery-only rider and review collection stay in the first-use recovery runtime.
 
@@ -628,3 +872,18 @@ remain source-independent. Expected unavailable/stale mix-in Preview failures
 return bounded disable/remove/refresh guidance without unexpected-error traceback;
 unexpected failures retain their diagnostic path. Ordinary server Browse checks
 snapshot capability before entering Mix-ins and retains its server view on refusal.
+
+### Ordinary integration and qualification boundary
+
+The native integration moves complete metadata/source/physical admission
+ahead of reference expansion, initializer/plugin/guidance effects and actual
+attachment consumption. Existing received and accepted-turn records retain exact
+inputs and private live custody; accepted-turn registration itself remains
+synchronous. One original launch owner feeds the real bridge primary and all
+actual borrowers/children. First persistence maps only through the original
+store's committed publication. Required child writes, preheld late callbacks
+and original worker/host/finish return retain the tree through disposal.
+Existing optional omissions and manual/automatic busy/input restoration remain.
+ADR285 records the native source and retirement contract. Source-specific
+qualification and historical adverse outcomes remain in the
+[workflow evidence index](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md).

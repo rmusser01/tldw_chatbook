@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import inspect
 import threading
 from types import SimpleNamespace
 
@@ -101,10 +102,16 @@ async def test_edit_waits_for_original_key_and_rechecks_original_target(
     async def sync():
         pass
 
+    worker_calls = []
+
+    def reject_worker(work, **kwargs):
+        assert callable(work) and inspect.iscoroutinefunction(work)
+        worker_calls.append((work, kwargs))
+
     screen = SimpleNamespace(
         app_instance=SimpleNamespace(notify=lambda *args, **kwargs: None),
         app=SimpleNamespace(push_screen=push_screen),
-        run_worker=lambda coroutine, **kwargs: coroutine.close(),
+        run_worker=reject_worker,
     )
     controller = stub_message_controller(
         screen,
@@ -145,6 +152,9 @@ async def test_edit_waits_for_original_key_and_rechecks_original_target(
             assert outcomes == [None]
             assert len(opened) == 1
             opened[0][1](ConsoleEditResult(text=message.content, resend=False))
+            assert len(worker_calls) == 1
+            assert worker_calls[0][0] is sync
+            assert worker_calls[0][1] == {"exclusive": True, "group": "console-sync"}
             after = db.get_message_by_id(message.persisted_message_id)
             assert after["version"] > before["version"]
             reopened = _repository(db)

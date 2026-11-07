@@ -1,0 +1,24 @@
+{
+  "source_head": "5dc21d4b4b10bcaee7908765159d94568d8e5dd6",
+  "result": "PASS",
+  "workflows": [
+    {
+      "path": ".github/workflows/plugin-qualification.yml",
+      "before_sha256": "bbd6ea94d719e831c75e205ccdf2f860e9d08404f5c215b7a9ec40b9ef8c34d4",
+      "after_sha256": "6348de7336ecd5964a53edc22cf0cfec04a3d18b4c9fa14e495daafb5ab1e4bd",
+      "yaml_valid": true,
+      "only_windows_step_added_before_checkout": true,
+      "all_original_job_settings_preserved": true
+    },
+    {
+      "path": ".github/workflows/eval-recovery-regressions.yml",
+      "before_sha256": "dcc2d5b01d5bbfb1df913d35bd3011faacd137ed1f12133f99c4075de336c27d",
+      "after_sha256": "0c7f093371d9a2ba4555b55e8de2ddbfe606fe9330456b6bd2dbdcd54324bda3",
+      "yaml_valid": true,
+      "only_windows_step_added_before_checkout": true,
+      "all_original_job_settings_preserved": true
+    }
+  ],
+  "runtime_or_historical_qa_changes": false,
+  "windows_execution": "Pending normal PR CI after push"
+}

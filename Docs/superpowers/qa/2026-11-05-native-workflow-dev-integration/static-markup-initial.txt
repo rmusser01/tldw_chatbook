@@ -1,0 +1,5 @@
+markup interpolation: 308 notify_interp, 79 button_label_interp, 58 tooltip_interp occurrence(s) (537 pinned).
+
+FAIL: 1 new/grown markup-interpolation site(s). Textual parses Rich markup in notify messages, tooltips and Button labels; an unescaped user-derived name containing [/] raises MarkupError at render time. Wrap interpolated values in escape_markup(...) (tldw_chatbook.Utils.input_validation), or pass markup=False on the notify call:
+    tldw_chatbook/UI/Screens/chat_screen	ChatScreen._publish_console_turn_undo	notify_interp (now 3, pinned 0)
+  If a pinned site must grow legitimately, regenerate the census with --write and say why in the PR. Do NOT regenerate to hide a new unescaped user-name site.

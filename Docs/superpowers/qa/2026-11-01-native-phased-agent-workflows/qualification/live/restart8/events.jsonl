@@ -1,0 +1,10 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 93072, "time": 1793853389.4014468}
+{"conversation": "d57a6e56-9522-4089-8ed6-d539888a7ac7", "event": "hydrated-original-chat", "pid": 93072, "session": "702570e3-cff3-4d94-87ea-81d3f54d2b8d", "time": 1793853392.230092}
+{"event": "ready", "label": "named-chat-tab", "pid": 93072, "time": 1793853392.239349}
+{"base": "http://127.0.0.1:8010", "event": "native-provider", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 93072, "provider": "llama_cpp", "ready": true, "time": 1793853392.278656}
+{"event": "ready", "label": "typed history command", "pid": 93072, "time": 1793853393.721345}
+{"event": "ready", "label": "#console-send-message", "pid": 93072, "time": 1793853393.722307}
+{"event": "clicked", "id": "#console-send-message", "pid": 93072, "region": [116, 52, 14, 1], "time": 1793853394.156474}
+{"event": "ready", "label": "history", "pid": 93072, "time": 1793853394.1572711}
+{"event": "monitor-released", "pid": 93072, "time": 1793853394.362369}
+{"event": "creators-returned", "pid": 93072, "time": 1793853394.399141}

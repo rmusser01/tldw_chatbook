@@ -435,3 +435,14 @@ class CodeReviewToolProvider:
             else "review_refused",
             ok=None if result is None else result.ok,
         )
+
+
+from tldw_chatbook.Chat.console_ordinary_tree import _function_record as _review_record
+from types import FunctionType as _ReviewFunction
+
+_ORDINARY_REVIEW_PROVIDER = CodeReviewToolProvider
+_ORDINARY_REVIEW_PROVIDER_METHODS = tuple(
+    (name, _review_record(value))
+    for name, value in vars(CodeReviewToolProvider).items()
+    if type(value) is _ReviewFunction
+)

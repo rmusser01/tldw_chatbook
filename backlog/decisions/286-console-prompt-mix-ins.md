@@ -235,3 +235,19 @@ An accepted native turn's validated durable commit owns its operational mix-in a
 ## CI integration clarification: model and storage dependencies
 
 The existing immutable operational values and strict JSON compatibility codecs belong in `Chat/console_prompt_mixin_models.py`. Request composition and selection reconciliation stay in the domain module; its existing public imports remain available. Shared literal-v3 envelope/definition validation and size limits use the pure artifact-model owner. Coherent DB snapshot reads retain strict validation inside their existing transaction, without importing the general artifact compiler/service. This is a source dependency correction, with unchanged persisted JSON, receipt identity, format classifications and source-authority contracts; no migration is introduced.
+
+### Cursor ownership when a standalone attempt first persists its assistant
+
+A standalone attempt can create its previously pending assistant before provider
+entry. Its existing transaction then advances the local cursor through ADR-100's
+two-column writer when the originating store still selects that assistant and
+the durable cursor selects its parent or is unset. An explicit before-first
+cursor, a different durable branch, or an in-flight leaf selection for the
+originating session preserves the existing cursor. The attempt and its receipt
+still commit. The leaf-selection check covers the interval between a branch
+selection's durable commit and its native publication. Reaffirming an already
+selected assistant whose durable identity is still pending refreshes the native
+path without issuing a stale SQL clear. Once the attempt owns the
+SQLite writer, later cursor writes serialize after it. Existing assistant rows
+retain their cursor on replay. File-backed attempts use the existing owned DB
+worker, and a failed contribution rolls back the new anchor and cursor together.

@@ -30,17 +30,6 @@ from .console_citation_sources_modal import (
     ConsoleCitationSourcesModal,
     build_console_citation_source_rows,
 )
-from .console_edit_message_modal import (
-    ConsoleEditMessageModal,
-    ConsoleEditResult,
-    ConsoleEditThinkingModal,
-    ConsoleThinkingEditResult,
-)
-from .console_fork_chat_modal import (
-    ConsoleForkChatModal,
-    ConsoleForkDialogSummary,
-    ConsoleForkSubmitResult,
-)
 from .console_message_more_menu import (
     ConsoleMessageMoreMenu,
     dismiss_message_more_menus,
@@ -59,7 +48,6 @@ from .console_project_instructions import (
 from .console_retrieval_scope_row import ConsoleRetrievalScopeRow
 from .console_run_inspector import ConsoleRunInspector
 from .console_send_authority_summary import ConsoleSendAuthoritySummary
-from .console_save_as_modal import ConsoleSaveAsModal
 from .console_session_surface import ConsoleSessionSurface
 from .console_setup_modal import ConsoleSetupModal
 from .console_settings_summary import ConsoleSettingsSummary
@@ -86,10 +74,6 @@ from .console_workspace_tree import (
     WorkspaceTreeRetryRequested,
     WorkspaceTreeStarRequested,
     WorkspaceTreeWorkspaceSelected,
-)
-from .console_workspace_switcher_modal import (
-    ConsoleWorkspaceRenameModal,
-    ConsoleWorkspaceSwitcherModal,
 )
 
 
@@ -132,6 +116,31 @@ def __getattr__(name: str):
         from . import console_terminal_workspace as terminal_workspace
 
         return getattr(terminal_workspace, name)
+    if name in (
+        "ConsoleEditMessageModal",
+        "ConsoleEditResult",
+        "ConsoleEditThinkingModal",
+        "ConsoleThinkingEditResult",
+    ):
+        from . import console_edit_message_modal
+
+        return getattr(console_edit_message_modal, name)
+    if name in (
+        "ConsoleForkChatModal",
+        "ConsoleForkDialogSummary",
+        "ConsoleForkSubmitResult",
+    ):
+        from . import console_fork_chat_modal
+
+        return getattr(console_fork_chat_modal, name)
+    if name in ("ConsoleSaveAsModal",):
+        from . import console_save_as_modal
+
+        return getattr(console_save_as_modal, name)
+    if name in ("ConsoleWorkspaceRenameModal", "ConsoleWorkspaceSwitcherModal"):
+        from . import console_workspace_switcher_modal
+
+        return getattr(console_workspace_switcher_modal, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

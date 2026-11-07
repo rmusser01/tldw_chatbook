@@ -1,0 +1,9 @@
+{
+  "path": "tldw_chatbook/Agents/hooks_v2/command_executor.py",
+  "comparison_head": "f4e72e54078413c35e01ea52607afe76283cc972",
+  "removed_trailing_spaces": 3,
+  "only_expected_bytes_changed": true,
+  "ast_identical": true,
+  "before_sha256": "2ef9a3d1ca08eca02c7928aa860aff1390958e5e4cb638bf44bb38eee8c7b031",
+  "after_sha256": "5ef0c549b253b7c11f3c62708dde3825a5daa66833dac374a473eb9eabd8156d"
+}

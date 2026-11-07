@@ -1,0 +1,13 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+7.05s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+5.62s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+5.51s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+4.78s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+4.40s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+4.00s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+3.87s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+3.78s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+
+(16 durations < 1s hidden.)
+8 passed in 41.14s

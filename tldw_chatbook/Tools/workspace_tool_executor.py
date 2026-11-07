@@ -1141,3 +1141,36 @@ __all__ = [
     "WorkspaceToolExecutor",
     "workspace_worker_environment",
 ]
+
+
+# Concrete native local executor sources for ordinary callable containment.
+_NATIVE_ORDINARY_EXECUTOR_CLASS = WorkspaceToolExecutor
+_NATIVE_ORDINARY_EXECUTOR_METHODS = tuple(
+    (name, value)
+    for name, value in vars(WorkspaceToolExecutor).items()
+    if callable(value) or isinstance(value, (staticmethod, classmethod, property))
+)
+_NATIVE_ORDINARY_EXECUTOR_HELPERS = tuple(
+    (name, value)
+    for name, value in tuple(globals().items())
+    if type(value).__name__ == "function" and value.__module__ == __name__
+)
+_NATIVE_ORDINARY_EXECUTOR_FUNCTIONS = tuple(
+    (
+        fn,
+        fn.__code__,
+        fn.__defaults__,
+        fn.__kwdefaults__,
+        tuple((fn.__kwdefaults__ or {}).items()),
+        fn.__closure__,
+        tuple((cell, cell.cell_contents) for cell in fn.__closure__ or ()),
+    )
+    for fn in dict.fromkeys(
+        value
+        for _name, value in (
+            *_NATIVE_ORDINARY_EXECUTOR_METHODS,
+            *_NATIVE_ORDINARY_EXECUTOR_HELPERS,
+        )
+        if type(value).__name__ == "function"
+    )
+)

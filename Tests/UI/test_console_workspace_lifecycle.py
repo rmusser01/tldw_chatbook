@@ -14,6 +14,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _wait_for_workspace_switcher_modal
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceRenameModal,
@@ -24,12 +25,14 @@ from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
 async def _open_switcher(host, pilot):
     await pilot.press("alt+w")
-    await pilot.pause(0.2)
+    async with asyncio.timeout(2.0):
+        await _wait_for_workspace_switcher_modal(host, pilot)
     modal = host.screen_stack[-1]
     assert isinstance(modal, ConsoleWorkspaceSwitcherModal)
     return modal
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rename_flow_renames_workspace() -> None:
     app = _build_test_app()
@@ -258,6 +261,7 @@ async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 30), (160, 44)])
 async def test_switcher_shows_archived_and_restores_as_without_switching(

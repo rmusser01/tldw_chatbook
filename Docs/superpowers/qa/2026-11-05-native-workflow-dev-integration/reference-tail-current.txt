@@ -1,0 +1,20 @@
+................                                                         [100%]
+============================= slowest 25 durations =============================
+2.65s call     Tests/Chat/test_console_reference_custody.py::test_reference_timeout_retains_same_worker_for_late_tree_proof[diff]
+1.54s call     Tests/Chat/test_console_reference_custody.py::test_actual_queued_head_expands_with_original_text
+1.37s call     Tests/Chat/test_console_reference_custody.py::test_real_managed_git_child_keeps_original_operation[diff]
+1.36s call     Tests/Chat/test_console_reference_custody.py::test_real_managed_git_child_keeps_original_operation[version]
+1.27s setup    Tests/Chat/test_console_reference_custody.py::test_original_received_and_voice_consumers_expand_once[voice]
+1.27s setup    Tests/Chat/test_console_reference_custody.py::test_zero_roots_has_no_reference_operation_or_git_launch
+1.24s call     Tests/Chat/test_console_reference_custody.py::test_real_managed_git_child_keeps_original_operation[config]
+1.19s setup    Tests/Chat/test_console_reference_custody.py::test_reference_timeout_retains_same_worker_for_late_tree_proof[diff]
+1.18s setup    Tests/Chat/test_console_reference_custody.py::test_actual_queued_head_expands_with_original_text
+1.17s call     Tests/Chat/test_console_reference_custody.py::test_zero_roots_has_no_reference_operation_or_git_launch
+1.13s call     Tests/Chat/test_console_reference_custody.py::test_original_received_and_voice_consumers_expand_once[voice]
+1.12s call     Tests/Chat/test_console_reference_custody.py::test_git_helpers_refuse_without_body[filter.fixture.process-never-start-this]
+1.10s setup    Tests/Chat/test_console_reference_custody.py::test_whole_repo_git_exclusions_magic_paths_and_no_mutation
+1.09s call     Tests/Chat/test_console_reference_custody.py::test_whole_repo_git_exclusions_magic_paths_and_no_mutation
+1.01s call     Tests/Chat/test_console_reference_custody.py::test_original_received_and_voice_consumers_expand_once[received]
+
+(10 durations < 1s hidden.)
+16 passed, 22 deselected in 34.80s

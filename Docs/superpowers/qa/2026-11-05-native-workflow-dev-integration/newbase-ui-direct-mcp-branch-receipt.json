@@ -1,0 +1,25 @@
+{
+  "cwd": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python3.12",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/observe-ui-refusal.py",
+    "Tests/UI/test_console_projection_reads_off_loop.py::test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection[direct]",
+    "-q",
+    "-s",
+    "-x",
+    "--tb=short",
+    "-W",
+    "error::RuntimeWarning",
+    "-W",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "--basetemp=../pytest-newbase-ui-direct-mcp-branch"
+  ],
+  "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/integration",
+  "exit_code": 1,
+  "elapsed_seconds": 51.8991531659849,
+  "source_file_count": 9109,
+  "before_sha256": "8b2d9ce5b9ced877c9ada1fa78db379ccb42fad5709592ab0cf1aa0989567069",
+  "after_sha256": "8b2d9ce5b9ced877c9ada1fa78db379ccb42fad5709592ab0cf1aa0989567069",
+  "changed_during_command": [],
+  "log": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/native-phased-workflows-2026-11-05/newbase-ui-direct-mcp-branch.log"
+}

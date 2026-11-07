@@ -1,6 +1,6 @@
-# Upward imports frozen by Tests/Architecture/test_layer_direction.py (TASK-36942.3).
 # One src_module<TAB>dst_module<TAB>kind row each; kind is top or lazy. Layer map: Docs/Architecture/layer-map.md.
 # This file only shrinks: delete a row when its import is gone. Never add one to make the test pass.
+# Upward imports frozen by Tests/Architecture/test_layer_direction.py (TASK-36942.3).
 tldw_chatbook.Backup_Recovery.async_file_participants	tldw_chatbook.Event_Handlers.note_ingest_events	lazy
 tldw_chatbook.Backup_Recovery.launcher	tldw_chatbook.UI.Screens.backup_restore_screen	lazy
 tldw_chatbook.Backup_Recovery.raw_participants	tldw_chatbook.Widgets.emoji_picker	lazy
@@ -70,6 +70,8 @@ tldw_chatbook.DB.Workspace_Project_Index_DB	tldw_chatbook.Backup_Recovery.partic
 tldw_chatbook.DB.Workspace_Project_Index_DB	tldw_chatbook.RAG_Search.chunking_service	lazy
 tldw_chatbook.DB.automatic_work	tldw_chatbook.Agents.automatic_work_budget	top
 tldw_chatbook.DB.automatic_work	tldw_chatbook.Agents.run_log	lazy
+tldw_chatbook.DB.automatic_work	tldw_chatbook.Chat.console_workflow_preparation	lazy
+tldw_chatbook.DB.automatic_work	tldw_chatbook.Chat.console_workflow_runs	lazy
 tldw_chatbook.DB.base_db	tldw_chatbook.Backup_Recovery.participants	lazy
 tldw_chatbook.DB.character_conversation_search	tldw_chatbook.Character_Chat.character_conversation_navigation	top
 tldw_chatbook.DB.fleet_progress_repository	tldw_chatbook.Agents.fleet_messages	top
@@ -104,6 +106,8 @@ tldw_chatbook.DB.recovery_response_rules	tldw_chatbook.Backup_Recovery.sqlite_va
 tldw_chatbook.DB.recovery_sqlite	tldw_chatbook.Backup_Recovery.admission	lazy
 tldw_chatbook.DB.recovery_sqlite	tldw_chatbook.Backup_Recovery.sqlite_validation	lazy
 tldw_chatbook.DB.store_kernel	tldw_chatbook.Backup_Recovery.participants	top
+tldw_chatbook.DB.workflow_runs	tldw_chatbook.Agents.execution_capacity	lazy
+tldw_chatbook.DB.workflow_runs	tldw_chatbook.Workspaces.change_review_finalization	lazy
 tldw_chatbook.Home.dashboard_state	tldw_chatbook.UI.Navigation.shell_destinations	top
 tldw_chatbook.LLM_Management.snapshot_admission	tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle	top
 tldw_chatbook.LLM_Management.snapshot_models	tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle	top

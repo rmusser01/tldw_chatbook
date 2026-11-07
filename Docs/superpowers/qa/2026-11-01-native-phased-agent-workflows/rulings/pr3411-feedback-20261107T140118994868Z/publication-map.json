@@ -1,0 +1,85 @@
+{
+  "cutoff_status": "OPEN57literalrecords at14:01:18UTC, all current literal rulings included",
+  "literal_records": 57,
+  "prior56_exact": true,
+  "files": [
+    {
+      "file": "snapshot.txt",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T140118994868Z-snapshot.txt",
+      "capture_bytes": 135427,
+      "capture_sha256": "bb04f14ff160ef6b2ef1eeee06fabf01650e22d32be130bd0266d7ddb9a7b3fa",
+      "bytes": 135427,
+      "sha256": "bb04f14ff160ef6b2ef1eeee06fabf01650e22d32be130bd0266d7ddb9a7b3fa"
+    },
+    {
+      "file": "snapshot-meta.json",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T140118994868Z-snapshot-meta.json",
+      "capture_bytes": 622,
+      "capture_sha256": "5ace7faedd40508ee253a2e1b9068700e2c3421fa6f4c6e9b207814e2abdb0c2",
+      "bytes": 622,
+      "sha256": "5ace7faedd40508ee253a2e1b9068700e2c3421fa6f4c6e9b207814e2abdb0c2"
+    },
+    {
+      "file": "index.json",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T140118994868Z-index.json",
+      "capture_bytes": 63434,
+      "capture_sha256": "5ac4381850987b9a5e3f54e67ff86cd0c84b7f5dc9f5f06b0b1fab7806574773",
+      "bytes": 63434,
+      "sha256": "5ac4381850987b9a5e3f54e67ff86cd0c84b7f5dc9f5f06b0b1fab7806574773"
+    },
+    {
+      "file": "agent-verified.json",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T140118994868Z-agent-verified.json",
+      "capture_bytes": 6973,
+      "capture_sha256": "d3c6a39dad4ab11ed33154ff74c9035f3a9226f7125ccce8defd07ceba19ff2c",
+      "bytes": 6973,
+      "sha256": "d3c6a39dad4ab11ed33154ff74c9035f3a9226f7125ccce8defd07ceba19ff2c"
+    },
+    {
+      "file": "root-verified.json",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T140118994868Z-root-verified.json",
+      "capture_bytes": 1339,
+      "capture_sha256": "c8d2481454ffe3e38da486b09c6c374665621c9956995d9faf3946e2330f43b2",
+      "bytes": 1339,
+      "sha256": "c8d2481454ffe3e38da486b09c6c374665621c9956995d9faf3946e2330f43b2"
+    },
+    {
+      "file": "draft.capture.md.gz",
+      "bytes": 16024,
+      "sha256": "ef740745ee33e0f422ca9b588d4a17003727e345f1f2b27197fe8db08e7ec083",
+      "decompressed_sha256": "98158349ede63af68dbbac411599701865ae699cf7f2d1f298346a77a39bd9a0"
+    },
+    {
+      "file": "draft.md",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T140118994868Z-draft.md",
+      "capture_bytes": 41917,
+      "capture_sha256": "98158349ede63af68dbbac411599701865ae699cf7f2d1f298346a77a39bd9a0",
+      "exact_capture_archive": "draft.capture.md.gz",
+      "display_normalization": "Markdown trailing whitespace and EOF separator only",
+      "bytes": 41916,
+      "sha256": "08fc5d7355ee3645aef0b9d498980f8c1e0bf4211dbbdee00f7a3a3cd750407e"
+    },
+    {
+      "file": "report.capture.md.gz",
+      "bytes": 1576,
+      "sha256": "d03f60582ed02d5ff762c28b3ff14bb28773a3dcc8b140352596af5b6b2428c2",
+      "decompressed_sha256": "173e0459de4a52aba4b00af98046546663186b0a5e068775d0812bcd33ff189e"
+    },
+    {
+      "file": "report.md",
+      "capture_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/pr-prep/pr3411-ci-2026-11-05/feedback-rulings-20261107T140118994868Z-report.md",
+      "capture_bytes": 3360,
+      "capture_sha256": "173e0459de4a52aba4b00af98046546663186b0a5e068775d0812bcd33ff189e",
+      "exact_capture_archive": "report.capture.md.gz",
+      "display_normalization": "Markdown trailing whitespace and EOF separator only",
+      "bytes": 3360,
+      "sha256": "173e0459de4a52aba4b00af98046546663186b0a5e068775d0812bcd33ff189e"
+    },
+    {
+      "file": "README.md",
+      "bytes": 725,
+      "sha256": "9d1c5c2d9affb812a12414e60f7184dc06ff92964eac361aa3fbf33be3a7a140"
+    }
+  ],
+  "publication_note": "Root independently verified all57records/current-ledger prefix, prior56exact and completeUTF8bodies; these Source copies preserve captured bytes or the recorded whitespace-only readable presentation. No runtime/readiness claim."
+}

@@ -10,6 +10,7 @@ import threading
 from time import monotonic
 from typing import Any
 import uuid
+from contextlib import nullcontext
 
 from ...Agents.agent_models import STEP_TOOL_CALL, STEP_TOOL_RESULT
 from ...Agents.run_log import (
@@ -132,6 +133,7 @@ def prepare_visible_send(
     commit_captured: Callable[[ConsoleDraftStash], Any] | None = None,
     *,
     captured: bool = False,
+    raw_capture_scope: Callable[[], Any] = nullcontext,
 ) -> tuple[ConsoleDraftStash | None, Any | None, str, bool]:
     """Classify a visible draft and consume direct raw submissions.
 
@@ -149,9 +151,10 @@ def prepare_visible_send(
     if stash is not None:
         classified = classify_console_raw_draft(stash)
         if classified.kind == "raw":
-            if commit_captured is not None:
-                commit_captured(stash)
-            start_user_command(stash)
+            with raw_capture_scope():
+                if commit_captured is not None:
+                    commit_captured(stash)
+                start_user_command(stash)
             return stash, None, "", True
         if classified.kind == "escaped_chat":
             stash = unescape_console_raw_chat_stash(stash)
@@ -159,14 +162,23 @@ def prepare_visible_send(
     if stash is None and captured:
         return None, composer, "", False
     if stash is None and composer is not None:
-        stash = composer.stash_raw_cli_draft_for_send()
-        if stash is None and composer.draft_text().startswith(r"\! "):
+        candidate = (
+            composer.capture_draft_for_send()
+            if composer.draft_text().startswith("! ")
+            else None
+        )
+        if (
+            candidate is not None
+            and classify_console_raw_draft(candidate).kind == "raw"
+        ):
+            with raw_capture_scope():
+                composer.commit_captured_draft(candidate)
+                start_user_command(candidate)
+            return candidate, composer, "", True
+        if composer.draft_text().startswith(r"\! "):
             stash = composer.stash_draft_for_send()
         if stash is not None:
             classified = classify_console_raw_draft(stash)
-            if classified.kind == "raw":
-                start_user_command(stash)
-                return stash, composer, "", True
             if classified.kind == "escaped_chat":
                 stash = unescape_console_raw_chat_stash(stash)
     draft = (
@@ -236,7 +248,10 @@ class ConsoleRawCliController:
         confirm_arm: Callable[[str, str], Awaitable[bool]] | None = None,
         notify: Callable[[str, str], Any] = lambda _text, _severity: None,
         authority_changed: Callable[[], Any] = lambda: None,
+        native_source: Any = None,
     ) -> None:
+        self._native_source = native_source
+        self._native_attached = native_source is not None
         self._raw_cli_runtime = raw_cli_runtime
         self._active_session_id = active_session_id
         self._persist_session_if_needed = persist_session_if_needed
@@ -339,29 +354,34 @@ class ConsoleRawCliController:
                 stash,
                 "Raw CLI needs an active Console session. The exact draft was restored.",
             )
+        custody = None
+        invocation_id = uuid.uuid4().hex
         try:
+            if self._native_attached or self._native_source is not None:
+                custody = self._native_source.capture(runtime, session_id, invocation_id)
             native_anchor = self._active_leaf_anchor(session_id)
             if native_anchor is not None and (
                 type(native_anchor) is not str or not native_anchor.strip()
             ):
                 raise RuntimeError("invalid active leaf")
             request = RawCliRequest(
-                invocation_id=uuid.uuid4().hex,
+                invocation_id=invocation_id,
                 caller="user",
                 command=classified.text,
                 shell="auto",
-                initial_directory=self._submission_root(session_id),
+                initial_directory=custody.root() if custody else self._submission_root(session_id),
                 timeout_seconds=MAX_RAW_TIMEOUT_SECONDS,
                 console_session_id=session_id,
                 transcript_anchor_id=None,
             )
             request = validate_raw_cli_request(request)
+            if custody is not None:
+                custody.request = request
         except ValueError as exc:
-            return self._refuse(
-                session_id, stash, f"Raw CLI refused: {exc}. Draft restored."
-            )
+            return self._refuse_before_start(custody, session_id, stash, f"Raw CLI refused: {exc}. Draft restored.")
         except Exception:  # noqa: BLE001 -- submission snapshot fails locally
-            return self._refuse(
+            return self._refuse_before_start(
+                custody,
                 session_id,
                 stash,
                 "Raw CLI could not capture this Console context. The exact draft "
@@ -369,7 +389,11 @@ class ConsoleRawCliController:
             )
 
         try:
-            self._start_worker(
+            if custody is not None:
+                custody._refuse_unstarted = partial(
+                    self._refuse, session_id, stash, _AUTHORITY_CHANGED_REFUSAL
+                )
+            worker = self._start_worker(
                 partial(
                     self._execute,
                     runtime,
@@ -377,13 +401,17 @@ class ConsoleRawCliController:
                     session_id,
                     stash,
                     native_anchor,
+                    custody,
                 ),
                 thread=True,
                 exclusive=False,
                 name=f"console-raw-cli-{request.invocation_id}",
             )
+            if custody is not None and getattr(worker, "_task", None) is not None:
+                worker._task.add_done_callback(lambda task: custody.cancel_unstarted() if task.cancelled() or getattr(worker, "is_cancelled", False) else None)
         except Exception:  # noqa: BLE001 -- failed worker admission is local refusal
-            return self._refuse(
+            return self._refuse_before_start(
+                custody,
                 session_id,
                 stash,
                 "Raw CLI worker could not start. The exact draft was restored.",
@@ -397,14 +425,61 @@ class ConsoleRawCliController:
         )
         return Path(root)
 
+    def _refuse_before_start(self, custody, session_id, stash, message):
+        if custody is not None and not custody.prevent_start():
+            custody.raw.cancel(custody.request.invocation_id)
+            return False
+        try:
+            return self._refuse(session_id, stash, message)
+        finally:
+            if custody is not None:
+                custody.finish()
+
     def _execute(
+        self, runtime, request, session_id, stash, native_anchor, custody=None
+    ):
+        if custody is None:
+            return self._execute_command(
+                runtime, request, session_id, stash, native_anchor
+            )
+        if not custody.start():
+            return
+        try:
+            with custody.activate():
+                try:
+                    try:
+                        custody.check()
+                    except Exception:  # noqa: BLE001 -- source failure restores the original input
+                        self._marshal_to_ui(
+                            self._refuse, session_id, stash, _AUTHORITY_CHANGED_REFUSAL
+                        )
+                        return
+                    return self._execute_command(
+                        runtime, request, session_id, stash, native_anchor, custody
+                    )
+                finally:
+                    custody.finish_operation()
+        except Exception:  # noqa: BLE001 -- failed worker storage admission has no launch
+            custody.deliver(self._marshal_to_ui, self._refuse, session_id, stash, _AUTHORITY_CHANGED_REFUSAL, refusal=True)
+        finally:
+            custody.finish()
+
+    def _execute_command(
         self,
         runtime: Any,
         request: RawCliRequest,
         session_id: str,
         stash: ConsoleDraftStash,
         native_anchor: str | None,
+        custody: Any = None,
     ) -> None:
+        def marshal(callback, *args):
+            if custody is None:
+                return self._marshal_to_ui(callback, *args)
+            return custody.deliver(
+                self._marshal_to_ui, callback, *args, refusal=callback == self._refuse
+            )
+
         db = None
         run_id: str | None = None
         writer: RunLogWriter | None = None
@@ -418,7 +493,7 @@ class ConsoleRawCliController:
                 return
             persistence_error_reported = True
             try:
-                self._marshal_to_ui(
+                marshal(
                     self._append_execution_error,
                     session_id,
                     message,
@@ -432,7 +507,7 @@ class ConsoleRawCliController:
                 return
             persistence_error_reported = True
             try:
-                self._marshal_to_ui(
+                marshal(
                     self._refuse,
                     session_id,
                     stash,
@@ -449,6 +524,8 @@ class ConsoleRawCliController:
             ):
                 refuse_for_persistence_error()
                 return
+            if custody is not None:
+                custody.persisted(durable_conversation_id)
             anchor = None
             if native_anchor is not None:
                 anchor = self._persisted_leaf_anchor(session_id, native_anchor)
@@ -456,12 +533,14 @@ class ConsoleRawCliController:
                     refuse_for_persistence_error()
                     return
             request = replace(request, transcript_anchor_id=anchor)
+            if custody is not None:
+                custody.request = request
         except Exception:  # noqa: BLE001 -- durable identity is mandatory
             refuse_for_persistence_error()
             return
 
         try:
-            db = self._agent_runs_db()
+            db = custody.database_for_run() if custody else self._agent_runs_db()
         except Exception:  # noqa: BLE001 -- unavailable persistence fails locally
             db = None
         if db is None:
@@ -471,14 +550,21 @@ class ConsoleRawCliController:
 
         # The native command callback owns only the connection it acquires.
         # A pre-existing caller connection remains with its original owner.
-        with operation_owned_connection(db):
+        with operation_owned_connection(db) if custody is None else nullcontext():
+            if custody is not None:
+                run_id = uuid.uuid4().hex
+                custody.run_id = run_id
+                custody.required_proven = False
             try:
                 run_id = db.create_run(
                     conversation_id=durable_conversation_id,
                     agent_kind=LOCAL_COMMAND_AGENT_KIND,
                     task=LOCAL_COMMAND_TASK,
                     assistant_message_id=request.transcript_anchor_id,
+                    **({"run_id": run_id} if custody is not None else {}),
                 )
+                if custody is not None:
+                    custody.created(run_id)
                 try:
                     db.append_steps(
                         run_id,
@@ -499,17 +585,38 @@ class ConsoleRawCliController:
                     )
                 except Exception:  # noqa: BLE001 -- terminalize the admitted row
                     try:
-                        db.set_status(run_id, "error")
+                        written = db.set_status(run_id, "error")
+                        if custody is not None:
+                            custody.required_proven = written is True or custody.observe_terminal("error")
                     except Exception:  # noqa: BLE001 -- original failure stays local
-                        pass
+                        if custody is not None:
+                            custody.required_proven = custody.observe_terminal("error")
                     raise
             except Exception:  # noqa: BLE001 -- never launch without its run row
+                if custody is not None and custody.owner.run_id is None:
+                    try:
+                        row = db.get_run(run_id)
+                        if row is None:
+                            custody.required_proven = True
+                        elif custody.matches_row(row):
+                            custody.created(run_id)
+                            try:
+                                written = db.set_status(run_id, "error")
+                                custody.required_proven = (
+                                    written is True or custody.observe_terminal("error")
+                                )
+                            except Exception:  # noqa: BLE001 -- only original readback proves settlement
+                                custody.required_proven = custody.observe_terminal(
+                                    "error"
+                                )
+                    except Exception:  # noqa: BLE001 -- unreadable creation remains unresolved
+                        pass
                 refuse_for_persistence_error()
                 return
 
             candidate_writer: RunLogWriter | None = None
             try:
-                root = self._run_log_access()
+                root = custody.log_root if custody is not None else self._run_log_access()
                 if root is None:
                     raise RuntimeError("local command run-log root unavailable")
                 candidate_writer = RunLogWriter(
@@ -591,8 +698,14 @@ class ConsoleRawCliController:
                     "tool_outcome": tool_outcome,
                 }
                 try:
-                    db.set_terminal_with_step(run_id, status, None, result_step)
+                    written = db.set_terminal_with_step(
+                        run_id, status, None, result_step
+                    )
+                    if custody is not None:
+                        custody.required_proven = written is True or custody.observe_terminal(status, result_step)
                 except Exception:  # noqa: BLE001 -- display completion must still land
+                    if custody is not None:
+                        custody.required_proven = custody.observe_terminal(status, result_step)
                     report_persistence_error("Raw CLI persistence was incomplete.")
                 if writer is not None:
                     try:
@@ -642,7 +755,7 @@ class ConsoleRawCliController:
                         return
                     pending = pending_repaint
                     pending_repaint = None
-                    self._marshal_to_ui(
+                    marshal(
                         self._update_running_marker,
                         request,
                         session_id,
@@ -662,7 +775,7 @@ class ConsoleRawCliController:
 
             def on_registered() -> None:
                 nonlocal marker_started
-                self._marshal_to_ui(
+                marshal(
                     self._append_starting_marker,
                     request,
                     session_id,
@@ -672,7 +785,7 @@ class ConsoleRawCliController:
             def on_started(timestamp: float) -> None:
                 nonlocal started_at
                 started_at = timestamp
-                self._marshal_to_ui(
+                marshal(
                     self._update_running_marker,
                     request,
                     session_id,
@@ -706,6 +819,8 @@ class ConsoleRawCliController:
                     repaint_timer.start()
 
             try:
+                if custody is not None:
+                    custody.physical_proven = False
                 result = runtime.execute(
                     request,
                     on_event,
@@ -732,7 +847,7 @@ class ConsoleRawCliController:
                 )
                 finalize_local_run(failed_result)
                 if marker_started:
-                    self._marshal_to_ui(
+                    marshal(
                         self._fail_running_marker,
                         request,
                         session_id,
@@ -742,16 +857,18 @@ class ConsoleRawCliController:
                         stream_truncated,
                     )
                 else:
-                    self._marshal_to_ui(
+                    marshal(
                         self._append_execution_error,
                         session_id,
                         "Raw CLI execution failed locally.",
                     )
                 return
             cancel_repaint()
+            if custody is not None:
+                custody.physical_proven = result.cleanup_proven is True
             finalize_local_run(result)
             if marker_started:
-                self._marshal_to_ui(
+                marshal(
                     self._finish_marker,
                     request,
                     session_id,
@@ -759,14 +876,14 @@ class ConsoleRawCliController:
                     result,
                 )
             if result.terminal_state == "refused":
-                self._marshal_to_ui(
+                marshal(
                     self._refuse,
                     session_id,
                     stash,
                     _AUTHORITY_CHANGED_REFUSAL,
                 )
             elif result.terminal_state == "containment_unavailable":
-                self._marshal_to_ui(
+                marshal(
                     self._refuse,
                     session_id,
                     stash,

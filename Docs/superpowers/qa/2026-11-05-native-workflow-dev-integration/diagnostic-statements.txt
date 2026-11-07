@@ -1,0 +1,178 @@
+tldw_chatbook/Chat/console_workflow_preparation.py: did not exist at 3c39215749a96d5c1b8c05972fdd2aeb7588b002; every statement below is new.
+
+tldw_chatbook/Chat/console_workflow_preparation.py: 0 -> 1 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + exception b01c832529d14074 (now line 3698)
+      | logger.exception("Native planning returned; wake notification failed")
+
+tldw_chatbook/Chat/console_workflow_runs.py: did not exist at 3c39215749a96d5c1b8c05972fdd2aeb7588b002; every statement below is new.
+
+tldw_chatbook/Chat/console_workflow_runs.py: 0 -> 8 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 8
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + exception 518b2741cb9d75c5 (now line 1896)
+      | logger.exception("Workflow snapshot observer failed")
+  + exception e4aa4646933fb8f2 (now line 2305)
+      | logger.exception("Native workflow cancellation remains unresolved")
+  + exception caad75bb6b8e2f7a (now line 2308)
+      | logger.exception("Native workflow planning did not retire normally")
+  + exception 780dff6e0effe5df (now line 2336)
+      | logger.exception("Native workflow final publication did not return")
+  + exception b01c832529d14074 (now line 2344)
+      | logger.exception("Native planning returned; wake notification failed")
+  + exception 9d7c4e728bf7813c (now line 2974)
+      | logger.exception("Native workflow phase did not retire normally")
+  + exception 92bcb6f5af5f3455 (now line 2983)
+      | logger.exception(
+      |     "Original workflow cleanup remains unresolved"
+      | )
+  + exception 3c3d468456e4a3f0 (now line 3001)
+      | logger.exception("Native workflow returned; wake notification failed")
+
+tldw_chatbook/UI/Console_Modules/workflows.py: did not exist at 3c39215749a96d5c1b8c05972fdd2aeb7588b002; every statement below is new.
+
+tldw_chatbook/UI/Console_Modules/workflows.py: 0 -> 1 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning 92d704aa22158ce7 (now line 141)
+      | logger.warning("Workflow {} unavailable: {} (cause: {})", operation, reason, cause)
+
+tldw_chatbook/Workspaces/worktree_activity.py: did not exist at 3c39215749a96d5c1b8c05972fdd2aeb7588b002; every statement below is new.
+
+tldw_chatbook/Workspaces/worktree_activity.py: 0 -> 1 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning e4f673461325b251 (now line 318)
+      | logger.warning("Worktree activity observer failed")
+
+tldw_chatbook/Agents/agent_service.py: 53 -> 54 diagnostic call(s)
+  moved/re-indented only: 4   removed: 1   added: 2
+
+= moved or re-indented -- statement text is unchanged, NO review needed:
+  = warning efa9eff89d050a14 -> 40f9becd355944bb  (line 5458 -> 6302)
+  = warning 910eda51ce219bdb -> 091884621f413135  (line 5763 -> 6610)
+  = warning 61f8714f5d47bb0c -> a5c9e6032566b52b  (line 5787 -> 6636)
+  = warning c58d3b0c86cbece1 -> 7ccc576398571f1e  (line 5855 -> 6600)
+
+- REMOVED -- these statements no longer exist:
+  - warning 2ab1496930521c93 (was line 5826)
+      | logger.warning(
+      |     "review child start raised after worker admission"
+      | )
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning f808f70c13c8e47c (now line 5732)
+      | logger.warning("could not finalize workflow child run log")
+  + warning fa68323428adbf1f (now line 6743)
+      | logger.warning("review child start raised after worker admission")
+
+tldw_chatbook/Agents/execution_capacity.py: 1 -> 2 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning 5e76ff8595b0a803 (now line 126)
+      | logger.warning("Tool availability observer failed")
+
+tldw_chatbook/Agents/run_hooks.py: 26 -> 28 diagnostic call(s)
+  moved/re-indented only: 0   removed: 2   added: 4
+
+- REMOVED -- these statements no longer exist:
+  - warning a9e69a2f0924a3e3 (was line 772)
+      | logger.warning("run-hooks: {} timeout; process reaped", identity)
+  - warning 54a3e0460f7b8045 (was line 1200)
+      | logger.warning("run-hooks: notify dropped (closed)")
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning eefb373211bf845f (now line 759)
+      | logger.warning(
+      |     "run-hooks: native process/group cleanup remains unproven"
+      | )
+  + warning f18aa80692aae938 (now line 831)
+      | logger.warning("run-hooks: {} timeout; bounded reap attempted", identity)
+  + warning 59cc5c3999805492 (now line 1282)
+      | logger.warning(
+      |     "run-hooks: future notification omitted ({})", type(exc).__name__
+      | )
+  + warning ec48bfc5cdd61333 (now line 1366)
+      | logger.warning("run-hooks: notify dropped (closed or changed)")
+
+tldw_chatbook/Chat/console_agent_bridge.py: 36 -> 36 diagnostic call(s)
+  moved/re-indented only: 2   removed: 0   added: 0
+
+= moved or re-indented -- statement text is unchanged, NO review needed:
+  = warning a19ad5151210ee7b -> 45ec2c0192f8abaf  (line 6394 -> 6746)
+  = warning 978d4944bb5001d4 -> 8ddb8ecc0a4deb05  (line 6403 -> 6755)
+
+tldw_chatbook/Chat/console_chat_controller.py: 70 -> 71 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning c40525b79b54c477 (now line 10347)
+      | logger.warning(
+      |     "@-reference expansion unavailable; sending the raw draft"
+      | )
+
+tldw_chatbook/Chat/console_fleet_attention.py: 11 -> 11 diagnostic call(s)
+  moved/re-indented only: 1   removed: 0   added: 0
+
+= moved or re-indented -- statement text is unchanged, NO review needed:
+  = warning 5bc04e2ca15a628b -> 1dcd0d390500869e  (line 317 -> 359)
+
+tldw_chatbook/Chat/console_runtime.py: 41 -> 43 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 3
+
+- REMOVED -- these statements no longer exist:
+  - warning 1e8f9284b20289b6 (was line 3322)
+      | logger.warning(
+      |     "Failed to persist Console first-send completion "
+      |     "(exception_type={})",
+      |     type(exc).__name__,
+      | )
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning ea0fe92ea5d91c63 (now line 3551)
+      | logger.warning(
+      |     "Failed to persist Console first-send completion (exception_type={})",
+      |     type(exc).__name__,
+      | )
+  + warning adb6e4817c6ac96a (now line 5921)
+      | logger.warning(
+      |     "Console legacy hook cleanup remains unproven; native protection retained."
+      | )
+  + error 730bae250fb72985 (now line 6982)
+      | logger.opt(exception=wake_fence_error).error(
+      |     "Console runtime wake fence failed during required physical cleanup"
+      | )
+
+tldw_chatbook/Tools/remote_workspace_transport.py: 12 -> 12 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 1
+
+- REMOVED -- these statements no longer exist:
+  - warning 02d4c1cbf9217517 (was line 482)
+      | logger.warning(
+      |     f"control dir for {loc.host} is unavailable: {exc!r}"
+      | )
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning 0c66a98ba449ce46 (now line 514)
+      | logger.warning(f"control dir for {loc.host} is unavailable: {exc!r}")
+
+tldw_chatbook/UI/Screens/chat_screen.py: 118 -> 118 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 1
+
+- REMOVED -- these statements no longer exist:
+  - warning b28085906910d7be (was line 20091)
+      | logger.opt(exception=True).warning(
+      |     "Console turn-card Undo All apply failed."
+      | )
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning 55570190b7057cfe (now line 20172)
+      | logger.opt(exception=error).warning(
+      |     "Console turn-card Undo All apply failed."
+      | )

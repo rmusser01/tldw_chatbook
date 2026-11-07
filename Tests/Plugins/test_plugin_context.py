@@ -368,16 +368,16 @@ async def test_manual_fork_skill_model_reaches_real_provider(
 
 @pytest.mark.asyncio
 async def test_embedded_native_skill_survives_reference_expansion(
-    native_console, monkeypatch
+    reference_native_console, monkeypatch
 ):
     import tldw_chatbook.Chat.console_references as references
 
-    rig = native_console
+    rig = reference_native_console
     install = await rig.install()
     monkeypatch.setattr(
         references,
         "build_console_reference_resolver",
-        lambda: lambda token: ("file", "REFERENCE_BODY", None),
+        lambda **kwargs: lambda token: ("file", "REFERENCE_BODY", None),
     )
     result = await rig.controller.submit_draft(
         f"Use ${install.alias}:review and @evidence.txt", session_id=rig.session.id
@@ -389,10 +389,10 @@ async def test_embedded_native_skill_survives_reference_expansion(
 
 
 @pytest.mark.asyncio
-async def test_reference_body_cannot_invoke_native_skill(native_console, monkeypatch):
+async def test_reference_body_cannot_invoke_native_skill(reference_native_console, monkeypatch):
     import tldw_chatbook.Chat.console_references as references
 
-    rig = native_console
+    rig = reference_native_console
     install = await rig.install()
     generated = (
         f"${install.alias}:review /{install.alias}:command @{install.alias}:agent"
@@ -400,7 +400,7 @@ async def test_reference_body_cannot_invoke_native_skill(native_console, monkeyp
     monkeypatch.setattr(
         references,
         "build_console_reference_resolver",
-        lambda: lambda token: ("file", generated, None),
+        lambda **kwargs: lambda token: ("file", generated, None),
     )
     result = await rig.controller.submit_draft(
         "Read @evidence.txt", session_id=rig.session.id
@@ -492,7 +492,7 @@ async def test_native_final_provider_rechecks_staged_authority(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("disable", [False, True])
 async def test_reference_invocation_source_survives_real_preparation_resume(
-    native_console, monkeypatch, disable
+    reference_native_console, monkeypatch, disable
 ):
     from types import SimpleNamespace
 
@@ -500,7 +500,7 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
     import tldw_chatbook.Chat.console_references as references
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
-    rig = native_console
+    rig = reference_native_console
     admitted_maxima = []
     admit = rig.service.admit
 
@@ -531,7 +531,7 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
         reads.append(token)
         return "file", generated, None
 
-    monkeypatch.setattr(references, "build_console_reference_resolver", lambda: resolve)
+    monkeypatch.setattr(references, "build_console_reference_resolver", lambda **kwargs: resolve)
     result = await rig.controller.submit_draft(
         f"Read @evidence.txt then ${install.alias}:review", session_id=session.id
     )
@@ -576,7 +576,7 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
 @pytest.mark.parametrize("paused", [False, True])
 @pytest.mark.parametrize("reference", [False, True])
 async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_send(
-    native_console, native_package, monkeypatch, paused, reference
+    reference_native_console, native_package, monkeypatch, paused, reference
 ):
     from types import SimpleNamespace
 
@@ -584,7 +584,7 @@ async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_s
     import tldw_chatbook.Chat.console_references as references
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
-    rig = native_console
+    rig = reference_native_console
     admitted_maxima = []
     admit = rig.service.admit
 
@@ -612,7 +612,7 @@ async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_s
             return None
         return "file", generated, None
 
-    monkeypatch.setattr(references, "build_console_reference_resolver", lambda: resolve)
+    monkeypatch.setattr(references, "build_console_reference_resolver", lambda **kwargs: resolve)
     session = rig.store.create_session(ephemeral=paused, workspace_id="workspace-a")
     if paused:
         monkeypatch.setattr(
@@ -692,7 +692,7 @@ async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_s
     ],
 )
 async def test_command_selector_keeps_closed_argument_contract(
-    native_console, native_package, monkeypatch, spelling, arguments, accepted
+    reference_native_console, native_package, monkeypatch, spelling, arguments, accepted
 ):
     import json
 
@@ -702,7 +702,7 @@ async def test_command_selector_keeps_closed_argument_contract(
     (package / "command.md").write_text(
         "---\nname: review\ndescription: Review\narguments: [query]\n---\nCLOSED COMMAND BODY."
     )
-    rig = native_console
+    rig = reference_native_console
     installed = await install_components(rig.service, package, ("command:review",))
     calls, reads = [], []
     execute = rig.service.execute_skill
@@ -715,7 +715,7 @@ async def test_command_selector_keeps_closed_argument_contract(
     monkeypatch.setattr(
         references,
         "build_console_reference_resolver",
-        lambda: lambda token: reads.append(token),
+        lambda **kwargs: lambda token: reads.append(token),
     )
     selector = {
         "legacy": f"/{installed.alias}:review",
@@ -793,3 +793,18 @@ async def test_zero_and_multiple_command_arguments_share_strict_renderer(
         assert "STRICT COMMAND BODY." in str(rig.gateway.payloads[-1])
     else:
         assert not rig.gateway.payloads
+
+
+@pytest.fixture
+async def reference_native_console(native_console, tmp_path, monkeypatch):
+    """Reference tests use actual bounded private roots before replacing content."""
+    from tldw_chatbook.Tools import workspace_file_roots as roots_api
+
+    rig = native_console
+    root = tmp_path / "reference-files"
+    root.mkdir()
+    rig.registry.add_folder_binding("workspace-a", root)
+    rig.registry.set_active_workspace("workspace-a")
+    monkeypatch.setattr(roots_api, "_registry_factory", lambda: rig.registry)
+    with roots_api.run_file_sandbox(root):
+        yield rig

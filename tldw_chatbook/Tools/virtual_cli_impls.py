@@ -337,3 +337,67 @@ def _leased_operation(
             arguments["end_line"] = args.end
         return "git_blame", arguments
     return "git_branches", {}
+
+
+_NATIVE_VIRTUAL_CLASS = VirtualCliRegistry
+_NATIVE_VIRTUAL_METHODS = tuple(
+    (name, value)
+    for name, value in vars(VirtualCliRegistry).items()
+    if callable(value) or isinstance(value, property)
+)
+_NATIVE_VIRTUAL_HELPERS = tuple(
+    (name, value)
+    for name, value in tuple(globals().items())
+    if type(value).__name__ == "function" and value.__module__ == __name__
+)
+_NATIVE_VIRTUAL_PARSERS = _PARSERS, tuple(_PARSERS.items())
+# These actual argparse instances are the grammar used by the native projector.
+# Retain callable slots and action identities; no parsing occurs during capture.
+from inspect import getattr_static as _raw_virtual_source
+
+_NATIVE_VIRTUAL_PARSER_SOURCES = tuple(
+    (target, name, _raw_virtual_source(target, name, None))
+    for parser in _PARSERS.values()
+    for target, names in (
+        (
+            parser,
+            (
+                "parse_args",
+                "parse_known_args",
+                "_parse_known_args",
+                "_get_value",
+                "error",
+            ),
+        ),
+        *((action, ("__call__", "type")) for action in parser._actions),
+    )
+    for name in names
+)
+_NATIVE_VIRTUAL_ACTIONS = tuple(
+    (parser, tuple(parser._actions)) for parser in _PARSERS.values()
+)
+_NATIVE_VIRTUAL_FUNCTIONS = tuple(
+    (
+        fn,
+        fn.__code__,
+        fn.__defaults__,
+        fn.__kwdefaults__,
+        tuple((fn.__kwdefaults__ or {}).items()),
+        fn.__closure__,
+        tuple((cell, cell.cell_contents) for cell in fn.__closure__ or ()),
+    )
+    for fn in dict.fromkeys(
+        (
+            *(
+                value
+                for _name, value in (*_NATIVE_VIRTUAL_METHODS, *_NATIVE_VIRTUAL_HELPERS)
+                if type(value).__name__ == "function"
+            ),
+            *(
+                value
+                for _obj, _name, value in _NATIVE_VIRTUAL_PARSER_SOURCES
+                if type(value).__name__ == "function"
+            ),
+        )
+    )
+)

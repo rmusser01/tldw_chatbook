@@ -1,0 +1,9 @@
+{
+  "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python tldw_chatbook/css/check_bundle_sync.py",
+  "cwd": "integration",
+  "chunk_id": "b64ed1",
+  "wall_time_seconds": 0.000006,
+  "exit_code": 0,
+  "original_token_count": 386,
+  "output": "CSS bundle reproduces from its source modules.\nwidget_defaults_self.tcss reproduces from the BUNDLED_CSS/BUNDLED_SCREEN_CSS declarations in the Python sources.\nwidget_defaults_scoped.tcss reproduces from the BUNDLED_CSS/BUNDLED_SCREEN_CSS declarations in the Python sources.\nscreen_css_self.tcss reproduces from the BUNDLED_CSS/BUNDLED_SCREEN_CSS declarations in the Python sources.\nscreen_css_scoped.tcss reproduces from the BUNDLED_CSS/BUNDLED_SCREEN_CSS declarations in the Python sources.\nscreen_feature_plugins.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_agentic_library.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_agentic_settings.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_feature_evals.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_feature_scheduling.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_feature_workflows.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_feature_roleplay.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_modal_console_delete_receipt.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_modal_file_notes_history.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\nscreen_feature_watchlists.tcss reproduces from its source modules (SCREEN_OWNED_SPLITS in build_css.py).\n"
+}

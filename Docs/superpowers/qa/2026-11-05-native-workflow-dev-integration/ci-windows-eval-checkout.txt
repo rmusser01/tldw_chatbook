@@ -1,0 +1,285 @@
+﻿2026-11-05T19:46:20.7252341Z Current runner version: '2.338.2'
+2026-11-05T19:46:20.7279592Z ##[group]Runner Image Provisioner
+2026-11-05T19:46:20.7280512Z Hosted Compute Agent
+2026-11-05T19:46:20.7281121Z Version: 20261028.624
+2026-11-05T19:46:20.7281837Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-05T19:46:20.7282688Z Build Date: 2026-10-28T21:51:42Z
+2026-11-05T19:46:20.7283478Z Worker ID: {6a785189-a9ff-4c89-961a-1ab26f8efdbd}
+2026-11-05T19:46:20.7284254Z Region: centralus
+2026-11-05T19:46:20.7284882Z Cloud: Azure
+2026-11-05T19:46:20.7285446Z ##[endgroup]
+2026-11-05T19:46:20.7286954Z ##[group]Operating System
+2026-11-05T19:46:20.7287672Z Microsoft Windows Server 2022
+2026-11-05T19:46:20.7288426Z 10.0.20348
+2026-11-05T19:46:20.7288983Z Datacenter
+2026-11-05T19:46:20.7289518Z ##[endgroup]
+2026-11-05T19:46:20.7290130Z ##[group]Runner Image
+2026-11-05T19:46:20.7290704Z Image: windows-2022
+2026-11-05T19:46:20.7291118Z Version: 20261101.353.1
+2026-11-05T19:46:20.7292206Z Included Software: https://github.com/actions/runner-images/blob/win22/20261101.353/images/windows/Windows2022-Readme.md
+2026-11-05T19:46:20.7293386Z Image Release: https://github.com/actions/runner-images/releases/tag/win22%2F20261101.353
+2026-11-05T19:46:20.7294126Z ##[endgroup]
+2026-11-05T19:46:20.7294945Z ##[group]GITHUB_TOKEN Permissions
+2026-11-05T19:46:20.7296377Z Contents: read
+2026-11-05T19:46:20.7296798Z Metadata: read
+2026-11-05T19:46:20.7297234Z ##[endgroup]
+2026-11-05T19:46:20.7298865Z Secret source: Actions
+2026-11-05T19:46:20.7299538Z Cache mode: write
+2026-11-05T19:46:20.7300055Z Prepare workflow directory
+2026-11-05T19:46:20.7684392Z Prepare all required actions
+2026-11-05T19:46:20.7738467Z Getting action download info
+2026-11-05T19:46:21.0397178Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-05T19:46:22.1766567Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-11-05T19:46:22.4688996Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-11-05T19:46:27.3397035Z Complete job name: Eval recovery (windows-2022)
+2026-11-05T19:46:31.2737417Z ##[group]Run actions/checkout@v4
+2026-11-05T19:46:31.2738006Z with:
+2026-11-05T19:46:31.2738192Z   ref: 5dc21d4b4b10bcaee7908765159d94568d8e5dd6
+2026-11-05T19:46:31.2738425Z   persist-credentials: false
+2026-11-05T19:46:31.2738626Z   repository: rmusser01/tldw_chatbook
+2026-11-05T19:46:31.2740496Z   token: ***
+2026-11-05T19:46:31.2740659Z   ssh-strict: true
+2026-11-05T19:46:31.2740825Z   ssh-user: git
+2026-11-05T19:46:31.2740969Z   clean: true
+2026-11-05T19:46:31.2741126Z   sparse-checkout-cone-mode: true
+2026-11-05T19:46:31.2741320Z   fetch-depth: 1
+2026-11-05T19:46:31.2741475Z   fetch-tags: false
+2026-11-05T19:46:31.2741638Z   show-progress: true
+2026-11-05T19:46:31.2741797Z   lfs: false
+2026-11-05T19:46:31.2741937Z   submodules: false
+2026-11-05T19:46:31.2742101Z   set-safe-directory: true
+2026-11-05T19:46:31.2742299Z   allow-unsafe-pr-checkout: false
+2026-11-05T19:46:31.2742758Z env:
+2026-11-05T19:46:31.2742889Z   PYTHONUTF8: 1
+2026-11-05T19:46:31.2743064Z ##[endgroup]
+2026-11-05T19:46:31.4762621Z Syncing repository: rmusser01/tldw_chatbook
+2026-11-05T19:46:31.4763680Z ##[group]Getting Git version info
+2026-11-05T19:46:31.4763953Z Working directory is 'D:\a\tldw_chatbook\tldw_chatbook'
+2026-11-05T19:46:31.6071524Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-11-05T19:46:33.5771281Z git version 2.56.0.windows.4
+2026-11-05T19:46:33.5802488Z ##[endgroup]
+2026-11-05T19:46:33.5819097Z Temporarily overriding HOME='D:\a\_temp\e9f6099d-e406-45ba-be60-c41ded04260e' before making global git config changes
+2026-11-05T19:46:33.5819677Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-05T19:46:33.5827796Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\tldw_chatbook\tldw_chatbook
+2026-11-05T19:46:33.6464927Z Deleting the contents of 'D:\a\tldw_chatbook\tldw_chatbook'
+2026-11-05T19:46:33.6468907Z ##[group]Initializing the repository
+2026-11-05T19:46:33.6476150Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\tldw_chatbook\tldw_chatbook
+2026-11-05T19:46:33.7589484Z Initialized empty Git repository in D:/a/tldw_chatbook/tldw_chatbook/.git/
+2026-11-05T19:46:33.7621851Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/rmusser01/tldw_chatbook
+2026-11-05T19:46:33.8439845Z ##[endgroup]
+2026-11-05T19:46:33.8440214Z ##[group]Disabling automatic garbage collection
+2026-11-05T19:46:33.8451319Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+2026-11-05T19:46:33.8682626Z ##[endgroup]
+2026-11-05T19:46:33.8683133Z ##[group]Setting up auth
+2026-11-05T19:46:33.8693074Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T19:46:33.8924290Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-11-05T19:46:37.4208159Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T19:46:37.4442610Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-11-05T19:46:37.8393139Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T19:46:37.8624079Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-11-05T19:46:38.2620539Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+2026-11-05T19:46:38.2857286Z ##[endgroup]
+2026-11-05T19:46:38.2857775Z ##[group]Fetching the repository
+2026-11-05T19:46:38.2869426Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 5dc21d4b4b10bcaee7908765159d94568d8e5dd6
+2026-11-05T19:47:05.6443999Z From https://github.com/rmusser01/tldw_chatbook
+2026-11-05T19:47:05.6445103Z  * branch              5dc21d4b4b10bcaee7908765159d94568d8e5dd6 -> FETCH_HEAD
+2026-11-05T19:47:05.6468098Z ##[endgroup]
+2026-11-05T19:47:05.6468691Z ##[group]Determining the checkout info
+2026-11-05T19:47:05.6470218Z ##[endgroup]
+2026-11-05T19:47:05.6478398Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+2026-11-05T19:47:05.7039872Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+2026-11-05T19:47:05.7271524Z ##[group]Checking out the ref
+2026-11-05T19:47:05.7281477Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force 5dc21d4b4b10bcaee7908765159d94568d8e5dd6
+2026-11-05T19:47:06.9923156Z Updating files:  12% (4941/40890)
+2026-11-05T19:47:07.1795899Z Updating files:  13% (5316/40890)
+2026-11-05T19:47:07.3074043Z Updating files:  14% (5725/40890)
+2026-11-05T19:47:07.4109751Z Updating files:  15% (6134/40890)
+2026-11-05T19:47:07.5160917Z Updating files:  16% (6543/40890)
+2026-11-05T19:47:07.6133610Z Updating files:  17% (6952/40890)
+2026-11-05T19:47:07.7131980Z Updating files:  18% (7361/40890)
+2026-11-05T19:47:07.7961155Z Updating files:  19% (7770/40890)
+2026-11-05T19:47:07.8966791Z Updating files:  20% (8178/40890)
+2026-11-05T19:47:07.8976574Z Updating files:  20% (8585/40890)
+2026-11-05T19:47:08.0024153Z Updating files:  21% (8587/40890)
+2026-11-05T19:47:08.1080059Z Updating files:  22% (8996/40890)
+2026-11-05T19:47:08.1864266Z Updating files:  23% (9405/40890)
+2026-11-05T19:47:08.2755515Z Updating files:  24% (9814/40890)
+2026-11-05T19:47:08.3644743Z Updating files:  25% (10223/40890)
+2026-11-05T19:47:08.6518895Z Updating files:  26% (10632/40890)
+2026-11-05T19:47:08.7418645Z Updating files:  27% (11041/40890)
+2026-11-05T19:47:08.8291714Z Updating files:  28% (11450/40890)
+2026-11-05T19:47:08.8973381Z Updating files:  29% (11859/40890)
+2026-11-05T19:47:08.9192347Z Updating files:  29% (12177/40890)
+2026-11-05T19:47:09.0084446Z Updating files:  30% (12267/40890)
+2026-11-05T19:47:09.0937900Z Updating files:  31% (12676/40890)
+2026-11-05T19:47:09.1853327Z Updating files:  32% (13085/40890)
+2026-11-05T19:47:09.2476536Z Updating files:  33% (13494/40890)
+2026-11-05T19:47:09.3076933Z Updating files:  34% (13903/40890)
+2026-11-05T19:47:09.3681178Z Updating files:  35% (14312/40890)
+2026-11-05T19:47:10.0106434Z Updating files:  36% (14721/40890)
+2026-11-05T19:47:10.1103591Z Updating files:  36% (15095/40890)
+2026-11-05T19:47:10.3409680Z Updating files:  37% (15130/40890)
+2026-11-05T19:47:10.5660485Z Updating files:  38% (15539/40890)
+2026-11-05T19:47:10.6976200Z Updating files:  39% (15948/40890)
+2026-11-05T19:47:10.7892389Z Updating files:  40% (16356/40890)
+2026-11-05T19:47:10.8383979Z Updating files:  41% (16765/40890)
+2026-11-05T19:47:10.8401510Z ##[error]error: unable to create file Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/native-receipts/pytest__test_native_correction_keeps_f0__original__source-home-removed__retained-temporary.tldw-backup.zip.manifest.json: Filename too long
+2026-11-05T19:47:10.9563528Z Updating files:  41% (17045/40890)
+2026-11-05T19:47:11.1399320Z Updating files:  42% (17174/40890)
+2026-11-05T19:47:11.2624882Z Updating files:  43% (17583/40890)
+2026-11-05T19:47:11.6921992Z Updating files:  44% (17992/40890)
+2026-11-05T19:47:11.7777280Z Updating files:  45% (18401/40890)
+2026-11-05T19:47:11.8763835Z Updating files:  46% (18810/40890)
+2026-11-05T19:47:11.9045361Z Updating files:  47% (19219/40890)
+2026-11-05T19:47:12.0921143Z Updating files:  47% (19249/40890)
+2026-11-05T19:47:12.3207265Z Updating files:  48% (19628/40890)
+2026-11-05T19:47:12.3792504Z Updating files:  49% (20037/40890)
+2026-11-05T19:47:12.4768817Z Updating files:  50% (20445/40890)
+2026-11-05T19:47:12.5490035Z Updating files:  51% (20854/40890)
+2026-11-05T19:47:12.9803683Z Updating files:  52% (21263/40890)
+2026-11-05T19:47:13.1265526Z Updating files:  52% (21507/40890)
+2026-11-05T19:47:13.7392052Z Updating files:  53% (21672/40890)
+2026-11-05T19:47:13.9026479Z Updating files:  54% (22081/40890)
+2026-11-05T19:47:15.1073139Z Updating files:  54% (22229/40890)
+2026-11-05T19:47:16.1933567Z Updating files:  54% (22386/40890)
+2026-11-05T19:47:17.2285872Z Updating files:  54% (22391/40890)
+2026-11-05T19:47:18.9180853Z Updating files:  54% (22411/40890)
+2026-11-05T19:47:19.4430976Z Updating files:  54% (22434/40890)
+2026-11-05T19:47:19.9549538Z Updating files:  54% (22445/40890)
+2026-11-05T19:47:21.0385596Z Updating files:  54% (22456/40890)
+2026-11-05T19:47:21.0404698Z Updating files:  54% (22480/40890)
+2026-11-05T19:47:22.2402783Z Updating files:  55% (22490/40890)
+2026-11-05T19:47:23.3852799Z Updating files:  55% (22526/40890)
+2026-11-05T19:47:24.4782606Z Updating files:  55% (22589/40890)
+2026-11-05T19:47:24.7795744Z Updating files:  55% (22652/40890)
+2026-11-05T19:47:24.9057135Z Updating files:  56% (22899/40890)
+2026-11-05T19:47:24.9407107Z Updating files:  57% (23308/40890)
+2026-11-05T19:47:24.9889713Z Updating files:  57% (23478/40890)
+2026-11-05T19:47:25.0948919Z Updating files:  58% (23717/40890)
+2026-11-05T19:47:25.1856316Z Updating files:  59% (24126/40890)
+2026-11-05T19:47:25.2771412Z Updating files:  60% (24534/40890)
+2026-11-05T19:47:25.4051019Z Updating files:  61% (24943/40890)
+2026-11-05T19:47:25.4855834Z Updating files:  62% (25352/40890)
+2026-11-05T19:47:25.7477508Z Updating files:  63% (25761/40890)
+2026-11-05T19:47:25.8304412Z Updating files:  64% (26170/40890)
+2026-11-05T19:47:25.9140900Z Updating files:  65% (26579/40890)
+2026-11-05T19:47:25.9418104Z Updating files:  66% (26988/40890)
+2026-11-05T19:47:26.0070404Z Updating files:  66% (27091/40890)
+2026-11-05T19:47:26.1031430Z Updating files:  67% (27397/40890)
+2026-11-05T19:47:26.2005985Z Updating files:  68% (27806/40890)
+2026-11-05T19:47:26.3008653Z Updating files:  69% (28215/40890)
+2026-11-05T19:47:26.3816719Z Updating files:  70% (28623/40890)
+2026-11-05T19:47:26.4604134Z Updating files:  71% (29032/40890)
+2026-11-05T19:47:26.5319770Z Updating files:  72% (29441/40890)
+2026-11-05T19:47:26.6189917Z Updating files:  73% (29850/40890)
+2026-11-05T19:47:26.6792714Z Updating files:  74% (30259/40890)
+2026-11-05T19:47:26.7402984Z Updating files:  75% (30668/40890)
+2026-11-05T19:47:26.8035970Z Updating files:  76% (31077/40890)
+2026-11-05T19:47:26.8641429Z Updating files:  77% (31486/40890)
+2026-11-05T19:47:27.0712543Z Updating files:  78% (31895/40890)
+2026-11-05T19:47:27.1176261Z Updating files:  78% (31988/40890)
+2026-11-05T19:47:27.1754371Z Updating files:  79% (32304/40890)
+2026-11-05T19:47:27.2355739Z Updating files:  80% (32712/40890)
+2026-11-05T19:47:27.2950043Z Updating files:  81% (33121/40890)
+2026-11-05T19:47:27.3561539Z Updating files:  82% (33530/40890)
+2026-11-05T19:47:27.4226278Z Updating files:  83% (33939/40890)
+2026-11-05T19:47:27.4884658Z Updating files:  84% (34348/40890)
+2026-11-05T19:47:27.5456839Z Updating files:  85% (34757/40890)
+2026-11-05T19:47:27.6046023Z Updating files:  86% (35166/40890)
+2026-11-05T19:47:27.6603508Z Updating files:  87% (35575/40890)
+2026-11-05T19:47:27.7189781Z Updating files:  88% (35984/40890)
+2026-11-05T19:47:27.7783535Z Updating files:  89% (36393/40890)
+2026-11-05T19:47:27.8434215Z Updating files:  90% (36801/40890)
+2026-11-05T19:47:27.9306326Z Updating files:  91% (37210/40890)
+2026-11-05T19:47:27.9461746Z Updating files:  92% (37619/40890)
+2026-11-05T19:47:28.0503483Z Updating files:  92% (37689/40890)
+2026-11-05T19:47:28.1387886Z Updating files:  93% (38028/40890)
+2026-11-05T19:47:28.4567092Z Updating files:  94% (38437/40890)
+2026-11-05T19:47:28.5442074Z Updating files:  95% (38846/40890)
+2026-11-05T19:47:28.6490458Z Updating files:  96% (39255/40890)
+2026-11-05T19:47:28.7618659Z Updating files:  97% (39664/40890)
+2026-11-05T19:47:28.8551253Z Updating files:  98% (40073/40890)
+2026-11-05T19:47:28.9474931Z Updating files:  99% (40482/40890)
+2026-11-05T19:47:29.0196404Z Updating files:  99% (40705/40890)
+2026-11-05T19:47:29.0196687Z Updating files: 100% (40890/40890)
+2026-11-05T19:47:29.0196901Z Updating files: 100% (40890/40890), done.
+2026-11-05T19:47:29.0664381Z Note: switching to '5dc21d4b4b10bcaee7908765159d94568d8e5dd6'.
+2026-11-05T19:47:29.0664739Z 
+2026-11-05T19:47:29.0664980Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-05T19:47:29.0665528Z changes and commit them, and you can discard any commits you make in this
+2026-11-05T19:47:29.0666108Z state without impacting any branches by switching back to a branch.
+2026-11-05T19:47:29.0666394Z 
+2026-11-05T19:47:29.0666583Z If you want to create a new branch to retain commits you create, you may
+2026-11-05T19:47:29.0667074Z do so (now or later) by using -c with the switch command. Example:
+2026-11-05T19:47:29.0667369Z 
+2026-11-05T19:47:29.0667474Z   git switch -c <new-branch-name>
+2026-11-05T19:47:29.0667659Z 
+2026-11-05T19:47:29.0667733Z Or undo this operation with:
+2026-11-05T19:47:29.0667857Z 
+2026-11-05T19:47:29.0667918Z   git switch -
+2026-11-05T19:47:29.0668012Z 
+2026-11-05T19:47:29.0668175Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-05T19:47:29.0668398Z 
+2026-11-05T19:47:29.0668575Z HEAD is now at 5dc21d4b Integrate current review actors and native workflow lifetimes
+2026-11-05T19:47:29.1034287Z ##[group]Removing auth
+2026-11-05T19:47:29.1042241Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T19:47:29.1278727Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-11-05T19:47:29.5029370Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T19:47:29.5231778Z http.https://github.com/.extraheader
+2026-11-05T19:47:29.5255628Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+2026-11-05T19:47:29.5481847Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-11-05T19:47:29.9408162Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T19:47:29.9633148Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-11-05T19:47:30.4422959Z ##[endgroup]
+2026-11-05T19:47:30.4449628Z ##[error]The process 'C:\Program Files\Git\bin\git.exe' failed with exit code 1
+2026-11-05T19:47:30.4741928Z ##[group]Run actions/upload-artifact@v4
+2026-11-05T19:47:30.4742202Z with:
+2026-11-05T19:47:30.4742370Z   name: eval-recovery-windows-2022
+2026-11-05T19:47:30.4742581Z   path: D:\a\_temp/eval-recovery.xml
+2026-11-05T19:47:30.4742792Z   if-no-files-found: error
+2026-11-05T19:47:30.4742967Z   compression-level: 6
+2026-11-05T19:47:30.4743128Z   overwrite: false
+2026-11-05T19:47:30.4743288Z   include-hidden-files: false
+2026-11-05T19:47:30.4743460Z env:
+2026-11-05T19:47:30.4743606Z   PYTHONUTF8: 1
+2026-11-05T19:47:30.4743756Z ##[endgroup]
+2026-11-05T19:47:30.6137497Z (node:1856) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-05T19:47:30.6138044Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-05T19:47:30.6170856Z ##[error]No files were found with the provided path: D:\a\_temp/eval-recovery.xml. No artifacts will be uploaded.
+2026-11-05T19:47:30.6365542Z ##[group]Run actions/upload-artifact@v4
+2026-11-05T19:47:30.6365810Z with:
+2026-11-05T19:47:30.6365999Z   name: eval-recovery-windows-2022-child-logs
+2026-11-05T19:47:30.6367090Z   path: /pytest-of-*/pytest-*/*/original/restart-output.log
+/pytest-of-*/pytest-*/*/restored/restart-output.log
+/pytest-of-*/pytest-*/*/restored/home/restore-stacks.json
+/pytest-of-*/pytest-*/*/restored/home/restore-stacks-fatal.log
+/pytest-of-*/pytest-*/*/reopen.log
+
+2026-11-05T19:47:30.6368175Z   if-no-files-found: ignore
+2026-11-05T19:47:30.6368375Z   compression-level: 6
+2026-11-05T19:47:30.6368629Z   overwrite: false
+2026-11-05T19:47:30.6368827Z   include-hidden-files: false
+2026-11-05T19:47:30.6369014Z env:
+2026-11-05T19:47:30.6369169Z   PYTHONUTF8: 1
+2026-11-05T19:47:30.6369324Z ##[endgroup]
+2026-11-05T19:47:30.7940148Z (node:3664) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-05T19:47:30.7941285Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-05T19:47:30.7981075Z No files were found with the provided path: /pytest-of-*/pytest-*/*/original/restart-output.log
+2026-11-05T19:47:30.7981757Z /pytest-of-*/pytest-*/*/restored/restart-output.log
+2026-11-05T19:47:30.7982298Z /pytest-of-*/pytest-*/*/restored/home/restore-stacks.json
+2026-11-05T19:47:30.7982837Z /pytest-of-*/pytest-*/*/restored/home/restore-stacks-fatal.log
+2026-11-05T19:47:30.7983381Z /pytest-of-*/pytest-*/*/reopen.log. No artifacts will be uploaded.
+2026-11-05T19:47:30.8275262Z Post job cleanup.
+2026-11-05T19:47:30.9881535Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-11-05T19:47:31.0153480Z git version 2.56.0.windows.4
+2026-11-05T19:47:31.0208699Z Temporarily overriding HOME='D:\a\_temp\908900ba-eb68-439b-a9ac-e912c183c278' before making global git config changes
+2026-11-05T19:47:31.0210602Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-05T19:47:31.0226540Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\tldw_chatbook\tldw_chatbook
+2026-11-05T19:47:31.0524083Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T19:47:31.0816822Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-11-05T19:47:31.4674157Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T19:47:31.4981081Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-11-05T19:47:31.9075467Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T19:47:31.9361351Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-11-05T19:47:32.3718594Z Cleaning up orphan processes
+2026-11-05T19:47:32.3801873Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

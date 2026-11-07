@@ -1,0 +1,101 @@
+| tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.973 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.976 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.978 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.979 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.983 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.984 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.985 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.986 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.987 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6080 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=40915ba30c3c...
+2026-11-04 20:45:46.988 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6144 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-11-04 20:45:46.989 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6194 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=40915ba30c3c...
+2026-11-04 20:45:46.989 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.990 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6333 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=40915ba30c3c.
+2026-11-04 20:45:46.991 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6363 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=40915ba30c3c...
+2026-11-04 20:45:46.991 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:46.999 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6403 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=40915ba30c3c.
+2026-11-04 20:45:47.000 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6472 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-11-04 20:45:47.001 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.002 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6505 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-11-04 20:45:47.002 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6549 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=40915ba30c3c...
+2026-11-04 20:45:47.003 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.007 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6595 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=40915ba30c3c. Purged 0 unreachable sync_log row(s) of 1.
+2026-11-04 20:45:47.007 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6637 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=40915ba30c3c...
+2026-11-04 20:45:47.007 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.008 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6672 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=40915ba30c3c.
+2026-11-04 20:45:47.009 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.014 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6828 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=40915ba30c3c...
+2026-11-04 20:45:47.014 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.015 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6863 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=40915ba30c3c.
+2026-11-04 20:45:47.015 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6911 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=40915ba30c3c...
+2026-11-04 20:45:47.016 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.016 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6945 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=40915ba30c3c.
+2026-11-04 20:45:47.017 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.021 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.029 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7070 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=40915ba30c3c...
+2026-11-04 20:45:47.030 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.030 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7135 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=40915ba30c3c (examined 0, compacted 0, skipped 0 unreadable).
+2026-11-04 20:45:47.031 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.035 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.036 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.048 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.051 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.066 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.067 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.069 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.070 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.087 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.092 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.110 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.111 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.115 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 3 on thread 8461753728.
+2026-11-04 20:45:47.116 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 3 on thread 8461753728.
+2026-11-04 20:45:47.117 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.120 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.140 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.142 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.144 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.151 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.163 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.165 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.171 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.172 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.173 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.194 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.196 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.197 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.
+2026-11-04 20:45:47.199 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8531 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 81.
+2026-11-04 20:45:47.202 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-11-04 20:45:47.202 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2974 - CharactersRAGDB initialization completed successfully db_sha256=40915ba30c3c
+----------------------------- Captured stderr call -----------------------------
+2026-11-04 20:45:47.253 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 8461753728.
+2026-11-04 20:45:47.253 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-11-04 20:45:47.254 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 8461753728.
+2026-11-04 20:45:47.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-11-04 20:45:47.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10969 - Added conversation ID: 815362c9-80bf-4303-8330-8a53c1cb4721.
+2026-11-04 20:45:47.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): UPDATE sync_log SET timestamp = ?... Params: (2020-01-01T00:00:00.000Z)
+2026-11-04 20:45:47.257 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3665 - Committed directly by execute_query.
+2026-11-04 20:45:47.258 | DEBUG    | tldw_chatbook.DB.Client_Media_DB_v2:execute_query:1337 - Executing Query: UPDATE sync_log SET timestamp = ?... Params: (2020-01-01T00:00:00.000Z)
+2026-11-04 20:45:47.298 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+2026-11-04 20:45:47.403 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-11-04 20:45:47.579 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3129 - Opened/Reopened SQLite connection db_sha256=40915ba30c3c thread=6163001344
+2026-11-04 20:45:47.579 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 6163001344.
+2026-11-04 20:45:47.580 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 6163001344.
+2026-11-04 20:45:47.580 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:delete_sync_log_entries_older_than:21678 - Deleted 2 sync_log entries older than 2026-08-07T04:45:47.534Z from db_sha256=40915ba30c3c.
+2026-11-04 20:45:47.581 | INFO     | tldw_chatbook.app_lifecycle:_perform_sync_log_retention:1747 - Sync-log retention pruned 2 rows older than 90 days from chachanotes_db
+2026-11-04 20:45:47.619 | DEBUG    | tldw_chatbook.DB.Client_Media_DB_v2:execute_query:1337 - Executing Query: DELETE FROM sync_log WHERE timestamp < ?... Params: (2026-08-07T04:45:47.534Z)
+2026-11-04 20:45:47.620 | INFO     | tldw_chatbook.DB.Client_Media_DB_v2:delete_sync_log_entries_older_than:3481 - Deleted 1 sync log entries older than 2026-08-07T04:45:47.534Z from DB '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-retention_red-5ef11rzu/pytest/test_app_pass_prunes_both_stor0/media_sync_retention.db'.
+2026-11-04 20:45:47.620 | INFO     | tldw_chatbook.app_lifecycle:_perform_sync_log_retention:1747 - Sync-log retention pruned 1 rows older than 90 days from media_db
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-04 20:45:47.680 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3458 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=40915ba30c3c thread=8461753728.
+2026-11-04 20:45:47.684 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3464 - WAL checkpoint TRUNCATE executed db_sha256=40915ba30c3c.
+2026-11-04 20:45:47.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3491 - Closed SQLite connection db_sha256=40915ba30c3c thread=8461753728.
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-retention_red/tests.xml -
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/DB/test_sync_log_retention.py::test_app_pass_prunes_both_stores
+1 failed in 1.33s

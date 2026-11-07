@@ -99,6 +99,9 @@ class ConsoleHarness(ConsolidatedCSSApp):
     async def on_mount(self) -> None:
         # This harness bypasses startup and directly mounts the ready Console.
         self.app_instance._ui_ready = True
+        if getattr(self.app_instance, "_test_prepare_console_send_sources", False):
+            trust = await self.app_instance.ensure_local_skill_trust_service()
+            assert self.app_instance.local_skills_service.trust_service is trust
         await self.push_screen(ChatScreen(self.app_instance))
 
 
