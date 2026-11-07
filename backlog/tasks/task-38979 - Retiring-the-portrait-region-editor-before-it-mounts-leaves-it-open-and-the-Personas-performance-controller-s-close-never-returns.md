@@ -1,10 +1,10 @@
 ---
 id: TASK-38979
 title: "Retiring the portrait region editor before it mounts leaves it open, and the Personas performance controller's close never returns"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: '2026-11-07 02:04'
+updated_date: '2026-11-07 02:19'
 labels:
 - follow-up
 - bug
@@ -52,7 +52,7 @@ The TASK-38747 branch adds only `PortraitRegionEditor.confirm_quit`; `retire`, `
 - [x] #2 The [close] case passes 20 of 20 serial runs and the file passes 3 of 3 runs at -n 4, with the load recorded (dev: [close] hung in 4 of 19 serial runs)
 - [x] #3 When a case in this file fails, the run still ends: no case holds pytest past --timeout in teardown
 - [x] #4 A Personas runtime-backend switch and a screen unmount made while a region editor is opening both complete
-- [ ] #5 Once green, the file joins the UI census with its measured serial time, and its shard stays at least 5 minutes under its cap
+- [x] #5 Once green, the file joins the UI census with its measured serial time, and its shard stays at least 5 minutes under its cap
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -75,7 +75,7 @@ The TASK-38747 branch adds only `PortraitRegionEditor.confirm_quit`; `retire`, `
 
 **Sibling site (review r11m-rev1).** `PortraitCompositionReview.retire()` had the same `is_mounted` gate, and its `close()` hung the same way. It gets the same fix (`self.call_later(self.retire)` before mount). New test `test_retiring_the_pair_review_before_it_mounts_still_closes_it[discard|close]` was red 2/2 before the fix ("retired before mount, the pair review stayed open (stack ['Screen', 'PersonasScreen', 'PortraitCompositionReview'])") and is green after. `close_bounded` now dismisses a leftover review too.
 
-**Placement (review r11m-rev2).** The tail block (the Promote node, the 17 quit-modal entries and the 30 region-editor entries) is ordered by `$FU/census_reorder.py`. Hot shards are the ones whose slowest UI Fast Lane job over the last 12 PR runs is not at least 5 min under the 20-min cap: 3 (16.9), 5 (16.7), 8 (15.3), 13 (16.1), 15 (15.0) and 19 (15.0), from `$FU/ui_shard_ci_minutes.json`. The lightest entries take the hot slots, hottest shard first, and the heaviest entries go to the coolest shards. Dealing is the checker's own (`entries[index::32]`), as `$FU/census_shards.py` reproduces. **Shortfall:** the block has 7 hot slots but only 3 entries under 5 s (at load ~70), so 4 hot slots still hold heavier entries. These are shard 8, the Promote node (13.0 s at load ~31); shard 13, `test_retiring_the_editor_before_it_mounts_still_closes_it[unmount]` (8.4 s); shard 15, `test_ctrl_q_waits_for_a_goal_that_is_starting` (13.5 s); and shard 19, `test_save_completion_drops_removed_validation_control` (14.5 s). Raised for the owner. **AC#5 is left open, and the task is In Progress, until the owner rules on the shortfall.** The hot shards were already over the line before these entries, and some entries cannot avoid them. **The final placement is set by the coordinator after the round-11 restack** (re-run `census_reorder.py` on the restacked tail); the shards below are this base's.
+**Placement (review r11m-rev2).** The tail block (the Promote node, the 17 quit-modal entries and the 30 region-editor entries) is ordered by `$FU/census_reorder.py`. Hot shards are the ones whose slowest UI Fast Lane job over the last 12 PR runs is not at least 5 min under the 20-min cap: 3 (16.9), 5 (16.7), 8 (15.3), 13 (16.1), 15 (15.0) and 19 (15.0), from `$FU/ui_shard_ci_minutes.json`. The lightest entries take the hot slots, hottest shard first, and the heaviest entries go to the coolest shards. Dealing is the checker's own (`entries[index::32]`), as `$FU/census_shards.py` reproduces. **Shortfall:** the block has 7 hot slots but only 3 entries under 5 s (at load ~70), so 4 hot slots still hold heavier entries. These are shard 8, the Promote node (13.0 s at load ~31); shard 13, `test_retiring_the_editor_before_it_mounts_still_closes_it[unmount]` (8.4 s); shard 15, `test_ctrl_q_waits_for_a_goal_that_is_starting` (13.5 s); and shard 19, `test_save_completion_drops_removed_validation_control` (14.5 s). The owner accepted these four as a stated exception (decision below). **The final placement is set by the coordinator after the round-11 restack** (re-run `census_reorder.py` on the restacked tail); the shards below are this base's.
 
 | Entry | Shard on this base (slowest recent CI min) | Serial s (load ~70) |
 |---|---|---|
@@ -109,6 +109,14 @@ The TASK-38747 branch adds only `PortraitRegionEditor.confirm_quit`; `retire`, `
 | `test_queued_dialog_validation_cannot_overwrite_discard_status` | 2 (14.3) | 16.9 |
 | `test_preview_budget_refusal_retains_foreign_reservation` | 3 (16.9) | 1.7 |
 | `test_retiring_the_editor_before_it_mounts_still_closes_it[discard]` | 4 (14.1) | 17.8 |
+
+**AC#5.** **Owner decision (2026-11-06):** "Accept, record exception: lane all 47; those four shards gain a few seconds each and stay under 17 min; record the AC as met with a stated exception and file a follow-up to rebalance or split the hot shards themselves."
+The criterion is met with this stated exception: four hot slots (shards whose slowest recent CI run is not at least 5 min under the 20-min cap) still hold an entry over 5 s:
+  - shard 8: the Promote node, `Tests/UI/test_response_rules_modal.py::test_a_confirmed_promote_keeps_the_manager_busy_and_open_until_it_reports`, 13.0 s (serial, load ~31);
+  - shard 13: `Tests/UI/test_portrait_region_editor.py::test_retiring_the_editor_before_it_mounts_still_closes_it[unmount]`, 8.4 s (serial, load ~70);
+  - shard 15: `Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_waits_for_a_goal_that_is_starting`, 13.5 s (serial, load ~70);
+  - shard 19: `Tests/UI/test_portrait_region_editor.py::test_save_completion_drops_removed_validation_control`, 14.5 s (serial, load ~70).
+The coordinator is filing the follow-up to rebalance or split the hot shards.
 
 **Verification after review r11m-rev1** (2026-11-07 UTC; the machine was shared, and the load is given for each run).
 - **Head.** 19 modal and fleet files under the scratch boot plugin, `-n 4`, load 20 to 80: 272 passed, 2 failed. The two failures are the inspector-section summary tests, which also fail on base.

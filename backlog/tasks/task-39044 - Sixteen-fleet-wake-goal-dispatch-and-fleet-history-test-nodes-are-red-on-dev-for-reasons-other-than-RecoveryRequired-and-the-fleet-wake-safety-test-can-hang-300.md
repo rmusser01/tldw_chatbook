@@ -4,7 +4,7 @@ title: "Sixteen fleet-wake, goal-dispatch and fleet-history test nodes are red o
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: '2026-11-07 02:04'
+updated_date: '2026-11-07 02:19'
 labels:
 - follow-up
 - tests
@@ -118,9 +118,11 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - **Defect B toast count.** The freshness node also asserts exactly one background toast (`_notify_console_run_outcome`, counted on the class before mount, so the screen's hook rebinding cannot route around it). Its receipt assert is covered under review r11m-rev2 below; the claim made here that a wake had no ordinary id held only in a chat with no earlier prepared turn.
 
 **Review r11m-rev2 fixes.**
-- **Defect B, wrong receipt id.** Once eligible, a wake's terminal transition published an ordinary receipt under `_ordinary_outcome_ids[session]`. That map is written only from a preparation id and never cleared, so in a chat with an earlier manual turn the wake published `turn:<old preparation>` with the old reply's id. That either added a receipt pointing at the old reply, or superseded the old turn's unacknowledged failure receipt with "done". The fix: at acceptance, an automatic-origin turn with no preparation drops the chat's stale ordinary outcome and assistant ids (`_notify_submission_accepted`), so it publishes no ordinary receipt. That is the pre-change behaviour, kept until the owner rules on whether a wake should publish one. The freshness node now runs one prepared manual turn in the target chat first and asserts the wake publishes no ordinary receipt. It was red 2/2 on `b3f9a0c61b` (`turn:<prep>` published) and green 3/3 after. `console_chat_controller.py` grew by 7 lines past its size row, which is raised to 29180 under the owner's size waiver.
+- **Defect B, wrong receipt id.** Once eligible, a wake's terminal transition published an ordinary receipt under `_ordinary_outcome_ids[session]`. That map is written only from a preparation id and never cleared, so in a chat with an earlier manual turn the wake published `turn:<old preparation>` with the old reply's id. That either added a receipt pointing at the old reply, or superseded the old turn's unacknowledged failure receipt with "done". The fix: at acceptance, an automatic-origin turn with no preparation drops the chat's stale ordinary outcome and assistant ids (`_notify_submission_accepted`), so it publishes no ordinary receipt. That is the pre-change behaviour, which the owner confirmed (see the decision below). The freshness node now runs one prepared manual turn in the target chat first and asserts the wake publishes no ordinary receipt. It was red 2/2 on `b3f9a0c61b` (`turn:<prep>` published) and green 3/3 after. `console_chat_controller.py` grew by 7 lines past its size row, which is raised to 29180 under the owner's size waiver.
 - **Re-sync pinned.** The `[superseded]` case no longer calls `_sync_console_agent_section()` after the held read. It waits up to 10 s for the re-keyed read to land, which only the coalesced sync the superseded read requests can start. With that request disabled temporarily, it was red 3/3 ("the re-keyed historical read never landed").
 - **Housekeeping.** `release_historical_presentation()` clears `_console_historical_read` and `_console_historical_kept` together. It runs at every reset without a re-key (no bridge, no chat, a non-native bridge, a cancelled read) and in `ChatScreen.on_unmount`. The superseded-branch comment now names live and child status moves as well as config writes.
+
+**Owner decision (2026-11-06), wake receipt:** "No receipt: keep today's behaviour — the ✓ and toast are the notice; the buddy's unseen pointer stays reserved for turns the user sent." This confirms 9ad83d929f: an automatic turn (wake, agent chat start, goal iteration) publishes no ordinary receipt. The freshness node pins that, and pins exactly one toast and the ✓.
 
 **Not laned.** No PR lane runs these files, and the criteria ask for none. They need TASK-38111 first.
 
