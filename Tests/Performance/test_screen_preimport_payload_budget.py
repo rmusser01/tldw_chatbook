@@ -171,7 +171,16 @@ MAX_PASS_ADDED_MODULES = 558
 #: `UI/Speech/speech_playback_mixin.py` (a clip handed to the default app is
 #: kept for the bound instead of deleted on Stop, and its progress polling
 #: ends); ADR-097 ledger.
-MAX_PASS_ADDED_LOC = 426_575
+#: 426,575 -> 427,830 (2026-11-07, PR #3361, TASK-38600; owner size waiver):
+#: paired arms measured dev cf24ef7ba3 426,575 -> head 427,830, +1,255.
+#: +1,209 is a move, not new code: the lint fix dropped `app.py`'s unused
+#: `LocalChatDictionaryService` import, so
+#: `Character_Chat/local_chat_dictionary_service` now loads on the `ccp` route
+#: instead of at app import (the boot is lighter by the same module; +1
+#: module, 557, under the 558 ceiling). The other +46 is the audit's fixes in
+#: already-resident modules (watchlists +50, settings +10, llm +2, schedules
+#: -16).
+MAX_PASS_ADDED_LOC = 427_830
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules

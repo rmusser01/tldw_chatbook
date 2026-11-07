@@ -553,6 +553,10 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
         await pilot.pause()
         table = pane.query_one("#sources-table", DataTable)
         table.focus()
+        # Let focus land first: `focus()` is deferred, and SourcesPane only
+        # acts on a highlight from a focused table (TASK-38586), as a real
+        # click or key press always is.
+        await pilot.pause()
         table.move_cursor(row=1, animate=False)
         pane.set_selected_source_ids((first["id"],))
         await pilot.pause()
