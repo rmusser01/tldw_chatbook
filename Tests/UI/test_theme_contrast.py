@@ -997,6 +997,163 @@ async def test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_ever
     assert not shortfalls, f"{len(shortfalls)} shortfalls:\n" + "\n".join(shortfalls)
 
 
+# TASK-38229 (WCAG 1.4.11): the caret Textual paints in every Input is a
+# block in $input-cursor-background over the field's fill, with the letter
+# under it in $input-cursor-foreground (textual/widgets/_input.py). No tcss
+# names either (the Console settings modal and the Workflows search restyle
+# only their own carets), so the theme's entries paint, and Textual's
+# defaults ($foreground, $background) were never measured against the fill a
+# focused field takes in this app (components/_forms.tcss `Input:focus`:
+# $ds-input-focus-bg, the house tint over the pane). On dev the block was
+# under 3:1 on 7 of the 89 measurable themes (pastel_dreams 1.77:1 on
+# $panel) and the letter under it under 4.5:1 on 4 (pastel_dreams 2.53:1).
+# themes.ensure_readable_text_hues now pins both per theme; the two gates
+# below hold it there, one at the resolved values and one as painted.
+CARET_PANES = ("surface", "panel", "background")
+CARET_TEXT = "typed 123"
+#: The typed text of a focused Input ($ds-text-primary on $ds-input-focus-bg
+#: over the pane) is under 4.5:1 on these (theme, pane) rows on dev today,
+#: measured as painted (2026-11-06, dev 8ae979d81b); TASK-38229 does not fix
+#: it (the guard pins the caret's two colours only, the Workflows search
+#: restyles its own field). AC#2 is "drops below 4.5:1 as a result", so each
+#: row is held at its dev value and every other row at 4.5:1.
+TYPED_TEXT_ON_DEV = {
+    ("atom-one-dark", "panel"): 4.33,
+    ("catppuccin-frappe", "panel"): 4.12,
+    ("catppuccin-macchiato", "panel"): 4.47,
+    ("catppuccin-mocha", "panel"): 4.19,
+    ("litestep", "background"): 3.47,
+    ("nord", "panel"): 4.47,
+}
+
+
+def _caret_fills(theme: Theme, table: dict) -> dict[str, Color]:
+    """The fill a focused field's caret sits on, per pane, as Textual composes
+    it: the house focus tint, tinted 5% toward $foreground (Textual's own
+    `Input:focus` background-tint, applied to the fill colour before it
+    composites: textual/widget.py `_get_styles_background`), over the pane.
+    Checked against the painted fills of 89 themes x 3 panes: 0 misses."""
+    tint = _translucent(_painted(table, "ds-input-focus-bg"))
+    text = Color.parse(table["foreground"]).with_alpha(0.05)
+    return {pane: Color.parse(table[pane]) + tint.tint(text) for pane in CARET_PANES}
+
+
+def _translucent(value: str) -> Color:
+    """A fill colour with its alpha ('#hexAA' or '#hex NN%', not composited)."""
+    suffixed = re.fullmatch(r"(.+) (\d{1,3})%", value)
+    if suffixed:
+        return Color.parse(suffixed[1]).multiply_alpha(int(suffixed[2]) / 100)
+    return Color.parse(value)
+
+
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_resolved_caret_clears_contrast_on_every_theme(theme: Theme) -> None:
+    """TASK-38229 AC#1 and AC#2 at the resolved values: the caret block reads
+    at 3:1 on a focused field's fill over every pane fields lay on, and the
+    letter under it at 4.5:1 on the block. On dev the block failed on
+    atom-one-dark, bunny_fluff, pastel_dreams, solarized_dark, solarized_light,
+    solarized-dark and tokyo-night (1.77:1 to 2.91:1), the letter on
+    bunny_fluff, pastel_dreams, solarized_light and sweet_sorbet (2.53:1 to
+    4.29:1); this PR's guard pins both, and leaves the other themes' caret as
+    Textual (or the theme) paints it."""
+    table = _painted_variables(theme)
+    fills = _caret_fills(theme, table)
+    block = _resolve_color(table["input-cursor-background"], fills["surface"])
+    for pane, fill in fills.items():
+        ratio = _ratio(block.hex, fill.hex)
+        assert ratio >= NON_TEXT, (
+            f"{theme.name}: caret block {block.hex} is {ratio:.2f}:1 on the focused "
+            f"field's {fill.hex} over ${pane} (needs {NON_TEXT}:1)"
+        )
+    ink = _resolve_color(table["input-cursor-foreground"], block)
+    ratio = _ratio(ink.hex, block.hex)
+    assert ratio >= AA, (
+        f"{theme.name}: the letter under the caret {ink.hex} is {ratio:.2f}:1 on the "
+        f"block {block.hex} (needs {AA}:1)"
+    )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_input_caret_paints_at_non_text_contrast_on_every_theme() -> None:
+    """TASK-38229 AC#1 and AC#2, painted under the production stylesheets on
+    every measurable theme: a plain Input on each of $surface, $panel and
+    $background, focused with a typed value. The caret's block on the blank
+    cell after the text reads at 3:1 against the field's fill beside it; the
+    letter under the caret reads at 4.5:1 on the block; and the typed text
+    not under the caret paints on the field's fill, at 4.5:1 or, on the six
+    TYPED_TEXT_ON_DEV rows dev already has under that, at its dev value. On
+    dev the block was under 3:1 on 7 themes (pastel_dreams 1.77:1 on $panel,
+    atom-one-dark 2.41:1, tokyo-night 2.73:1) and the letter under it under
+    4.5:1 on 4 (pastel_dreams 2.53:1, sweet_sorbet 4.29:1); this PR fixes
+    both through the theme guard, not CSS."""
+    from textual.containers import Horizontal, Vertical
+    from textual.widgets import Input
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+
+    class Fields(ConsolidatedCSSApp):
+        # One plain Input on each pane fill the app lays fields on.
+        CSS = "\n".join(
+            f"#pane-{pane} {{ background: ${pane}; width: 1fr; padding: 1; }}"
+            for pane in CARET_PANES
+        )
+
+        def compose(self):
+            with Horizontal():
+                for pane in CARET_PANES:
+                    with Vertical(id=f"pane-{pane}"):
+                        yield Input(id=f"field-{pane}")
+
+    app = Fields(css_path=[str(path) for path in APP_STYLESHEETS])
+    shortfalls: list[str] = []
+    read = 0
+    async with app.run_test(size=(90, 12)) as pilot:
+        for theme in ALL_THEMES:
+            app.register_theme(theme)
+        for field in app.query(Input):
+            field.cursor_blink = False  # the caret is read, not caught mid-blink
+        for theme in MEASURABLE_THEMES:
+            app.theme = theme.name
+            for pane in CARET_PANES:
+                field = app.query_one(f"#field-{pane}", Input)
+                field.value = ""
+                app.set_focus(field)
+                await pilot.pause()  # focus lands first: focusing selects the value
+                field.value = CARET_TEXT
+                field.cursor_position = len(CARET_TEXT)  # the caret on the blank cell after the text
+                await pilot.pause()
+                x, y = field.content_region.offset
+                end = x + len(CARET_TEXT)
+                ((_, block),) = _painted_line(app, y, end, end + 1, " ")
+                ((_, fill),) = _painted_line(app, y, end + 1, end + 2, " ")
+                typed = _painted_line(app, y, x, end, CARET_TEXT)
+                field.cursor_position = 0  # the caret over the first letter
+                await pilot.pause()
+                ((ink, under),) = _painted_line(app, y, x, x + 1, CARET_TEXT[0])
+                read += 1
+                where = f"{theme.name}: the caret on ${pane}"
+                if block == fill:
+                    shortfalls.append(f"{where} is not painted: {block} on {fill}")
+                if (ratio := _ratio(block, fill)) < NON_TEXT:
+                    shortfalls.append(f"{where}, block {block} is {ratio:.2f}:1 on the field's {fill}")
+                if under != block:
+                    shortfalls.append(f"{where}, the letter under it sits on {under}, not the block {block}")
+                if (ratio := _ratio(ink, under)) < AA:
+                    shortfalls.append(f"{where}, the letter under it {ink} is {ratio:.2f}:1 on {under}")
+                if len(typed) != len(CARET_TEXT):
+                    shortfalls.append(f"{where}, {len(typed)} of {len(CARET_TEXT)} typed cells painted")
+                floor = TYPED_TEXT_ON_DEV.get((theme.name, pane), AA)
+                for text_ink, text_fill in typed:
+                    if text_fill != fill:
+                        shortfalls.append(f"{where}, typed text sits on {text_fill}, not the field's {fill}")
+                    if (ratio := round(_ratio(text_ink, text_fill), 2)) < floor:
+                        shortfalls.append(f"{where}, typed text {text_ink} is {ratio:.2f}:1 on {text_fill} (floor {floor})")
+    assert len(MEASURABLE_THEMES) >= 89
+    assert read == len(MEASURABLE_THEMES) * len(CARET_PANES)
+    assert not shortfalls, f"{len(shortfalls)} shortfalls:\n" + "\n".join(shortfalls)
+
+
 # TASK-36479 (WCAG 1.4.11): every focus edge -- a border or outline set by a
 # `:focus`, `:focus-within` or `.*-focused` rule -- reads at 3:1 against
 # $surface, $panel and the fill its own rule paints over either. The edges
