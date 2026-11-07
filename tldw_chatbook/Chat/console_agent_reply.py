@@ -663,23 +663,32 @@ async def _run_agent_reply(
                     trusted_profile_user_message = candidate
             except KeyError:
                 pass
-        from .console_review_delivery import compose_turn_review_provider
+        from tldw_chatbook.Agents.code_review_models import review_turn_possible
 
-        code_review_provider = await compose_turn_review_provider(
-            self,
-            session_id=session_id,
-            message=trusted_profile_user_message,
-            roots=run_admitted_roots,
-            resolution=resolution,
-            conversation_id=conversation_id,
+        code_review_provider = None
+        # TASK-33620.15.53: an ordinary turn loads no review module, makes no hop.
+        if review_turn_possible(
+            getattr(trusted_profile_user_message, "content", None),
+            review_owner=getattr(self, "_code_review", None),
             wake_authorization=wake_authorization,
-            tool_configuration=turn_context.tool_configuration,
-            skill_bindings=skill_bindings,
-            project_selection=project_selection,
-            project_authority_guard=project_authority_guard,
-            confirm_project_dispatch=confirm_project_dispatch,
-            startup_candidate=startup_candidate,
-        )
+        ):
+            from .console_review_delivery import compose_turn_review_provider
+
+            code_review_provider = await compose_turn_review_provider(
+                self,
+                session_id=session_id,
+                message=trusted_profile_user_message,
+                roots=run_admitted_roots,
+                resolution=resolution,
+                conversation_id=conversation_id,
+                wake_authorization=wake_authorization,
+                tool_configuration=turn_context.tool_configuration,
+                skill_bindings=skill_bindings,
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+                confirm_project_dispatch=confirm_project_dispatch,
+                startup_candidate=startup_candidate,
+            )
         profile_provider = None
         if personal_context_service is not None and session is not None:
             profile_provider = await host.asyncio.to_thread(

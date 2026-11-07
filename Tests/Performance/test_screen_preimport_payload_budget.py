@@ -204,6 +204,11 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: warm-up list), modules exactly, no slack. RATCHET (ADR-097): never rises.
 #: No LOC row: a LOC pin with no slack would fail every edit that adds a line
 #: to one of these Console modules; the per-entry LOC is printed instead.
+#: 2026-11-05 (TASK-33620.15.53): ``Agents.agent_lesson_promotion`` takes the
+#: last slot, 93 -> 94 at this limit, not a raise (the owner declined one on
+#: 2026-10-31). Its ``Notes.agent_lessons`` import moved into the one function
+#: that uses it, so it adds one module, not two. The review service a first
+#: send also imported stays out: an ordinary turn no longer loads it.
 MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """

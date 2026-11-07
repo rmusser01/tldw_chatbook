@@ -15,8 +15,6 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
 
-from tldw_chatbook.Notes.agent_lessons import classify_lesson_credentials
-
 from .agent_models import (
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     ToolResult,
@@ -224,6 +222,10 @@ def assess_promotion_evidence(evidence: PromotionEvidence) -> PromotionEligibili
             evidence.rationale,
         )
     )
+    # Lazy (TASK-33620.15.53): the Console's first-send warm-up imports this
+    # module, and its ADR-097 row counts every module it pulls in.
+    from tldw_chatbook.Notes.agent_lessons import classify_lesson_credentials
+
     if not classify_lesson_credentials(credential_text).accepted:
         return PromotionEligibility(False, "credential_material_detected")
     return PromotionEligibility(True, "eligible", "proposal_only")

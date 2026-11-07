@@ -76,7 +76,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # owners pinned to exact measured sizes, with no spare budget.
 _BUDGETS: dict[str, int] = {
     # PR3346: extracted owners retain exact ceilings; no size-pin increases.
-    "tldw_chatbook/Chat/console_agent_reply.py": 1156,
+    # 2026-11-05 (TASK-33620.15.53, owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): 1156 -> 1165 (+9), run start's
+    # ordinary-turn check before it imports the review composition.
+    "tldw_chatbook/Chat/console_agent_reply.py": 1165,
     "tldw_chatbook/Chat/console_settings_persistence.py": 788,
     "tldw_chatbook/Chat/console_memory_banner.py": 207,
     "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": 193,
