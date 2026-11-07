@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 #: TASK-33620.15.1 (owner decision 2026-10-09): while the poll ticks (it
@@ -20,6 +21,13 @@ RUN_BACKSTOP_SECONDS = 1.0
 #: poll's next tick (this is the poll's own interval), so the syncs a run
 #: start requests share one projection.
 RUN_COALESCE_SECONDS = 0.2
+#: TASK-39145 (owner decision 2026-11-07): a core-state push that loses its
+#: probe of the config locks retries on its own after this long, instead of
+#: replaying the whole FULL sync ...
+CORE_PUSH_RETRY_DELAY = 0.5
+#: ... at most this many times in one episode (about 3 s), then stops. A
+#: config.toml that cannot be parsed is then named on the status strip.
+CORE_PUSH_RETRIES = 6
 _clock = time.monotonic
 _POLL_TICK: ContextVar[bool] = ContextVar("console_poll_tick", default=False)
 #: The running sync is the poll's (set at its entry, for its own task).
@@ -445,6 +453,7 @@ def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
             checked_projection=projection,
         )
 
+    sync_config_unreadable_notice(screen)
     if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
         screen, "_closing", False
     ):
@@ -483,17 +492,28 @@ def sync_console_core_state(screen) -> None:
     would-wait probe held the UI loop 238 ms; a cold read rebuilt config on it.
     The replayed pass pushes after its preparation warmed config off-loop, and
     pushes live if config is still cold (an unparseable file stays cold).
+
+    TASK-39145 (owner decision 2026-11-07): a lost probe no longer replays the
+    whole sync. With config.toml unparseable, failing reads hold both locks
+    through each rebuild, and under load the replays lost every probe. The push
+    now retries alone, ``CORE_PUSH_RETRIES`` times ``CORE_PUSH_RETRY_DELAY``
+    apart, then stops; if the file cannot be parsed, the status strip says so
+    until the next good load. It still never reads config without both locks.
     """
     from tldw_chatbook import config
 
     from .console_spend_projection import defer_cold_live_read
 
+    sync_config_unreadable_notice(screen)
+    contended = True
     with ExitStack() as held:
         for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
             if not lock.acquire(blocking=False):
                 break
             held.callback(lock.release)
         else:
+            contended = False
+            _end_core_push_contention(screen)
             if not defer_cold_live_read(screen, "sync_console_core_state"):
                 request = getattr(screen, "_console_config_handoffs", {}).get("core")
                 try:
@@ -504,8 +524,77 @@ def sync_console_core_state(screen) -> None:
                 return
     request = _owe_console_config_sync(screen, "core")
     if request is not None and request.token is not None:
-        request.retire(owed=True)  # One guarded attempt; whole replay still owns it.
-    replay_whole_console_sync(screen)
+        # One guarded attempt; the push's own retry (TASK-39145) or the
+        # whole replay still owns it.
+        request.retire(owed=True)
+    if contended:
+        _retry_core_push_later(screen)
+    else:
+        replay_whole_console_sync(screen)
+
+
+def _end_core_push_contention(screen) -> None:
+    """A won probe ends the episode: no retry is owed (TASK-39145)."""
+    screen._console_core_push_retries = 0
+    timer = getattr(screen, "_console_core_push_timer", None)
+    if timer is not None:
+        screen._console_core_push_timer = None
+        timer.stop()
+
+
+def _retry_core_push_later(screen) -> None:
+    """Owe one push-only retry, or stop and name an unreadable config.toml."""
+    from tldw_chatbook import config
+
+    attempts = getattr(screen, "_console_core_push_retries", 0) + 1
+    screen._console_core_push_retries = attempts
+    if attempts <= CORE_PUSH_RETRIES:
+        if getattr(screen, "_console_core_push_timer", None) is None:
+            screen._console_core_push_timer = screen.set_timer(
+                CORE_PUSH_RETRY_DELAY, partial(retry_console_core_push, screen)
+            )
+        return
+    if (
+        getattr(screen, "_console_config_unreadable_installs", None) is None
+        and config.get_config_load_failure() is not None
+    ):
+        # Once per episode: until a good load moves the install count.
+        screen._console_config_unreadable_installs = config._CONFIG_CACHE_INSTALLS
+        sync_config_unreadable_notice(screen)
+
+
+def retry_console_core_push(screen) -> None:
+    """Run only the core-state push that lost its config-lock probe."""
+    screen._console_core_push_timer = None
+    if getattr(screen, "_closing", False) or getattr(
+        screen, "_console_sync_maintenance_paused", False
+    ):
+        return  # The resume's replayed FULL probes again.
+    sync_console_core_state(screen)
+
+
+def sync_config_unreadable_notice(screen) -> None:
+    """Paint the unreadable-config notice, or clear it after a good load.
+
+    TASK-39145 (owner decision 2026-11-07). The notice stands from the install
+    count recorded when the push stopped until any good load installs config
+    (``_CONFIG_CACHE_INSTALLS`` moves); that also starts a new episode. Called
+    by FULL and control-bar syncs and by a successful readiness read.
+    """
+    from tldw_chatbook import config
+
+    installs = getattr(screen, "_console_config_unreadable_installs", None)
+    if installs is not None and installs != config._CONFIG_CACHE_INSTALLS:
+        installs = screen._console_config_unreadable_installs = None
+        screen._console_core_push_retries = 0
+    shown = installs is not None
+    if not shown and not getattr(screen, "_console_config_unreadable_painted", False):
+        return  # Nothing shown or to clear: no DOM query on the sync path.
+    from ...Widgets.Console.console_status_chips import ConsoleStatusChips
+
+    for chips in screen.query(ConsoleStatusChips):
+        chips.sync_config_unreadable(shown)
+    screen._console_config_unreadable_painted = shown
 
 
 

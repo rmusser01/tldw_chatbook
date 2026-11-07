@@ -692,6 +692,9 @@ class ConsoleReadinessConfigProjection:
             self._retry_delay = 0.0
             installed = True
             retry = False
+            from .config_sync import sync_config_unreadable_notice
+
+            sync_config_unreadable_notice(self.screen)  # A good load clears it.
         except Exception:  # noqa: BLE001 - remain cold and retryable.
             return
         except BaseException:

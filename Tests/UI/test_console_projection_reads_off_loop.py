@@ -545,7 +545,8 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
     gate's 238 ms probe stall, main thread in ``config_participants.operation``),
     and a cold cache made the push rebuild config on the UI loop. The push now
     holds both locks, so no read starts under it, and replays the whole sync
-    when another thread holds a lock or a live read would be cold.
+    when a live read would be cold. TASK-39145 (owner decision 2026-11-07):
+    when another thread holds a lock it owes one push-only retry instead.
     """
     from types import SimpleNamespace
 
@@ -562,7 +563,7 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
         app_instance = app = SimpleNamespace(app_config={"disk-loaded": True})
 
         def __init__(self):
-            self.pushes, self.replays = 0, []
+            self.pushes, self.replays, self.timers = 0, [], []
 
         def _console_config_snapshot_is_disk_loaded(self, value):
             return bool(value)
@@ -583,6 +584,12 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
 
         def _request_console_control_bar_sync(self, *, delayed=False):
             self.replays.append(delayed)
+
+        def set_timer(self, delay, callback):
+            timer = SimpleNamespace(delay=delay, callback=callback, stopped=False)
+            timer.stop = lambda: setattr(timer, "stopped", True)
+            self.timers.append(timer)
+            return timer
 
     screen = Screen()
     config_sync.sync_console_core_state(screen)
@@ -605,23 +612,26 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
         release.set()
         holder.join(5)
     assert screen.pushes == 1, "the push ran while another thread held a config lock"
-    assert screen.replays == [True] and screen._console_control_bar_replay_whole_sync
+    # TASK-39145: a push-only retry, not a whole-sync replay.
+    assert screen.replays == [] and not screen._console_control_bar_replay_whole_sync
+    assert [timer.delay for timer in screen.timers] == [config_sync.CORE_PUSH_RETRY_DELAY]
 
     warm["settings"] = None  # An external edit or a save left the cache cold.
     config_sync.sync_console_core_state(screen)
+    assert screen.timers[0].stopped, "a won probe left its owed retry armed"
     assert screen.pushes == 1, "the push would rebuild config on the UI loop"
-    assert screen.replays == [True, True]
+    assert screen.replays == [True]
 
     # An unparseable config.toml stays cold for good: one deferral per episode.
     config_sync.sync_console_core_state(screen)  # The replay pushes live.
     assert screen.pushes == 2, "a still-cold replay deferred again (replay loop)"
     config_sync.sync_console_core_state(screen)  # Same episode: no new replay.
-    assert screen.pushes == 3 and screen.replays == [True, True]
+    assert screen.pushes == 3 and screen.replays == [True]
     warm["settings"] = {}
     config_sync.sync_console_core_state(screen)  # A warm push ends the episode,
     warm["settings"] = None
     config_sync.sync_console_core_state(screen)  # so a later cold one defers once.
-    assert screen.pushes == 4 and screen.replays == [True, True, True]
+    assert screen.pushes == 4 and screen.replays == [True, True]
 
 
 def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monkeypatch):
@@ -1118,6 +1128,115 @@ async def test_a_finite_checked_reader_leaves_a_core_push_release_window(request
     assert (
         first["identity"] >= 1
     ), f"finite reader released but identity never ran: {first}"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_core_push_held_off_by_failing_reads_stops_and_says_so(
+    request, monkeypatch
+):
+    """TASK-39145 (owner decision 2026-11-07): bounded stop and a notice.
+
+    With config.toml unparseable, a failing read holds both config locks
+    through its rebuild. Each lost probe used to replay the whole FULL sync,
+    for as long as the reads kept the locks. The push now retries on its own,
+    at most ``CORE_PUSH_RETRIES`` times, then stops and says on the status
+    strip that the file cannot be read. A good load clears the notice and the
+    next push runs. A real failing read is parked here, holding both locks,
+    and every retry is fired by hand: no clock.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleStatusChips,
+    )
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(0.5)
+
+            async def no_full_sync(*_args, **_kwargs):  # Only this test drives it.
+                return False
+
+            monkeypatch.setattr(console, "_sync_native_console_chat_ui", no_full_sync)
+            pushes, replays, shown = [], [], []
+            real_push = console._sync_console_chat_core_state
+
+            def push():
+                if sys._getframe(1).f_code is config_sync.sync_console_core_state.__code__:
+                    pushes.append(1)
+                return real_push()
+
+            monkeypatch.setattr(console, "_sync_console_chat_core_state", push)
+            real_replay = config_sync.replay_whole_console_sync
+            monkeypatch.setattr(
+                config_sync,
+                "replay_whole_console_sync",
+                lambda screen: replays.append(screen) or real_replay(screen),
+            )
+            chips = console.query_one(ConsoleStatusChips)
+            real_notice = getattr(chips, "sync_config_unreadable", None)
+            if real_notice is not None:
+
+                def notice(on):  # Records each change the strip shows.
+                    if on != chips._config_unreadable:
+                        shown.append(on)
+                    real_notice(on)
+
+                monkeypatch.setattr(chips, "sync_config_unreadable", notice)
+
+            def notice_visible() -> bool:
+                return any(
+                    segment.name == "config-unreadable" and segment.visible
+                    for segment in chips._build_segments()
+                )
+
+            path = config._get_effective_config_path()
+            original = path.read_bytes()
+            path.write_bytes(original + b"\n[unterminated\n")
+            await asyncio.to_thread(config.load_settings, True)  # Fails; recorded.
+            assert config.get_config_load_failure() is not None
+            entered, release = threading.Event(), threading.Event()
+            real_aside = config._preserve_corrupt_config_aside
+
+            def parked_aside(config_path):  # Runs inside the failing rebuild.
+                entered.set()
+                release.wait(30)
+                return real_aside(config_path)
+
+            monkeypatch.setattr(config, "_preserve_corrupt_config_aside", parked_aside)
+            reader = threading.Thread(target=config.load_settings, args=(True,))
+            reader.start()
+            try:
+                assert await asyncio.to_thread(entered.wait, 10)
+                limit = getattr(config_sync, "CORE_PUSH_RETRIES", 6)
+                config_sync.sync_console_core_state(console)  # A FULL's own probe.
+                for attempt in range(limit):
+                    timer = getattr(console, "_console_core_push_timer", None)
+                    assert timer is not None, (
+                        f"probe {attempt + 1} lost the config locks and scheduled no "
+                        f"push retry (whole-sync replays requested: {len(replays)})"
+                    )
+                    timer.stop()
+                    config_sync.retry_console_core_push(console)
+                assert console._console_core_push_timer is None, (
+                    f"the push kept retrying past {limit} retries"
+                )
+                assert pushes == [] and replays == [], (pushes, len(replays))
+                assert notice_visible(), "the push stopped without saying why"
+                config_sync.sync_console_core_state(console)  # A later FULL's probe.
+                assert console._console_core_push_timer is None and replays == []
+                assert shown == [True], f"the notice was not shown once: {shown}"
+            finally:
+                release.set()
+                await asyncio.to_thread(reader.join, 10)
+                path.write_bytes(original)
+            await asyncio.to_thread(config.load_settings, True)  # A good load.
+            config_sync.sync_console_core_state(console)
+            assert pushes == [1], "the first push after a good load did not run"
+            assert not notice_visible(), "the notice outlived a good config load"
+            assert shown == [True, False]
 
 
 def _refused_warm_up(monkeypatch, console):

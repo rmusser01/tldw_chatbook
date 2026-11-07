@@ -1504,6 +1504,13 @@ this tab's in-flight run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   all and the row scrolls to it and keeps it in view as the window or the
   chips before it change (unless you scroll the row away from it), and
   back to its start when focus leaves.
+- **The status strip says "Config file can't be read: showing the last loaded
+  settings".** Your `config.toml` has a syntax error, so the Console keeps
+  using the settings it last loaded. When repeated failed reads of the file
+  keep the Console from refreshing your provider and model choice, it retries
+  for about three seconds, then stops and shows this notice once. Fix the file
+  (a copy of the unreadable version is kept beside it); the notice clears once
+  the file loads again, and the next refresh picks up your settings.
 - **The status strip shows no "Context" figure.** While the model's context
   window is unknown the cost chip leaves the context share out (hover it for
   why). It only matters if a send is refused, and then the refusal names the
