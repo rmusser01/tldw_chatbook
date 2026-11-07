@@ -27,6 +27,13 @@ from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
 from Tests.console_provider_doubles import provider_resolution, with_destination
 
+# TASK-38111: the real ConsoleChatController reads config (its constructor,
+# hook admission, the regenerate path), which the per-test TLDW_CONFIG_PATH
+# redirect refuses (RecoveryRequired raw_source_selection_changed; hook
+# admission reports it as "Hooks unavailable"). Keep the collection-time
+# sandbox profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _store_with_db(tmp_path):
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")

@@ -48,19 +48,30 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
 )
 
+# TASK-38111: improve() resolves the rewrite persona through the Internal
+# Prompts registry, a get_cli_setting read the per-test TLDW_CONFIG_PATH
+# redirect refuses (RecoveryRequired raw_source_selection_changed). Keep the
+# collection-time sandbox profile; `scratch_cli_config` selects its own.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def scratch_cli_config(tmp_path, monkeypatch):
     """Point config at a throwaway file so internal-prompt resolution never
     reads the host config (TASK-32479: trusted_optimizer_instructions now
     resolves prompt_improvement.rewrite through the Internal_Prompts
-    registry, which consults [internal_prompts] overrides)."""
-    from tldw_chatbook import config
+    registry, which consults [internal_prompts] overrides).
+
+    TASK-38111: a bare ``TLDW_CONFIG_PATH`` redirect plus a forced reload is
+    refused (``RecoveryRequired: raw_source_selection_changed``), so select a
+    fresh config source for the file. The resolver imports config lazily, so
+    no namespace needs binding."""
+    from Tests.Backup_Recovery.config_test_support import select_config_source
     from tldw_chatbook.Internal_Prompts import resolver
 
     config_file = tmp_path / "config.toml"
     config_file.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
+    config = select_config_source(monkeypatch, config_file)
     config.load_settings(force_reload=True)
     resolver._warned_ids.clear()
     yield

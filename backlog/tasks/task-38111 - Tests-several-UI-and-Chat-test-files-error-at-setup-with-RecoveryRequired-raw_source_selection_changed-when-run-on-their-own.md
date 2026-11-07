@@ -3,9 +3,10 @@ id: TASK-38111
 title: >-
   Tests: several UI and Chat test files error at setup with RecoveryRequired
   raw_source_selection_changed when run on their own
-status: To Do
-assignee: []
-updated_date: '2026-11-06 06:56'
+status: Done
+assignee:
+  - '@claude'
+updated_date: '2026-11-06 22:54'
 created_date: '2026-10-30 05:56'
 labels:
   - tests
@@ -31,7 +32,54 @@ For test_trace_export_ui.py the traceback is: Tests/UI/conftest.py _disable_mode
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each listed file passes, or fails only on its own assertions, under the plain one-file command on a clean checkout
-- [ ] #2 The fix does not bind config to the developer's real profile (the conftest's documented trap)
-- [ ] #3 The cause of each listed file is confirmed from its own traceback, not assumed from test_trace_export_ui.py
+- [x] #1 Each listed file passes, or fails only on its own assertions, under the plain one-file command on a clean checkout
+- [x] #2 The fix does not bind config to the developer's real profile (the conftest's documented trap)
+- [x] #3 The cause of each listed file is confirmed from its own traceback, not assumed from test_trace_export_ui.py
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Run every listed file alone through the scratch-profile wrapper on the base (dev 2684e5453f), plus the files the round-11 brief adds (Tests/RAG_Search/test_keyword_leg_*.py, Tests/Library/test_library_ingest_runner.py); read each file's own tracebacks (AC#3). Files green on the base: run them at the filing commit ff815f8559 too, and find the commit that greened them.
+2. Fix each red file with the repo's existing profile seams, in test code only (no production change, no change to `RecoveryRequired` admission):
+   - tests that read config but select no profile of their own: the `bootstrap_profile` marker (the shared, per-test-restored collection-time sandbox profile);
+   - fixtures that redirect `TLDW_CONFIG_PATH` and force a reload: `Tests/Backup_Recovery/config_test_support.select_config_source`, binding the module namespaces that hold config imports.
+3. Re-run each file alone (red-before / green-after table), a broad `-n 4` regression set on head and on fu-base-r11 (Tests/UI, Tests/Chat, Tests/Wizards, Tests/Prompt_Management, Tests/RAG_Search, Tests/Library, as practical), Tests/CI, preflight and bootbudget.
+4. Prove AC#2 with a wrapper run of the fixed files whose scratch HOME stays empty of profile paths and whose real-profile guard records no refusal.
+
+## Implementation Notes
+
+**Approach.** The config source binds, for the whole process, to the profile its first guarded read selected (`raw_participants._register_raw_participant`); `Tests/conftest.py`'s eager imports make that the collection-time sandbox profile. A plain test's per-test `TLDW_CONFIG_PATH` redirect then makes every later config read fail closed with `raw_source_selection_changed`. That refusal is production behaviour and is unchanged. Each file now uses one of the two profile seams the suite already has, in test code only:
+- `pytestmark = pytest.mark.bootstrap_profile` where the tests, or the code they drive, read config but select no profile of their own: `Tests/UI/test_console_inspector_focus_carriers.py`, `Tests/Chat/test_trajectory_capture.py`, `Tests/Chat/test_console_chat_controller.py`, `Tests/Prompt_Management/test_prompt_improvement_service.py`, `Tests/Library/test_library_ingest_runner.py` and the five `Tests/RAG_Search/test_keyword_leg_*.py` files.
+- `Tests/Backup_Recovery/config_test_support.select_config_source` in the two fixtures that redirected `TLDW_CONFIG_PATH` and force-reloaded: the wizard suite's `temp_config` (binding `provider_setup_persistence`, whose module-level writer import otherwise refuses the new profile: without it 5 tests fail with `fully_applied` False, measured) and the prompt suite's `scratch_cli_config` (the resolver imports config lazily, so nothing to bind).
+
+No production file, conftest, `Tests/private_profile.py`, app_factory or run.sh change. The eager `Chunking` import in `Tests/conftest.py` is not the cause: without it the first test's own profile would bind the source and every later test in the worker would be refused instead.
+
+**Causes, each from the file's own traceback (AC#3).** One file per command through run.sh at `-n 4`: "Before" on the read-only base worktree (dev 2684e5453f), "After" on this branch. Both columns were run twice, before and after a machine reboot, with identical counts. A serial run (`-p no:xdist`) of the eleven edited files on this branch gave the same After counts.
+
+| File | Before (base) | After (head) | Cause read from its traceback |
+|---|---|---|---|
+| UI/test_trace_export_ui.py | 20 errors at ff815f8559; 23 passed on base | unchanged file, 23 passed | `Tests/UI/conftest.py:193` lazy app import ran `app.py:693 APP_CONFIG = load_settings()`; 36e0f56c7c (TASK-36945.3) removed that read |
+| UI/test_console_inspector_workflow.py | 35 errors at ff815f8559; 35 passed on base | unchanged file, 35 passed | same as above |
+| UI/test_non_obscuring_focus_contract.py | 98 errors at ff815f8559; 98 passed on base | unchanged file, 98 passed | same as above |
+| UI/test_console_inspector_focus_carriers.py | 14 failed, 1 passed | 15 passed | `_build_test_app` -> `app_factory.build_test_app_config` -> `load_settings()` (14/14) |
+| Chat/test_trajectory_capture.py | 10 failed, 22 passed (one hit the 300 s timeout) | 31 passed, 1 failed (own assertion) | `ConsoleChatController.__init__` and `admitted` reads; hook admission's swallowed refusal ("Hooks unavailable") |
+| Wizards/test_first_run_setup_integration.py | 24 passed, 17 errors | 41 passed | `temp_config:25` force reload under the redirect (17/17) |
+| Prompt_Management/test_prompt_improvement_service.py | 49 failed, 53 passed, 3 errors | 105 passed | `scratch_cli_config` redirect (3); `improve()` -> Internal Prompts resolver `get_cli_setting` (49) |
+| Chat/test_console_chat_controller.py | 206 failed, 159 passed | 330 passed, 35 failed (own assertions) | hook admission `read_hooks_config_snapshot` ("Hooks unavailable") and controller config reads; cascades (unknown session, StopIteration) |
+| RAG_Search/test_keyword_leg_chacha.py | 13 failed | 13 passed | `RAGConfig.__post_init__` -> `default_chroma_persist_directory` -> `get_user_data_dir` |
+| RAG_Search/test_keyword_leg_db_resolution.py | 11 failed | 11 passed | same |
+| RAG_Search/test_keyword_leg_prompts.py | 14 failed, 2 passed | 16 passed | same |
+| RAG_Search/test_keyword_leg_pushdown.py | 12 failed, 10 passed | 22 passed | same |
+| RAG_Search/test_keyword_leg_tiered_merge.py | 22 failed | 22 passed | same (one via `MediaDatabase.__init__`) |
+| Library/test_library_ingest_runner.py | 86 failed, 70 passed, 1 skipped | 154 passed, 2 failed (own assertion), 1 skipped | `_resolve_ingest_backend` `get_cli_setting` (75), Parakeet source service, parse-pool sizing |
+
+The 38 remaining red nodes (35 + 1 + 2) each fail alone in their own process the same way, on stale assertions or fakes the wall had hidden (for example `got an unexpected keyword argument` in test-defined fakes, `'Accepted turn ownership changed before settlement.' == 'Session closed.'`, `error_detail` missing df22692d70's two diagnostic keys). One of them, `test_accepted_send_survives_prompt_history_maintenance_refusal`, still raises `raw_source_selection_changed`, from its own `raw._raw_participant(history)` call: since 2bce8ffa0f the guard derives the prompt-history path from the bound config's data directory, which the test's `default_prompt_history_path` stub no longer controls. That holds under any profile, so it is a stale test, not this redirect. All 38 are proposed as follow-ups (filed by the round-11 filing task), not fixed here.
+
+**AC#2 evidence.** A run.sh run of all 14 files with a fresh scratch HOME and a throwaway per-test probe (`-p`, never committed; it compared path strings and opened nothing): 955 tests, the scratch HOME still held only the five directories run.sh creates, 0 real-profile guard refusals, and for every one of the 955 tests the config source was bound either to the bootstrap profile under `TLDW_TEST_CONFIG_ROOT` (921) or to a fresh source under the run's basetemp (34). 0 resolved or bound under the real home's profile roots. The run itself: 38 failed (exactly the residual nodes above), 916 passed, 1 skipped.
+
+**Regression (head vs base, `-n 4`, same command on both trees, run concurrently at load 40-150).**
+- Tests/Wizards, Tests/Prompt_Management, Tests/RAG_Search and Tests/Library: 7106 nodes on both trees. Base 6676 passed / 394 failed / 22 errors / 14 skipped; head 6903 / 187 / 2 / 14. Files whose counts changed: the eight edited files in these directories (all better), plus two unedited files with flaky nodes (test_embeddings_performance 2 -> 1 failed, test_first_run_setup_wizard 6 -> 5 failed). One node was worse on head, `test_first_run_setup_wizard.py::test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary` (unedited file); alone it failed 2 of 9 runs on head and 2 of 9 on base.
+- Every Tests/UI, Tests/Chat, Tests/integration and Tests/Backup_Recovery file that imports from an edited module, plus the edited and base-green listed files there (23 files): 1718 nodes on both trees. Base 676 passed / 1032 failed / 10 errors; head 872 / 836 / 10. Changed files: test_console_chat_controller, test_trajectory_capture and test_console_inspector_focus_carriers (all better), plus two unedited files that each had one fewer failure on head (test_console_fleet_wake_safety, test_console_runtime_shutdown). One node was worse on head, `test_console_durable_progress.py::test_durable_discard_contention_keeps_mounted_reads_and_heartbeat_responsive[dispose]` (unedited file); alone it passed 3 of 3 runs on both trees. The 836 reds that remain are in files outside this task's list and are equally red on base, mostly `test_library_shell.py` (779 `RecoveryRequired`).
+- Tests/CI at `-n 4`: 1215 passed, 1 skipped. Boot budget ratchets (bootbudget.sh): 32 passed. Preflight passed.
+
+No new test was added. The red evidence is each file's Before column: every edited file was red on base with `RecoveryRequired` and is green after, apart from its own assertions.
