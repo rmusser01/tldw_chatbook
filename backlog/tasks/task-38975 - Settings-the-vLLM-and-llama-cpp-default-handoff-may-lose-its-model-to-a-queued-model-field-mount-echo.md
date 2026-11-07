@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-07 01:38
+updated_date: 2026-11-07 02:55
 labels:
 - follow-up
 - settings
@@ -73,3 +73,5 @@ Review r11g-rev1 I1: the endpoint field had the same race. A held endpoint mount
 - The provider Select has a late mount echo too: its held `Select.Changed` carried `llama_cpp` (the saved provider) while the Select already showed `vllm`. Handled, it re-applied llama.cpp and the draft emptied. `handle_provider_value_changed` returns on `event.value != event.select.value` as well.
 - The held-echo test now holds all three echoes and checks the endpoint field. Red with the review head's sources: `assert None is not None` (the draft was gone). With the endpoint guard but no Select guard it was still `draft is None`, from the Select echo. Without the Select hold, the model and endpoint guards passed. With both guards the whole file passes (2 passed).
 - Covering run (run.sh, `-n 4`): the Select guard broke `test_settings_provider_blank_select_value_is_not_treated_as_provider` (task-565). That test posts a synthetic `Select.Changed(provider, Select.NULL)` to a Select built with `allow_blank=False`. The guard now lets a `Select.NULL` event through, so task-565's pin holds unchanged, and a stale echo carrying a real provider is still skipped.
+
+Re-review r11g-rev2: the held-echo test now also asserts that the provider echo was captured (`held["settings-provider-value"].value == "llama_cpp"`).

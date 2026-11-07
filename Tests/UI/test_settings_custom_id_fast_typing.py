@@ -124,6 +124,7 @@ async def test_a_late_mount_echo_keeps_the_handoffs_model_and_typing_still_stage
         assert held["settings-provider-endpoint-value"].value == (
             "http://127.0.0.1:9099"  # the saved endpoint
         )
+        assert held["settings-provider-value"].value == "llama_cpp"  # saved provider
         assert adapter.value == "chatbook-vllm"
         assert endpoint.value == target.api_url
 

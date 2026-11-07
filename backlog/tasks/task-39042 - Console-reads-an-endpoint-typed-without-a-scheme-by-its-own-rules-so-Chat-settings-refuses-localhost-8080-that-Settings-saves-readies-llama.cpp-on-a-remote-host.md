@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-07 00:06
+updated_date: 2026-11-07 02:55
 labels:
 - follow-up
 - console
@@ -101,3 +101,10 @@ Review r11g-rev1:
   - Red with the sources at the review head c19f090442 (run.sh, load about 90): 8 failed. Examples: `assert 'localhost:8080' == 'http://localhost:8080'`; QwenCloud "invalid API base URL setting"; and the snapshot refused its draft. Green after.
   - aphrodite, oobabooga, tabbyapi and koboldcpp take no endpoint argument (their adapters read config); a probe showed them Ready with `http://` bases.
 - M4: `console.md` now names any `127.x.x.x` address and `[::1]` as on this computer.
+
+Re-review r11g-rev2 (Minor):
+- `read_schemeless_loopback` checked the whole netloc, so `localhost:8080@gpu-box.lan:9000` became `http://localhost:8080@gpu-box.lan:9000` (host gpu-box.lan). It now returns the value unchanged when the netloc holds "@"; the contract refuses user info first anyway. `test_a_loopback_spelling_before_user_info_is_never_read_as_loopback` covers three values, the helper and vLLM readiness. It was red before for two of them (`'http://local...-box.lan:9000' == 'localhost:80...-box.lan:9000'`); `[::1]:8080@evil.example` was already left alone. Green after.
+- aphrodite, koboldcpp, oobabooga and tabbyapi got no `api_base_url` and read their own config raw. So a hand-edited `localhost:8080/v1` that readiness accepts, and that the gateway pinned as `http://`, would have been sent without a scheme. Their adapters take `api_base_url` before config, so the gateway's prepared and plain kwargs builders now pin the resolved base for them (`_CONFIG_READING_LOCAL_KEYS`). The auxiliary builder already pinned it for every provider.
+  - `test_a_hand_edited_schemeless_loopback_endpoint_is_sent_as_readiness_reads_it` uses a stub adapter and no network. It was red before (`None == 'http://localhost:8080/v1'` for all four) and is green after.
+  - `console_provider_gateway.py` is re-pinned at 8,497 under the owner waiver.
+- Left alone, as the coordinator asked: `normalize_llamacpp_base_url` accepting any host, and old remote llama.cpp chats (to be filed as follow-ups).

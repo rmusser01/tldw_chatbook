@@ -1925,3 +1925,79 @@ def test_a_chat_settings_draft_with_a_schemeless_loopback_endpoint_restores():
 
     assert restored is not None
     assert restored.settings.base_url == "localhost:8080"
+
+
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "localhost:8080@gpu-box.lan:9000",
+        "127.0.0.1:1@203.0.113.9",
+        "[::1]:8080@evil.example",
+    ],
+)
+def test_a_loopback_spelling_before_user_info_is_never_read_as_loopback(typed):
+    """TASK-39042 review r11g-rev2: ``read_schemeless_loopback`` checked the
+    whole netloc, so ``localhost:8080@gpu-box.lan:9000`` became
+    ``http://localhost:8080@gpu-box.lan:9000``, whose host is gpu-box.lan."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        read_schemeless_loopback,
+    )
+
+    assert read_schemeless_loopback(typed) == typed
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="vllm", model="m", base_url=typed),
+        app_config={"api_settings": {"vllm": {"api_url": "http://127.0.0.1:8000/v1"}}},
+        environ={},
+    )
+    assert readiness.blocker == "endpoint_invalid", readiness
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "configured", "sent"),
+    [
+        ("aphrodite", "localhost:8080/v1", "http://localhost:8080/v1"),
+        ("oobabooga", "127.0.0.1:5000/v1", "http://127.0.0.1:5000/v1"),
+        ("tabbyapi", "[::1]:5000/v1", "http://[::1]:5000/v1"),
+        (
+            "koboldcpp",
+            "localhost:5001/api/v1/generate",
+            "http://localhost:5001/api/v1/generate",
+        ),
+    ],
+)
+async def test_a_hand_edited_schemeless_loopback_endpoint_is_sent_as_readiness_reads_it(
+    provider, configured, sent
+):
+    """TASK-39042 review r11g-rev2: these four adapters got no
+    ``api_base_url`` and read their own config raw, so a hand-edited
+    ``localhost:8080/v1`` that readiness accepts (and the gateway pinned as
+    ``http://``) would reach the server without its scheme. The adapter takes
+    ``api_base_url`` before its config, so the stub sees the URL it would use."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+    key = provider_endpoint_key(provider)
+    calls: list[dict] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {key: configured, "model": "m", "api_key": "k"}}
+        },
+        environ={},
+        chat_api_call_fn=adapter,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, explicit_model="m", streaming=False)
+    )
+
+    assert resolution.ready, resolution.visible_copy
+    [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    assert calls[0].get("api_base_url") == sent

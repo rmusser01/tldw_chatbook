@@ -703,6 +703,8 @@ def read_schemeless_loopback(endpoint: str) -> str:
         netloc = urlsplit(f"http://{raw}").netloc
     except ValueError:
         return endpoint
+    if "@" in netloc:  # user info: the host is after it (the contract refuses)
+        return endpoint
     return f"http://{raw}" if is_exact_schemeless_host(netloc) else endpoint
 
 
