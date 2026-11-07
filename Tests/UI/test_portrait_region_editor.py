@@ -935,7 +935,12 @@ async def test_save_completion_drops_removed_validation_control(
 
     try:
         async with asyncio.timeout(15):
-            while not isinstance(app.screen, region_ui().PortraitRegionEditor):
+            # Mounted, not only pushed: _pressed ignores an editor that is
+            # not current yet, and a loaded machine shows the gap.
+            while not (
+                isinstance(app.screen, region_ui().PortraitRegionEditor)
+                and app.screen._current()
+            ):
                 await Pilot(app).pause()
         modal = app.screen
         monkeypatch.setattr(modal, "_save", held_save)

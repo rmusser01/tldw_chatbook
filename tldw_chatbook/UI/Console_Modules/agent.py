@@ -2799,6 +2799,13 @@ class ConsoleAgentController:
                                 self._historical_owner(current_key),
                                 value,
                             )
+                            # Nothing else is bound to ask again: request
+                            # the sync that re-keys and re-reads.
+                            repaint = getattr(
+                                self._screen, "_request_console_agent_fleet_sync", None
+                            )
+                            if callable(repaint):
+                                repaint()
                     return
                 state["value"] = value
             except asyncio.CancelledError:
