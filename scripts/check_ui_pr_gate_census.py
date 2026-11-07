@@ -730,7 +730,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR3323 integration: preserve1311 selectors and append4 verified readiness/modal entries.
 # PR3330 integration appends the coded Send strip selector.
 # PR3333 integration appends the recorded MiniMax Stop outcome file.
-MINIMUM_FILES = 1813
+MINIMUM_FILES = 1815
 # 2026-10-26, Roleplay frame B2b (TASK-33910.4), owner decision (expand
 # limits, never contort code): appends Tests/UI/test_roleplay_import_sniff.py
 # at the tail (the last assignment is the one that takes effect). History:
@@ -837,6 +837,8 @@ MINIMUM_FILES = 1813
 # five heaviest tests) at the tail, split so they spread over consecutive
 # shards. The floor is the measured entry count.
 # TASK-33621.59 (2026-11-06): append the four Stop-during-a-failed-commit
+# TASK-33621.59 review (2026-11-06): append the two Stop-during-a-card-retry
+# nodes at the tail. The floor is the measured entry count.
 
 
 def read_census(path: Path) -> list[str]:
