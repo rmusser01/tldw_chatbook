@@ -27,6 +27,23 @@ refusal with appropriately scoped evidence, or state that its payload is unavail
 - If the holder may release before you capture it, record each acquirer through a delegating proxy over the module's lock. A `Condition` built on the original lock still works, because the proxy takes the same underlying lock.
 - Load the probe with `PYTEST_PLUGINS`, from a runner that adds its directory to `PYTHONPATH`. That reaches xdist workers and private-profile children in both worktrees, without putting a file in either.
 
+## A Console test that pushes its own ChatScreen loses the transcript to the reused route (TASK-39120, 2026-11-07)
+
+**Incident.** `test_manual_stream_completes_once_across_real_navigation` built `ChatScreen(app)`, pushed it, sent a turn, navigated to Library and back through `NavigateToScreen`, and found the "Setup complete" empty state instead of the reply, which was in the store. Since fed0b7257a (TASK-31520, 2026-09-05) the Console route reuses the app's own installed ChatScreen, and the runtime's view stays attached across a suspend. So the return showed the app's ChatScreen, not the pushed one. A probe on that screen read `_console_attach_reconciled=False` and `running=False` for 18 s, with an empty `ConsoleTranscript._messages`: it never attached. The wake-render test in the same file failed the same way. Its helper also asserted `chat2 is not chat, "screens are never cached"`, which TASK-31520 made false. Getting the seed's Console through the route (`_navigate(app, pilot, "chat", ...)`) made both tests pass.
+
+**What to do.** A mounted Console test that navigates away and back must take its Console from the route, never construct one. If a navigation test reads an empty transcript while the store has the rows, check the screen's identity and its attach flags before suspecting the render.
+
+## Neither a probe process nor the loop's CPU time turns a loaded host's latency miss into a verdict (TASK-38948, 2026-11-07)
+
+**Incident.** Three ways to keep the 100 ms Send-feedback budgets from failing as product regressions on a loaded host were tried, and the first two were wrong:
+- A separate probe process slept 1 ms at a time, and its late wakes were subtracted from each wall-clock interval. At load 104-130 the Send-button case read 406 ms, of which the probe accounted for 181 ms, so it still failed. The scheduler favours a thread that mostly sleeps, so the probe stalls far less than the CPU-bound event loop thread.
+- The probe was then used only as a contention signal (stalled at least 10% of the window). At load 48 an input interval read 181 ms while the probe had stalled 9 ms.
+- The event loop thread's own CPU time over the Sending interval (`time.thread_time()` stamped on the loop at both ends) was then held to the budget at any load. That read at most 49 ms (median 35) in 39 of 40 cases, but 258 ms in one case at load 31 with no product change, so work that is not the Send's own landed in the window.
+
+The shipped rule fails a wall-clock miss only while the 1-minute load average is under the CPU count. At or over it, the miss is reported with the loop's CPU time and its off-CPU time. A 150 ms delay before the Sending paint, busy-waiting or sleeping, fails both cases when the load reading is forced to 0, and is reported at load 46-63.
+
+**What to do.** Do not infer a busy thread's lost time from another process's sleep latency. Do not assume the loop's CPU in a window is the measured path's alone. Gate a wall-clock budget on a whole-host signal (load average against CPU count). Prove the negative control under the quiet-host verdict, and say plainly that a loaded host only reports.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
