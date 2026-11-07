@@ -243,7 +243,24 @@ def strip_text(host, screen) -> str:
     return painted_region(host, strips[0].region)
 
 
+def select_toggle_laid_out(screen) -> bool:
+    """Whether the Select toggle is mounted, enabled and has cells to click."""
+    return any(
+        toggle.region.width > 0 and not toggle.disabled
+        for toggle in screen.query("#library-notes-select-toggle").results(Button)
+    )
+
+
 async def enter_select_mode(host, pilot, screen) -> None:
+    # Wait for the toggle's layout, not a longer timeout. Right after a
+    # recompose (opening a note re-shapes the list pane) the toggle exists
+    # with an empty region, and a click on it lands at (0, 0): the Home tab
+    # (measured at load ~25, 2 runs in 6; focus ended on ``nav-home``).
+    await until(
+        pilot,
+        lambda: select_toggle_laid_out(screen),
+        lambda: f"the Select toggle to be laid out: {painted(host)}",
+    )
     await pilot.click("#library-notes-select-toggle")
     await until(
         pilot,
