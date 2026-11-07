@@ -29,6 +29,7 @@ import pytest
 
 from Tests.ChaChaNotesDB.note_trace_census import (
     note_id_columns,
+    note_id_json_paths,
     note_traces,
     value_traces,
 )
@@ -50,14 +51,24 @@ _CONTENT_TOKEN = "plutonium"
 _KEYWORD_TOKEN = "quokkatag"
 #: The agent receipt the soft delete cancels into a replay guard (m-1).
 _GUARD_RECEIPT = "receipt-guard-1"
-#: Review R0, m-2: what a purge KEEPS on purpose, by table.column -- Sync v2
-#: organization state that by its v58 contract holds logical ids only, never
-#: a title or text (``chachanotes_v57_to_v58_notes_organization_sync.sql``).
-#: A pending link intent must still reach the server, in order; a head is the
-#: server's acknowledged state a later link tombstone builds on.
+#: What a purge KEEPS on purpose -- Sync v2 organization HEADS, the server's
+#: acknowledged state, which by the v58 contract hold logical ids only, never
+#: a title or text (``chachanotes_v57_to_v58_notes_organization_sync.sql``):
+#: the keyword-link and folder-link heads the fixture seeds. PR #3423 Qodo 2
+#: took the note's organization INTENTS off this list: review R0's m-2
+#: (8639dcae88) kept them, "A pending link intent must still reach the
+#: server, in order", and that let a link to a purged note be published. A
+#: purge now cancels the unacknowledged ones and scrubs the acknowledged ones
+#: (``CharactersRAGDB._NOTE_PURGE_ORGANIZATION_SQL``).
 _ID_ONLY_TOMBSTONES = {
-    "notes_organization_sync_intents.payload_json": 1,
-    "notes_organization_heads.payload_json": 1,
+    "notes_organization_heads.payload_json": 2,
+    "notes_organization_heads.payload_json$.note_id": 1,
+    "notes_organization_heads.payload_json$.subject_id": 1,
+}
+#: The column-level part of it, for the token scan (``value_traces`` sees
+#: columns, not JSON paths).
+_ID_ONLY_COLUMNS = {
+    where: rows for where, rows in _ID_ONLY_TOMBSTONES.items() if "$" not in where
 }
 
 
@@ -151,9 +162,10 @@ class _Purgeable:
                 "VALUES (?, ?)",
                 (self.note_id, _HEX),
             )
-            # Review R0, m-2: Sync v2 organization state naming the note --
-            # a pending keyword-link intent and its acknowledged head. By the
-            # v58 contract these hold logical ids only, never the note's text.
+            # Review R0, m-2 and PR #3423 Qodo 2: Sync v2 organization state
+            # naming the note. A keyword link acknowledged once, its pending
+            # successor, a pending folder link, and both links' acknowledged
+            # heads. By the v58 contract these hold logical ids only.
             link = json.dumps(
                 {
                     "subject_type": "note",
@@ -161,24 +173,44 @@ class _Purgeable:
                     "keyword_sync_id": "kw-sync-1",
                 }
             )
-            connection.execute(
-                "INSERT INTO notes_organization_sync_intents(intent_id, "
-                "intent_sequence, server_profile_id, dataset_id, domain, "
-                "object_id, operation, schema_version, encryption_policy, "
-                "payload_json, payload_hash, source_version, created_at) VALUES "
-                "('org-intent-1', 1, 'p', 'd', 'notes.keyword_link', 'link-1', "
-                "'upsert', 1, 'server_trusted_v1', ?, ?, 1, 't')",
-                (link, _HEX),
+            folder_link = json.dumps(
+                {"note_id": self.note_id, "folder_sync_id": "folder-sync-1"}
             )
-            connection.execute(
-                "INSERT INTO notes_organization_heads(server_profile_id, dataset_id, "
-                "domain, object_id, operation, schema_version, encryption_policy, "
-                "payload_json, payload_hash, object_revision, object_hash, "
-                "server_cursor, deleted, apply_state, applied_at, updated_at) "
-                "VALUES ('p', 'd', 'notes.keyword_link', 'link-1', 'upsert', 1, "
-                "'server_trusted_v1', ?, ?, 1, ?, 'c1', 0, 'applied', 't', 't')",
-                (link, _HEX, _HEX),
+            # (intent id, sequence, predecessor, domain, object, operation,
+            #  payload, source version, acknowledged at)
+            intents = (
+                ("org-intent-1", 1, None, "notes.keyword_link", "link-1")
+                + ("upsert", link, 1, "t"),
+                ("org-intent-2", 2, "org-intent-1", "notes.keyword_link", "link-1")
+                + ("tombstone", link, 2, None),
+                ("org-intent-3", 3, None, "notes.folder_link", "link-2")
+                + ("upsert", folder_link, 1, None),
             )
+            for intent in intents:
+                connection.execute(
+                    "INSERT INTO notes_organization_sync_intents(intent_id, "
+                    "intent_sequence, predecessor_intent_id, server_profile_id, "
+                    "dataset_id, domain, object_id, operation, payload_json, "
+                    "source_version, acknowledged_at, schema_version, "
+                    "encryption_policy, payload_hash, created_at) VALUES "
+                    "(?, ?, ?, 'p', 'd', ?, ?, ?, ?, ?, ?, 1, 'server_trusted_v1', "
+                    "?, 't')",
+                    (*intent, _HEX),
+                )
+            for domain, object_id, payload in (
+                ("notes.keyword_link", "link-1", link),
+                ("notes.folder_link", "link-2", folder_link),
+            ):
+                connection.execute(
+                    "INSERT INTO notes_organization_heads(server_profile_id, "
+                    "dataset_id, domain, object_id, operation, schema_version, "
+                    "encryption_policy, payload_json, payload_hash, "
+                    "object_revision, object_hash, server_cursor, deleted, "
+                    "apply_state, applied_at, updated_at) VALUES ('p', 'd', ?, ?, "
+                    "'upsert', 1, 'server_trusted_v1', ?, ?, 1, ?, 'c1', 0, "
+                    "'applied', 't', 't')",
+                    (domain, object_id, payload, _HEX, _HEX),
+                )
 
     def connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path)
@@ -203,6 +235,10 @@ def test_delete_forever_leaves_no_row_that_names_the_note(tmp_path) -> None:
             f"{table}.{column}"
             for table, column in note_id_columns(connection)
             if f"{table}.{column}" not in before
+        ] + [
+            f"{table}.{column}{path}"
+            for table, column, path in note_id_json_paths(connection)
+            if f"{table}.{column}{path}" not in before
         ]
         assert not unfilled, (
             "a discovered note-id column the fixture does not fill -- teach "
@@ -355,7 +391,7 @@ def test_a_token_scan_of_every_column_finds_only_id_only_tombstones(tmp_path) ->
 
     The note's id (bare and as JSON), a word of its title, a word of its body
     and its own keyword: before the purge each is found; afterwards nothing
-    is, except the id-only Sync v2 organization rows the purge keeps (m-2)
+    is, except the id-only Sync v2 organization heads the purge keeps (m-2)
     and the tag's own rows. The FTS index's own blocks are scanned too --
     an FTS ``'delete'`` leaves a word's bytes in older segments until the
     purge's ``'optimize'`` merges them.
@@ -378,7 +414,7 @@ def test_a_token_scan_of_every_column_finds_only_id_only_tombstones(tmp_path) ->
     kept = {where: rows for where, rows in after.items() if not _the_tag_itself(where)}
     assert kept == {
         f"{where}:{needle}": rows
-        for where, rows in _ID_ONLY_TOMBSTONES.items()
+        for where, rows in _ID_ONLY_COLUMNS.items()
         for needle in (seed.note_id, json.dumps(seed.note_id))
     }, kept
     assert {str(row[0]) for row in tag_rows} <= {"keywords"}, tag_rows
