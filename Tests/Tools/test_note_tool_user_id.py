@@ -274,20 +274,26 @@ import asyncio, json, os
 from pathlib import Path
 import tldw_chatbook.config as config
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+from tldw_chatbook.app_services import open_profile_storage
 
-assert config.chachanotes_db is None, "something already created the DB"
+assert not hasattr(config, "chachanotes_db"), "config holds no database (TASK-36947.6)"
 real = config.get_cli_setting
 config.get_cli_setting = lambda s, k, d=None: True if s == "tools" else real(s, k, d)
-tool = BuiltinToolProvider()._tools["create_note"]
+storage = open_profile_storage(
+    client_id=config.CLI_APP_CLIENT_ID, chachanotes=config.get_chachanotes_db_path()
+)
+tool = BuiltinToolProvider(storage_provider=lambda: storage)._tools["create_note"]
 result = asyncio.run(tool.execute(title="fresh", content="process"))
-db = config.chachanotes_db
+db = storage.chachanotes
 print(json.dumps({"result": result, "db_path": str(Path(db.db_path_str).resolve()) if db else None}))
 """
 
 
 def test_note_tools_succeed_in_a_process_where_nothing_created_the_db():
     """AC#3: base failed with 'No unified database template for
-    NotesInteropService' because config.chachanotes_db was still None."""
+    NotesInteropService' because config.chachanotes_db was still None. Since
+    TASK-36947.6 the process opens its storage through the shared factory and
+    hands it to the registrar."""
     import json
     import os
     import subprocess
@@ -328,12 +334,27 @@ def test_service_cache_reuses_for_same_db_and_rebuilds_for_another(tmp_path):
         two.close()
 
 
-def test_registrar_default_getter_is_resolved_at_call_time(monkeypatch):
-    """A patch of config's lazy getter after the provider is built must apply."""
-    import tldw_chatbook.config as config_module
-    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+def test_registrar_storage_is_resolved_at_call_time():
+    """The note tools read their host's storage when they run, not when built."""
+    from types import SimpleNamespace
 
-    provider = BuiltinToolProvider()
+    from tldw_chatbook.Agents.tool_catalog import (
+        build_gateable_tool,
+        gateable_builtin_tools,
+    )
+
+    current = {"storage": None}
+    entry = next(e for e in gateable_builtin_tools() if e.tool_name == "create_note")
+    tool = build_gateable_tool(entry, lambda: current["storage"])
+    assert tool._db_provider() is None
     sentinel = object()
-    monkeypatch.setattr(config_module, "get_chachanotes_db_lazy", lambda: sentinel)
-    assert provider._chachanotes_db_provider() is sentinel
+    current["storage"] = SimpleNamespace(chachanotes=sentinel)
+    assert tool._db_provider() is sentinel
+
+
+@pytest.mark.asyncio
+async def test_note_tools_without_a_host_database_report_it_unavailable():
+    """No config global to fall back on (TASK-36947.6): no provider, no DB."""
+    nmt._reset_notes_service_cache()
+    result = await nmt.CreateNoteTool().execute(title="t", content="c")
+    assert "unavailable" in result.get("error", ""), result

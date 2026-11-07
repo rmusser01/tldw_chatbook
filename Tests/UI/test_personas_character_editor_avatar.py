@@ -204,12 +204,12 @@ def stub_character_with_avatar(monkeypatch, seeded_character_with_avatar):
         "image": seeded_character_with_avatar["image"],
     }
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+        character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: (
+        lambda _db, character_id: (
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )
@@ -247,12 +247,12 @@ def stub_character_with_wide_avatar(monkeypatch, seeded_character_with_wide_avat
         "image": seeded_character_with_wide_avatar["image"],
     }
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+        character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: (
+        lambda _db, character_id: (
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )

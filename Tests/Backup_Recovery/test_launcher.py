@@ -206,7 +206,6 @@ def guarded(name, *args, **kwargs):
         if condition in unlocked:
             from tldw_chatbook import config
             assert config.get_encryption_password() == 'unlock-sentinel'
-            assert config.chachanotes_db is None and config.media_db is None and config.prompts_db is None
         if condition == 'encrypted-reset':
             from tldw_chatbook import config
             assert config.get_encryption_password() is None

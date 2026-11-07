@@ -846,21 +846,8 @@ def list_character_tags(db: CharactersRAGDB) -> List[str]:
         return []
 
 
-def _get_default_chachanotes_db() -> Optional[CharactersRAGDB]:
-    """Return the app's default character DB when legacy callers omit one."""
-    try:
-        from tldw_chatbook.config import get_chachanotes_db_lazy
-
-        return get_chachanotes_db_lazy()
-    except Exception as exc:
-        logger.opt(exception=True).error(
-            f"Unable to resolve default character database: {exc}"
-        )
-        return None
-
-
 def fetch_character_names(
-    db: Optional[CharactersRAGDB] = None, limit: int = 1000
+    db: Optional[CharactersRAGDB], limit: int = 1000
 ) -> List[Dict[str, Any]]:
     """Compatibility wrapper used by older CCP handlers.
 
@@ -868,18 +855,16 @@ def fetch_character_names(
     the full library (e.g. paged/search-backed listings) should pass an
     explicit ``limit``.
     """
-    target_db = db or _get_default_chachanotes_db()
-    if target_db is None:
+    if db is None:
         return []
-    return get_character_list_for_ui(target_db, limit=limit)
+    return get_character_list_for_ui(db, limit=limit)
 
 
 def fetch_all_dictionaries(
-    db: Optional[CharactersRAGDB] = None, limit: int = 1000
+    db: Optional[CharactersRAGDB], limit: int = 1000
 ) -> List[Dict[str, Any]]:
     """Compatibility wrapper used by older CCP dictionary handlers."""
-    target_db = db or _get_default_chachanotes_db()
-    if target_db is None:
+    if db is None:
         return []
 
     try:
@@ -887,7 +872,7 @@ def fetch_all_dictionaries(
             list_chat_dictionaries,
         )
 
-        return list_chat_dictionaries(target_db, limit=limit)
+        return list_chat_dictionaries(db, limit=limit)
     except Exception as exc:
         logger.opt(exception=True).error(f"Unable to fetch chat dictionaries: {exc}")
         return []

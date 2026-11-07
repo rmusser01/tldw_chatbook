@@ -62,7 +62,7 @@ class SaveHold:
 @asynccontextmanager
 async def lore_app(mock_app_instance, tmp_path, monkeypatch, **hold_options):
     db = CharactersRAGDB(tmp_path / "lore.db", "responsive-lore-settings")
-    monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: db)
+    monkeypatch.setattr("tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: db)
     manager = WorldBookManager(db)
     first = manager.create_world_book("First Lore", description="original")
     second = manager.create_world_book("Second Lore")

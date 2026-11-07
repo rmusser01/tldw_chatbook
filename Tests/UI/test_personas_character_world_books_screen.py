@@ -92,12 +92,12 @@ def stub_characters_for_worldbooks(monkeypatch, seeded_character_with_worldbook)
         "version": 1,
     }
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+        character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: (
+        lambda _db, character_id: (
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )
@@ -168,12 +168,12 @@ class TestCharacterWorldBooksScreenWiring:
             "version": 1,
         }
         monkeypatch.setattr(
-            character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+            character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
         )
         monkeypatch.setattr(
             character_handler_module,
             "fetch_character_by_id",
-            lambda character_id: (
+            lambda _db, character_id: (
                 dict(record) if str(character_id) == str(char_id) else None
             ),
         )
@@ -225,12 +225,12 @@ def stub_character_for_standalone_worldbook(
         "version": 1,
     }
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+        character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: (
+        lambda _db, character_id: (
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )
@@ -409,7 +409,7 @@ class TestCharacterAttachmentsWrapperGating:
         # paint (which shows the card and this wrapper), so the no-selection
         # state this test pins needs an empty library.
         monkeypatch.setattr(
-            character_handler_module, "fetch_all_characters", lambda: []
+            character_handler_module, "fetch_all_characters", lambda _db: []
         )
         mock_app_instance.chachanotes_db = worldbooks_db
         mock_app_instance.chat_dictionary_scope_service = None

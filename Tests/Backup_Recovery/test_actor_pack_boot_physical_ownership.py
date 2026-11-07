@@ -94,7 +94,8 @@ async def settle(predicate):
         await asyncio.sleep(.005)
 
 async def exercise():
-    database = config.get_chachanotes_db_lazy()
+    from tldw_chatbook.app_services import open_chachanotes_db
+    database = open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
     host = Host(database)
     database.close_connection()
     original = host.actor_pack_repository.list_persona_intents

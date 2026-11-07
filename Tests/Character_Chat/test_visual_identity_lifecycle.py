@@ -412,11 +412,14 @@ def test_valid_profile_owned_fork_is_terminal_without_package_reads_or_warning(
     assert warnings == []
 
 
-def test_config_eager_and_lazy_paths_seed_the_exact_constructed_database(
-    monkeypatch: pytest.MonkeyPatch,
+def test_tui_open_seeds_the_exact_constructed_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
+    """The TUI's ChaChaNotes open (TASK-36947.6) seeds what the opener built."""
     from Tests.Backup_Recovery.config_test_support import install_config_source
     config = install_config_source(monkeypatch)
+    import tldw_chatbook.app as app_module
+    import tldw_chatbook.DB.ChaChaNotes_DB as chachanotes_module
 
     created: list[object] = []
     seeded: list[object] = []
@@ -425,19 +428,11 @@ def test_config_eager_and_lazy_paths_seed_the_exact_constructed_database(
         def __init__(self, *args, **kwargs):
             created.append(self)
 
-    monkeypatch.setattr(config, "CharactersRAGDB", FakeCharactersDB)
-    monkeypatch.setattr(config, "PromptsDatabase", lambda *args, **kwargs: object())
-    monkeypatch.setattr(config, "MediaDatabase", lambda *args, **kwargs: object())
+    monkeypatch.setattr(chachanotes_module, "CharactersRAGDB", FakeCharactersDB)
     monkeypatch.setattr(config, "seed_builtin_content", seeded.append)
-    monkeypatch.setattr(config, "chachanotes_db", None)
+    set_app_global(monkeypatch, "get_chachanotes_db_path", lambda: tmp_path / "c.db")
 
-    config.initialize_all_databases()
-    assert seeded == [created[0]]
-
-    created.clear()
-    seeded.clear()
-    monkeypatch.setattr(config, "chachanotes_db", None)
-    config.get_chachanotes_db_lazy()
+    assert app_module._open_profile_chachanotes({}) is created[0]
     assert seeded == [created[0]]
 
 
@@ -458,9 +453,9 @@ def test_app_injected_notes_database_uses_shared_seed_helper_once(
     monkeypatch.setattr(app_module, "seed_builtin_content", record_seed)
     set_app_global(
         monkeypatch,
-        "get_chachanotes_db_lazy",
-        lambda: pytest.fail("injected DB should not use lazy construction"),
+        "_open_profile_chachanotes",
+        lambda _config: pytest.fail("injected DB should not open another"),
     )
 
-    assert app_module._select_profile_database(SimpleNamespace(db=db)) is db
+    assert app_module._select_profile_database(SimpleNamespace(db=db), {}) is db
     assert seeded == [db]

@@ -2645,3 +2645,15 @@ async def test_serve_wiring_attaches_relay_only_when_broker_exists(
     finally:
         await service.shutdown()
         await broker.aclose()
+
+
+async def test_engine_agent_tools_use_the_engine_storage(tmp_path: Path) -> None:
+    """TASK-36947.6: the mobile bridge's note and expand tools get the engine's
+    own factory-opened storage (ADR-234 isolation), not a config global."""
+    service = _reading_service(tmp_path)
+    assert service.workspace_registry is not None  # builds the engine
+    engine = service._engine
+    try:
+        assert engine.bridge._storage_provider() is engine.storage
+    finally:
+        await asyncio.wait_for(service.shutdown(), timeout=15)

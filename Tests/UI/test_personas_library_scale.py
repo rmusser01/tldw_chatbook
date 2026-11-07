@@ -17,8 +17,8 @@ Harness: mirrors ``test_personas_character_world_books_screen.py`` — a real
 ``CharactersRAGDB`` seeded via ``add_character_card`` and fed to the delegating
 ``PersonasTestApp`` from ``test_personas_dictionaries.py``. The screen's paged
 loader (and its import/save paths) resolve the character DB through
-``ccp_character_handler._default_character_db()`` →
-``config.get_chachanotes_db_lazy()``, so the harness points that resolver at the
+``PersonasScreen._character_db()`` (the app's ``services.storage``), so the
+harness points that resolver at the
 seeded DB (and also sets ``chachanotes_db`` on the mock app for good measure).
 """
 
@@ -27,7 +27,6 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-import tldw_chatbook.config as config_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.personas_screen import PERSONAS_LIBRARY_PAGE_SIZE
 from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
@@ -68,8 +67,8 @@ def _pane_visible_rows(pane: PersonasLibraryPane) -> int:
 async def _personas(mock_app_instance, db, monkeypatch):
     """Mount PersonasScreen over a real CharactersRAGDB and settle mount work."""
     # The screen's character DB resolver (import/export/save + the paged loader)
-    # goes through the lazy global getter; route it at the seeded DB.
-    monkeypatch.setattr(config_module, "get_chachanotes_db_lazy", lambda: db)
+    # reads the services bundle; route it at the seeded DB.
+    mock_app_instance.services.storage.chachanotes = db
     mock_app_instance.chachanotes_db = db
     mock_app_instance.chat_dictionary_scope_service = None
     app = PersonasTestApp(mock_app_instance)

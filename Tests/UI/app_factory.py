@@ -183,7 +183,7 @@ def persist_seeded_config(app, *sections: str) -> None:
 def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     """Give a factory-built app the durable ChaChaNotes DB a real send needs.
 
-    TASK-21590. `_build_test_app` patches `get_chachanotes_db_lazy` to `None`,
+    TASK-21590. `_build_test_app` patches `_open_profile_chachanotes` to `None`,
     so a factory app boots with `chachanotes_db = None`. `ConsoleRuntime.
     ensure_chat_store` then builds the Console store with `persistence=None` --
     and since TASK-19900.3's review-fix commit `56db75386` a durable Console
@@ -409,7 +409,7 @@ def _build_test_app(
         for ctx in (
             patch_app_global("load_settings", return_value=fake_app_config),
             patch_app_global("get_cli_setting", side_effect=fake_cli_setting),
-            patch_app_global("get_chachanotes_db_lazy", return_value=None),
+            patch_app_global("_open_profile_chachanotes", return_value=None),
             # task-32059: `__init__` stamps `[library.rail_state] lifecycle
             # = "unknown"` for a profile this run created, and the sandbox
             # creates one per test. A factory app that goes on to CLEAR

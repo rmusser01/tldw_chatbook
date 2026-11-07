@@ -55,7 +55,6 @@ from textual.screen import Screen
 from textual.widget import Widget
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
-import tldw_chatbook.config as config_module
 import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
 from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
@@ -201,12 +200,12 @@ def seed_mock_characters(
     from Tests.UI.test_personas_dictionaries import patch_character_paging
 
     monkeypatch.setattr(
-        handler, "fetch_all_characters", lambda: [dict(r) for r in records]
+        handler, "fetch_all_characters", lambda _db: [dict(r) for r in records]
     )
     monkeypatch.setattr(
         handler,
         "fetch_character_by_id",
-        lambda character_id: next(
+        lambda _db, character_id: next(
             (dict(r) for r in records if str(r["id"]) == str(character_id)), None
         ),
     )
@@ -271,9 +270,8 @@ def character_db_in_use(
 ) -> Iterator[None]:
     """Route Roleplay's character and lore database reads and writes to ``db``.
 
-    Roleplay resolves its character DB through ``config.get_chachanotes_db_lazy``
-    at call time (``ccp_character_handler._default_character_db`` and
-    ``Character_Chat_Lib._get_default_chachanotes_db``); lore reads
+    Roleplay resolves its character DB through ``PersonasScreen._character_db``
+    (the app's ``services.storage``) at call time; lore reads
     ``app.chachanotes_db``. A ``:memory:`` DB cannot serve (one connection per
     thread: the screen's off-thread page reads would see an empty database).
 
@@ -286,7 +284,7 @@ def character_db_in_use(
     """
     if app_instance is not None:
         app_instance.chachanotes_db = db
-    with patch.object(config_module, "get_chachanotes_db_lazy", lambda: db):
+    with patch.object(PersonasScreen, "_character_db", lambda _self: db):
         yield
 
 

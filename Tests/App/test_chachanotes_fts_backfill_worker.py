@@ -5,49 +5,61 @@ current, plus built-in seeding) is a multi-second step that no cancel can
 stop. On Windows that creation outlived the app's exit and the 3 s worker join
 in test teardown once timers stopped slowing the test bodies.
 
-The backfill's existence check and ``get_chachanotes_db_lazy`` both call
-``config.get_chachanotes_db_path()`` with no arguments, so they name the same
-file; these tests stub that one function to pin the branch.
+Since TASK-36947.6 the backfill only uses the database the app already opened,
+``services.storage.chachanotes``; it never opens one itself.
 """
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook import app_feature_glue, config
+from tldw_chatbook import config
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.app_services import ProfileStorage
 
 
 @pytest.fixture
-def lazy_calls(tmp_path, monkeypatch) -> list[str]:
-    """Point ChaChaNotes at a scratch path and record every lazy-open attempt."""
-    calls: list[str] = []
-    monkeypatch.setattr(config, "chachanotes_db", None)
+def backfilled(tmp_path, monkeypatch) -> list[object]:
+    """Point ChaChaNotes at a scratch path and record every backfilled database."""
+    import tldw_chatbook.DB.base_db as base_db
+    import tldw_chatbook.DB.chachanotes_fts_backfill as fts_backfill
+
+    calls: list[object] = []
     monkeypatch.setattr(
         config,
         "get_chachanotes_db_path",
         lambda **_kwargs: tmp_path / "ChaChaNotes.db",
     )
+    monkeypatch.setattr(base_db, "operation_owned_connection", lambda _db: nullcontext())
     monkeypatch.setattr(
-        app_feature_glue, "get_chachanotes_db_lazy", lambda: calls.append("open")
+        fts_backfill,
+        "backfill_chachanotes_messages_fts",
+        lambda db, **_kwargs: calls.append(db),
     )
     return calls
 
 
-def test_backfill_skips_a_profile_with_no_chachanotes_database(lazy_calls):
-    TldwCli._backfill_chachanotes_messages_fts(SimpleNamespace())
-    assert lazy_calls == []
+def _app(chachanotes: object | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        services=SimpleNamespace(storage=ProfileStorage(chachanotes=chachanotes))
+    )
 
 
-def test_backfill_opens_an_existing_database_file(tmp_path, lazy_calls):
-    (tmp_path / "ChaChaNotes.db").touch()
-    TldwCli._backfill_chachanotes_messages_fts(SimpleNamespace())
-    assert lazy_calls == ["open"]
+def test_backfill_skips_an_app_with_no_chachanotes_database(tmp_path, backfilled):
+    (tmp_path / "ChaChaNotes.db").touch()  # a file alone is not an open database
+    TldwCli._backfill_chachanotes_messages_fts(_app(None))
+    assert backfilled == []
 
 
-def test_backfill_uses_an_already_open_database(monkeypatch, lazy_calls):
-    monkeypatch.setattr(config, "chachanotes_db", object())
-    TldwCli._backfill_chachanotes_messages_fts(SimpleNamespace())
-    assert lazy_calls == ["open"]
+def test_backfill_never_creates_the_database_file(tmp_path, backfilled):
+    TldwCli._backfill_chachanotes_messages_fts(_app(None))
+    assert not (tmp_path / "ChaChaNotes.db").exists()
+
+
+def test_backfill_uses_the_database_the_app_opened(backfilled):
+    database = object()
+    TldwCli._backfill_chachanotes_messages_fts(_app(database))
+    assert backfilled == [database]

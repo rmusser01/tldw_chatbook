@@ -322,7 +322,11 @@ def open_chachanotes_db(
         console_library_migration_seed=load_console_library_migration_seed(),
     )
     if seed_builtin_content:
-        seed_builtins(db)
+        try:
+            seed_builtins(db)
+        except BaseException:
+            db.close_connection()  # retire this thread's connection, then fail
+            raise
     return db
 
 

@@ -432,6 +432,7 @@ class MobileChatService:
                 agent_runs_db=storage.agent_runs,
                 store=store,
                 provider_gateway=self._gateway,
+                storage_provider=lambda: storage,  # the engine's own DBs (ADR-234)
             )
             controller = ConsoleChatController(
                 store=store,

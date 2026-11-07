@@ -7019,8 +7019,8 @@ class PersonasScreen(BaseAppScreen):
     # ===== Saved conversations =====
 
     def _character_db(self) -> Any:
-        """Local character DB, via the same resolver import/export uses."""
-        return ccp_character_handler._default_character_db()
+        """Local character DB, from the app's services bundle (ADR-250)."""
+        return self.app_instance.services.storage.chachanotes
 
     @on(ConversationRowSelected)
     async def _handle_conversation_row_selected(
@@ -8263,7 +8263,7 @@ class PersonasScreen(BaseAppScreen):
             return
         try:
             source = await asyncio.to_thread(
-                ccp_character_handler.fetch_character_by_id, entity_id
+                ccp_character_handler.fetch_character_by_id, self._character_db(), entity_id
             )
         except Exception as exc:
             logger.opt(exception=True).warning(
@@ -8307,7 +8307,7 @@ class PersonasScreen(BaseAppScreen):
             if not self._local_character_actions_allowed():
                 return
             new_id = await asyncio.to_thread(
-                ccp_character_handler.create_character, payload
+                ccp_character_handler.create_character, self._character_db(), payload
             )
         except ConflictError:
             self._notify("A character with that name already exists.", "error")
@@ -14290,6 +14290,7 @@ class PersonasScreen(BaseAppScreen):
         try:
             outcome = await asyncio.to_thread(
                 ccp_character_handler.import_character_card_with_outcome,
+                self._character_db(),
                 source_bytes,
             )
         except Exception as error:
@@ -14336,7 +14337,7 @@ class PersonasScreen(BaseAppScreen):
         loaded = None
         try:
             loaded = await asyncio.to_thread(
-                ccp_character_handler.fetch_character_by_id, imported_id
+                ccp_character_handler.fetch_character_by_id, self._character_db(), imported_id
             )
         except Exception as error:
             logger.debug(
@@ -14519,7 +14520,7 @@ class PersonasScreen(BaseAppScreen):
             return ""
         try:
             record = await asyncio.to_thread(
-                ccp_character_handler.fetch_character_by_id, character_id
+                ccp_character_handler.fetch_character_by_id, self._character_db(), character_id
             )
         except Exception:
             return ""
@@ -15018,7 +15019,7 @@ class PersonasScreen(BaseAppScreen):
         """Sync JSON export; raises on failure (runs off the UI thread)."""
         if not self._local_character_actions_allowed():
             raise RuntimeError("Local character export is unavailable in server mode.")
-        db = ccp_character_handler._default_character_db()
+        db = self._character_db()
         if portable_profile is None:
             content = export_character_card_to_json(
                 db,
@@ -15050,7 +15051,7 @@ class PersonasScreen(BaseAppScreen):
         """
         if not self._local_character_actions_allowed():
             raise RuntimeError("Local character export is unavailable in server mode.")
-        db = ccp_character_handler._default_character_db()
+        db = self._character_db()
         target = Path(target_path).expanduser()
         if portable_profile is None:
             ok = export_character_card_to_png(
@@ -15207,13 +15208,13 @@ class PersonasScreen(BaseAppScreen):
             # Per-item fetch: the handler's loaded record only covers the
             # current selection, and the sparse list rows carry no version.
             record = await asyncio.to_thread(
-                ccp_character_handler.fetch_character_by_id, entity_id
+                ccp_character_handler.fetch_character_by_id, self._character_db(), entity_id
             )
             if not record:
                 raise ValueError(f"character {entity_id} not found")
             version = int(record.get("version") or 1)
             ok = await asyncio.to_thread(
-                ccp_character_handler.delete_character, entity_id, version
+                ccp_character_handler.delete_character, self._character_db(), entity_id, version
             )
             if not ok:
                 raise ValueError(f"delete conflict for character {entity_id}")
@@ -15393,7 +15394,10 @@ class PersonasScreen(BaseAppScreen):
             try:
                 # Sync DB call; same threading choice as import/export.
                 ok = await asyncio.to_thread(
-                    ccp_character_handler.delete_character, entity_id, int(version or 1)
+                    ccp_character_handler.delete_character,
+                    self._character_db(),
+                    entity_id,
+                    int(version or 1),
                 )
             except ConflictError:
                 logger.warning(
@@ -15718,13 +15722,15 @@ class PersonasScreen(BaseAppScreen):
             else None
         )
 
+        db = self._character_db()
+
         def persist_character() -> str:
             if edit_mode == "create" or not selected_id:
-                created_id = ccp_character_handler.create_character(data)
+                created_id = ccp_character_handler.create_character(db, data)
                 if not created_id:
                     raise RuntimeError("Character creation returned no id.")
                 return str(created_id)
-            if not ccp_character_handler.update_character(selected_id, data):
+            if not ccp_character_handler.update_character(db, selected_id, data):
                 raise RuntimeError(f"Character update failed for id {selected_id}.")
             return str(selected_id)
 
@@ -15846,7 +15852,7 @@ class PersonasScreen(BaseAppScreen):
         # reconciliation.
         try:
             saved_record = await asyncio.to_thread(
-                ccp_character_handler.fetch_character_by_id, saved_id
+                ccp_character_handler.fetch_character_by_id, self._character_db(), saved_id
             )
         except Exception:
             logger.opt(exception=True).warning(

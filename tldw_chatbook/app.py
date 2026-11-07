@@ -298,7 +298,6 @@ from .Widgets.splash_screen import SplashScreen
 from tldw_chatbook.config import (
     get_chachanotes_db_path,
     settings,
-    get_chachanotes_db_lazy,
     seed_builtin_content,
 )
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
@@ -737,10 +736,29 @@ def _build_notes_scope_service(
     )
 
 
-def _select_profile_database(notes_service: object | None) -> Any:
-    """Return the seeded injected profile DB, or the seeded lazy global DB."""
+def _open_profile_chachanotes(app_config: Mapping[str, Any]) -> Any:
+    """Open the profile ChaChaNotes DB through the shared opener, seeded; None on failure."""
+    from .app_services import open_chachanotes_db
+
+    try:
+        return open_chachanotes_db(
+            get_chachanotes_db_path(),
+            client_id=CLI_APP_CLIENT_ID,
+            check_integrity=app_config.get("database", {}).get("check_integrity_on_startup", False),
+            seed_builtin_content=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - the app boots without this DB
+        logger.opt(exception=True).error("ChaChaNotes open failed: {}", type(exc).__name__)
+        return None
+
+
+def _select_profile_database(notes_service: Any, app_config: Mapping[str, Any]) -> Any:
+    """Return the seeded injected DB, the notes service's own DB, or a fresh open."""
     injected = getattr(notes_service, "db", None)
-    return seed_builtin_content(injected) if injected else get_chachanotes_db_lazy()
+    if injected:
+        return seed_builtin_content(injected)
+    opened = getattr(notes_service, "unified_db_template", None)
+    return _open_profile_chachanotes(app_config) if opened is None else opened
 
 
 class WideViewportTierMixin:
@@ -1530,21 +1548,11 @@ class TldwCli(
             client_provider=self.server_context_provider,
         )
 
-        if getattr(self.notes_service, "db", None):
-            self.chachanotes_db = _select_profile_database(self.notes_service)
-            logging.info("Assigned self.notes_service.db to self.chachanotes_db")
-        else:  # Fallback to global if notes_service didn't set it up as expected on itself
-            lazy_db = _select_profile_database(self.notes_service)
-            if lazy_db:
-                self.chachanotes_db = lazy_db
-                logging.info(
-                    "Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback."
-                )
-            else:
-                logging.error(
-                    "ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__."
-                )
-                self.chachanotes_db = None  # Explicitly set to None
+        self.chachanotes_db = _select_profile_database(self.notes_service, self.app_config)
+        if self.chachanotes_db is None:
+            logging.error(
+                "ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__."
+            )
 
         if self.chachanotes_db is not None:
             self.notes_organization_repository = None
@@ -2076,7 +2084,7 @@ class TldwCli(
                 f"Notes for user '{user_name_for_notes}' will use the unified DB: {chachanotes_db_file_path}"
             )
 
-            notes_db = get_chachanotes_db_lazy()
+            notes_db = _open_profile_chachanotes(self.app_config)
             self.notes_service = NotesInteropService(
                 base_db_directory=actual_base_directory_for_service,
                 api_client_id="tldw_tui_client_v1",
@@ -2131,14 +2139,14 @@ class TldwCli(
         media_db = None
         try:
             media_db_path = get_media_db_path()
+            from .app_services import open_media_db
+
             # Get integrity check configuration
             check_integrity = self.app_config.get("database", {}).get(
                 "check_integrity_on_startup", False
             )
-            media_db = self.media_db = MediaDatabase(
-                db_path=media_db_path,
-                client_id=CLI_APP_CLIENT_ID,
-                check_integrity_on_startup=check_integrity,
+            media_db = self.media_db = open_media_db(
+                media_db_path, client_id=CLI_APP_CLIENT_ID, check_integrity=check_integrity
             )
             logger.info(
                 f"Media_DB_v2 initialized successfully for client '{CLI_APP_CLIENT_ID}' at {media_db_path}"

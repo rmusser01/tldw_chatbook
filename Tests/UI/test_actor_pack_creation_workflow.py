@@ -254,7 +254,7 @@ async def test_character_actor_pack_save_uses_atomic_creation_service_once(
     monkeypatch.setattr(
         personas_screen_module.ccp_character_handler,
         "fetch_character_by_id",
-        lambda actor_id: {
+        lambda _db, actor_id: {
             "id": int(actor_id),
             "name": "Pack Hero",
             "version": 1,
@@ -461,7 +461,7 @@ async def test_stale_pack_result_does_not_reconcile_into_newer_editor_authority(
     monkeypatch.setattr(
         personas_screen_module.ccp_character_handler,
         "fetch_character_by_id",
-        lambda actor_id: {
+        lambda _db, actor_id: {
             "id": int(actor_id),
             "name": "Stale result",
             "version": 1,

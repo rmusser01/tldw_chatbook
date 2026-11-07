@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
-from tldw_chatbook.config import get_chachanotes_db_lazy, get_media_db_lazy
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 
 from .activation import batch_guard, guarded, in_worker, request_guard
@@ -214,8 +213,12 @@ class LocalMCPRuntimeDelegate:
         manifest_provider: Callable[[], dict[str, Any]] | None = None,
         library_service: Any | None = None,
         policy_enforcer: Any | None = None,
+        storage_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._manifest_provider = manifest_provider or describe_local_mcp_capabilities
+        # ADR-250 s6: the host's ProfileStorage (the TUI's services bundle),
+        # resolved per call; without one the local databases are unavailable.
+        self._storage_provider = storage_provider
         # task-1337 (plan Task 9): shared synchronous LocalLibraryToolService
         # (duck-typed ``invoke``). Injected by tests/hosts; lazily composed
         # from the process-local databases on first Library dispatch.
@@ -668,14 +671,18 @@ class LocalMCPRuntimeDelegate:
             format=str(arguments.get("format") or "markdown"),
         )
 
+    def _storage_db(self, name: str) -> Any:
+        storage = self._storage_provider() if self._storage_provider else None
+        return getattr(storage, name, None)
+
     def _require_chachanotes_db(self):
-        db = get_chachanotes_db_lazy()
+        db = self._storage_db("chachanotes")
         if db is None:
             raise RuntimeError("Local ChaChaNotes database is unavailable.")
         return db
 
     def _require_media_db(self):
-        db = get_media_db_lazy()
+        db = self._storage_db("media")
         if db is None:
             raise RuntimeError("Local media database is unavailable.")
         return db

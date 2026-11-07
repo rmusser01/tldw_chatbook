@@ -295,8 +295,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 210,
-      "diagnostic_digest": "ae77ea0add7f59184a98",
+      "call_count": 209,
+      "diagnostic_digest": "a03de5e96fd2e2696ae1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Character_Chat/Character_Chat_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1996,8 +1996,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 22,
-      "diagnostic_digest": "042a7d966f71d7ac6012",
+      "call_count": 21,
+      "diagnostic_digest": "05d795cc2d182ddae83b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Notes/Notes_Library.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4950,8 +4950,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 116,
-      "diagnostic_digest": "767e891c8167d0a2ddc3",
+      "call_count": 115,
+      "diagnostic_digest": "8273c82b8e682702efc9",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -5062,8 +5062,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 133,
-      "diagnostic_digest": "73a7e73179d7f61c278c",
+      "call_count": 111,
+      "diagnostic_digest": "e3e412b1f9591809e84e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/config.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9168,15 +9168,6 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "1a9a4b5e60335bb2",
-          "method": "info",
-          "path_expressions": [
-            "self.unified_db_template.db_path_str"
-          ],
-          "scope": "NotesInteropService.__init__",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "3a83b72c69a5fd6a",
           "method": "info",
           "path_expressions": [
@@ -11690,60 +11681,6 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "a311e977af6b2ee8",
-          "method": "error",
-          "path_expressions": [
-            "chachanotes_path"
-          ],
-          "scope": "get_chachanotes_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "1de097927132e94d",
-          "method": "info",
-          "path_expressions": [
-            "chachanotes_path"
-          ],
-          "scope": "get_chachanotes_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "d69064a364641d03",
-          "method": "success",
-          "path_expressions": [
-            "chachanotes_path"
-          ],
-          "scope": "get_chachanotes_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "0fe0011874cc61ff",
-          "method": "error",
-          "path_expressions": [
-            "media_path"
-          ],
-          "scope": "get_media_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "b9bc56eced1ce8ae",
-          "method": "info",
-          "path_expressions": [
-            "media_path"
-          ],
-          "scope": "get_media_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "c254321bfcf6122c",
-          "method": "success",
-          "path_expressions": [
-            "media_path"
-          ],
-          "scope": "get_media_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "394246c9e726f3d1",
           "method": "error",
           "path_expressions": [
@@ -11759,114 +11696,6 @@
             "cache_path"
           ],
           "scope": "get_model_cache_dir",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "9dcca51aa471dcec",
-          "method": "error",
-          "path_expressions": [
-            "prompts_path"
-          ],
-          "scope": "get_prompts_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "865378e33d0e8bf6",
-          "method": "info",
-          "path_expressions": [
-            "prompts_path"
-          ],
-          "scope": "get_prompts_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "b86e8ccca4f19939",
-          "method": "success",
-          "path_expressions": [
-            "prompts_path"
-          ],
-          "scope": "get_prompts_db_lazy",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "218916836c323888",
-          "method": "error",
-          "path_expressions": [
-            "media_path"
-          ],
-          "scope": "initialize_all_databases",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "4841982fda2a45f4",
-          "method": "error",
-          "path_expressions": [
-            "prompts_path"
-          ],
-          "scope": "initialize_all_databases",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "ae0f0c6d3ebf5702",
-          "method": "error",
-          "path_expressions": [
-            "chachanotes_path"
-          ],
-          "scope": "initialize_all_databases",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "a2044272c53ba2ac",
-          "method": "info",
-          "path_expressions": [
-            "media_path"
-          ],
-          "scope": "initialize_all_databases",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "df69e77dda7b7fb9",
-          "method": "info",
-          "path_expressions": [
-            "prompts_path"
-          ],
-          "scope": "initialize_all_databases",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "e94abb6a1d3bddc9",
-          "method": "info",
-          "path_expressions": [
-            "chachanotes_path"
-          ],
-          "scope": "initialize_all_databases",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "048df691aa522d69",
-          "method": "success",
-          "path_expressions": [
-            "media_path"
-          ],
-          "scope": "initialize_all_databases",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "320442b9feab3efd",
-          "method": "success",
-          "path_expressions": [
-            "chachanotes_path"
-          ],
-          "scope": "initialize_all_databases",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "824e35330bb254e7",
-          "method": "success",
-          "path_expressions": [
-            "prompts_path"
-          ],
-          "scope": "initialize_all_databases",
           "status": "legacy_unreviewed"
         },
         {

@@ -36,7 +36,7 @@ real_persona_scope_service = save_in_place.real_persona_scope_service
 def character_store(tmp_path, monkeypatch):
     """Borrow one real SQLite owner and retire all of its thread handles."""
     database = CharactersRAGDB(tmp_path / "pending-save.db", "pending-save-test")
-    monkeypatch.setattr(character_handler, "_default_character_db", lambda: database)
+    monkeypatch.setattr("tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: database)
     yield database
     with database.quiesce_connections(timeout_seconds=5):
         pass

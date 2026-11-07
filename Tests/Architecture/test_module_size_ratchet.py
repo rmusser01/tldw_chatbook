@@ -134,7 +134,9 @@ _BUDGETS: dict[str, int] = {
     # on the UI loop.
     # 2026-11-03, TASK-36945.3: 5689 -> 5686 (-3) -- the eager-dependency flag
     # moved from on_mount to the entry points.
-    "tldw_chatbook/app.py": 5687,
+    # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
+    # the TUI opens ChaChaNotes and Media through the shared openers (+8).
+    "tldw_chatbook/app.py": 5695,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -165,7 +167,9 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3702,
+    # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
+    # the local MCP control service gets a storage provider (+1).
+    "tldw_chatbook/app_service_wiring.py": 3703,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -198,7 +202,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-04 (TASK-38462 regression fix): 742 -> 753 (+11) -- the
     # ChaChaNotes FTS backfill skips a profile with no database instead of
     # creating one in an uncancellable boot worker.
-    "tldw_chatbook/app_feature_glue.py": 753,
+    # TASK-36947.6: the FTS backfill reads services.storage, no lazy getter (-8).
+    "tldw_chatbook/app_feature_glue.py": 745,
     # TASK-35190: the rebaser's endpoint choice moved to
     # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
     # Rebased onto dev 0fef489ece, whose TASK-35444 Console refresh deferral is +1: 29,151.
@@ -305,7 +310,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33910.4, 2026-10-26: B2b changes it by +646 lines (16,859 -> 17,505).
     # The row rises to the measurement, never squeezed code; applied
     # 2026-10-30 after the final fix wave (B2b rows).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16829,
+    # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
+    # every CCP helper call passes the services bundle's character DB (+6).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16835,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -782,10 +789,14 @@ _BUDGETS: dict[str, int] = {
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-02: 12285 -> 9668; the default config template moved to Config_Files/default_config.toml (TASK-36945.1).
-    "tldw_chatbook/config.py": 8983,
+    # 2026-11-07: 8961 -> 8820; the DB singletons, lazy getters,
+    # initialize_all_databases and its lazy-init log are gone (TASK-36947.6).
+    "tldw_chatbook/config.py": 8820,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12092,
+    # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
+    # the storage provider reaches the per-run BuiltinToolProvider (+8 on 12,091).
+    "tldw_chatbook/Chat/console_agent_bridge.py": 12099,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -911,7 +922,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7069,
+    # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
+    # the agent bridge gets the services bundle's storage (+1).
+    "tldw_chatbook/Chat/console_runtime.py": 7070,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
@@ -956,7 +969,8 @@ _BUDGETS: dict[str, int] = {
     # while the session lease is still held) and its provision-continuation
     # allowlist entry; dev pinned this row while the branch was in flight.
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
-    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
+    # TASK-36947.6: the config-getter default DB is gone (-15).
+    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4760,
     # 2026-11-04, TASK-38686 (owner size waiver 2026-10-31): +1, the comment
     # on update_prompt_by_id's IMMEDIATE transaction.
     "tldw_chatbook/DB/Prompts_DB.py": 4674,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)

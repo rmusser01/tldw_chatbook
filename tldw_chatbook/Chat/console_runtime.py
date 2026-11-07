@@ -5077,6 +5077,7 @@ class ConsoleRuntime:
             # in setup or the MCP hub applies on the next send.
             light_tool_surface=light_surface_configured,
             tool_kill_switch=functools.partial(tool_kill_switch_engaged, self._app),
+            storage_provider=lambda: self._app.services.storage,  # ADR-250 s6
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
         # unseen mark + app-wide toast + deep link), registered NEXT TO

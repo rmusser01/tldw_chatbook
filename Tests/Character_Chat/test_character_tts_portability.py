@@ -242,7 +242,6 @@ def test_personas_local_wrapper_exposes_the_structured_import_outcome(
 ) -> None:
     expected = object()
     fake_db = object()
-    monkeypatch.setattr(character_handler, "_default_character_db", lambda: fake_db)
     monkeypatch.setattr(
         character_lib,
         "import_and_save_character_from_file_with_outcome",
@@ -253,7 +252,7 @@ def test_personas_local_wrapper_exposes_the_structured_import_outcome(
     importer = getattr(character_handler, "import_character_card_with_outcome", None)
 
     assert callable(importer), "the Personas structured import wrapper is missing"
-    assert importer("/chosen/card.json") is expected
+    assert importer(fake_db, "/chosen/card.json") is expected
 
 
 def test_read_only_attachment_inspection_returns_valid_profile_without_a_database() -> (
