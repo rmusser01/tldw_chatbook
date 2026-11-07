@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-07 02:55
+updated_date: 2026-11-07 03:41
 labels:
 - follow-up
 - console
@@ -108,3 +108,20 @@ Re-review r11g-rev2 (Minor):
   - `test_a_hand_edited_schemeless_loopback_endpoint_is_sent_as_readiness_reads_it` uses a stub adapter and no network. It was red before (`None == 'http://localhost:8080/v1'` for all four) and is green after.
   - `console_provider_gateway.py` is re-pinned at 8,497 under the owner waiver.
 - Left alone, as the coordinator asked: `normalize_llamacpp_base_url` accepting any host, and old remote llama.cpp chats (to be filed as follow-ups).
+
+Re-review r11g-rev3 (Important): the trace verifier's independent reconstruction (`reconstruct_provider_gateway_kwargs`, `console_trace_final_values.py`) did not pin `api_base_url` for the four keys. With capture on, their shadow came out `available=False` with `ALIGNMENT_MISMATCH`, and with no trace boundary the gateway raised `TraceProvenanceAlignmentError`, so the send failed.
+- The set now lives in `console_provider_endpoints.py` as `CONFIG_READING_LOCAL_EXECUTION_KEYS`, beside `CONDITIONAL_BASE_URL_EXECUTION_KEYS`. The gateway's two builders and the reconstruction share it.
+- Tests in `Tests/Chat/test_console_provider_gateway.py`:
+  - `test_final_value_reconstructor_preserves_adapter_endpoint_projection` adds the four keys.
+  - New capture-on test: `test_capture_on_send_aligns_for_the_config_reading_local_adapters`.
+  - Red on the rebased HEAD 6880fcfd0b: 8 failed (the reconstruction lacked `api_base_url`, and `alignment_mismatch`). Green after.
+- `console_provider_gateway.py` shrank to 8,493, so its pin was lowered.
+- Behaviour change for aphrodite, oobabooga and tabbyapi. These adapters read the legacy `aphrodite_api` / `ooba_api` / `tabby_api` tables, while Console's readiness reads `api_settings.<provider>`. Measured with the reviewer's stub probe (`probe_legacy.py`), the URL the adapter uses:
+
+| Config | Before (no pin) | Now |
+|---|---|---|
+| Canonical and legacy tables both set, different URLs | the legacy URL (e.g. gpu-box.lan), not the one Console shows | the canonical URL Console shows and readiness checked |
+| Legacy table only | the legacy URL | the legacy URL (nothing is pinned) |
+| Canonical table only | `ChatConfigurationError` ("API URL is required") | the canonical URL |
+
+  koboldcpp's adapter already reads `api_settings.koboldcpp`, so for it only a missing scheme changes. No User Guide change: sends now follow the endpoint Console shows.

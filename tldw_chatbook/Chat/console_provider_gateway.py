@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    CONFIG_READING_LOCAL_EXECUTION_KEYS,
     URL_BASED_PROVIDER_KEYS,
     adapter_api_base_url,
     effective_provider_endpoint,
@@ -3009,11 +3010,6 @@ def build_llamacpp_chat_payload(
             **template_options,
         }
     return payload
-
-
-#: TASK-39042 review r11g-rev2: these adapters otherwise read their own
-#: config raw, so a schemeless endpoint readiness reads as http:// went as typed.
-_CONFIG_READING_LOCAL_KEYS = frozenset({"aphrodite", "koboldcpp", "oobabooga", "tabbyapi"})
 
 
 def _adapter_api_base_url(resolution: ConsoleProviderResolution) -> str | None:
@@ -7967,7 +7963,7 @@ class ConsoleProviderGateway:
             "mistralai",
             "vllm",
             "local_vllm",
-        } | CUSTOM_OPENAI_EXECUTION_KEYS | _CONFIG_READING_LOCAL_KEYS:
+        } | CUSTOM_OPENAI_EXECUTION_KEYS | CONFIG_READING_LOCAL_EXECUTION_KEYS:
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
@@ -8069,7 +8065,7 @@ class ConsoleProviderGateway:
             "anthropic",
             "mistral",
             "mistralai",
-        } | CUSTOM_OPENAI_EXECUTION_KEYS | _CONFIG_READING_LOCAL_KEYS:
+        } | CUSTOM_OPENAI_EXECUTION_KEYS | CONFIG_READING_LOCAL_EXECUTION_KEYS:
             # These adapters otherwise consult process-global config after
             # Console has resolved a provider-scoped endpoint and credential.
             # Pinning the resolved base keeps that pair intact, including the

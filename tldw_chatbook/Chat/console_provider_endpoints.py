@@ -218,6 +218,13 @@ CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
         "openrouter",
     }
 )
+#: TASK-39042 review r11g-rev2: local adapters that otherwise read their own
+#: config raw, so a schemeless endpoint readiness reads as http:// went as
+#: typed. Every primary send pins the resolved base for them; shared by the
+#: gateway kwargs builders and the trace verifier's reconstruction (r11g-rev3).
+CONFIG_READING_LOCAL_EXECUTION_KEYS = frozenset(
+    {"aphrodite", "koboldcpp", "oobabooga", "tabbyapi"}
+)
 
 
 def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None:

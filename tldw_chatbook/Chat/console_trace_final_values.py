@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    CONFIG_READING_LOCAL_EXECUTION_KEYS,
     adapter_api_base_url,
     meaningful_adapter_base_url,
 )
@@ -1025,7 +1026,7 @@ def reconstruct_provider_gateway_kwargs(
         "mistral",
         "mistralai",
         "vllm",
-    } | CUSTOM_OPENAI_EXECUTION_KEYS:
+    } | CUSTOM_OPENAI_EXECUTION_KEYS | CONFIG_READING_LOCAL_EXECUTION_KEYS:
         kwargs["api_base_url"] = base_url
         if execution_key in CUSTOM_OPENAI_EXECUTION_KEYS:
             kwargs["api_key_resolved"] = True
