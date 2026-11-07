@@ -216,10 +216,12 @@ def build_console_citation_source_rows(
 #: Keyed by the repository's ``fingerprint_key_state`` value when the key is
 #: what failed, else by the lookup outcome.
 CITATION_SOURCES_UNAVAILABLE_COPY: dict[str, str] = {
+    # TASK-33620.8.3: the palette entry changes a saved answer without
+    # editing config.toml, or says what config.toml decides.
     "writes_disabled": (
         "Sources unavailable: citation records are turned off. To save sources "
-        "for new replies, set canonical_writes_enabled = true under "
-        "[rag_citations] in config.toml, then restart Chatbook."
+        "for new replies, open the command palette and choose Console: "
+        "Citation records…"
     ),
     "keyring_unavailable": (
         "Sources unavailable: Chatbook needs a secure system keyring to protect "
