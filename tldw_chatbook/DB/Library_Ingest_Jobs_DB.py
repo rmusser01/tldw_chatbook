@@ -28,6 +28,7 @@ from typing import Iterator, Union
 
 from loguru import logger
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Research_Workspace.source_operations import (
     validate_source_operation_id,
 )
@@ -48,6 +49,12 @@ class LibraryIngestJobLinkConflictError(RuntimeError):
     """Raised when an upsert would mutate persisted Research lineage."""
 
 
+@declare_store(
+    "db.library_ingest_jobs",
+    closer="close",
+    finite_worker=False,
+    shared_connection=True,
+)
 class LibraryIngestJobsDB(BaseDB):
     _CURRENT_SCHEMA_VERSION = 7
     _STT_LINEAGE_COLUMNS = (

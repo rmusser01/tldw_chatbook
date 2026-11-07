@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Union
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import core_transaction
 
 from .base_db import BaseDB
@@ -22,6 +23,7 @@ class LibraryCollectionsSchemaError(RuntimeError):
         super().__init__(reason)
 
 
+@declare_store("db.library_collections", closer="close", policy="db.base")
 class LibraryCollectionsDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for Library-owned local Collections.
 

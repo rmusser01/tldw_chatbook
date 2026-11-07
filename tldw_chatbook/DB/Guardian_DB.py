@@ -23,6 +23,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import core_access
 
 from ..Utils.timestamps import utc_now_iso
@@ -90,6 +91,7 @@ def _utc_now_iso() -> str:
     return utc_now_iso()
 
 
+@declare_store("db.guardian", closer="close", policy="db.base")
 class GuardianDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for the Guardian subsystem (rules, alerts, escalation).
 

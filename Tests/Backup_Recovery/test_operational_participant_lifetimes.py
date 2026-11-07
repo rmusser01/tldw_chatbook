@@ -744,7 +744,27 @@ class NoEngines(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, NoEngines())
 from tldw_chatbook.Backup_Recovery import bootstrap
 bootstrap.default_bootstrap_root = lambda: Path(sys.argv[1]) / "bootstrap"
+import importlib
+# The store modules repository_types() imported itself before stores declared
+# their own registration (TASK-36948.1).
+for module in (
+    "tldw_chatbook.Notifications.event_state_repository",
+    "tldw_chatbook.Sync_Interop.sync_state_repository",
+    "tldw_chatbook.DB.ChaChaNotes_DB",
+    "tldw_chatbook.DB.Client_Media_DB_v2",
+    "tldw_chatbook.DB.Prompts_DB",
+    "tldw_chatbook.DB.Library_Collections_DB",
+    "tldw_chatbook.DB.Library_Ingest_Jobs_DB",
+    "tldw_chatbook.DB.Workspace_DB",
+    "tldw_chatbook.DB.AgentRuns_DB",
+    "tldw_chatbook.Notifications.client_notifications_db",
+    "tldw_chatbook.Scheduling.db.scheduled_tasks_db",
+    "tldw_chatbook.Research_Interop.local_research_service",
+    "tldw_chatbook.Writing_Interop.local_writing_service",
+):
+    importlib.import_module(module)
 from tldw_chatbook.Backup_Recovery.participants import repository_types
+assert len(repository_types()) >= 13
 for number, cls in enumerate(repository_types()):
     owner = cls(Path(sys.argv[1]) / (str(number) + ".sqlite")) if cls.__name__ not in {"CharactersRAGDB", "MediaDatabase", "PromptsDatabase"} else cls(Path(sys.argv[1]) / (str(number) + ".sqlite"), "import-check")
     owner.close()

@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 from loguru import logger
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
     core_getter,
@@ -58,6 +59,7 @@ DORMANT_TRANSFER_STATES = ("to_server_sent", "from_server_pending")
 IN_FLIGHT_TRANSFER_STATES = ("to_server_pending", *DORMANT_TRANSFER_STATES)
 
 
+@declare_store("db.scheduled_tasks", policy="db.base")
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
