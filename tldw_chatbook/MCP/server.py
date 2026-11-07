@@ -564,31 +564,35 @@ class TldwMCPServer:
 
         # Initialize databases
         self._init_databases()
+        try:
+            # Initialize MCP components
+            from .tools import MCPTools
+            from .resources import MCPResources
+            from .prompts import MCPPrompts
 
-        # Initialize MCP components
-        from .tools import MCPTools
-        from .resources import MCPResources
-        from .prompts import MCPPrompts
+            from ..Tools.character_tool_service import load_runtime_source
 
-        from ..Tools.character_tool_service import load_runtime_source
+            self.tools = MCPTools(self.chachanotes_db, self.media_db)
+            # No Console session here: the default profile's source decides.
+            self.tools.runtime_source_loader = load_runtime_source
+            self.resources = MCPResources(self.chachanotes_db, self.media_db)
+            self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
 
-        self.tools = MCPTools(self.chachanotes_db, self.media_db)
-        # No Console session here: the default profile's source decides.
-        self.tools.runtime_source_loader = load_runtime_source
-        self.resources = MCPResources(self.chachanotes_db, self.media_db)
-        self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
-
-        # Register tools, resources, and prompts
-        self._register_tools()
-        self._register_resources()
-        self._register_prompts()
-        self._register_local_agent_tools()
-        self.mcp.finalize()
+            # Register tools, resources, and prompts
+            self._register_tools()
+            self._register_resources()
+            self._register_prompts()
+            self._register_local_agent_tools()
+            self.mcp.finalize()
+        except BaseException:
+            self.storage.close()  # main() never gets a server to close
+            raise
 
         logger.info(f"MCP Server '{name}' initialized")
 
     def _init_databases(self):
         """Initialize database connections."""
+        storage = None
         try:
             from ..app_services import open_profile_storage
             from ..config import (
@@ -602,7 +606,7 @@ class TldwMCPServer:
             # media DB uses the same resolver the rest of the app opens it
             # through -- ``get_cli_setting("database", "media_db", ...)`` used
             # to read a config key that was never declared (TASK-854).
-            self.storage = open_profile_storage(
+            storage = self.storage = open_profile_storage(
                 client_id=CLI_APP_CLIENT_ID,
                 chachanotes=get_chachanotes_db_path(),
                 media=get_media_db_path(),
@@ -645,6 +649,8 @@ class TldwMCPServer:
 
             logger.info("Databases initialized successfully")
         except Exception:
+            if storage is not None:
+                storage.close()  # opened before a later step failed
             logger.bind(operation="initialize_standalone_mcp_databases").error(
                 "Standalone MCP database initialization failed."
             )

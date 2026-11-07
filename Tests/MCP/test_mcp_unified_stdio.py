@@ -1421,6 +1421,46 @@ def test_real_module_import_failure_is_fixed_and_payload_free(tmp_path: Path) ->
     assert "Traceback" not in result.stderr
 
 
+def test_construction_failure_after_the_databases_closes_their_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-36947.7: if construction fails after ``_init_databases``, the
+    storage it opened is closed; main() never gets a server to close."""
+    from tldw_chatbook.app_services import open_profile_storage
+    from tldw_chatbook.MCP import prompts, resources, tools
+    import tldw_chatbook.config as config
+
+    opened: list[Any] = []
+
+    def init_databases(instance: server_module.TldwMCPServer) -> None:
+        instance.storage = open_profile_storage(
+            client_id=CLI_APP_CLIENT_ID,
+            chachanotes=tmp_path / "chachanotes.db",
+            media=tmp_path / "media.db",
+        )
+        opened.append(instance.storage)
+        instance.chachanotes_db = instance.storage.chachanotes
+        instance.media_db = instance.storage.media
+        instance.notes_service = SimpleNamespace()
+
+    def refuse(_instance: server_module.TldwMCPServer) -> None:
+        raise RuntimeError("registration refused")
+
+    monkeypatch.setattr(config, "load_console_library_migration_seed", lambda: None)
+    monkeypatch.setattr(server_module.TldwMCPServer, "_init_databases", init_databases)
+    monkeypatch.setattr(server_module.TldwMCPServer, "_register_tools", refuse)
+    monkeypatch.setattr(tools, "MCPTools", lambda *_args: _FakeTools())
+    monkeypatch.setattr(resources, "MCPResources", lambda *_args: _FakeResources())
+    monkeypatch.setattr(prompts, "MCPPrompts", lambda *_args: _FakePrompts())
+
+    with pytest.raises(RuntimeError, match="registration refused"):
+        server_module.TldwMCPServer()
+
+    (storage,) = opened
+    assert getattr(storage.chachanotes._local, "conn", None) is None
+    assert getattr(storage.media._local, "conn", None) is None
+
+
 def test_database_init_failure_log_is_fixed_and_payload_free(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
