@@ -1,6 +1,6 @@
 # Console approval PR #3036 resync
 
-The existing PR is rebased onto `dev` at `8b762b52fa9c38be8c978f2b2175d9f070bc829a`. Earlier phase records below retain their original source scope. The owner requires native timing and actual Windows dispatch qualification before auto-merge. Source integration is verified. Actual Windows dispatch is recorded for the earlier published source; renewed dispatch and presentation qualification on the latest revision remain open. The PR remains draft and auto-merge remains off.
+The existing PR is rebased onto `dev` at `8b762b52fa9c38be8c978f2b2175d9f070bc829a`. Earlier phase records below retain their original source scope. The owner requires native timing and actual Windows dispatch qualification before auto-merge. Source integration is verified. Actual Windows dispatch has also been witnessed on current source `c1833ae9`; presentation qualification remains open. The PR remains draft and auto-merge remains off.
 
 ## Integration
 
@@ -42,7 +42,7 @@ This proves execution. It provides no native UI timing. Earlier setup failures a
 
 There are zero qualified native/browser product presentation samples. The 100 ms feedback and 200 ms actionable p95 budgets and 40 warm samples per transport are not claimed achieved. Compositor refresh, server frames, animation callbacks and terminal flushes alone do not establish presentation.
 
-The owner authorized installed Playwright/CDP and QA-only native capture. Synthetic capture and clock capabilities are established, and an actual private native Console frame now has verified terminal handles and cell-to-pixel mapping. The complete workload has not yet reached an approval card; no product presentation distribution is qualified. Original failures and zero-sample results are retained. The PR stays draft with auto-merge off until the mandatory evidence, current-head Qodo review and resolved-thread requirements are met.
+The owner authorized installed Playwright/CDP and QA-only native capture. Synthetic capture and clock capabilities are established, and an actual private native Console frame now has verified terminal handles and cell-to-pixel mapping. The complete native workload now reaches an independently inspected approval card and completes genuine Windows dispatch; no product presentation distribution is qualified. Original failures and zero-sample results are retained. The PR stays draft with auto-merge off until the mandatory evidence, current-head Qodo review and resolved-thread requirements are met.
 
 ## Evidence
 
@@ -57,3 +57,13 @@ The [worker-bundle follow-up](artifact-followup.md) records the inherited hosted
 
 
 [Current-dev follow-up](dev8b-followup.md) records the rebase, exact1816-member census, targeted results, Windows governance repair, independent review and remaining physical gates.
+
+## Current-source physical capture follow-up
+
+[Current-source Windows witness](windows-dispatch-current-head.json) binds `c1833ae9`, all 3,484 frozen files and the actual native gesture. The original stock Console, scripted loopback provider, tool discovery/load, human approval, controller/host and isolated worker completed a harmless 33-byte `fs_read`. Root independently inspected the enabled **Allow once** card and later **Decision accepted** pixels. The main process and worker loaded 1,858 and 18 matching product modules with no source mismatch or profile refusal. All owned processes exited normally. The worker internal duration is not a UI latency. Earlier dispatch evidence above retains its original scope.
+
+The original protected-path helper after ADR355 took 0.6743465 seconds and added two module names, versus the retained original 1.5782705 seconds and 570 names. Each is one isolated diagnostic; neither proves a p95 improvement or explains a full-app setup stall.
+
+Timing samples remain zero. Repeated old-baseline workspace-setup stalls are retained as censored failures, including missing final source closure after forced cleanup; they are excluded from distributions. Browser capture also remains unqualified. Its latest diagnostic observed an original Windows control-connect refusal before cleanup; the later WebSocket close and child pipe error do not establish the initial cause. Neither trace-admission negative was invoked in these failed browser setups. Passive owned-file setup observation is being prepared without changing production behavior, heartbeat, timeout or capture gates.
+
+[Speech preload follow-up](audio-meter-followup.md) records the subsequent measured import-edge repair, 12 focused passes, 45 affected Audio passes, exact inherited failures and unchanged CI limits. The earlier c183 physical witnesses retain their original source scope; presentation qualification must be renewed on the repaired source.

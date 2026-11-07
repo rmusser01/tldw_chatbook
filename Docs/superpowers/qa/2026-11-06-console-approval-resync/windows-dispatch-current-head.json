@@ -1,0 +1,92 @@
+{
+  "scope": "One actual current-source native Allow once gesture through full Console to isolated Windows fs_read. Dispatch witness only.",
+  "revision": "c1833ae9e9fdabb38a976151ab3c9a79c280b245",
+  "source_freeze_sha256": "6ef94625182a465ec68561a290c819a22facb329aabfe561cbf1418d6157f9bf",
+  "frozen_source_files": 3484,
+  "source_before_after_stable": true,
+  "actual_native_driver": "WindowsResizeDriver",
+  "terminal_cells": [
+    120,
+    40
+  ],
+  "root_independent_actual_card_review": true,
+  "actual_mouse_down_up_events_admitted": 2,
+  "original_decision": "approve_once",
+  "original_submit_accepted": true,
+  "original_terminal_status": "completed",
+  "owned_scripted_provider_HTTP_turns": 4,
+  "physical_isolated_worker": true,
+  "worker_frames": [
+    {
+      "outcome": "admitted",
+      "code": "root_pinned",
+      "cleanup_proven": true,
+      "truncated": false
+    },
+    {
+      "outcome": "success",
+      "code": "ok",
+      "cleanup_proven": true,
+      "truncated": false
+    }
+  ],
+  "actual_read_matches_fixture": true,
+  "fixture_bytes": 33,
+  "fixture_sha256": "1087ac39939689bac57d564f34d4b74c19c69ec4510a0a9a0b51ce38c2f4a810",
+  "source_closures": [
+    {
+      "role": "isolated_worker",
+      "product_modules": 18,
+      "source_mismatches": 0,
+      "profile_refusals": 0,
+      "network": {
+        "owned_connects": 0,
+        "stdlib_selfpipe_connects": 0,
+        "refused_connects": 0,
+        "refused_dns": 0,
+        "loopback_auth_validations": 0
+      }
+    },
+    {
+      "role": "app",
+      "product_modules": 1858,
+      "source_mismatches": 0,
+      "profile_refusals": 0,
+      "network": {
+        "owned_connects": 4,
+        "stdlib_selfpipe_connects": 3,
+        "refused_connects": 0,
+        "refused_dns": 0,
+        "loopback_auth_validations": 0
+      }
+    },
+    {
+      "role": "observer",
+      "product_modules": 0,
+      "source_mismatches": 0,
+      "profile_refusals": 0,
+      "network": {
+        "owned_connects": 1351,
+        "stdlib_selfpipe_connects": 0,
+        "refused_connects": 0,
+        "refused_dns": 0,
+        "loopback_auth_validations": 0
+      }
+    }
+  ],
+  "all_owned_processes_absent": true,
+  "normal_exit": true,
+  "forced_cleanup": false,
+  "root_independent_actual_feedback_review": "Decision accepted was visible in a later owned capture; no latency inferred.",
+  "timing_qualified": false,
+  "timing_product_samples": 0,
+  "missing": [
+    "No presentation distribution or p95 budget qualification",
+    "No native deny/raw/batch/large or full geometry matrix in this witness",
+    "No live external model request or confirmed model/backend start",
+    "No new-source no-remembered-grant assertion in this witness"
+  ],
+  "original_sealed_receipt_sha256": "7bbeb08dee17fc5c23f13ffd400fc691d817cdc8ca6f29a8c1e2fc9cc7c90a89",
+  "actual_card_PNG_sha256": "85d43490771be6fadfbbedaf6cf05a19a48005a28d76f7c4217f4168b0f4e2d3",
+  "actual_feedback_PNG_sha256": "ec0f6a4ca740fdc348bea7c0194af881f49ee1d2ceaab5f6c187fda2c318eafc"
+}

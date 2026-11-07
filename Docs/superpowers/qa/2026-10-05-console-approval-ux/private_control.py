@@ -79,6 +79,13 @@ target = (
     sys.argv[1] if len(sys.argv) > 1 else "Tests/UI/test_approval_action_ownership.py"
 )
 assert target in {
+    "Tests/Audio/test_dictation_speech_resumed.py",
+    "Tests/Audio/test_dictation_recorder_factory.py",
+    "Tests/Audio/test_dictation_privacy_allowlist.py",
+    "Tests/Audio/test_dictation_capture_release.py",
+    "Tests/Audio/test_dictation_stop_join.py",
+    "Tests/Performance/test_screen_preimport_payload_budget.py::test_preimport_pass_payload_stays_within_budget",
+    "Tests/Audio/test_dictation_meter_import_contract.py",
     "Tests/Tools/test_remote_worker_bundle.py",
     "Tests/Tools/test_file_tool_sandbox.py::test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_contains_it",
     "Tests/Tools/test_local_tool_sensitive_paths.py::test_both_file_tool_families_refuse_the_same_denylisted_paths",

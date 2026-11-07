@@ -342,6 +342,8 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_console_semantic_mutation_inventory.py",
     # TASK-34564 / ADR-355: real protected RAG paths without optional runtime.
     "Tests/RAG/test_state_paths.py",
+    # TASK-34569 AC9: Speech preimport avoids optional meter runtime.
+    "Tests/Audio/test_dictation_meter_import_contract.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
