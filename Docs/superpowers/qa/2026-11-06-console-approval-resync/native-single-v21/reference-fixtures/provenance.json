@@ -1,0 +1,300 @@
+{
+  "scope": "Finite lossless crops of actual Root-viewed synthetic owned frames. Never new presentation/latency evidence.",
+  "exports": [
+    {
+      "export": "reference-fixtures/card-glyph-scene.png",
+      "original_image_name": "owned-004-card-candidate.png",
+      "original_PNG_SHA256": "85d43490771be6fadfbbedaf6cf05a19a48005a28d76f7c4217f4168b0f4e2d3",
+      "original_pixel_size": [
+        616,
+        208
+      ],
+      "crop_xywh": [
+        0,
+        0,
+        616,
+        208
+      ],
+      "export_pixel_size": [
+        616,
+        208
+      ],
+      "export_PNG_SHA256": "885339c28ce00f664ee16773fd711ac1f17c8ad0f0c27170fb660d5725de1349",
+      "export_RGBA_SHA256": "d4add224bc6def04f2d307e9826e7efe533c18243f8eb2d3b1a454ba12c2fa22",
+      "scope": "Actual card/glyph reference; Root independently reviewed enabled card.",
+      "original_review_receipt_SHA256": "5786aef30c22e989e68c7c60361d4d6e4daa6b8e64fe822db9b49297845d69fc",
+      "additional_Root_scope_statement": "Actual card/glyph reference; Root independently reviewed enabled card.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/enabled-white-scene.png",
+      "original_image_name": "owned-004-card-candidate.png",
+      "original_PNG_SHA256": "75afae5a34818060d8175bd8590ec24fea36a2835d06f57bae48871b13e0dc13",
+      "original_pixel_size": [
+        616,
+        208
+      ],
+      "crop_xywh": [
+        0,
+        0,
+        616,
+        208
+      ],
+      "export_pixel_size": [
+        616,
+        208
+      ],
+      "export_PNG_SHA256": "75e2cce9f1e19de488afdb55303a6b5000bc57facdbb2bd2a2a38fe296e2811e",
+      "export_RGBA_SHA256": "b828a7ae3caf7fdcbdb9d4ae0bd7267f519e304850c3f687143ee3487818793e",
+      "scope": "Actual enabled white Allow once; Root independently viewed.",
+      "original_review_receipt_SHA256": "e9eb8d7009aa80bbdbba178f997b902c57233c099e41c99ed4317420182b3390",
+      "additional_Root_scope_statement": "Actual enabled white Allow once; Root independently viewed.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/enabled-blue-scene.png",
+      "original_image_name": "owned-005-card-before-input.png",
+      "original_PNG_SHA256": "f22f2932c3f3de04e37e19013d1ad16ddaacf8808a0bff5df0af343651bb32f3",
+      "original_pixel_size": [
+        616,
+        208
+      ],
+      "crop_xywh": [
+        0,
+        0,
+        616,
+        208
+      ],
+      "export_pixel_size": [
+        616,
+        208
+      ],
+      "export_PNG_SHA256": "e83c4f163aed59aa58493ffc31de8ff16523b47f1a671734637d873a0e6e47fa",
+      "export_RGBA_SHA256": "9f812bf8a5032a4660376db46f2f9d629e5b39df7f4cab74681187cbcd1b2676",
+      "scope": "Actual enabled blue Allow once; Root independently viewed.",
+      "original_review_receipt_SHA256": "e9eb8d7009aa80bbdbba178f997b902c57233c099e41c99ed4317420182b3390",
+      "additional_Root_scope_statement": "Actual enabled blue Allow once; Root independently viewed.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/accepted-feedback-scene.png",
+      "original_image_name": "owned-009-feedback-candidate.png",
+      "original_PNG_SHA256": "98efba78f65aef37aa781523e7cd51488074000a2e16d07c57187c2a0631b59d",
+      "original_pixel_size": [
+        960,
+        640
+      ],
+      "crop_xywh": [
+        248,
+        160,
+        616,
+        208
+      ],
+      "export_pixel_size": [
+        616,
+        208
+      ],
+      "export_PNG_SHA256": "58eac3f9d559cb1a11ced9ae1fe51199300380cbc2912e45195e896af7184be2",
+      "export_RGBA_SHA256": "f012843db8968aa47647603941dc768cecb864485c8ec02bd1a326a8600dfaad",
+      "scope": "Root verified Decision accepted/fullnonce/disabled actions; exact original review hash below.",
+      "original_review_receipt_SHA256": "6d825ba7baf272d8649ba3730ee4f77c7fde9d5aaf476b3d5026ab1d8e10b50c",
+      "additional_Root_scope_statement": "Root verified Decision accepted/fullnonce/disabled actions; exact original review hash below.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/accepted-title.png",
+      "original_image_name": "owned-009-feedback-candidate.png",
+      "original_PNG_SHA256": "98efba78f65aef37aa781523e7cd51488074000a2e16d07c57187c2a0631b59d",
+      "original_pixel_size": [
+        960,
+        640
+      ],
+      "crop_xywh": [
+        272,
+        192,
+        568,
+        16
+      ],
+      "export_pixel_size": [
+        568,
+        16
+      ],
+      "export_PNG_SHA256": "d8edbc4117d37aefa5860d13ed9bc15ec4f97ddc1b9f1e6b1aeb881097c4951c",
+      "export_RGBA_SHA256": "d0276654a78d029b8a39b0882fb676495b211c41685a99a7524cc5803ab9d94e",
+      "scope": "Root verified Decision accepted; accepted-title-only reference.",
+      "original_review_receipt_SHA256": "6d825ba7baf272d8649ba3730ee4f77c7fde9d5aaf476b3d5026ab1d8e10b50c",
+      "additional_Root_scope_statement": "Root verified Decision accepted; accepted-title-only reference.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/header-current.png",
+      "original_image_name": "owned-026-after-collect-final-owned.png",
+      "original_PNG_SHA256": "519723ea925fc3b52c12287ae86708aa425afeb8100499e81fd7fc1de1aadf45",
+      "original_pixel_size": [
+        960,
+        640
+      ],
+      "crop_xywh": [
+        248,
+        96,
+        616,
+        16
+      ],
+      "export_pixel_size": [
+        616,
+        16
+      ],
+      "export_PNG_SHA256": "21a04e77a1abbedc2820787f961fad70976b4e1b6059af20c19d52a86513769c",
+      "export_RGBA_SHA256": "23165ab782472c1029b8ce71976a71458308b0bc37a134d0b91ce6bc114c14c8",
+      "scope": "Root verified this is TRANSITIONAL; HEADER GLYPHS ONLY, never terminal.",
+      "original_review_receipt_SHA256": "6d825ba7baf272d8649ba3730ee4f77c7fde9d5aaf476b3d5026ab1d8e10b50c",
+      "additional_Root_scope_statement": "Root verified this is TRANSITIONAL; HEADER GLYPHS ONLY, never terminal.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/header-v14.png",
+      "original_image_name": "owned-007-feedback-candidate.png",
+      "original_PNG_SHA256": "ec0f6a4ca740fdc348bea7c0194af881f49ee1d2ceaab5f6c187fda2c318eafc",
+      "original_pixel_size": [
+        960,
+        640
+      ],
+      "crop_xywh": [
+        248,
+        96,
+        616,
+        16
+      ],
+      "export_pixel_size": [
+        616,
+        16
+      ],
+      "export_PNG_SHA256": "68fa8c1b120b4fe513686a1d245c02401a0e0724002da4135aee9947ca88b64c",
+      "export_RGBA_SHA256": "f93dabe834e0e0006c3f0ff1de968522f4cb5e50d71e90c4c2086c912b4a97ef",
+      "scope": "Root viewed actual accepted frame; header glyphs only.",
+      "original_review_receipt_SHA256": "5786aef30c22e989e68c7c60361d4d6e4daa6b8e64fe822db9b49297845d69fc",
+      "additional_Root_scope_statement": "Root viewed actual accepted frame; header glyphs only.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/header-baseline-glyphs.png",
+      "original_image_name": "owned-005-failure-before-cleanup.png",
+      "original_PNG_SHA256": "4e8256119fe6940dd681370f29b220337d8b7ab5d31433cfe3bfe08b96fadaf4",
+      "original_pixel_size": [
+        960,
+        640
+      ],
+      "crop_xywh": [
+        248,
+        96,
+        616,
+        16
+      ],
+      "export_pixel_size": [
+        616,
+        16
+      ],
+      "export_PNG_SHA256": "2c0d10b5fb271bb8232f10860f57855d8ca796885287227238ef475ffaf08e38",
+      "export_RGBA_SHA256": "6b5523e063b3efff0af10dd9bac3752e3c65f65bb377102442ab29ec2624968c",
+      "scope": "Root explicitly approved ONLY raw header glyphs1/2/7 from baseline clip-refusal; no successful input/terminal/performance proof.",
+      "original_review_receipt_SHA256": "29b03df8f83e0c40f321e47eddd6fe856d24b03691364f9120147f24b98c970f",
+      "additional_Root_scope_statement": "Root explicitly approved ONLY raw header glyphs1/2/7 from baseline clip-refusal; no successful input/terminal/performance proof.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/card-nonce-strip.png",
+      "original_image_name": "owned-004-card-candidate.png",
+      "original_PNG_SHA256": "85d43490771be6fadfbbedaf6cf05a19a48005a28d76f7c4217f4168b0f4e2d3",
+      "original_pixel_size": [
+        616,
+        208
+      ],
+      "crop_xywh": [
+        184,
+        64,
+        256,
+        16
+      ],
+      "export_pixel_size": [
+        256,
+        16
+      ],
+      "export_PNG_SHA256": "d51c919f44944b8c4fae87896d600e1bc7736b4e1596547acb6af10919152bd5",
+      "export_RGBA_SHA256": "b568a30482efb94f1991f37623c30c26da4971ee8e16f62a80169c75cd1f4032",
+      "scope": "Root card full synthetic nonce; raw16hex glyphs only.",
+      "original_review_receipt_SHA256": "5786aef30c22e989e68c7c60361d4d6e4daa6b8e64fe822db9b49297845d69fc",
+      "additional_Root_scope_statement": "Root card full synthetic nonce; raw16hex glyphs only.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/action-white.png",
+      "original_image_name": "owned-004-card-candidate.png",
+      "original_PNG_SHA256": "75afae5a34818060d8175bd8590ec24fea36a2835d06f57bae48871b13e0dc13",
+      "original_pixel_size": [
+        616,
+        208
+      ],
+      "crop_xywh": [
+        24,
+        160,
+        96,
+        16
+      ],
+      "export_pixel_size": [
+        96,
+        16
+      ],
+      "export_PNG_SHA256": "a5c1c5631d119923e56fe0d09cc8f7c52b87e0da96c396701ebc98c7c5aa04af",
+      "export_RGBA_SHA256": "c4121e66ca628829e2e3d3b990a4935c72fdca922285b6d18c9836226ba63661",
+      "scope": "Root-viewed enabled action pixels; not a new live frame.",
+      "original_review_receipt_SHA256": "e9eb8d7009aa80bbdbba178f997b902c57233c099e41c99ed4317420182b3390",
+      "additional_Root_scope_statement": "Root-viewed enabled action pixels; not a new live frame.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    },
+    {
+      "export": "reference-fixtures/action-blue.png",
+      "original_image_name": "owned-005-card-before-input.png",
+      "original_PNG_SHA256": "f22f2932c3f3de04e37e19013d1ad16ddaacf8808a0bff5df0af343651bb32f3",
+      "original_pixel_size": [
+        616,
+        208
+      ],
+      "crop_xywh": [
+        24,
+        160,
+        96,
+        16
+      ],
+      "export_pixel_size": [
+        96,
+        16
+      ],
+      "export_PNG_SHA256": "fca37c1db746a94967c197a3137ae89a4019a3ebb3e849ebc00a5c0f4ef61040",
+      "export_RGBA_SHA256": "d54b626767b7198ab3d979ad132719de985c8ccad70c8f2690cd33f0d9b6d1f6",
+      "scope": "Root-viewed enabled action pixels; not a new live frame.",
+      "original_review_receipt_SHA256": "e9eb8d7009aa80bbdbba178f997b902c57233c099e41c99ed4317420182b3390",
+      "additional_Root_scope_statement": "Root-viewed enabled action pixels; not a new live frame.",
+      "lossless_actual_pixels": true,
+      "rendered_or_normalized": false
+    }
+  ],
+  "metadata_exports": [
+    {
+      "export": "reference-fixtures/root-feedback-review-export.json",
+      "original_receipt_name": "root-feedback-and-final-image-review.json",
+      "original_receipt_SHA256": "6d825ba7baf272d8649ba3730ee4f77c7fde9d5aaf476b3d5026ab1d8e10b50c",
+      "export_SHA256": "15fdf4b369a62c82831238de161ee4a4ac7be6bef870381e9c26feef21eaaaaa",
+      "transformation": "UTF8 JSON values identical; LF export for portable committed bytes. Historical receipt untouched."
+    }
+  ]
+}

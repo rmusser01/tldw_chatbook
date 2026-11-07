@@ -35,3 +35,7 @@ tldw_chatbook/Config_Files/default_config.toml -text
 
 # Remote worker identity hashes these exact bytes on Windows too.
 tldw_chatbook/Tools/remote_worker_bundle.py text eol=lf
+
+# Reviewed Console QA sources and fixtures have manifest-pinned bytes.
+Docs/superpowers/qa/2026-11-06-console-approval-resync/native-single-v21/** -text
+Docs/superpowers/qa/2026-11-06-console-approval-resync/native-single-v21/*.diff whitespace=-blank-at-eol

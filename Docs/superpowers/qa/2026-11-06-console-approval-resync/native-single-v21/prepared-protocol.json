@@ -1,0 +1,242 @@
+{
+  "version": "NativeV21-portable-SINGLE-source-only",
+  "prepared_UTC": "2026-11-07T11:19:30.219580+00:00",
+  "publication": "Exact QA code/ref bytes must be committed before live validation/measurements. Outputs never committed.",
+  "product_revision": "PENDING_ROOT_FINAL_CODE_COMMIT_AND_FREEZE",
+  "historical_reference_product_revision": "c1833ae9e9fdabb38a976151ab3c9a79c280b245",
+  "scope": {
+    "source": "current-feature only",
+    "transport": "genuine native Windows Console",
+    "shape": "single real private fs_read",
+    "size": [
+      120,
+      40
+    ],
+    "Inspect": "closed",
+    "theme": "textual-dark",
+    "validation_rounds": 1,
+    "qualification_rounds": 41,
+    "cold": 1,
+    "warm": 40,
+    "baseline": "historical censored/missing, no retries/comparison",
+    "other_shapes_transports_matrix": "not implemented or claimed"
+  },
+  "runtime_SHA256": {
+    "approval_fixture_driver.py": "39abfcfc93519df330b107cdf632d92cdba0095238322accb5c14a03cda7027d",
+    "approval_fixture_workload_v7.py": "2bab44e762702a8c8f18f3e59e5e769a1cc67fa31a2d4d735599b4217cc2825c",
+    "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
+    "native_bootstrap.py": "fba33556c87bd321c138d6d50bb037ed90d7bb0c4ace59440a74f1689e87ca08",
+    "native_product_child.py": "5c39cc89332cc83a591950ac43aad57d64d469ea9eb444f55a68e13efb9e3f15",
+    "native_product_observer.py": "fd38994f999431636ea472fdc93a196f24254c8de2285a30e47bdb8b541fc608",
+    "native_rehearsal_observation.py": "b962f2c158069180dfbbd29b47626f097758a2554edb449e61390e2a30142c3a",
+    "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
+    "native_window_api.py": "194ef1d9f31b5983e7a50424cfea539ba7a15da5dfdcf47216fd0eb5f1783ee4",
+    "owned_roi_capture.py": "161718b7fcca0e2851a01c3f9694bda83ac90f0f6d8b15fd81fe3e357963fe7d",
+    "prepare_native_run.py": "38bdeb7f6881b8fbf12461e0d958b44ad35c9502ee4c7deb6a0478125d6801a7",
+    "qa_process_guard.py": "5929c9d89253645b205a90a37215a2fa131c20deb8bdfba0e39fc6876f590251"
+  },
+  "reference_files_SHA256": {
+    "reference-fixtures/accepted-feedback-scene.png": "58eac3f9d559cb1a11ced9ae1fe51199300380cbc2912e45195e896af7184be2",
+    "reference-fixtures/accepted-feedback-state.json": "a8a33c19b4e08d6a3c3ed8bc79eb4df09ead801a0bce64725caf47bbe653f97b",
+    "reference-fixtures/accepted-title.png": "d8edbc4117d37aefa5860d13ed9bc15ec4f97ddc1b9f1e6b1aeb881097c4951c",
+    "reference-fixtures/action-blue.png": "fca37c1db746a94967c197a3137ae89a4019a3ebb3e849ebc00a5c0f4ef61040",
+    "reference-fixtures/action-white.png": "a5c1c5631d119923e56fe0d09cc8f7c52b87e0da96c396701ebc98c7c5aa04af",
+    "reference-fixtures/card-glyph-scene.png": "885339c28ce00f664ee16773fd711ac1f17c8ad0f0c27170fb660d5725de1349",
+    "reference-fixtures/card-nonce-strip.png": "d51c919f44944b8c4fae87896d600e1bc7736b4e1596547acb6af10919152bd5",
+    "reference-fixtures/enabled-blue-scene.png": "e83c4f163aed59aa58493ffc31de8ff16523b47f1a671734637d873a0e6e47fa",
+    "reference-fixtures/enabled-white-scene.png": "75e2cce9f1e19de488afdb55303a6b5000bc57facdbb2bd2a2a38fe296e2811e",
+    "reference-fixtures/header-baseline-glyphs.png": "2c0d10b5fb271bb8232f10860f57855d8ca796885287227238ef475ffaf08e38",
+    "reference-fixtures/header-current.png": "21a04e77a1abbedc2820787f961fad70976b4e1b6059af20c19d52a86513769c",
+    "reference-fixtures/header-v14.png": "68fa8c1b120b4fe513686a1d245c02401a0e0724002da4135aee9947ca88b64c",
+    "reference-fixtures/provenance.json": "293078f1a58f766b9e835b4b27a34c9c7c6acda03ca308f2fce9ed435a5332ef",
+    "reference-fixtures/root-feedback-review-export.json": "15fdf4b369a62c82831238de161ee4a4ac7be6bef870381e9c26feef21eaaaaa",
+    "exact-pixel-refs.json": "8fd0d99a7810fe07ec5b4e130471dfd3125272c22191d4c8c76073f5ae91d187"
+  },
+  "controls": {
+    "watchdog": 7,
+    "actual_loop_deadlines": 10,
+    "pixels_identity_modes_denominator": 11,
+    "spool_clock": 5,
+    "protocol_refusals": 28,
+    "qualification_freeze_Windows_Git": 9,
+    "shape_caps": {
+      "native_batch_calls": 4,
+      "large_UTF8_bytes": 1048576,
+      "raw_UTF8_bytes": 16384
+    },
+    "AST_count": 19,
+    "Ruff_format": "PASS before final controls",
+    "Ruff_check_no_cache": "PASS",
+    "source_semantics": {
+      "approval_fixture_driver.py_semantic_AST_preserved": true,
+      "approval_fixture_workload_v7.py_semantic_AST_preserved": true,
+      "common_activity_observer.py_semantic_AST_preserved": true,
+      "native_bootstrap.py_semantic_AST_preserved": true,
+      "native_window_api.py_semantic_AST_preserved": true,
+      "owned_roi_capture.py_semantic_AST_preserved": true,
+      "NativeConsoleProcess_original_AST_preserved": true,
+      "same_eligible_action_button_original_AST_preserved": true,
+      "CardEvents_original_AST_preserved": true,
+      "StageWatchdog_original_AST_preserved": true,
+      "reference_hashes_match": true,
+      "no_original_home_worktree_private_run_literal": true
+    },
+    "diagnostic_policy": 12
+  },
+  "receipt_exports": [
+    {
+      "file": "selfcheck-receipts/stage-watchdog-control-results.json",
+      "original_output_SHA256": "07d3888d8d31834a7d90cb1021bb07f4dc1a6ca017b66a41e3492d1a097a8e25",
+      "export_SHA256": "02be75e933e50c515a8c4502dd62ed4e40c9338668ed1e00d53d6957cfbe62f3",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF public metadata export; original output retained."
+    },
+    {
+      "file": "selfcheck-receipts/preparation-clock-control-results.json",
+      "original_output_SHA256": "22924d55fa0b6cb43d20986324f7c164bd4fbf6b3e8df1e55bdd0bf18d2647d0",
+      "export_SHA256": "991e56f61fc4329ee0ba683bcb16766ed941c6c411f43664e59290567a44e16b",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF public metadata export; original output retained."
+    },
+    {
+      "file": "selfcheck-receipts/series-method-control-results.json",
+      "original_output_SHA256": "848c2a44a7d64bf411594fe057f24f08275ef0fd6f9cf90382b516398756aece",
+      "export_SHA256": "3e3a64accfea293f8924f0f0f939d277e2a54368df8dfad4860edf02824d54ed",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF public metadata export; original output retained."
+    },
+    {
+      "file": "selfcheck-receipts/series-spool-control-results.json",
+      "original_output_SHA256": "95d84efed74f3a8a5aead33e55530982bf11d8d4413c19857273e3e7f95d95f4",
+      "export_SHA256": "2eda5f3fdff692a275d0877b3435a4428769217ed0442bdc26091c19698b76e8",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF public metadata export; original output retained."
+    },
+    {
+      "file": "selfcheck-receipts/script-protocol-selfcheck.json",
+      "original_output_SHA256": "b6cb16b8edcca70c98a5fcdbedf8cb02ba9fdfafe65003ce510aa9994acc854e",
+      "export_SHA256": "24bcaa9ae83161970832d912d549c965914077b1309ea4f722a0a04230fe18ed",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF public metadata export; original output retained."
+    },
+    {
+      "file": "selfcheck-receipts/qualification-freeze-control-results.json",
+      "original_output_SHA256": "3c571a36b8b64ef3fc3961349a59c36ec278db1733ed2b93febbb283fef82382",
+      "export_SHA256": "5afe26abbeda9fbdcbc648579fcf287919f03a6569d1ea7875f83c1fb1ea4a1d",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF public metadata export; original output retained."
+    },
+    {
+      "file": "selfcheck-receipts/diagnostic-policy-control-results.json",
+      "original_output_SHA256": "33c242e1086e1892af67339e5e80a0566fd045fae541bb4a65d0c3aaa77f1cad",
+      "export_SHA256": "9bc2a519c998e6c1ffa03908c76cee4faef0a4b96c43f31bf80ea578019e2bf8",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF public metadata export; original output retained."
+    },
+    {
+      "file": "selfcheck-receipts/v20-v21-semantic-delta-results.json",
+      "original_output_SHA256": "f85899f74b3f0e70873e88446c3fa58b06ec659fabb58ebbc7d49b8aa24502fb",
+      "export_SHA256": "ad2a82c3716b4c5704bf894a72aa3714025ae2b0c2c781ab952801bb7f0168d0",
+      "JSON_values_identical": true,
+      "transformation": "UTF8/LF public metadata export; original output retained."
+    },
+    {
+      "file": "selfcheck-receipts/diagnostic-policy-control-RED-v20.json",
+      "original_output_SHA256": "d9af77e632e9c943da99490e68d4476ac04943800c555b7c52b09175e553710e",
+      "export_SHA256": "5f51073d8933587d5ab9443a11dd5800961493a743993545578bb46ea250a7dd",
+      "JSON_values_identical": true
+    }
+  ],
+  "caps": {
+    "rounds": 41,
+    "event_rows_per_round": 64,
+    "event_rows_process": 2624,
+    "queue": 256,
+    "row_bytes": 4096,
+    "stage_bytes_process": 10747904,
+    "captures_per_round": 64,
+    "captures_process": 2624,
+    "normal_PNGs_per_round": 6,
+    "failure_PNGs_per_round": 1,
+    "PNG_bytes_per_round": 524288,
+    "PNG_bytes_process": 22020096,
+    "control_spans_per_round": 32,
+    "setup_control_spans": 16,
+    "process_control_spans": 1328,
+    "settlement_observations": 20,
+    "settlement_seconds": 2,
+    "preparation_prior_progress_seconds": 60,
+    "preparation_total_seconds": 300,
+    "card_review_seconds": 45,
+    "unchanged_app_safety_seconds": 600
+  },
+  "qualification_hold": "Mode validation is hard1. Mode qualification requires actual parsed freeze qualification_authorized is True/source_root+revision match, matching freeze SHA, all runtime/reference bytes and Root-reviewed live feedback/settled PNG receipts. A diagnostic freeze cannot qualify retrospectively.",
+  "timing": {
+    "primary": "earliest actual app MouseDown -> first new accepted-feedback capture upper bound",
+    "retain": "MouseDown +MouseUp +Down/Up delivery +committing Up/helper interval +Win32 QPC before/after +request_complete/local_checks separate",
+    "targets_ms": {
+      "input_feedback_p95": 100,
+      "local_checks_actionable_p95": 200
+    },
+    "p95": "nearest rank of all40 valid warm, cold separate",
+    "bounds": "before/after QPC/perf union; new owned GDI intervals, no atomic scanout claim",
+    "overhead": "classification_compute_ns; pre_persist_capture_total_ns excluding persist; persist_encode_ns includes encode/write/stat/hash; no subtraction",
+    "prior_presented_output": "MISSING, scripted text is not paint/inference"
+  },
+  "references": {
+    "feedback": "actual newly recomputed Decisionaccepted-title/full32nonce/current round; disabled actions valid",
+    "terminal": "first Root live settled reference still MISSING; V18026 never terminal. Current unique QA12 +actual owner/session/run/retired card +header/status/composer/Stop/ROI facts twicefresh",
+    "palette": "exact rawRGBA, no color/font normalization",
+    "baseline_glyph_scope": "clip-refusal005 ONLY header1/2/7",
+    "provenance": "reference-fixtures/provenance.json"
+  },
+  "profile_source_security": "Original-home guard before redirect/products, selected main/Core source first in no-pip venv and -I workers; real admission/gateway/catalog/load/permissions/rootpin/executor, exact owned endpoints, no model/external network",
+  "original_V19_checkpoint_SHA256": "8c192125ab1dbc89d724d903b5cf383c1c5b0192c4d766054ae315e61532cdbd",
+  "source_export_notes": "New public copy formatted LF/Ruff; unused imports/locals removed, exact-type and essential E402 exceptions documented. Original V18/V19 code/receipts untouched. Guard semantic change only per-command safe.directory.as_posix; stricter qualification-freeze gate explicitly RED/GREEN reviewed.",
+  "readme_SHA256": "447ce7349de01c1da9a55229056b8f9681126fd21d463f371f71376ddbbeeede",
+  "qualified": false,
+  "product_samples": 0,
+  "GUI_launched": false,
+  "run_seeded": false,
+  "launch_authorized": false,
+  "review_status": "Root diagnostic ruling implemented; independent V21 delta review pending",
+  "original_V20_packet": {
+    "protocol_SHA256": "58b196cfeeed1c9c3412d3691d5562231c35e836edfcb92a9a3032086a282eb1",
+    "manifest_SHA256": "8d97843a937bdb9c207de986633cb66b19021893012635c135b87ef8a5037f59",
+    "checkpoint_receipt_SHA256": "3c1e51284959d3b66987d27bede32a7bf70a1ed82cf604d5729d4acbc7e6da83",
+    "files_verified_before_rename": 45
+  },
+  "diagnostic_policy": {
+    "default": "OFF for ALL QA C-faulthandler work in validation and qualification",
+    "opt_in": "--diagnostic-stack only validation1",
+    "selected_field": "diagnostic_stack exactboolean",
+    "child_binding": "Explicit --diagnostic-stack or --no-diagnostic-stack, checked against SourceSelection before App",
+    "qualification": "Diagnostic true or malformed flag refuses before App",
+    "C_calls": "Only retained StageWatchdog.arm/cancel; no automatic35s startup/attach/repeating schedule or synchronous failure dump",
+    "debug": "One20s repeatFalse stage timer with original lifecycle retained",
+    "causality": "Operator method ruling removes optional observer work/risk; no attribution of historical crashes/stalls"
+  },
+  "semantic_delta_checks": {
+    "StageWatchdog_unchanged_AST": true,
+    "run_round_unchanged_AST": true,
+    "capture_unchanged_AST": true,
+    "persist_image_unchanged_AST": true,
+    "classify_feedback_unchanged_AST": true,
+    "classify_terminal_unchanged_AST": true,
+    "qpc_perf_interval_unchanged_AST": true,
+    "input_components_unchanged_AST": true,
+    "planned_outcomes_unchanged_AST": true,
+    "nearest_rank_p95_unchanged_AST": true,
+    "authorized_round_limit_unchanged_AST": true,
+    "all_reference_bytes_unchanged": true,
+    "guard_bytes_unchanged": true,
+    "spool_bytes_unchanged": true
+  },
+  "semantic_delta": {
+    "file": "v20-to-v21-diagnostic-policy.diff",
+    "SHA256": "990134304d049f3758dfefb43251c88ebee0b596691a0ec0891a8baa0677f180",
+    "receipt": "selfcheck-receipts/v20-v21-semantic-delta-results.json",
+    "receipt_SHA256": "ad2a82c3716b4c5704bf894a72aa3714025ae2b0c2c781ab952801bb7f0168d0"
+  },
+  "formatting_scratch": "Wholesale V19/V20 formatting diff excluded from publication; retained in exact verified V20 checkpoint."
+}
