@@ -29,6 +29,15 @@ class HostedSSEReadError(ValueError):
     """Raised when an owned hosted SSE response cannot be read safely."""
 
 
+class HostedSSEIncompleteError(HostedSSEReadError):
+    """Raised when a body that was read to its end stops inside a line or record.
+
+    Not a failed read: the server closed the body cleanly, but what it sent
+    is not a whole SSE stream (for example a JSON answer with no final line
+    break).
+    """
+
+
 class SSERecordDecoder:
     """Incrementally decode strict UTF-8 Server-Sent Events records."""
 
@@ -205,7 +214,7 @@ class OwnedSSEStream(Iterator[SSERecord]):
                     self._pending.extend(self._decoder.finish())
                 except Exception:
                     self.close()
-                    raise HostedSSEReadError(
+                    raise HostedSSEIncompleteError(
                         "Hosted SSE response was incomplete."
                     ) from None
                 self.close()

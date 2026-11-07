@@ -175,9 +175,16 @@ async def test_real_handler_gateway_projection_does_not_identify_response_cause(
             str(error)
             == "Provider error from custom-ep:offline: unexpected provider error."
         )
+        # TASK-37762: a stream that ends without its terminal record is the
+        # protocol error's incomplete-stream subtype.
+        lower_class = (
+            "HostedChatStreamIncompleteError"
+            if mode == "missing_done"
+            else "HostedChatProtocolError"
+        )
         assert lower_errors == [
             (
-                "HostedChatProtocolError",
+                lower_class,
                 {
                     "malformed_json": "Hosted Chat stream JSON is malformed.",
                     "read_failure": "Hosted Chat stream read failed.",
@@ -204,9 +211,10 @@ async def test_real_handler_gateway_projection_does_not_identify_response_cause(
             "http_502": "unclassified",
         }[mode]
         assert record["reason_code"] == expected_reason
-        assert record["exception_class"] == (
-            "ChatProviderError" if mode == "http_502" else "HostedChatProtocolError"
-        )
+        assert record["exception_class"] == {
+            "http_502": "ChatProviderError",
+            "missing_done": "HostedChatStreamIncompleteError",
+        }.get(mode, "HostedChatProtocolError")
         assert record["original_status"] == (502 if mode == "http_502" else None)
         assert record["frames"] and len(record["frames"]) <= 16
         assert CANARY not in packets[0].read_text()
