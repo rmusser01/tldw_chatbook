@@ -1200,6 +1200,16 @@ MINIMUM_FILES = 2437
 MINIMUM_FILES = 2439
 
 
+MINIMUM_FILES = 2032
+MINIMUM_FILES = 2037
+MINIMUM_FILES = 2044
+MINIMUM_FILES = 2079
+MINIMUM_FILES = 2148
+MINIMUM_FILES = 2149
+MINIMUM_FILES = 2150
+MINIMUM_FILES = 2438
+# 2026-11-20: re-counted after rebasing onto dev d85e90bc9e. The floor is the measured entry count.
+MINIMUM_FILES = 2442
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
