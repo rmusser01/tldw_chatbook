@@ -72,7 +72,7 @@ async def _settle(app, pilot):
 @asynccontextmanager
 async def _mounted_form(verb):
     db = CharactersRAGDB(db_path=":memory:", client_id="study-create-drafts")
-    quiz_id = db.create_quiz(name="Existing quiz")
+    quiz_id = db.learning.create_quiz(name="Existing quiz")
     scope = _HeldCreate(QuizScopeService(local_service=LocalQuizService(db=db)), verb)
     app = _StudyHost(scope)
     try:
@@ -112,12 +112,12 @@ def _stored(db, quiz_id, verb):
     if verb == "create_quiz":
         return [
             (quiz["name"], quiz["description"])
-            for quiz in db.list_quizzes()["items"]
+            for quiz in db.learning.list_quizzes()["items"]
             if quiz["id"] != quiz_id
         ]
     return [
         (question["question_text"], question["correct_answer"])
-        for question in db.list_questions(quiz_id, include_answers=True)["items"]
+        for question in db.learning.list_questions(quiz_id, include_answers=True)["items"]
     ]
 
 

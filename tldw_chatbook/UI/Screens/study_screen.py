@@ -1079,6 +1079,7 @@ class StudyScreen(BaseAppScreen):
         study_service = getattr(self.app_instance, "study_scope_service", None)
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         db = getattr(self.app_instance, "chachanotes_db", None)
+        learning = getattr(db, "learning", None)
 
         async def _db_off_loop(func: Any, /, *args: Any, **kwargs: Any) -> Any:
             """Run one sync fallback DB query off the event loop.
@@ -1103,9 +1104,11 @@ class StudyScreen(BaseAppScreen):
                 due_count = len(
                     self._normalize_records(due_records) or list(due_records or [])
                 )
-            elif db is not None and hasattr(db, "get_due_flashcards"):
+            elif learning is not None and hasattr(learning, "get_due_flashcards"):
                 due_count = len(
-                    list(await _db_off_loop(db.get_due_flashcards, limit=25) or [])
+                    list(
+                        await _db_off_loop(learning.get_due_flashcards, limit=25) or []
+                    )
                 )
         except Exception:
             logger.opt(exception=True).debug("Failed to load Study due counts")
@@ -1121,11 +1124,11 @@ class StudyScreen(BaseAppScreen):
                     str(deck.get("name") or "Untitled deck")
                     for deck in self._normalize_records(decks)[:3]
                 ]
-            elif db is not None and hasattr(db, "list_decks"):
+            elif learning is not None and hasattr(learning, "list_decks"):
                 recent_decks = [
                     str(deck.get("name") or "Untitled deck")
                     for deck in list(
-                        await _db_off_loop(db.list_decks, limit=3, offset=0) or []
+                        await _db_off_loop(learning.list_decks, limit=3, offset=0) or []
                     )[:3]
                 ]
         except Exception:
@@ -1142,9 +1145,9 @@ class StudyScreen(BaseAppScreen):
                     str(quiz.get("name") or "Untitled quiz")
                     for quiz in self._normalize_records(quizzes)[:3]
                 ]
-            elif db is not None and hasattr(db, "list_quizzes"):
+            elif learning is not None and hasattr(learning, "list_quizzes"):
                 quizzes = await _db_off_loop(
-                    db.list_quizzes,
+                    learning.list_quizzes,
                     q=None,
                     workspace_id=self.scope_state.workspace_id,
                     limit=3,

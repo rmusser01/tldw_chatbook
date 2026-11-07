@@ -2026,7 +2026,7 @@ async def test_two_awaited_card_list_rebuilds_do_not_interleave():
 async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
     """TASK-19559 review R3: SM-2 is compounding, so a double-submit doubles it.
 
-    `ChaChaNotes_DB.update_flashcard_review` runs SM-2, which is *not*
+    `LearningRepository.update_flashcard_review` runs SM-2, which is *not*
     idempotent: applying it twice to one card moves `repetitions` 0 -> 1 -> 2
     and `interval` 1d -> 6d. Removing exclusivity turned a lost write into a
     doubled schedule, which is a different data defect, not a fix.
@@ -2039,8 +2039,8 @@ async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
     from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 
     db = CharactersRAGDB(str(tmp_path / "study.db"), "study-review-probe")
-    deck_id = db.create_deck("Doubling deck")
-    card_id = db.create_flashcard({"deck_id": deck_id, "front": "Q", "back": "A"})
+    deck_id = db.learning.create_deck("Doubling deck")
+    card_id = db.learning.create_flashcard({"deck_id": deck_id, "front": "Q", "back": "A"})
     local = LocalStudyService(db)
 
     class RealDbStudyScopeService(FakeStudyScopeService):
@@ -2098,7 +2098,7 @@ async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
         scope.gate.set()
         await pilot.pause(0.8)
 
-    row = db.get_flashcard(card_id)
+    row = db.learning.get_flashcard(card_id)
     assert (row["repetitions"], row["interval"]) == (1, 1), (
         "SM-2 was applied more than once for a single card presentation: "
         f"repetitions={row['repetitions']} interval={row['interval']}"
@@ -2111,7 +2111,7 @@ class RealDbReviewScopeService(FakeStudyScopeService):
     The `gate` is a genuine suspension point *in front of* the SM-2 write. It
     stands in for the server backend, which is the only one where a rating can
     be cancelled with the write's fate unknown: the local backend reaches
-    `ChaChaNotes_DB.update_flashcard_review` through `_maybe_await` without ever
+    `LearningRepository.update_flashcard_review` through `_maybe_await` without ever
     yielding to the loop, so a `CancelledError` delivered at that await means
     the write had not begun. Holding this gate open lets a test cancel the
     rating worker at a point where nothing has been written yet -- the case a
@@ -2170,8 +2170,8 @@ def _real_db_review_fixture(tmp_path, name: str):
     from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 
     db = CharactersRAGDB(str(tmp_path / f"{name}.db"), f"study-{name}")
-    deck_id = db.create_deck(f"{name} deck")
-    card_id = db.create_flashcard({"deck_id": deck_id, "front": "Q", "back": "A"})
+    deck_id = db.learning.create_deck(f"{name} deck")
+    card_id = db.learning.create_flashcard({"deck_id": deck_id, "front": "Q", "back": "A"})
     return db, LocalStudyService(db), deck_id, card_id
 
 
@@ -2224,7 +2224,7 @@ async def test_cancelled_rating_leaves_the_card_retryable(tmp_path):
         window.query_one("#review-rating-3", Button).press()
         await pilot.pause(0.6)
 
-    row = db.get_flashcard(card_id)
+    row = db.learning.get_flashcard(card_id)
     assert (row["repetitions"], row["interval"]) == (1, 1), (
         "the retry after a cancelled rating did not apply SM-2 exactly once: "
         f"repetitions={row['repetitions']} interval={row['interval']} "
@@ -2260,7 +2260,7 @@ async def test_direct_submit_rating_call_cannot_double_apply_sm2(tmp_path):
         await pilot.pause(0.6)
         await bypass
 
-    row = db.get_flashcard(card_id)
+    row = db.learning.get_flashcard(card_id)
     assert (row["repetitions"], row["interval"]) == (1, 1), (
         "a direct submit_rating() call compounded SM-2 for one presentation: "
         f"repetitions={row['repetitions']} interval={row['interval']} "
@@ -2294,7 +2294,7 @@ async def test_re_dealt_card_records_every_genuine_re_review(tmp_path):
             controller.show_answer()
             await pilot.pause(0.05)
 
-    row = db.get_flashcard(card_id)
+    row = db.learning.get_flashcard(card_id)
     assert (row["repetitions"], row["interval"]) == (2, 6), (
         "a re-dealt card lost one of its two genuine re-reviews: "
         f"repetitions={row['repetitions']} interval={row['interval']} "

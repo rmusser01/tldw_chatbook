@@ -1816,7 +1816,7 @@ class TldwCli(
     def _local_flashcards_due_count(self) -> int | None:
         """Count due flashcards for the Home mirror; None when the DB is absent."""
         db = getattr(self, "chachanotes_db", None)
-        counter = getattr(db, "count_due_flashcards", None)
+        counter = getattr(getattr(db, "learning", None), "count_due_flashcards", None)
         if not callable(counter):
             return None
         try:

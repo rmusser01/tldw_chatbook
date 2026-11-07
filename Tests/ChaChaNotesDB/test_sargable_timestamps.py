@@ -39,6 +39,7 @@ import pytest
 
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.DB import ChaChaNotes_DB as _chachanotes_module
+from tldw_chatbook.DB.learning_repository import LearningRepository
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     _split_sql_statements,
@@ -111,7 +112,7 @@ def seed_mixed_flashcards(db: CharactersRAGDB) -> dict[str, str | None]:
     (``due-space-later`` vs ``due-iso-earlier``) is ordered one way by
     ``datetime()`` and the other by raw text on a v78 DB.
     """
-    deck_id = db.create_deck("Audit", "mixed-format audit deck")
+    deck_id = db.learning.create_deck("Audit", "mixed-format audit deck")
     cards: dict[str, str | None] = {
         "due-null": None,  # never reviewed: due now
         "due-space-later": "2026-10-01 10:00:00",  # due; later instant
@@ -408,8 +409,8 @@ class TestV78ToV79Migration:
         facts = seed_mixed_v78_db(tmp_path)
         db = reopen_migrated(facts)
         try:
-            due = db.get_due_flashcards(limit=10)
-            count = db.count_due_flashcards()
+            due = db.learning.get_due_flashcards(limit=10)
+            count = db.learning.count_due_flashcards()
         finally:
             db.close_connection()
         # NULL first (never-reviewed = due now), then chronological.
@@ -749,7 +750,7 @@ class TestExplainQueryPlans:
         assert "USE TEMP B-TREE" not in plan
 
     def test_due_flashcards_use_the_next_review_index(self, db) -> None:
-        sql = CharactersRAGDB._DUE_FLASHCARDS_SQL + " LIMIT ?"
+        sql = LearningRepository._DUE_FLASHCARDS_SQL + " LIMIT ?"
         plan = _plan(db, sql, ("2027-06-01T00:00:00.000Z", 20))
         # Either an ordered index walk with early stop (SCAN ... USING
         # INDEX, LIMIT-aware) or index probes; the pre-ADR-224 plan was a
@@ -761,7 +762,7 @@ class TestExplainQueryPlans:
     def test_count_due_flashcards_use_the_next_review_index(self, db) -> None:
         plan = _plan(
             db,
-            CharactersRAGDB._COUNT_DUE_FLASHCARDS_SQL,
+            LearningRepository._COUNT_DUE_FLASHCARDS_SQL,
             ("2027-06-01T00:00:00.000Z",),
         )
         assert "SEARCH f USING INDEX idx_flashcards_next_review" in plan

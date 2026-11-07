@@ -72,7 +72,7 @@ async def _settle(app, pilot):
 @asynccontextmanager
 async def _mounted_form(verb):
     db = CharactersRAGDB(db_path=":memory:", client_id="flashcard-create-drafts")
-    deck_id = db.create_deck("Existing deck")
+    deck_id = db.learning.create_deck("Existing deck")
     scope = _HeldCreate(
         StudyScopeService(local_service=LocalStudyService(db=db), server_service=None),
         verb,
@@ -124,10 +124,10 @@ def _draft(fields):
 
 def _stored(db, deck_id, verb):
     if verb == "create_deck":
-        return [(deck["name"],) for deck in db.list_decks() if deck["id"] != deck_id]
+        return [(deck["name"],) for deck in db.learning.list_decks() if deck["id"] != deck_id]
     return [
         (card["front"], card["back"], card["tags"])
-        for card in db.list_flashcards(deck_id=deck_id)
+        for card in db.learning.list_flashcards(deck_id=deck_id)
     ]
 
 
