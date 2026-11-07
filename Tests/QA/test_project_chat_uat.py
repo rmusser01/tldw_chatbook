@@ -470,7 +470,19 @@ async def test_project_chat_uat(
                             str(item.renderable)
                             for item in rows[0].query(".approval-row-header")
                         )
-                        assert "Built-in" in header and "list_directory" in header
+                        assert "Built-in" in header and "List directory" in header
+                        pending = controller._head_round_payload(
+                            controller._parked_approval_payloads, session.id
+                        )
+                        assert pending is not None and len(pending["calls"]) == 1
+                        captured_call = pending["calls"][0]
+                        assert captured_call["tool_name"] == "list_directory"
+                        assert captured_call["llm_name"] == "list_directory"
+                        assert captured_call["call_id"]
+                        assert (
+                            pending["view"].rows[0].verdict_key
+                            == captured_call["call_id"]
+                        )
                         assert len(server.model.received) == 3
                         assert server.model.calls[-1] == {
                             "name": "list_directory",

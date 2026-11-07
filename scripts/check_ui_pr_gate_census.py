@@ -880,6 +880,8 @@ MINIMUM_FILES = 1809
 MINIMUM_FILES = 1813
 # PR3036 whole-branch review: append two bounded literal-Details regressions.
 MINIMUM_FILES = 1815
+# TASK-34569: preserve actual feedback MessagePump dispatch without eager helpers.
+MINIMUM_FILES = 1816
 
 
 def read_census(path: Path) -> list[str]:

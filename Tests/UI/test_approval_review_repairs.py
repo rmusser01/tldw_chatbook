@@ -609,3 +609,67 @@ async def test_queued_details_scroll_stays_with_exact_live_page(
         if transition == "settled":
             assert app.decided and not area.text
             assert not scroll_attempts, "settled disclosure received a stale scroll"
+
+
+@pytest.mark.asyncio
+async def test_details_restore_rewraps_a_page_delivered_before_layout(monkeypatch):
+    class DetailsApp(_CardHarnessApp):
+        CSS_PATH: ClassVar = [str(path) for path in APP_STYLESHEETS]
+
+    call = _sample_calls()[0]
+    row = replace(
+        view().rows[0],
+        verdict_key=call["llm_name"],
+        call_count=1,
+        argument_sets=({"content": "x" * 18000},),
+    )
+    captured = replace(view(), rows=(row,), call_count=1)
+    page = list(approval_details.iter_redacted_details(row.argument_sets))[1]
+    app = DetailsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [call],
+            timeout_seconds=0,
+            round_id="round",
+            view=captured,
+            presentation_revision=1,
+        )
+        await pilot.pause()
+        area = card.query_one("#approval-details-page", TextArea)
+        assert area.size.width == 0  # The unopened Details viewport has no layout.
+        pending = []
+        run_worker = card.run_worker
+
+        def hold_details(function, **kwargs):
+            if kwargs.get("group") == "approval-details":
+                pending.append(function)
+                return None
+            return run_worker(function, **kwargs)
+
+        monkeypatch.setattr(card, "run_worker", hold_details)
+        resize = TextArea._on_resize
+        held_resizes = []
+
+        def hold_resize(widget):
+            if widget is area:
+                held_resizes.append(widget.size)
+            else:
+                resize(widget)
+
+        # Geometry may be published before TextArea handles its Resize/rewrap.
+        monkeypatch.setattr(TextArea, "_on_resize", hold_resize)
+        card._open_details(card.query_one(".approval-details-open", Button))
+        card._details.request_page(1)
+        card._restore_details_scroll = (0, 3)
+        assert card._details.deliver_page(card._details_identity, page)
+        assert area.size.width == 0 and area.virtual_size.height == 1
+        await pilot.pause()
+        assert area.size.width > 0
+        assert (area.scroll_x, area.scroll_y) == (0, 3)
+        assert held_resizes
+        resize(area)
+        await pilot.pause()
+        assert (area.scroll_x, area.scroll_y) == (0, 3)
+        assert area.text == page.text and not app.decided
+        assert len(pending) == 2

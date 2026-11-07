@@ -412,6 +412,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 if TYPE_CHECKING:
+    from .console_approval_feedback import ApprovalFeedbackStore
     from tldw_chatbook.Chat.response_rules.runtime import ResponseRuleRuntime
     from tldw_chatbook.Chat.console_goal_runs import GoalIterationAuthorization
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
@@ -3996,12 +3997,9 @@ class ConsoleChatController:
 
         from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
-        from .console_approval_feedback import ApprovalFeedbackStore
-
-        self.approval_feedback = ApprovalFeedbackStore()
+        self._approval_feedback: ApprovalFeedbackStore | None = None
+        self._approval_feedback_lock = threading.Lock()
         self.approval_feedback_changed = None
-        if self._agent_bridge is not None:
-            self._agent_bridge.approval_feedback_store = self.approval_feedback
         self._interrupt_host = InterruptRoundHost(
             read_controller__active_assistant_message_ids=lambda: (
                 self._active_assistant_message_ids
@@ -14454,9 +14452,10 @@ class ConsoleChatController:
         never go stale.
         """
         self._agent_runtime_enabled = enabled
-        self._agent_bridge = bridge
-        if bridge is not None:
-            bridge.approval_feedback_store = self.approval_feedback
+        with self._approval_feedback_lock:
+            self._agent_bridge = bridge
+            if bridge is not None:
+                bridge.approval_feedback_store = self._approval_feedback
         # PR3a-2 Task 3: a refreshed bridge is a fresh fan-out registry --
         # re-register the usage fold on it (replace-by-name makes calling
         # this with the SAME bridge a safe no-op).
@@ -16720,6 +16719,26 @@ class ConsoleChatController:
             assistant_access=library_authority.policy.assistant_access,
         )
         return provider, authority
+
+    @property
+    def approval_feedback(self) -> ApprovalFeedbackStore:
+        """Construct one app-owned fact store on first approval use, never on attach."""
+        if self._approval_feedback is None:
+            with self._approval_feedback_lock:
+                if self._approval_feedback is None:
+                    from .console_approval_feedback import ApprovalFeedbackStore
+
+                    self._approval_feedback = ApprovalFeedbackStore()
+                    if self._agent_bridge is not None:
+                        self._agent_bridge.approval_feedback_store = self._approval_feedback
+        return self._approval_feedback
+
+    @approval_feedback.setter
+    def approval_feedback(self, value: ApprovalFeedbackStore | None) -> None:
+        self._approval_feedback = value
+        bridge = getattr(self, "_agent_bridge", None)
+        if bridge is not None:
+            bridge.approval_feedback_store = value
 
     def _notify_approval_feedback(self, session_id: str, run_id: str) -> None:
         callback = getattr(self, "approval_feedback_changed", None)

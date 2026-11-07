@@ -283,6 +283,7 @@ jobs:
             Tests/Web_Server/test_served_relay_publisher.py \
             Tests/Chat/test_approval_display_controls.py \
             Tests/Chat/test_console_approval_feedback.py::test_host_final_arbitration_wins_after_controller_receipt \
+            Tests/Chat/test_console_approval_feedback.py::test_feedback_first_access_is_single_and_binds_only_existing_bridge \
             Tests/MCP/test_control_plane_bridge.py \
             Tests/MCP/test_live_server_request_wiring.py \
             Tests/MCP/test_mcp_import_shapes.py \

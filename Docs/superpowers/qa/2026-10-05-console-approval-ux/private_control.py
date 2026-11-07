@@ -67,6 +67,9 @@ target = (
     sys.argv[1] if len(sys.argv) > 1 else "Tests/UI/test_approval_action_ownership.py"
 )
 assert target in {
+    "Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size",
+    "Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size",
+    "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[wrong-family]",
     "Tests/UI/test_approval_details_privacy.py",
     "Tests/Chat/test_approval_display_controls.py",
     "Tests/UI/test_approval_review_repairs.py",

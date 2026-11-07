@@ -11,15 +11,12 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from loguru import logger
 
-from tldw_chatbook.Agents.approval_observation import (
-    observe_grant_errors,
-    publish_grant_application,
-)
 from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
     ProducerLifetime,
     producer_call,
@@ -313,6 +310,29 @@ def _resolve_tool_states_from_payload(
         )
         for tool in tools
     }
+
+
+def _publish_grant_application(*args, **kwargs) -> None:
+    """Load optional display observations only when a grant owner reports one."""
+    try:
+        from tldw_chatbook.Agents.approval_observation import publish_grant_application
+
+        publish_grant_application(*args, **kwargs)
+    except Exception:  # noqa: BLE001, S110 - display cannot change a grant outcome
+        pass
+
+
+def _observe_grant_errors(function):
+    """Preserve the writer's result or exception without importing observers at boot."""
+    @wraps(function)
+    def observed(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except Exception:
+            _publish_grant_application("failed", error_code="writer_failed")
+            raise
+
+    return observed
 
 
 class UnifiedMCPControlPlaneService:
@@ -5266,7 +5286,7 @@ class UnifiedMCPControlPlaneService:
         except (TypeError, ValueError):
             return 0.0
 
-    @observe_grant_errors
+    @_observe_grant_errors
     def approve_for_session(
         self,
         server_key: str,
@@ -5297,7 +5317,7 @@ class UnifiedMCPControlPlaneService:
             # always supply the digest (and imported revision) below.
             with self._session_approvals_lock:
                 self._session_approvals.add((profile_id, server_key, tool_name))
-            publish_grant_application("applied", actual_scope="approve_session")
+            _publish_grant_application("applied", actual_scope="approve_session")
             return
         store = self.permission_store
         if store is None:
@@ -5305,7 +5325,7 @@ class UnifiedMCPControlPlaneService:
                 raise ProfileMutationError("stale_profile")
             with self._session_approvals_lock:
                 self._session_approvals.add((profile_id, server_key, tool_name))
-            publish_grant_application("applied", actual_scope="approve_session")
+            _publish_grant_application("applied", actual_scope="approve_session")
             return
         with store.mutation_fence():
             snapshot = store.read_snapshot_strict()
@@ -5330,7 +5350,7 @@ class UnifiedMCPControlPlaneService:
                 raise ProfileMutationError("stale_revision")
             with self._session_approvals_lock:
                 self._session_approvals.add((profile_id, server_key, tool_name))
-        publish_grant_application("applied", actual_scope="approve_session")
+        _publish_grant_application("applied", actual_scope="approve_session")
 
     def is_session_approved(
         self,
@@ -5694,7 +5714,7 @@ class UnifiedMCPControlPlaneService:
                 type(exc).__name__,
             )
 
-    @observe_grant_errors
+    @_observe_grant_errors
     def set_tool_state(
         self,
         server_key: str,
@@ -5735,7 +5755,7 @@ class UnifiedMCPControlPlaneService:
         """
         store = self.permission_store
         if store is None:
-            publish_grant_application("not_applied", error_code="writer_unavailable")
+            _publish_grant_application("not_applied", error_code="writer_unavailable")
             return
         hash_value: str | None = None
         if ui_state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
@@ -5755,7 +5775,7 @@ class UnifiedMCPControlPlaneService:
             expected_policy_chain_digest=expected_policy_chain_digest,
         )
         if ui_state == "allow":
-            publish_grant_application("applied", actual_scope="always_allow")
+            _publish_grant_application("applied", actual_scope="always_allow")
 
     def set_server_default(
         self,
@@ -5807,7 +5827,7 @@ class UnifiedMCPControlPlaneService:
             return
         store.set_kill_switch(value)
 
-    @observe_grant_errors
+    @_observe_grant_errors
     def add_tool_arg_rule(
         self,
         server_key: str,
@@ -5829,7 +5849,7 @@ class UnifiedMCPControlPlaneService:
         """
         store = self.permission_store
         if store is None:
-            publish_grant_application("not_applied", error_code="writer_unavailable")
+            _publish_grant_application("not_applied", error_code="writer_unavailable")
             return
         hash_value: str | None = None
         if server_key not in HASH_FREE_SERVER_KEYS:
@@ -5843,7 +5863,7 @@ class UnifiedMCPControlPlaneService:
             definition_hash=hash_value,
             profile_id=profile_id,
         )
-        publish_grant_application("applied", actual_scope="allow_matching")
+        _publish_grant_application("applied", actual_scope="allow_matching")
 
     def arg_rule_allows_call(
         self,

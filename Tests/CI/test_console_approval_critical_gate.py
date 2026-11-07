@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 UI_TARGETS = {
+    "Tests/UI/test_approval_feedback.py::test_feedback_message_compatibility_alias_reaches_current_screen_handler",
     "Tests/UI/test_approval_details.py::test_paged_details_escape_unicode_controls_in_keys_and_values",
     "Tests/UI/test_approval_details.py::test_mounted_details_keep_unicode_separators_literal_across_pages",
     "Tests/UI/test_approval_review_repairs.py",
@@ -15,6 +16,7 @@ UI_TARGETS = {
     "Tests/UI/test_approval_interaction.py::test_stale_more_options_cannot_change_replacement",
 }
 OWNER_TARGETS = {
+    "Tests/Chat/test_console_approval_feedback.py::test_feedback_first_access_is_single_and_binds_only_existing_bridge",
     "Tests/Chat/test_console_relay_approval_integration.py",
     "Tests/Web_Server/test_served_relay_publisher.py",
     "Tests/Chat/test_approval_display_controls.py",

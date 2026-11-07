@@ -47,3 +47,7 @@ The documented browser API lacks presentation tracing and requires explicit auth
 ## Evidence
 
 [Curated receipts](receipts.zip) are derived UTF8 exports with checkout/home paths, owner SIDs and terminal color escapes removed. The [receipt manifest](receipt-manifest.json) binds original and exported SHA256 separately. Original protected receipts remain in the isolated checkout. Profiles, virtual environments, databases, credentials and raw native identities are excluded. The [source manifest](source-manifest.json) binds the final changed Python files; the [independent review](independent-review.md) records findings and remaining limits.
+
+## Subsequent hosted CI repair
+
+Fresh CI identified startup-import and UAT integration regressions after the preceding record. The [follow-up](ci-followup.md) documents their repair, the measured Details restoration race, unchanged budgets and current source hashes. Timing qualification remains open; the earlier phase counts and source manifest retain their historical scope.

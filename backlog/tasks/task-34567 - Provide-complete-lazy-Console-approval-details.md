@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 06:41'
-updated_date: '2026-11-07 00:31'
+updated_date: '2026-11-07 03:04'
 labels: []
 dependencies:
   - TASK-34565
@@ -60,6 +60,8 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 2026-10-15 actual-base integration: user deferred #3023; continue on dev1c72cfd48f2bd903093ce6b032684de74c511919 without private #3023 changes. Existing approval decision remaps to ADR235 after a live ref/worktree census (original source221/private229 provenance retained); no new architecture or task ID. Retain this task plan/AC/history and full original approval/privacy/currentness/geometry/timing requirements. First establish the supported private launch, passing original control and reviewed content-free measurement contract before functional edits; Root owns publication and final external qualification.
 Review repair: hold real Details preparation and queue a page before actual card removal; RED must show private cancellation/identity remains live. Synchronously close/fence existing controller at actual card unmount, drop cache/capture/opener references without DOM queries/focus. Persist only bounded nonauthoritative reading position through existing pending-round presentation state; never retain pages/bodies/callbacks. Test actual removal/recreation, late delivery rejection and exact identity mismatch. ADR required:no new; existing ADR235/custody.
 Final two-correction review wave: reproduce a held real Details after-refresh scroll crossing close/reopen, page/row, round/revision, settlement and unmount; fence the callback with existing request cancellation/current identity, displayed/requested page, generation, state retirement and attached area. Preserve current nonzero restoration. ADR required: no new ADR; ADR235 already governs presentation currentness.
+
+2026-11-06 first-use Details deferral exposed measured restoration race in existing actual-card recreation regression: page1 may paint while TextArea.size=(0,0)/virtualheight1, then the fenced after-refresh scroll restoration sees laid-out width112 but stale virtualheight1/maxscroll0 and clamps saved3 to0. Exactpublished control passes; retained callback scalars identify this ordering. Add deterministic real-TextArea pre-layout delivery regression before repair. Minimal correction: inside the existing identity/page/cancellation-fenced restoration callback, only if that page was initially loaded without usable width and the same TextArea is now laid out, reload the same bounded redacted page through public load_text before the original scroll_to. Keep all existing fences, focus, page contents, cancellation and worker release; no timers, private Textual APIs, source cap changes or artificial wait. Requalify affected Details/privacy/actual recreation tests. ADR required:no new; existing ADR235 covers restoration and display-only lifecycle.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -81,4 +83,6 @@ Final review currentness correction: queued Details scroll now revalidates the e
 Originally TASK-34414 in the reviewed approval checkout. Renumbered to TASK-34567 during PR integration onto current dev because older unrelated TASK-34411/34412 already landed. The six approval records moved together to preserve dependency order; original verification hashes/commit references retain their historical context.
 
 2026-11-06 review correction escapes Cf/Zl/Zp/Cs only in serialized JSON display chunks before bounded pagination; ordinaryUnicode, structuralnewlines, JSONmeaning/redaction/originals remain. Three joined-page parameters and actual mountedTextArea regression showed RED, then finalDetails24/privacy10 pass. No native/browser presentation timing orfullmatrixclaim. Existing ADR235/236 applies; no new authority. Evidence Docs/superpowers/qa/2026-11-06-console-approval-resync/README.md. Status remains In Progress.
+
+The first-use Details deferral exposed an actual page-restoration ordering race: text loaded at zero width could retain virtual height 1 after layout, clamping saved scroll 3 to 0. A deterministic actual-TextArea regression failed before correction. The product fix reloads the same bounded redacted page through public load_text only inside the existing fully fenced restoration callback when that page was initially widthless. It preserves focus, contents and all lifetime checks. Final actual lifecycle/currentness 25, Details 24 and privacy 10 pass. New regression is included in the already whole-module required lane. Existing ADR235 applies; physical matrix and timing remain open.
 <!-- SECTION:NOTES:END -->
