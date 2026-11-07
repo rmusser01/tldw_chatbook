@@ -165,6 +165,12 @@ assert target in {
     "Tests/RAG/test_config_profiles.py",
     "Tests/RAG/test_config_profiles_import_order.py",
     "Tests/RAG/test_rag_search_facade.py",
+    "Tests/Web_Server/test_mobile_service.py",
+    "Tests/Web_Server/test_mobile_api.py",
+    "Tests/Persona_Buddy/test_controller_failure_logging.py",
+    "Tests/Architecture/test_backup_owner_inventory.py",
+    "Tests/Architecture/test_console_realtime_controller_boundary.py",
+    "Tests/Architecture/test_console_review_selection_controller_boundary.py",
 }
 selection = sys.argv[2:]
 assert not selection or (len(selection) == 2 and selection[0] == "-k")

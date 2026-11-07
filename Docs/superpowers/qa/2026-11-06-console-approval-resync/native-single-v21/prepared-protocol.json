@@ -1,6 +1,6 @@
 {
-  "version": "NativeV21-portable-SINGLE-received-intent-successor-source-only",
-  "prepared_UTC": "2026-11-07T11:58:32.016832+00:00",
+  "version": "NativeV22-private-bounded-innermost-task-diagnostic-source-only",
+  "prepared_UTC": "2026-11-07T14:19:06.866665+00:00",
   "publication": "Exact QA code/ref bytes must be committed before live validation/measurements. Outputs never committed.",
   "product_revision": "PENDING_ROOT_FINAL_CODE_COMMIT_AND_FREEZE",
   "historical_reference_product_revision": "c1833ae9e9fdabb38a976151ab3c9a79c280b245",
@@ -23,7 +23,7 @@
   },
   "runtime_SHA256": {
     "approval_fixture_driver.py": "39abfcfc93519df330b107cdf632d92cdba0095238322accb5c14a03cda7027d",
-    "approval_fixture_workload_v7.py": "065b32f8b491741170b5e1c9d79d0cd00382d2d27e87047bb1b016b1cb899987",
+    "approval_fixture_workload_v7.py": "ef0b030865070035a0e32258c72adfc5f471646ef76feebe393e4d68e707067b",
     "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
     "native_bootstrap.py": "fba33556c87bd321c138d6d50bb037ed90d7bb0c4ace59440a74f1689e87ca08",
     "native_product_child.py": "fee627ae2c1dd9288aabe4b171c7221a5ec517e068f0dd52903ef587a1909fc8",
@@ -124,7 +124,12 @@
         "file": "ruff ['check', '--no-cache']",
         "returncode": 0
       }
-    ]
+    ],
+    "completed_task_diagnostic": {
+      "passed": 30,
+      "failed": 0,
+      "no_product_imports": true
+    }
   },
   "receipt_exports": [
     {
@@ -257,13 +262,13 @@
   "profile_source_security": "Original-home guard before redirect/products, selected main/Core source first in no-pip venv and -I workers; real admission/gateway/catalog/load/permissions/rootpin/executor, exact owned endpoints, no model/external network",
   "original_V19_checkpoint_SHA256": "8c192125ab1dbc89d724d903b5cf383c1c5b0192c4d766054ae315e61532cdbd",
   "source_export_notes": "New public copy formatted LF/Ruff; unused imports/locals removed, exact-type and essential E402 exceptions documented. Original V18/V19 code/receipts untouched. Guard semantic change only per-command safe.directory.as_posix; stricter qualification-freeze gate explicitly RED/GREEN reviewed.",
-  "readme_SHA256": "63a864669f6dc3673b8e35e1947ea28918fab9ef27e36acb71f5501076116a54",
+  "readme_SHA256": "34c2d6fb0f483bd8a74d6f251651697e59a155519cd5484a374e2d4d3368163d",
   "qualified": false,
   "product_samples": 0,
   "GUI_launched": false,
   "run_seeded": false,
   "launch_authorized": false,
-  "review_status": "Release-safe received-intent successor; final independent delta review pending; no launch authorization",
+  "review_status": "Private bounded-innermost completed-task diagnostic; Root/independent re-review pending; no public enrollment/freeze/seed/App",
   "original_V20_packet": {
     "protocol_SHA256": "58b196cfeeed1c9c3412d3691d5562231c35e836edfcb92a9a3032086a282eb1",
     "manifest_SHA256": "8d97843a937bdb9c207de986633cb66b19021893012635c135b87ef8a5037f59",
@@ -321,5 +326,43 @@
     "new_live_validation": "HELD until review/commit/freeze/lease",
     "guards_caps_pixels_clock_refs": "unchanged",
     "selection_proof": "O(1) actual admitted intent.selection.provider_selection, boundary actual_received_intent_selection; legacy absence honest, observer failures cannot replace task result; actual canonical/SDK/owned endpoint evidence independent"
+  },
+  "completed_task_diagnostic": {
+    "original_public_manifest_SHA256": "9b09c7abd00c665d0372b840a5e8072248f175b2ca2dc5ea0196ba4c1fb5003e",
+    "original_helper_SHA256": "065b32f8b491741170b5e1c9d79d0cd00382d2d27e87047bb1b016b1cb899987",
+    "scope": "existing final failed self.worker snapshot only; no task callback/stage/wait/cap/timer/security/input change",
+    "reason": "exact already resident canonical RecoveryRequired only; builtin str args[0] ASCII [a-z][a-z0-9_]{0,95}; no other args/str/repr",
+    "trace": "own exception only; walk at most64 tb_next links, retain/format at most12 innermost observed source-relative frames outer-to-inner; honest unknown/outside/truncated/walk-limited tags; actual raise-site included only if actual chain end reached",
+    "control": "check_completed_task_diagnostic.py",
+    "control_SHA256": "5c372f0496a40db38bfcecd9df75a5fc4f8adbc94a43dffaab614e0ea550bac8",
+    "RED": {
+      "passed": 5,
+      "failed": 23,
+      "receipt": "selfcheck-receipts/completed-task-controls-RED-v21.json"
+    },
+    "GREEN": {
+      "passed": 30,
+      "failed": 0,
+      "receipt": "selfcheck-receipts/completed-task-tail-controls-GREEN.json"
+    },
+    "semantic_receipt": "selfcheck-receipts/completed-task-semantic-delta-results.json",
+    "delta": "v21-completed-task-diagnostic.diff",
+    "Ruff_format_check": "PASS on changed/new Python bytes only",
+    "runtime_authorized": false,
+    "qualified": false,
+    "product_samples": 0,
+    "bounded_innermost_refinement": {
+      "preserved_prefix_protocol_SHA256": "8a84af18a5581608aca813499f3440cfc484b25363c5e6ac75233d36ae7f0488",
+      "preserved_prefix_manifest_SHA256": "b113575d61b9908004f7d878320685b6dd4c1ce872de408d811595d133c1325a",
+      "RED_prefix": {
+        "passed": 28,
+        "failed": 2,
+        "receipt": "selfcheck-receipts/completed-task-tail-controls-RED-prefix.json"
+      },
+      "delta": "v22-prefix-to-bounded-innermost.diff",
+      "delta_SHA256": "668cd6f6598bf85b98c10f01872b4f0b934681213e9a9b3a2bb9bd6cba88fac4",
+      "snapshot_AST_identical_to_prefix": true,
+      "raise_site_included_requires_actual_chain_end": true
+    }
   }
 }

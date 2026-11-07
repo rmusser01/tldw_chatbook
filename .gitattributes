@@ -37,6 +37,6 @@ tldw_chatbook/Config_Files/default_config.toml -text
 tldw_chatbook/Tools/remote_worker_bundle.py text eol=lf
 
 # Reviewed Console QA sources and fixtures have manifest-pinned bytes.
-Docs/superpowers/qa/2026-11-06-console-approval-resync/native-single-v21/** -text
-Docs/superpowers/qa/2026-11-06-console-approval-resync/native-single-v21/*.diff whitespace=-blank-at-eol
+Docs/superpowers/qa/2026-11-06-console-approval-resync/native-single-v21/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Docs/superpowers/qa/2026-11-06-console-approval-resync/native-single-v21/*.diff whitespace=-blank-at-eol,-blank-at-eof
 Docs/superpowers/qa/2026-11-06-console-approval-resync/browser-single-v1/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

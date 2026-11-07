@@ -1,7 +1,7 @@
 {
   "version": "BrowserConsoleSINGLE-source-v1",
   "status": "COMPLETE_PRIVATE_SOURCE_READY_FOR_WHOLE_REVIEW_NOT_LAUNCHED",
-  "source_manifest_sha256": "dc6e50c635991f65b5c88ab8a0271f07e7dcf095218150d4339b9c6297b21a16",
+  "source_manifest_sha256": "8f07c7903ef21c5d7627fb8d56f4dcc8443ba2610fea1839cff2362f8f73ea40",
   "source_manifest_files": 29,
   "runtime_files": 19,
   "scope": "CURRENTfeature SINGLE actual120x40 Inspectclosed textual-dark only; validationhard1 thenexplicitfreeze-bound41=cold1+warm40. No baseline/four-shape/matrix claim.",
@@ -9,7 +9,7 @@
   "product_samples": 0,
   "private_prepare_App_browser_server_venv_launches": 0,
   "shared_workload": {
-    "sha256": "065b32f8b491741170b5e1c9d79d0cd00382d2d27e87047bb1b016b1cb899987",
+    "sha256": "ef0b030865070035a0e32258c72adfc5f471646ef76feebe393e4d68e707067b",
     "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-pr\\tldw_tui\\Docs\\superpowers\\qa\\2026-11-06-console-approval-resync\\native-single-v21\\approval_fixture_workload_v7.py",
     "byte_identical": true,
     "route": "Genuine stock settings/switch/bind/load/capture/receive andactualcustody.task; no directsubmitfallback"
