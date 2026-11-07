@@ -842,3 +842,93 @@ def test_grep_skips_racy_entries(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "stat", flaky_stat)
     out = grep_files("hit", workspace_root=ws)
     assert "good.py:1:hit" in out
+
+
+# --- TASK-38610: bounded per-target write-lock registry ----------------------
+#
+# The registry is module-global and process-lifetime, so it must not grow
+# without end, and its eviction must never break mutual exclusion for one
+# path. These tests manipulate the private map directly; each one restores
+# the module state it touched.
+
+
+def _lock_map():
+    return local_tool_impls._WRITE_LOCKS
+
+
+def test_write_lock_map_stays_bounded_under_distinct_paths():
+    saved = dict(_lock_map())
+    try:
+        cap = local_tool_impls._WRITE_LOCKS_MAX
+        for index in range(cap + 64):
+            with local_tool_impls._write_lock_for(f"/bounded/scratch-{index}.txt"):
+                pass
+        assert len(_lock_map()) <= cap
+    finally:
+        _lock_map().clear()
+        _lock_map().update(saved)
+
+
+def test_write_lock_map_never_evicts_a_held_entry():
+    saved = dict(_lock_map())
+    try:
+        cap = local_tool_impls._WRITE_LOCKS_MAX
+        key = "/bounded/held-target.txt"
+        with local_tool_impls._write_lock_for(key):
+            held = _lock_map()[key]
+        # A holder that keeps the lock object (as the validated critical
+        # section does) must survive cap-exceeding churn on other paths.
+        held.acquire()
+        try:
+            for index in range(cap + 64):
+                with local_tool_impls._write_lock_for(f"/bounded/other-{index}.txt"):
+                    pass
+            assert _lock_map().get(key) is held
+            assert len(_lock_map()) <= cap + 1
+        finally:
+            held.release()
+    finally:
+        _lock_map().clear()
+        _lock_map().update(saved)
+
+
+def test_write_lock_mutual_exclusion_survives_eviction_pressure():
+    saved = dict(_lock_map())
+    target = "/bounded/shared-target.txt"
+    stop = threading.Event()
+    counter_lock = threading.Lock()
+    concurrent = 0
+    peak = 0
+    try:
+        def writer():
+            nonlocal concurrent, peak
+            for _ in range(1500):
+                with local_tool_impls._write_lock_for(target):
+                    with counter_lock:
+                        concurrent += 1
+                        peak = max(peak, concurrent)
+                    with counter_lock:
+                        concurrent -= 1
+
+        def churner():
+            # Distinct keys past the cap force continuous eviction, so the
+            # writers' entry is repeatedly evicted and re-registered.
+            index = 0
+            while not stop.is_set():
+                with local_tool_impls._write_lock_for(f"/bounded/churn-{index}.txt"):
+                    index += 1
+                    if index > local_tool_impls._WRITE_LOCKS_MAX + 64:
+                        stop.set()
+
+        threads = [threading.Thread(target=writer) for _ in range(3)]
+        threads.append(threading.Thread(target=churner))
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+        assert not any(thread.is_alive() for thread in threads)
+        assert peak == 1
+    finally:
+        stop.set()
+        _lock_map().clear()
+        _lock_map().update(saved)

@@ -330,7 +330,6 @@ from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleMessagePresentation,
     ConsolePresentationContext,
-    expand_character_template,
     resolve_console_message_presentation,
     session_send_system_prompt,
 )

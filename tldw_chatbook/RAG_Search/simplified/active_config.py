@@ -42,7 +42,6 @@ from ..reranker import RerankingConfig
 # `RAG_Search/search_modes.py` so `Library/library_local_rag_search_service`
 # (on the app's import path) can read them without executing this module's
 # service tree. Re-imported here so both names stay single-sourced.
-from ..search_modes import RAG_SEARCH_MODES as _RAG_SEARCH_MODES
 from ..search_modes import normalize_rag_search_mode
 
 DEFAULT_PROFILE = "hybrid_basic"

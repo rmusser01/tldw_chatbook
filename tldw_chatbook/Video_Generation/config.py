@@ -15,7 +15,6 @@ here so all ``[video_generation]`` parsing has exactly one owner.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 from tldw_chatbook.Media_Generation.config_machinery import (

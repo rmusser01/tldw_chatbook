@@ -1159,6 +1159,14 @@ class ModelCapabilities:
         for key in list(self._capability_cache.keys()):
             if key[1] == model:
                 del self._capability_cache[key]
+        # TASK-38609: the @lru_cache on is_vision_capable is keyed by
+        # (self, provider, model) and would keep serving the pre-add answer
+        # (audit verified live: add vision -> is_vision_capable still False
+        # until clear_cache). Clearing the whole lru here is acceptable: it
+        # is 128 entries of cheap boolean recomputation, and this method is
+        # a rare config-driven mutation, not a hot path. There is no
+        # remove_model_capability, so no symmetric clearing is needed.
+        self.is_vision_capable.cache_clear()
 
     def list_vision_models(self, provider: Optional[str] = None) -> List[str]:
         """

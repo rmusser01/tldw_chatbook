@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 import httpx
-from loguru import logger
 
 # task-19733: this module used to hand-MIRROR egress's strip tuple, kept
 # honest only by a drift-guard test that had to be remembered. The mirror is

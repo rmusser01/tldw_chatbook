@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import re
 from collections import Counter, deque
-from typing import TYPE_CHECKING, Iterable, NamedTuple, Optional
+from typing import TYPE_CHECKING, Iterable, NamedTuple
 
 #
 # 3rd-Party Imports

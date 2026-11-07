@@ -99,36 +99,6 @@ class BaseWorkerHandler(ABC):
         msg += f": {error}"
         self.logger.opt(exception=True).error(msg)
 
-    async def update_button_state(self, button_id: str, disabled: bool) -> None:
-        """
-        Safely update a button's disabled state.
-
-        Args:
-            button_id: The ID of the button to update
-            disabled: Whether to disable (True) or enable (False) the button
-        """
-        try:
-            from textual.widgets import Button
-
-            button = self.app.query_one(f"#{button_id}", Button)
-            button.disabled = disabled
-        except Exception as e:
-            self.logger.warning(f"Could not update button '{button_id}': {e}")
-
-    async def update_ui_element(self, element_id: str, update_func: callable) -> None:
-        """
-        Safely update a UI element with error handling.
-
-        Args:
-            element_id: The ID of the element to update
-            update_func: Function to call with the element as argument
-        """
-        try:
-            element = self.app.query_one(f"#{element_id}")
-            update_func(element)
-        except Exception as e:
-            self.logger.warning(f"Could not update element '{element_id}': {e}")
-
 
 class WorkerHandlerRegistry:
     """Registry for managing worker handlers."""

@@ -14,7 +14,6 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
-from tldw_chatbook.Scheduling.events import ReminderFormSubmitted
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.Scheduling.schedule_input_parsing import (
     detect_system_timezone,
@@ -851,10 +850,4 @@ class ReminderForm(ModalScreen):
             # Preserve the current enabled state when editing.
             form_data["enabled"] = self._reminder_task.enabled
 
-        self.post_message(
-            ReminderFormSubmitted(
-                form_data,
-                task_id=self._reminder_task.id if self._reminder_task else None,
-            )
-        )
         self.dismiss(form_data)

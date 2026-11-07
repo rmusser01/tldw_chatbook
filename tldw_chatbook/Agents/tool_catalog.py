@@ -25,7 +25,6 @@ from typing import (
     ContextManager,
     Iterable,
     Iterator,
-    Literal,
     Mapping,
     NamedTuple,
     Protocol,
@@ -1909,6 +1908,22 @@ class ToolDefinitionSnapshot:
         )
 
 
+def _canonical_tool_args(args: dict) -> str | None:
+    """Canonical reviewed-argument JSON, or ``None`` when unserializable.
+
+    Non-finite floats are the motivating case (TASK-38610): Python's
+    ``json.loads`` accepts ``NaN``/``Infinity`` literals, so such values
+    survive provider parsing, while ``json.dumps(..., allow_nan=False)``
+    refuses them. Returning ``None`` instead of raising lets
+    ``invoke_by_name`` keep its never-raise dispatch contract and fail the
+    unverifiable reviewed call closed via ``ToolResult.blocked``.
+    """
+    try:
+        return json.dumps(args, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError):
+        return None
+
+
 class ToolCatalogRegistry:
     """Ordered provider registry: catalog, search, schema, invocation."""
 
@@ -2572,17 +2587,28 @@ class ToolCatalogRegistry:
         # `provider.invoke` below because this method has two dispatch sites and
         # is the one line every provider is reached through -- the same reason
         # the ephemeral gate and the call caps live here.
+        #
+        # TASK-38610: the canonical-args snapshot uses allow_nan=False, and
+        # Python's json.loads ACCEPTS NaN/Infinity literals -- such values
+        # survive provider parsing and would raise ValueError out of a method
+        # whose contract is that the pure loop never sees an exception from
+        # tool invocation. Canonicalization is therefore non-raising: an
+        # uncanonicalizable reviewed call cannot be verified, so it fails
+        # closed through the same ToolResult channel as every other review
+        # mismatch below rather than silently skipping the comparison.
         original_args = (
-            json.dumps(args, sort_keys=True, allow_nan=False)
-            if expected_definition is not None
-            else None
+            _canonical_tool_args(args) if expected_definition is not None else None
         )
         args = self._coerce_arguments(name, tool_id, provider, args)
-        if (
-            expected_definition is not None
-            and json.dumps(args, sort_keys=True, allow_nan=False) != original_args
-        ):
-            return ToolResult.blocked("reviewed tool arguments changed during coercion")
+        if expected_definition is not None:
+            if original_args is None:
+                return ToolResult.blocked(
+                    "reviewed tool arguments are not canonicalizable"
+                )
+            if _canonical_tool_args(args) != original_args:
+                return ToolResult.blocked(
+                    "reviewed tool arguments changed during coercion"
+                )
         # Workspace assistant defaults (Task 7): persona-policy call caps,
         # refused BEFORE dispatch in the exact error-`ToolResult` shape the
         # unknown-tool branch above uses. Narrowing-only -- a capped tool is

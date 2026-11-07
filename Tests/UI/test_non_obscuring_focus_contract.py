@@ -100,8 +100,6 @@ INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
 TAB_DROPDOWN = ROOT / "tldw_chatbook/css/features/_tab_dropdown.tcss"
 LLM_MANAGEMENT = ROOT / "tldw_chatbook/css/features/_llm-management.tcss"
 MEDIA = ROOT / "tldw_chatbook/css/features/_media.tcss"
-MEDIA_NAVIGATION_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_navigation_panel.py"
-MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
 REPO_TREE_WIDGETS = ROOT / "tldw_chatbook/Widgets/Coding_Widgets/repo_tree_widgets.py"
 CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss"
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
@@ -1804,21 +1802,9 @@ def test_media_selected_and_active_states_follow_shared_contracts():
     ):
         assert_readable_selected_state_contract(css_block(media_text, selector))
 
-    nav_text = MEDIA_NAVIGATION_PANEL.read_text(encoding="utf-8")
-    assert_native_row_hover_state_contract(
-        css_block(nav_text, "MediaNavigationPanel .media-type-button:hover")
-    )
-    assert_readable_inline_selected_state_contract(
-        css_block(nav_text, "MediaNavigationPanel .media-type-button.active")
-    )
-
-    list_text = MEDIA_LIST_PANEL.read_text(encoding="utf-8")
-    assert_native_row_hover_state_contract(
-        css_block(list_text, "MediaListPanel .media-item:hover")
-    )
-    assert_readable_inline_selected_state_contract(
-        css_block(list_text, "MediaListPanel .media-item.selected")
-    )
+    # (The MediaNavigationPanel/MediaListPanel DEFAULT_CSS contract
+    # assertions were removed with the Widgets/Media package,
+    # TASK-38605 dead-code purge.)
 
 
 def test_bundled_media_selected_states_match_source_contracts():

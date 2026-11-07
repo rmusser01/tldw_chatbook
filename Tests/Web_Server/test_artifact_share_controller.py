@@ -129,6 +129,84 @@ def test_start_share_rejects_colon_username(tmp_path, isolated_share_root):
     assert not isolated_share_root.exists() or not any(isolated_share_root.iterdir())
 
 
+def test_start_share_requires_credentials_for_non_loopback(
+    tmp_path, isolated_share_root
+):
+    # TASK-38608: the dialog used to be the only gate; the controller must
+    # fail closed on its own for unauthenticated non-loopback binds.
+    controller = ArtifactShareController()
+    with pytest.raises(ArtifactShareError, match="username and password"):
+        controller.start_share(
+            records=[_record(tmp_path, 1)], share_name="x", bind="0.0.0.0"
+        )
+    assert controller.status is None
+    # refused before staging: nothing laid down
+    assert not isolated_share_root.exists() or not any(isolated_share_root.iterdir())
+
+
+def test_start_share_rejects_partial_credentials_for_non_loopback(
+    tmp_path, isolated_share_root
+):
+    controller = ArtifactShareController()
+    with pytest.raises(ArtifactShareError, match="username and password"):
+        controller.start_share(
+            records=[_record(tmp_path, 1)],
+            share_name="x",
+            bind="0.0.0.0",
+            username="alice",
+        )
+    assert controller.status is None
+
+
+def test_start_share_non_loopback_with_credentials_starts(
+    tmp_path, isolated_share_root, monkeypatch
+):
+    import json
+
+    import tldw_chatbook.Web_Server.artifact_share as controller_module
+
+    spawned: list[list[str]] = []
+
+    class _FakePopen:
+        pid = 424242
+
+        def __init__(self, argv, **kwargs):
+            spawned.append(list(argv))
+            # argv = [python, -m, artifact_share_server, <manifest>, --host, ...]
+            manifest_path = Path(argv[3])
+            (manifest_path.parent / "status.json").write_text(
+                json.dumps({"url": "http://0.0.0.0:8123/"}), encoding="utf-8"
+            )
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            return None
+
+        def kill(self):
+            return None
+
+    monkeypatch.setattr(controller_module.subprocess, "Popen", _FakePopen)
+    controller = ArtifactShareController()
+    status = controller.start_share(
+        records=[_record(tmp_path, 1)],
+        share_name="lan kit",
+        username="alice",
+        password="secret-pass",
+        bind="0.0.0.0",
+        port=8123,
+    )
+
+    assert status.artifact_count == 1
+    assert "--host" in spawned[0] and "0.0.0.0" in spawned[0]
+    controller.stop_share()
+    assert controller.status is None
+
+
 def test_startup_sweep_removes_stale_dirs(tmp_path, isolated_share_root):
     stale = isolated_share_root / "deadbeef"
     stale.mkdir(parents=True)

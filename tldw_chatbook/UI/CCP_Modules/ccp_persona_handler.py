@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from loguru import logger
 
-from .ccp_messages import PersonaMessage, ViewChangeMessage
+from .ccp_messages import PersonaMessage
 from ...tldw_api.character_persona_schemas import (
     LocalPersonaProfileCreate,
     LocalPersonaProfileUpdate,
@@ -259,12 +259,6 @@ class CCPPersonaHandler:
         self.window.post_message(
             PersonaMessage.Loaded(self.current_persona_id, normalized),
         )
-        self.window.post_message(
-            ViewChangeMessage.Requested(
-                "persona_profiles",
-                {"persona_id": self.current_persona_id},
-            ),
-        )
 
     async def handle_create_persona(self) -> None:
         """Start a new persona profile flow with a clean editor state."""
@@ -276,7 +270,6 @@ class CCPPersonaHandler:
             "is_active": True,
         }
         self._load_editor(self.current_persona_data)
-        self.window.post_message(ViewChangeMessage.Requested("persona_editor"))
 
     async def handle_edit_persona(self, persona_id: str | None = None) -> None:
         """Switch to the editor for the currently selected persona."""
@@ -286,12 +279,6 @@ class CCPPersonaHandler:
             self._notify("Load a Persona before editing it.")
             return
         self._load_editor(self.current_persona_data)
-        self.window.post_message(
-            ViewChangeMessage.Requested(
-                "persona_editor",
-                {"persona_id": self.current_persona_id},
-            )
-        )
 
     async def save_persona(self, persona_data: Dict[str, Any]) -> None:
         """Create or update a persona profile through the shared scope service."""
@@ -388,12 +375,6 @@ class CCPPersonaHandler:
         self._load_editor(normalized)
         self.window.post_message(
             PersonaMessage.Loaded(self.current_persona_id or "", normalized),
-        )
-        self.window.post_message(
-            ViewChangeMessage.Requested(
-                "persona_profiles",
-                {"persona_id": self.current_persona_id},
-            )
         )
 
     async def list_chat_greetings(self, chat_id: str | None = None) -> Dict[str, Any]:

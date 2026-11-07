@@ -21,7 +21,11 @@ from tldw_chatbook.MCP.execution_log import (
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
+from tldw_chatbook.Tools.remote_root_types import (
+    RemoteRoot,
+    is_remote,
+    local_root_path,
+)
 from tldw_chatbook.Tools.virtual_cli_impls import (
     MAX_ARGV_ITEMS,
     VIRTUAL_CLI_COMMANDS,

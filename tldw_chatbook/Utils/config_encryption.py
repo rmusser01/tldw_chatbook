@@ -61,6 +61,14 @@ class ConfigEncryption:
     TAG_SIZE = 16  # 128 bits for GCM
 
     # scrypt parameters. v1 used 2^20, which made normal config saves unusably slow.
+    #
+    # DECISION (2026-11-02 audit, TASK-38613): keep N=2^14 for v2 even though
+    # OWASP guidance now suggests 2^17. Derivation is memoized per password
+    # (`_derive_key_cached` above), so interactive cost is bounded, and KDF
+    # parameters are per-version: raising N in place would silently make every
+    # existing v2 ciphertext undecryptable. The path to a stronger KDF is a
+    # future v3 format with migration-on-write (re-encrypt values under v3
+    # params on next successful save), tracked as a follow-up note.
     SCRYPT_N = 16384  # CPU/memory cost
     LEGACY_SCRYPT_N = 1048576
     SCRYPT_R = 8  # Block size
@@ -196,32 +204,6 @@ class ConfigEncryption:
         except ValueError:
             return False
         return payload[:1] == bytes([self.LEGACY_VERSION])
-
-    def encrypt_config(self, config: Dict[str, Any], password: str) -> Dict[str, Any]:
-        """
-        Encrypt all string values in a configuration dictionary.
-
-        Args:
-            config: Dictionary of configuration values
-            password: Password to use for encryption
-
-        Returns:
-            Dictionary with encrypted values
-        """
-        encrypted_config = {}
-
-        for key, value in config.items():
-            if isinstance(value, str) and value and not self.is_encrypted(value):
-                # Encrypt non-empty strings that aren't already encrypted
-                encrypted_config[key] = self.encrypt_value(value, password)
-            elif isinstance(value, dict):
-                # Recursively encrypt nested dictionaries
-                encrypted_config[key] = self.encrypt_config(value, password)
-            else:
-                # Keep non-string values as-is
-                encrypted_config[key] = value
-
-        return encrypted_config
 
     def decrypt_config(self, config: Dict[str, Any], password: str) -> Dict[str, Any]:
         """

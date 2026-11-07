@@ -2168,6 +2168,7 @@ import re
 import stat as stat_module
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 MAX_LIST_ENTRIES = 200
@@ -2178,6 +2179,7 @@ MAX_GLOB_RESULTS = 100
 MAX_GREP_RESULTS = 100
 _MAX_GREP_FILE_BYTES = 2 * 1024 * 1024
 _MAX_WRITE_DIFF_CHARS = 12 * 1024
+_WRITE_LOCKS_MAX = 1024
 _WRITE_LOCKS_GUARD = threading.Lock()
 _WRITE_LOCKS: dict[str, threading.Lock] = {}
 HINT_LABEL = 'hint (tool-generated)'
@@ -2600,8 +2602,7 @@ def _write_relative_file(relative: Path, content: str, *, workspace: Path, displ
     except UnicodeEncodeError as exc:
         raise LocalToolError(f'content is not UTF-8 encodable (lone surrogate?): {exc}') from exc
     canonical_key = os.path.normcase(str(target.absolute()))
-    lock = _write_lock_for(canonical_key)
-    with lock:
+    with _write_lock_for(canonical_key):
         current = _read_write_target(target, shown)
         current_digest = None if current is None else hashlib.sha256(current).hexdigest()
         if expected_absent and current is not None:
@@ -2619,9 +2620,57 @@ def _write_relative_file(relative: Path, content: str, *, workspace: Path, displ
         summary += f'\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}'
     return summary
 
-def _write_lock_for(key: str) -> threading.Lock:
-    with _WRITE_LOCKS_GUARD:
-        return _WRITE_LOCKS.setdefault(key, threading.Lock())
+def _evict_unheld_write_locks() -> None:
+    """Drop unheld registry entries until the map is back under the cap.
+
+    MUST be called with ``_WRITE_LOCKS_GUARD`` held. An entry whose lock is
+    currently held is never dropped — see ``_write_lock_for`` for why that
+    is load-bearing. If every entry is held when the cap is reached (>=
+    1024 concurrent writers), the map temporarily exceeds the cap; it is
+    then bounded by the number of concurrent writers, which the engine
+    already limits.
+    """
+    for victim_key, victim in list(_WRITE_LOCKS.items()):
+        if len(_WRITE_LOCKS) < _WRITE_LOCKS_MAX:
+            return
+        if not victim.locked():
+            del _WRITE_LOCKS[victim_key]
+
+@contextmanager
+def _write_lock_for(key: str):
+    """Serialize writes to one canonical target path via a bounded lock map.
+
+    The map is module-global and guarded by ``_WRITE_LOCKS_GUARD``; every
+    mutation (insertion and eviction) happens under that guard. Two
+    invariants keep bounded eviction thread-safe:
+
+    * **Never evict a held lock.** A holder is either already inside its
+      validated critical section — keeping the entry pinned means later
+      writers to the same key queue on the same lock object — or is
+      between acquiring and validating (next point). Evicting either would
+      let two threads run "the" lock for one path concurrently.
+    * **Validate after acquiring.** A plain dict+Lock cannot close the
+      window where a thread obtains a lock reference, its entry is evicted
+      (the lock was unheld at that instant), and a fresh lock is later
+      registered for the same key. So the critical section only runs while
+      the acquired lock is STILL the registered entry for the key;
+      otherwise the lock is released and the lookup retried against the
+      current map. Evicting an unheld lock is therefore always safe: the
+      only party that can notice is such a retry, which re-enters through
+      the current entry.
+    """
+    while True:
+        with _WRITE_LOCKS_GUARD:
+            lock = _WRITE_LOCKS.get(key)
+            if lock is None:
+                _evict_unheld_write_locks()
+                lock = _WRITE_LOCKS.setdefault(key, threading.Lock())
+        with lock:
+            with _WRITE_LOCKS_GUARD:
+                current = _WRITE_LOCKS.get(key)
+            if current is lock:
+                yield
+                return
 
 def _write_file_os():
     """Select retained-directory operations without importing native code remotely."""
@@ -5807,4 +5856,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("d89080f8267d02d2992ecea12e0274a9b93110d8f99c3cbaed5f07da316d8e85")
+BUNDLE_SHA256 = _enter_worker_exchange("c3317c1fc4d53ce3a1f495554d924382e806f38af8bc5d5e85f3338dafb759ca")

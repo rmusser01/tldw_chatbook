@@ -31,7 +31,6 @@
 import hashlib
 import json
 import logging
-import re
 import sqlite3
 import threading
 import time
@@ -73,7 +72,6 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     fts5_query_is_searchable,
     fts5_query_tokens,
     quote_fts5_prefix,
-    quote_fts5_token,
 )
 from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #
@@ -2494,19 +2492,39 @@ class MediaDatabase:
         media_id: int,
         title: str,
         content: Optional[str],
+        old_title: Optional[str] = None,
+        old_content: Optional[str] = None,
     ):
         """
         Internal helper to update or insert into the media_fts table.
 
-        Uses INSERT OR REPLACE to handle both creating new FTS entries and
-        updating existing ones based on the Media.id (rowid). Should be called
-        within a transaction after Media insert/update.
+        ``media_fts`` is an external-content FTS5 table (content='Media',
+        content_rowid='id').  On such tables ``INSERT OR REPLACE`` only ADDS
+        the new tokens -- it never removes the tokens of the values the
+        rowid was previously indexed with (TASK-38588): after an overwrite,
+        words present only in the old title/content kept matching forever.
+
+        Callers that change a live row's title or content must therefore
+        pass the TRUE previous values (read from Media BEFORE its UPDATE, in
+        the same transaction) as ``old_title``/``old_content``; this helper
+        then purges them with the special FTS5 'delete' command -- the same
+        idiom the ChaChaNotes_DB triggers use -- before inserting the new
+        values.  The old values MUST be the ones the row was last indexed
+        with: a 'delete' with mismatched values corrupts the index instead
+        of purging it.  Callers creating a brand-new FTS entry (fresh
+        insert, undelete after a purging delete) omit them.
+
+        Should be called within a transaction after Media insert/update.
 
         Args:
             conn (sqlite3.Connection): The database connection (within transaction).
             media_id (int): The ID (rowid) of the Media item.
             title (str): The title of the media.
             content (Optional[str]): The content of the media. Empty string if None.
+            old_title (Optional[str]): The row's title as last indexed, when
+                this call overwrites a live FTS entry.
+            old_content (Optional[str]): The row's content as last indexed,
+                when this call overwrites a live FTS entry.
 
         Raises:
             DatabaseError: If the FTS update fails.
@@ -2520,6 +2538,22 @@ class MediaDatabase:
             f"FTS update for media {media_id}: sanitized content - null bytes replaced"
         )
         try:
+            # TASK-38588: purge the previous generation of tokens before
+            # re-inserting.  Sanitize the old values exactly like the values
+            # they were indexed with, or the 'delete' will not match them.
+            if old_title is not None:
+                conn.execute(
+                    "INSERT INTO media_fts(media_fts, rowid, title, content) "
+                    "VALUES('delete', ?, ?, ?)",
+                    (
+                        media_id,
+                        old_title.replace("\x00", " "),
+                        (old_content or "").replace("\x00", " "),
+                    ),
+                )
+                logging.debug(
+                    f"Purged previous FTS tokens (special delete) for Media ID {media_id}"
+                )
             # Use INSERT OR REPLACE
             conn.execute(
                 "INSERT OR REPLACE INTO media_fts (rowid, title, content) VALUES (?, ?, ?)",
@@ -4896,8 +4930,20 @@ class MediaDatabase:
 
                                 # Update FTS with new title if it changed
                                 if metadata_changed:
+                                    # TASK-38588: purge the previous title's
+                                    # tokens. ``row`` was read before the
+                                    # UPDATE above, so ``row["title"]`` is
+                                    # the title media_fts was last indexed
+                                    # with; content is byte-identical here
+                                    # (this branch requires a content_hash
+                                    # match), so it is its own old value.
                                     self._update_fts_media(
-                                        conn, media_id, title, content
+                                        conn,
+                                        media_id,
+                                        title,
+                                        content,
+                                        old_title=row["title"],
+                                        old_content=content,
                                     )
 
                                 # Log metrics for metadata update
@@ -4956,6 +5002,16 @@ class MediaDatabase:
 
                         # Case A.1.b: Content is different. Proceed with a full versioned update.
                         new_ver = current_ver + 1
+                        # TASK-38588: capture the values media_fts was last
+                        # indexed with BEFORE the UPDATE overwrites them, so
+                        # the FTS purge can delete the true previous tokens.
+                        cur.execute(
+                            "SELECT title, content FROM Media WHERE id = ?",
+                            (media_id,),
+                        )
+                        prev_row = cur.fetchone()
+                        prev_title = prev_row["title"] if prev_row else None
+                        prev_content = prev_row["content"] if prev_row else None
                         payload = _media_payload(
                             media_uuid, new_ver, chunk_status=final_chunk_status
                         )
@@ -4979,7 +5035,12 @@ class MediaDatabase:
                             conn, "Media", media_uuid, "update", new_ver, payload
                         )
                         self._update_fts_media(
-                            conn, media_id, payload["title"], payload["content"]
+                            conn,
+                            media_id,
+                            payload["title"],
+                            payload["content"],
+                            old_title=prev_title,
+                            old_content=prev_content,
                         )
                         # task-4022 review round 2 / I2, corrected in review
                         # round P1 / finding 2: see the identical-content
@@ -5530,7 +5591,18 @@ class MediaDatabase:
                         )
                         content_row = cursor.fetchone()
                         content = content_row["content"] if content_row else ""
-                        self._update_fts_media(conn, media_id, title, content)
+                        # TASK-38588: purge the previously indexed title's
+                        # tokens. ``row`` was read before the UPDATE (this
+                        # method never touches the content column, so the
+                        # re-read content above is also the old value).
+                        self._update_fts_media(
+                            conn,
+                            media_id,
+                            title,
+                            content,
+                            old_title=row["title"],
+                            old_content=content,
+                        )
 
                     # Update keywords if provided
                     if keywords is not None:
@@ -5962,16 +6034,17 @@ class MediaDatabase:
                 cursor = conn.cursor()
                 # Get current media info
                 cursor.execute(
-                    "SELECT uuid, version, title FROM Media WHERE id = ? AND deleted = 0",
+                    "SELECT uuid, version, title, content FROM Media WHERE id = ? AND deleted = 0",
                     (media_id,),
                 )
                 media_info = cursor.fetchone()
                 if not media_info:
                     return {"error": f"Media {media_id} not found or deleted."}
-                media_uuid, current_media_version, current_title = (
+                media_uuid, current_media_version, current_title, old_content = (
                     media_info["uuid"],
                     media_info["version"],
                     media_info["title"],
+                    media_info["content"],
                 )
                 new_media_version = current_media_version + 1
 
@@ -6050,8 +6123,16 @@ class MediaDatabase:
                 )
 
                 # 4. Update FTS for the Media item
+                # TASK-38588: purge the tokens of the content being rolled
+                # away (read above, before the UPDATE) -- the title is
+                # unchanged, so it is its own old value.
                 self._update_fts_media(
-                    conn, media_id, current_title, target_content
+                    conn,
+                    media_id,
+                    current_title,
+                    target_content,
+                    old_title=current_title,
+                    old_content=old_content,
                 )  # Use original title, new content
 
             logger.info(

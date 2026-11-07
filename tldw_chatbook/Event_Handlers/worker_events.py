@@ -31,6 +31,9 @@ def chat_wrapper_function(
     Raises:
         ValueError: If a caller requests streaming, which is owned by native
             Console's provider gateway.
+        ChatAPIError: Propagated unchanged from the core chat call when
+            provider dispatch fails (TASK-38602); any other core error also
+            propagates so callers can distinguish failure from content.
     """
     del app_instance
     if kwargs.get("streaming"):

@@ -20,13 +20,6 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Prompt_Management.prompt_variables import (
     PromptVariableApplication,
 )
-from tldw_chatbook.state import (
-    AppState,
-    ChatState,
-    NavigationState,
-    NotesState,
-    UIState,
-)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -2105,29 +2098,6 @@ def test_recent_work_consumers_use_owner_api_outside_threaded_workers() -> None:
     )
 
 
-def test_legacy_state_exports_remain_serialization_compatible() -> None:
-    assert all(
-        state_type is not None
-        for state_type in (
-            AppState,
-            ChatState,
-            NavigationState,
-            NotesState,
-            UIState,
-        )
-    )
-    original = AppState(
-        runtime_source=RuntimeSourceState(
-            active_source="server",
-            active_server_id="server-compatible",
-            server_configured=True,
-        )
-    )
-    payload = original.to_dict()
-
-    assert AppState.from_dict(payload).to_dict() == payload
-
-
 def test_state_package_does_not_drag_dead_modules_onto_the_boot_path() -> None:
     """The one live leaf import must not import the four dead siblings.
 
@@ -2167,13 +2137,14 @@ def test_state_package_exports_still_resolve_lazily() -> None:
 
 
 def test_legacy_state_docs_describe_compatibility_not_live_authority() -> None:
-    app_state_source = (PRODUCTION_ROOT / "state" / "app_state.py").read_text(
-        encoding="utf-8"
-    )
+    """TASK-38613: the dead compatibility containers were deleted; the
+    surviving package docstring must still describe itself as compatibility
+    surface, never as the live state authority."""
+
     package_source = (PRODUCTION_ROOT / "state" / "__init__.py").read_text(
         encoding="utf-8"
     )
-    rendered = f"{app_state_source}\n{package_source}".lower()
+    rendered = package_source.lower()
 
     assert "single source of truth" not in rendered
     assert "centralized state" not in rendered

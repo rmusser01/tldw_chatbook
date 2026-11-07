@@ -198,7 +198,20 @@ class ConsoleCanvasCard(Vertical):
         self._id_suffix = f"{message_id}-{card_index}"
 
     def compose(self) -> ComposeResult:
-        yield Static(self.presentation.label, classes="console-canvas-card-label")
+        # TASK-38585: the label embeds the model-authored canvas title
+        # (length-validated only). Rendered through the markup parser a title
+        # containing "[/]" raised MarkupError on every transcript render of
+        # the persisted message, and bracketed text like "[draft]" was
+        # silently swallowed. `markup=False` renders the raw string
+        # literally: no bracket sequence can open a tag or crash. (Escaping
+        # instead — `escape_markup` + `markup=False` — would PAINT the
+        # backslash escapes on screen; the escape seams elsewhere in
+        # Widgets/Console/ pair with markup parsing left ON.)
+        yield Static(
+            self.presentation.label,
+            markup=False,
+            classes="console-canvas-card-label",
+        )
         if self.presentation.error_code:
             yield Static(
                 f"Revision unavailable · {self.presentation.error_code}",
