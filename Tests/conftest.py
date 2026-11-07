@@ -666,6 +666,31 @@ def cleanup_file_descriptors(request: pytest.FixtureRequest) -> Iterator[None]:
             gc.collect()
 
 
+def _lazy_real_semantic_coordinator(db):
+    """The real coordinator, imported on first use (some tests pin sys.modules)."""
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        SemanticRevisionCoordinator,
+    )
+
+    return SemanticRevisionCoordinator(db)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def semantic_coordination_installed() -> None:
+    """Install the DB layer's semantic-coordination port for the whole session.
+
+    Production composition roots install it at startup (TASK-36949.3); tests
+    construct databases directly, so the suite installs the real coordinator.
+    Session scope sets it up before any module- or class-scoped fixture that
+    writes a message; tests that clear the port do so through monkeypatch.
+    """
+    from tldw_chatbook.DB.transaction_observer import (
+        install_semantic_coordinator_factory,
+    )
+
+    install_semantic_coordinator_factory(_lazy_real_semantic_coordinator)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def fd_leak_sentinel() -> Iterator[None]:
     """Warn when the session's open-fd count grows past a leak threshold.

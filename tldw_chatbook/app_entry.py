@@ -369,6 +369,9 @@ def _run_module_main() -> None:
     )
 
     _set_launch_cwd()
+    from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+
+    install_semantic_coordination()  # DB-layer port; composition root
 
     # TASK-34100.4: the master-password unlock is NOT here. app.py's
     # `__main__` guard runs Backup_Recovery.launcher.startup_unlock (strict
@@ -604,6 +607,9 @@ def main_cli_runner() -> object:
     from tldw_chatbook.Tools.workspace_file_roots import set_launch_cwd
 
     set_launch_cwd()
+    from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+
+    install_semantic_coordination()  # DB-layer port; composition root
 
     # Configure logging to suppress verbose debug messages early
     import warnings

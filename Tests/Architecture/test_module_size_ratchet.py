@@ -846,7 +846,8 @@ _BUDGETS: dict[str, int] = {
     # to DB/learning_repository.py.
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 23519,
+    # TASK-36949.3: 25870 -> 25863 (-7) -- semantic-revision coordination reached through the DB-layer port.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 23512,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
