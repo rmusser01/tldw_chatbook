@@ -127,8 +127,9 @@ async def edit_regions(
     finally:
         if controller._region_modal is modal:
             controller._region_modal = None
-        if modal.is_mounted:
-            modal.retire()
+        # A worker cancelled between push and mount still closes the editor:
+        # retire() queues itself until mount (TASK-38979, TASK-39122).
+        modal.retire()
 
 
 async def save_regions(

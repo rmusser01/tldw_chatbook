@@ -192,8 +192,10 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             return False
 
     def _status(self, text: str) -> None:
-        if self.is_mounted:
-            self.query_one("#rr-status", Static).update(text)
+        # is_mounted never resets; a write can settle while Textual removes
+        # the dialog's children, and a removed line needs no repaint.
+        for status in self.query("#rr-status").results(Static):
+            status.update(text)
 
     async def _reload(self, *, selected_rule: RuleRevision | None = None) -> None:
         definition = None

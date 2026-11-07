@@ -745,12 +745,18 @@ async def test_dialog_validation_is_coalesced_owned_and_drained(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("retire_by", ["discard", "close", "backend", "unmount"])
+@pytest.mark.parametrize(
+    "retire_by", ["discard", "close", "backend", "unmount", "cancel"]
+)
 async def test_retiring_the_editor_before_it_mounts_still_closes_it(
     personas_editor_with_saved_character, monkeypatch, retire_by
 ):
-    """A retire between push and mount closes the editor, so close() returns (TASK-38979)."""
+    """A retire between push and mount closes the editor, so close() returns
+    (TASK-38979). ``cancel``: the regions worker itself is cancelled in that
+    window, and its opener must still close the editor (TASK-39122)."""
     import asyncio
+
+    from textual.worker import WorkerState
 
     app, screen, _, _, _, controller, _ = await prepare(
         personas_editor_with_saved_character
@@ -767,11 +773,10 @@ async def test_retiring_the_editor_before_it_mounts_still_closes_it(
     # Textual dispatches on_mount from the class __dict__, so this holds the
     # real editor between push and mount, with is_mounted still False.
     monkeypatch.setattr(editor_class, "on_mount", held_mount)
-    action = asyncio.create_task(
-        screen.run_worker(
-            controller.handle(CharacterPerformanceRequested("regions"))
-        ).wait()
+    worker = screen.run_worker(
+        controller.handle(CharacterPerformanceRequested("regions"))
     )
+    action = asyncio.create_task(worker.wait())
     waiting = {action}
     try:
         await asyncio.wait_for(mounting.wait(), 15)
@@ -779,6 +784,11 @@ async def test_retiring_the_editor_before_it_mounts_still_closes_it(
         assert isinstance(modal, editor_class) and not modal.is_mounted
         if retire_by == "discard":
             controller.discard()
+        elif retire_by == "cancel":
+            worker.cancel()
+            await asyncio.wait({action}, timeout=10)
+            assert worker.state == WorkerState.CANCELLED
+            waiting.add(asyncio.create_task(controller.close()))
         else:
             waiting.add(
                 asyncio.create_task(
@@ -798,7 +808,8 @@ async def test_retiring_the_editor_before_it_mounts_still_closes_it(
             f"{modal._retired}); still waiting on "
             f"{sorted(task.get_coro().__qualname__ for task in stuck)}"
         )
-        assert action.result() is False
+        if retire_by != "cancel":
+            assert action.result() is False
         assert modal not in app.screen_stack and controller.draft is None
     finally:
         release.set()

@@ -891,6 +891,9 @@ MINIMUM_FILES = 1817
 MINIMUM_FILES = 1819
 # TASK-34569: preserve actual feedback MessagePump dispatch without eager helpers.
 MINIMUM_FILES = 1820
+# TASK-39122 (2026-11-07): append the region editor's cancelled-before-mount
+# case at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1821
 
 
 def read_census(path: Path) -> list[str]:

@@ -589,8 +589,10 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["reload", "promote"])
+@pytest.mark.parametrize("action", ["reload", "promote", "disable"])
 async def test_manager_detached_subtree_callbacks_do_not_read_widgets(native, action):
+    """``disable``: a write that settles while the whole dialog subtree is
+    removed must not raise from the status line (TASK-39122)."""
     import asyncio
 
     _owner, rules, _chats, session, _gateway, _controller = native
@@ -601,26 +603,42 @@ async def test_manager_detached_subtree_callbacks_do_not_read_widgets(native, ac
             await pilot.pause()
         original = rules.run_db_call
         entered, release = asyncio.Event(), asyncio.Event()
+        held_call = (
+            rules.store.set_binding if action == "disable" else rules.store.list_drafts
+        )
 
         async def held(call, *args, **kwargs):
             value = await original(call, *args, **kwargs)
-            if call == rules.store.list_drafts:
+            if call == held_call:
                 entered.set()
                 await release.wait()
             return value
 
         rules.run_db_call = held
-        task = asyncio.create_task(modal._reload()) if action == "reload" else None
+        task = (
+            asyncio.create_task(modal._reload())
+            if action == "reload"
+            else asyncio.create_task(modal._action("disable"))
+            if action == "disable"
+            else None
+        )
         if task:
             await entered.wait()
-        await modal.query_one("#rr-body").remove()
+        # The status line sits outside #rr-body, so the write case removes
+        # the whole dialog, as Textual does when it tears the manager down.
+        await modal.query_one(
+            "#response-rules-dialog" if action == "disable" else "#rr-body"
+        ).remove()
         try:
             if task:
                 release.set()
                 await task
             else:
                 await modal._action("promote")
-            assert len(rules.store.list_bindings(rules.scopes(session.id)[0])) == 1
+            bindings = rules.store.list_bindings(rules.scopes(session.id)[0])
+            assert len(bindings) == 1
+            if action == "disable":
+                assert bindings[0].state == "disabled"
         finally:
             release.set()
             rules.run_db_call = original
