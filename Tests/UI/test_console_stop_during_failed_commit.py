@@ -265,3 +265,85 @@ async def test_a_failing_commit_with_no_stop_still_pauses_for_retry(
         assert len(case.runtime.recoveries_for_session(session_id)) == 1
         assert store.pending_attachments(session_id) == []
         assert case.provider_calls == []
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=WINDOW_IDS)
+async def test_stop_during_a_card_retry_whose_commit_fails_gives_the_send_back(
+    monkeypatch, window
+):
+    """AC#1 through the card: Retry send, Stop, and that save fails too.
+
+    Review of TASK-33621.59: the card's Retry send resumes the paused send
+    from the card's own worker, not through the runtime's turn custody, so
+    the runtime's return-to-draft never ran. The send was cancelled and the
+    run read "Send stopped", but the shelf offered the turn again ("Not
+    sent: Couldn't save the prepared turn.") and kept its image.
+    """
+    from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+        TraceCallRecoveryCallout,
+    )
+
+    async with _received_console_case(
+        monkeypatch, f"stop-retried-commit-{window.split()[0]}", durable=True
+    ) as case:
+        store, controller = case.store, case.controller
+        session_id = case.session.id
+        attachment, release, preparation = await _send_with_failing_commit(
+            case, monkeypatch, window
+        )
+        release.set()  # the first save fails with no Stop: the card offers Retry
+        assert await _until(lambda: _turn_ended(case), 15)
+        assert await _until(lambda: NOT_SAVED in _painted(case.host), 5)
+        retry = case.console.query_one("#console-trace-retry", Button)
+        assert await _until(lambda: retry.display and not retry.disabled, 5)
+        assert len(case.runtime.recoveries_for_session(session_id)) == 1
+
+        # The retried save is held, Stop is pressed, and that save fails too.
+        entered, release = _hold_then_fail_commit(monkeypatch, store, window)
+        retry.press()
+        assert await _until(entered.is_set, 20)
+        owner = controller._ordinary_native_commit_owner(preparation.preparation_id)
+        try:
+            await case.console.action_stop_console_run()
+            assert owner is not None and owner.explicit_stop
+        finally:
+            release.set()
+        card = case.console.query_one(TraceCallRecoveryCallout)
+        assert await _until(
+            lambda: store.preparation_by_id(preparation.preparation_id) is None
+            and not card._busy,
+            15,
+        )
+        await asyncio.sleep(0.3)  # let the screen paint the settled turn
+
+        painted = _painted(case.host)
+        state = controller.run_state_for(session_id)
+        assert state.status is ConsoleRunStatus.STOPPED, state
+        # Neither the card nor the shelf offers the send again.
+        assert NOT_SAVED not in painted
+        assert not retry.display
+        assert case.runtime.recoveries_for_session(session_id) == ()
+        assert NOT_SENT_SHELF not in painted
+        # The message and its image are back where the user left them.
+        assert case.composer.draft_text() == case.draft
+        assert store.session_draft(session_id) == case.draft
+        assert [item.attachment_id for item in store.pending_attachments(session_id)] == [
+            attachment.attachment_id
+        ]
+        assert not [
+            message
+            for message in store.messages_for_session(session_id)
+            if message.role is ConsoleMessageRole.USER
+        ]
+        assert case.provider_calls == []
+
+        # The next send in this chat is answered.
+        case.composer.load_draft(FOLLOW_UP)
+        case.composer.focus()
+        assert await _until(lambda: case.host.focused is case.composer, 5)
+        assert await _until(lambda: store.session_draft(session_id) == FOLLOW_UP, 5)
+        _send(case, "enter")
+        assert await _until(lambda: len(case.provider_calls) == 1, 20)
+        assert await _until(lambda: REPLY in _painted(case.host), 20)
+        assert await _until(lambda: _turn_ended(case), 15)
+        assert case.runtime.recoveries_for_session(session_id) == ()
