@@ -1,6 +1,6 @@
 # Console approval PR #3036 resync
 
-The existing PR is rebased onto `dev` at `8b762b52fa9c38be8c978f2b2175d9f070bc829a`. Earlier phase records below retain their original source scope. The owner requires native timing and actual Windows dispatch qualification before auto-merge. Source integration is verified. Actual Windows dispatch is renewed on source `f66a2b49`; presentation qualification remains open. The PR remains draft and auto-merge remains off.
+The existing PR is rebased onto `dev` at `a0ae30b7ed9c313fe19cb3a0da5d95ebde182385`. Earlier phase records below retain their original source scope. The owner requires native timing and actual Windows dispatch qualification before auto-merge. Source integration is verified. Actual Windows dispatch is renewed on source `f66a2b49`; presentation qualification remains open. The PR remains draft and auto-merge remains off.
 
 ## Integration
 
