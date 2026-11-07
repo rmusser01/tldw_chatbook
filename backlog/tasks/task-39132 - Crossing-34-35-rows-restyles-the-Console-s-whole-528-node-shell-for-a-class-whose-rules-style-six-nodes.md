@@ -1,8 +1,10 @@
 ---
 id: TASK-39132
 title: "Crossing 34/35 rows restyles the Console's whole 528-node shell for a class whose rules style six nodes"
-status: To Do
+status: Done
+assignee: ['@claude']
 created_date: 2026-11-07 02:03
+updated_date: '2026-11-07 06:38'
 labels:
 - follow-up
 - console
@@ -40,7 +42,25 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A crossing in either direction restyles only the nodes the `-console-compact` rules style, plus any subtree their inherited properties need, counted in a test that is red on dev (528 of 528)
-- [ ] #2 Styles after each flip equal those of a full restyle
-- [ ] #3 Height changes that do not cross the line still restyle nothing, and readers of the class (for example `ChatApprovalCard`) still see it
+- [x] #1 A crossing in either direction restyles only the nodes the `-console-compact` rules style, plus any subtree their inherited properties need, counted in a test that is red on dev (528 of 528)
+- [x] #2 Styles after each flip equal those of a full restyle
+- [x] #3 Height changes that do not cross the line still restyle nothing, and readers of the class (for example `ChatApprovalCard`) still see it
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reuse TASK-38950's `apply_scoped_breakpoints` (`UI/Console_Modules/frame.py`) for the shell's `-console-compact` flip: it already takes any node; let a breakpoint with an empty class name mean "no class at or above this threshold", so the shell's table is `[(0, "-console-compact"), (CONSOLE_COMPACT_HEIGHT_ROWS, "")]`. `_adapt_console_shell_to_height` calls it in place of `set_class` (no new line in `chat_screen.py`).
+2. In the same helper, restyle a target's subtree only when its rule sets a property descendants read from their ancestors. The compact rules set padding, margin and border, so only the six targets restyle. Move the ancestor-read property set from the test into `frame.py` as the one source the helper and the guards read.
+3. Test in `Tests/UI/test_console_projection_restyles.py`: at 160x40, dispatch Resizes 40->38->34->30->36 to the screen and count restyles (crossings restyle exactly what the compact rules style; non-crossings nothing; the class toggles); compare styles with a forced full restyle after each. Red on base (528). Update the header-breakpoint test's expected set to the same subtree rule.
+
+## Implementation Notes
+
+Reused TASK-38950's `apply_scoped_breakpoints` (`UI/Console_Modules/frame.py`); no second mechanism.
+
+- **Compact flip.** `_adapt_console_shell_to_height` now calls `apply_scoped_breakpoints(shell, [(0, "-console-compact"), (CONSOLE_COMPACT_HEIGHT_ROWS, "")], height)` in place of `shell.set_class(...)`. The helper already took any node; an empty class name now means "no class at or above this threshold". `chat_screen.py` stays at 24617 lines (two lines replaced two), so the size ratchet and `LIVE_RATCHET_ROW` are unchanged.
+- **Subtree only where inheritance needs it.** The helper restyled each target's whole subtree. The compact rules set padding, margin and border; none is read by descendants, but `#console-native-transcript`'s subtree holds every transcript row. The helper now walks a target's subtree only when its rule sets a property in `ANCESTOR_READ_RULES` (the set the restyle guards already used, moved from `Tests/UI/test_console_projection_restyles.py` into `frame.py` as the one source; the test module re-exports it for `test_console_composer_state_restyle.py`). The header breakpoint rules (min-height, padding, display) shrink the same way, and `_breakpoint_styled` in the header test now applies the same subtree rule.
+- **Test.** `test_a_compact_flip_restyles_only_what_its_rules_style` (160x40; Resizes 40->38->34->30->36 dispatched to the screen): a crossing restyles exactly the six nodes the compact rules style, a non-crossing restyles nothing, `has_class("-console-compact")` follows `height < 35`, and every node's rules equal a forced full restyle after each step. Red before the fix: `40->34: restyled 528 of 528 shell nodes; the compact rules style 6`. The file is a whole-file UI census entry.
+
+**Runs (load 45-98).** Covering files (projection restyles, composer restyle guard, keyboard trust, shell regions, resize reflow, narrow layout, approval card, internals decomposition, compaction hold, provider persistence, screen size ratchet, review-selection boundary): 219 failed / 149 passed on head and the same 219 failed / 148 passed on base 8b762b52fa (RecoveryRequired in the plain files). The compact readers among them, `test_console_shell_drops_header_at_small_height` and `test_console_compact_height_keeps_header_controls_and_row_budget[size0,size1]`, passed on head under a temporary `@private_profile_test` marker (3 passed; marker removed). `test_height_resize_requests_one_coalesced_context_reconcile` fails under that marker with `2 == 1` reconcile runs both with and without this change (3 runs each), so it is pre-existing and in no lane.
+
+Files: `tldw_chatbook/UI/Console_Modules/frame.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_restyles.py`, `backlog/docs/lessons-textual.md` (the 38950 entry's "same shape elsewhere" line).

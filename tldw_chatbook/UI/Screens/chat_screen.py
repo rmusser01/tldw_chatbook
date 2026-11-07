@@ -21647,8 +21647,8 @@ class ChatScreen(BaseAppScreen):
             shell = self.query_one("#console-shell")
         except QueryError:
             return
-        compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
-        shell.set_class(compact, "-console-compact")
+        breakpoints = [(0, "-console-compact"), (CONSOLE_COMPACT_HEIGHT_ROWS, "")]
+        apply_scoped_breakpoints(shell, breakpoints, event.size.height)  # TASK-39132
         for card in self.query(ChatApprovalCard):
             card._sync_control_layout()
         self._request_console_context_allocation_reconcile()
