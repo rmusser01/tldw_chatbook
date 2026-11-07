@@ -24927,3 +24927,9 @@ During the PR3036 audio-meter repair, Path.read_text() used the Windows locale r
 ### A tool session ID is not an operating-system PID
 
 PR3036 native validation17 (2026-11-07) returned exec session 82824. The initial postflight audit incorrectly passed that number to OpenProcess and counted its absence as authenticated process closure. The actual guarded observer receipt identified PID 37684; the captured product, worker and launcher identified 43112, 41036 and 26956. Preserve the erroneous seal and bind an explicit correction. Obtain process identities from authenticated run/guard receipts and retain their lineage/creation evidence; a tool session identifier is only a handle for polling tool output and its absence as a PID proves nothing.
+
+## Raising ChatScreen's screen-size row means editing three files, not one (TASK-36948.3, 2026-11-07)
+
+**Incident.** TASK-36948.3 added one public method to ChatScreen and raised its `test_screen_size_ratchet.py` row by the measured +38 lines and +1 method, as a dated waiver. The brief called that a one-line fix. The serial `Tests/Architecture` run (26 min) then failed two tests that only that full run reaches: `test_console_review_selection_controller_boundary.py` (`LIVE_RATCHET_ROW`) and `test_console_wave6_closeout_inventory.py` (`LIVE_RATCHET_BUDGET`). TASK-38988 put both pins there on purpose, to catch any raise of the row.
+
+**What to do.** When you raise or lower ChatScreen's row, run `grep -rn "LIVE_RATCHET" Tests/Architecture` and re-pin every match to the new row in the same commit.
