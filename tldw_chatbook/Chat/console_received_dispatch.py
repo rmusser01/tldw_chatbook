@@ -882,6 +882,7 @@ async def _run_custodied_turn(
             reason=str(getattr(result, "visible_copy", "") or ""),
             preparation_id=held_preparation_id,
             card_held=card_holds_refusal(controller, held_preparation_id),
+            returned_draft_revision=getattr(result, "cancelled_draft_revision", None),
         )
     run_state_for = getattr(controller, "run_state_for", None)
     run_state = run_state_for(request.session_id) if callable(run_state_for) else None
