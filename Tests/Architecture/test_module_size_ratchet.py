@@ -538,7 +538,7 @@ _BUDGETS: dict[str, int] = {
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
     # 2026-11-06, TASK-38964: 35,669 -> 35,654; the koboldcpp route refusal
     # wrapper is gone, the save reads Provider_Contract's rule directly.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35720,  # 2026-11-06: +63, one pane at a time at 70 columns and below (TASK-38953, owner waiver)
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35724,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +70, the stale model, endpoint and provider echo checks (TASK-38975, +5) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +65) (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -658,7 +658,7 @@ _BUDGETS: dict[str, int] = {
     # carries the chat's values (unsaved_committed). Exact measurement.
     # 2026-11-06, TASK-38964 (owner waiver): 6176 -> 6191, a koboldcpp default
     # off its native route is refused with its copy before it is submitted.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6191,
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6194,  # 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7010,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
@@ -856,7 +856,7 @@ _BUDGETS: dict[str, int] = {
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8487,
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8492,  # 2026-11-06: +5, QwenCloud reads a schemeless loopback session endpoint as http:// (TASK-39042 review C1, owner waiver)
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
