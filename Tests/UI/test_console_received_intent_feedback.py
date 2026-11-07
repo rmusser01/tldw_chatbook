@@ -202,24 +202,36 @@ class _TimedInputFrame(_NaturalInputFrame):
             self.frame_cpu = time.thread_time()
 
 
-def _assert_send_budget(record_property, label, start, end, loop_cpu, budget=0.1):
-    """Fail a wall-clock budget miss on a free host; report it on a loaded one.
+#: How long the held provider read waits for both paints (TASK-38948).
+_HELD_READER_SECONDS = 5.0
 
-    TASK-38948 (AC#2): while the 1-minute load average is at or over the CPU
-    count, a miss is reported (a warning and a ``<label>_host_load_miss``
-    property) with the loop's lag: the event loop thread's CPU time in the
-    interval, and the time it spent off the CPU. Below that, a miss fails.
+
+def _assert_send_budget(record_property, label, start, end, loop_cpu, budget=0.1):
+    """Hold the loop's CPU to the budget at any load; wall time on a free host.
+
+    TASK-38948 (AC#2). ``loop_cpu`` is the event loop thread's CPU time in
+    the interval. It is held to the budget at every load, so work added on
+    the loop fails even on a loaded runner. Wall time is held to the budget
+    only while the 1-minute load average is under the CPU count. At or over
+    that, a wall-clock miss is reported, not failed: a ``<label>_host_load_miss``
+    property and a warning carrying the load and the loop's CPU and off-CPU
+    time. A blocking wait added before the paint is therefore caught only on
+    a host that is not oversubscribed.
     """
     elapsed = end - start
     record_property(f"{label}_loop_cpu_seconds", loop_cpu)
-    if elapsed <= budget:
-        return
-    cores = os.cpu_count() or 1
-    load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
     lag = (
         f"the loop ran {loop_cpu * 1000:.0f} ms on the CPU and was off it "
         f"{(elapsed - loop_cpu) * 1000:.0f} ms"
     )
+    assert loop_cpu <= budget, (
+        f"{label}: the event loop spent {loop_cpu * 1000:.0f} ms of CPU against "
+        f"{budget * 1000:.0f} ms ({elapsed * 1000:.0f} ms wall)"
+    )
+    if elapsed <= budget:
+        return
+    cores = os.cpu_count() or 1
+    load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
     assert load >= cores, (
         f"{label}: {elapsed * 1000:.0f} ms against {budget * 1000:.0f} ms at "
         f"load {load:.1f} on {cores} CPUs; {lag}"
@@ -227,7 +239,7 @@ def _assert_send_budget(record_property, label, start, end, loop_cpu, budget=0.1
     record_property(f"{label}_host_load_miss", load)
     warnings.warn(
         f"{label} missed {budget * 1000:.0f} ms ({elapsed * 1000:.0f} ms) at load "
-        f"{load:.0f} on {cores} CPUs; {lag}",
+        f"{load:.0f} on {cores} CPUs, so wall time was not enforced; {lag}",
         stacklevel=2,
     )
 
@@ -550,8 +562,13 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                         return
                 typing.sent_at = time.perf_counter()
                 loop.call_soon_threadsafe(press_z)
-                deadline = time.perf_counter() + 0.5
-                typing.painted.wait(0.5)
+                # The reader stays held until both paints and the receipt
+                # are seen, or this long. It is the test's patience, not a
+                # budget: the budgets below come from the frames' own
+                # timestamps. 0.5 s released before a slow frame at load
+                # 105 (TASK-38948).
+                deadline = time.perf_counter() + _HELD_READER_SECONDS
+                typing.painted.wait(_HELD_READER_SECONDS)
                 preparing.painted.wait(max(0, deadline - time.perf_counter()))
                 receipt_observed.wait(max(0, deadline - time.perf_counter()))
             finally:
@@ -572,7 +589,7 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                 received_pending_identity = (id(ack), id(pending.token), pending.row.id)
                 assert record.received_intent.inputs.draft == pending.row.content
                 receipt_observed.set()
-                assert await _until(case.probe.release.is_set, 2)
+                assert await _until(case.probe.release.is_set, _HELD_READER_SECONDS + 2)
                 record_property(
                     "send_to_preparing_frame_seconds",
                     None
@@ -598,7 +615,7 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                 assert preparing.pending_user_while_held
                 record_property("pending_user_linked_to_received_session", True)
                 record_property("headless_supplied_frame_only", True)
-                record_property("held_reader_budget_seconds", 0.5)
+                record_property("held_reader_budget_seconds", _HELD_READER_SECONDS)
                 record_property(
                     "send_to_run_feedback_frame_seconds",
                     None
@@ -612,7 +629,7 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
             finally:
                 stop.set()
                 case.probe.release.set()
-                releaser.join(timeout=2)
+                releaser.join(timeout=_HELD_READER_SECONDS + 2)
                 assert not releaser.is_alive()
         for label, start, end, loop_cpu in (
             (
