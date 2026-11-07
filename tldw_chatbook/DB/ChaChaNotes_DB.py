@@ -136,6 +136,7 @@ from .base_db import (
 from .transaction_observer import (
     begin_managed_transaction,
     complete_managed_transaction,
+    semantic_coordinator_for,
 )
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
@@ -14388,11 +14389,7 @@ DELETE FROM keywords
         if self._CURRENT_SCHEMA_VERSION < 56:
             return
 
-        from tldw_chatbook.Chat.console_semantic_revision import (
-            SemanticRevisionCoordinator,
-        )
-
-        SemanticRevisionCoordinator(self).ensure_current_revision(
+        semantic_coordinator_for(self).ensure_current_revision(
             cursor,
             message_id=message_id,
             creation_reason=creation_reason,
@@ -14414,16 +14411,12 @@ DELETE FROM keywords
         if authorization._sqlite_authorized(message_id, "message_update") == 1:
             return mutate(cursor)
 
-        from tldw_chatbook.Chat.console_semantic_revision import (
-            SemanticRevisionCoordinator,
-        )
-
         result: list[Any] = []
 
         def tracked(mutation_cursor: sqlite3.Cursor) -> None:
             result.append(mutate(mutation_cursor))
 
-        SemanticRevisionCoordinator(self).mutate_message(
+        semantic_coordinator_for(self).mutate_message(
             cursor,
             message_id=message_id,
             creation_reason=creation_reason,
