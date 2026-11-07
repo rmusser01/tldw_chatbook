@@ -1,0 +1,124 @@
+{
+  "version": "BrowserConsoleSINGLE-source-v1",
+  "status": "COMPLETE_PRIVATE_SOURCE_READY_FOR_WHOLE_REVIEW_NOT_LAUNCHED",
+  "source_manifest_sha256": "dc6e50c635991f65b5c88ab8a0271f07e7dcf095218150d4339b9c6297b21a16",
+  "source_manifest_files": 29,
+  "runtime_files": 19,
+  "scope": "CURRENTfeature SINGLE actual120x40 Inspectclosed textual-dark only; validationhard1 thenexplicitfreeze-bound41=cold1+warm40. No baseline/four-shape/matrix claim.",
+  "qualified": false,
+  "product_samples": 0,
+  "private_prepare_App_browser_server_venv_launches": 0,
+  "shared_workload": {
+    "sha256": "065b32f8b491741170b5e1c9d79d0cd00382d2d27e87047bb1b016b1cb899987",
+    "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-pr\\tldw_tui\\Docs\\superpowers\\qa\\2026-11-06-console-approval-resync\\native-single-v21\\approval_fixture_workload_v7.py",
+    "byte_identical": true,
+    "route": "Genuine stock settings/switch/bind/load/capture/receive andactualcustody.task; no directsubmitfallback"
+  },
+  "guards": "ExistingV18sourcefirst/MainCoreTests/originalHome/admission/exactloopback/denyproxy/ownedHWNDprofileforegroundgeometrynonocclusion/pagevisibility retained; privateoutput underselectedsource/.superpowers;manifest/runtime/sourcefreeze mandatory. No CachedReadyStubs/Cdiagnostics/modelcalls/install/publicHEADedits.",
+  "changes": "Per-owned-WebDriver observationalprequeue once/failureisolated; exactV21EventSink/CardEvents andpassiveEventReaderreadiness; actualterminalowner/widgetsread-only; fixed1/41 attemptlimit; validation-only45sRootbarriers; qualificationallframecontentspendingoffline; no glyphatlas/nonceinferencefrommodel.",
+  "clock": "AtomicAPI default20 unchanged; exactint1/20. Ordered2validation OR82qualificationsegments;20firstbefore/20lastafter and1actualmark+ownedHTTPotherendpoints; everyendpoint/segment mapping checkedagainstanchors/stablePID. No assumedtraceorigin/overheadsubtraction.",
+  "bounds": {
+    "Chrome_ring_KiB_segment": 8192,
+    "Chrome_screenshots_segment": 50,
+    "screenshots_round": 64,
+    "screenshots_process": 2624,
+    "JSON_bytes_segment": 67108864,
+    "JSON_bytes_process_max": 5502926848,
+    "raw_rows_segment": 131072,
+    "raw_rows_process_max": 10747904,
+    "JPEG_bytes": 1048576,
+    "stage_rows_round": 64,
+    "stage_rows_process": 2624,
+    "control_spans_round": 32,
+    "control_spans_setup": 16,
+    "control_spans_process": 1328,
+    "review_seconds_validation": 45,
+    "preflight_phase_seconds": 60,
+    "preflight_total_seconds": 300,
+    "sampling_safety_seconds": 600,
+    "cleanup_seconds": 60
+  },
+  "failure_evidence": "Originalerror recordedbeforecleanup; failedinflightTracing.end usesnochildclockprobe, explicitlypartial/uncalibratedraw retained; partialclocksegments persist. Missingclosure/counters/worker/effect staysmissing, notzero/pass. Overflowretainedinvalid; no invalidroundreplacement.",
+  "metric_method": "EarliestactualindependentlyclassifieduniquePresented nonce/action andtruthfulfeedback; ALLearliereligibleframes classified orboundarymissing. LocalearliestDown->feedback,localchecks->actionable,transporttrustedDOMpointerdown->feedback; retainDownUp andUp->cardhelper. Twoactualterminalpresentations aftergenuineowner/UIReady beforeadvancing. Realmodel/prior-output boundariesexplicitlymissing.",
+  "controls": {
+    "check_segment_capture.py": {
+      "exit_code": 0,
+      "receipt": "check_segment_capture-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_browser_reviews.py": {
+      "exit_code": 0,
+      "receipt": "check_browser_reviews-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_owned_input.py": {
+      "exit_code": 0,
+      "receipt": "check_owned_input-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_method_gates.py": {
+      "exit_code": 0,
+      "receipt": "check_method_gates-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_transport_fences.py": {
+      "exit_code": 0,
+      "receipt": "check_transport_fences-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_git_argv.py": {
+      "exit_code": 0,
+      "receipt": "check_git_argv-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_sampling_deadline.py": {
+      "exit_code": 0,
+      "receipt": "check_sampling_deadline-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    }
+  },
+  "atomic_review": "Only traceAPI/clock/budget successor505441d2 previouslyCLEAR; WHOLErunner/collector requiresfreshindependentreview.",
+  "evidence": {
+    "segment-api-red.stderr.txt": "a34d93b9bbc3e848fdf19002c7f74311b3fc83a9e8c20dc65d61786163f7cc61",
+    "segment-endpoint-red.stderr.txt": "ea1fc76c620b31fc77abf57e0f199a9bf038be3d4d33eb548da4623fe69f20fd",
+    "segment-endpoint-green.stdout.txt": "23c8c776b78e234077f36d03be285969cecbb0b021fda4b81b29d8bfaa63c475",
+    "check_segment_capture-portable.stdout.txt": "41a40d43fb2c301148cd8296f29d543049dd512df21401402480584b391ec210",
+    "check_browser_reviews-portable.stdout.txt": "e836bd4a7561f5d755935f7e223f4773c6c85be057138faf8434ce6dc46938ab",
+    "check_owned_input-portable.stdout.txt": "9ad39690e4e7935e1175c90e89f758bfb169988739e0b9bc8011f46f430a8b57",
+    "check_method_gates-portable.stdout.txt": "63f24dbf75902e044569ef432fdcef6cfda751fef6f0efb8b93b1eb3274f10dd",
+    "check_transport_fences-portable.stdout.txt": "83f2c1796e945adc03669afed1a5956b0fa4756fbc82d0f8952e8207847e3544",
+    "sampling-deadline-red.stdout.txt": "aecd795f65c2ee37988bde3b4686f6cd55ec26a9b9764f95201139d4bc8a7be3",
+    "sampling-deadline-green.stdout.txt": "688aadcb6bc00fda6a0d1a1d04d64e87ae95a059e10e603d52deff21d52cb8f8"
+  },
+  "launch_gates": [
+    "Root+independentWHOLEsourceclear",
+    "Publish/commitimmutablewholepacket BEFOREvalidation",
+    "Rootnewactualproductfreeze inclcurrentRAGmetadatafix; exactsourceMainCore/workerclosure",
+    "Dedicatedactualstocktracenegativeprocess beforepositives; typedrefusalsALLPOST/turn0",
+    "Nativeleasefree andexplicitexclusiveBrowserSTART",
+    "ActualfirstRootaction/feedback/twoReadyvalidationviews beforequalificationauthorization",
+    "RootactualqualificationTruefreeze+runtime/reference/capability/version/loadbindings before41"
+  ],
+  "next_prepare_template": [
+    "<existing-python>",
+    "-I",
+    "<published-code>/prepare_browser_run.py",
+    "--source-root",
+    "<current-feature>",
+    "--freeze",
+    "<Root-new-freeze>",
+    "--shared-dependencies",
+    "<existing-deps>",
+    "--original-home",
+    "<original-home>",
+    "--output-root",
+    "<feature>/.superpowers/<unique-owned-output>",
+    "--shape",
+    "single",
+    "--method-mode",
+    "validation"
+  ],
+  "predecessor_protocol_sha256": "1503546138a9d1c5056665f84142f91d125731f7e03f707840370fedb9e88f02",
+  "git_path_successor": "ONLY seeder/guard safe.directory values now actualPath.as_posix; original-C path/check/capture/text/frozenHEAD/hash behavior preserved. No product/Git/App execution in actualAST once/return controls.",
+  "deadline_successor": "ONLY whole positive sampling enclosed in asyncio.timeout(600) with postreply actualelapsed refusal before accepting success; failedTracing.end send+complete enclosed TOGETHER in original30s budget. Original600/30 caps, cleanupoutside, allsource/OS/15heartbeat/60phase300total/tracecaps unchanged. Reverse-onlytransform byteequalsv2 parent."
+}

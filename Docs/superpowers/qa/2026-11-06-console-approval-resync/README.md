@@ -75,3 +75,10 @@ Timing samples remain zero. Repeated old-baseline workspace-setup stalls are ret
 ## Received-send metadata follow-up
 
 [The RAG metadata repair](rag-metadata-followup.md) records the observed inherited import edge, actual guarded Library/received-capture RED/GREEN, class/export compatibility and unchanged profile authority. The current source passes its targeted metadata checks; native/browser qualification must be renewed on a new committed freeze. The canonical diagnostic inventory was also regenerated after reviewing the obsolete NumPy meter warning: only the Audio owner changes55 to54 calls, with all other owner and policy/sink rows unchanged.
+
+
+## Browser method enrollment and native refusal diagnostic
+
+The [browser SINGLE method](browser-single-v1/README.md) publishes the independently reviewed source packet before live validation. The 31-file packet preserves the reviewed code; extra trailing blank lines in three files were removed with unchanged Python ASTs, and the manifest was rebound. All 29 source hashes match, and seven focused no-App control programs pass. The packet README/protocol preserve the preparation snapshot; this enrollment does not claim browser validation or qualified timing samples. Git preserves the manifest-pinned bytes on Windows.
+
+On product source `528520e750d005b8eebc42ffc732b973630df4a7`, the next native run reached the approval card but Root missed the original 45-second review deadline; no input was sent. A subsequent run ended before a card with a completed, noncancelled `RecoveryRequired` task, released custody and stopped timer. Its 60-second observer timeout is not evidence that preparation remained pending for that entire interval. The exact refusal reason was not retained. Both runs remain invalid, closed without forced cleanup, and added no qualified sample. A bounded completed-task reason/traceback diagnostic is being prepared before another attempt; permission/currentness checks and all deadlines remain unchanged.
