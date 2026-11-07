@@ -6797,6 +6797,7 @@ class ConsoleSessionController:
             clear_answered_draft,
             own_draft_takes_it_back,
             shelf_releasable,
+            stop_cancelled_send,
             trace_card_returns_draft,
         )
 
@@ -6893,7 +6894,11 @@ class ConsoleSessionController:
             and controller.store.active_session_id == held.session_id
             and self._console_visible_draft_session_id == held.session_id
         )
-        cancelled = action == "cancel" and settled
+        # TASK-33621.59: Stop won over this action's failed save; as Cancel.
+        cancelled = settled and (
+            action == "cancel"
+            or stop_cancelled_send(result, held.session_id, preparation_id)
+        )
         # A composer send keeps showing its own text until the turn is accepted;
         # that is no follow-up to protect (as in `own_draft_takes_it_back`), so
         # Cancel still takes the turn off the shelf with its attachments.
