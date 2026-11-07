@@ -3627,3 +3627,12 @@ Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_re
 Tests/UI/test_post_release_workspaces_library_depth.py::test_blocked_use_in_console_press_explains_inline
 Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_preserves_rail_scroll
 Tests/UI/test_post_release_workspaces_library_depth.py::test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate
+# TASK-33621.59 (2026-11-06): Stop pressed while a send's durable commit runs,
+# and the commit then fails (before and inside its reservation), settles as
+# stopped with the text and image back in the draft, and the next send is
+# answered; with no Stop the failure still pauses for Retry send. One node per
+# mounted case at the tail (4-6 s each).
+Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_failing_commit_gives_the_send_back_and_frees_the_chat[before-reservation]
+Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_failing_commit_gives_the_send_back_and_frees_the_chat[inside-reservation]
+Tests/UI/test_console_stop_during_failed_commit.py::test_a_failing_commit_with_no_stop_still_pauses_for_retry[before-reservation]
+Tests/UI/test_console_stop_during_failed_commit.py::test_a_failing_commit_with_no_stop_still_pauses_for_retry[inside-reservation]

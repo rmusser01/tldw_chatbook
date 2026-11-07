@@ -992,6 +992,9 @@ MINIMUM_FILES = 2028
 # TASK-40720 (2026-11-13): append the native sync admission file at the tail.
 # The floor is the measured entry count.
 MINIMUM_FILES = 2029
+# TASK-33621.59 (2026-11-06): append the four Stop-during-a-failed-commit
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2033
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
@@ -1227,6 +1230,24 @@ MINIMUM_FILES = 2457
 MINIMUM_FILES = 2472
 
 
+MINIMUM_FILES = 2038
+MINIMUM_FILES = 2045
+MINIMUM_FILES = 2080
+MINIMUM_FILES = 2149
+MINIMUM_FILES = 2150
+MINIMUM_FILES = 2151
+# 2026-11-19: re-counted after rebasing onto dev a6df4d8d48. The floor is the measured entry count.
+MINIMUM_FILES = 2439
+# 2026-11-20: re-counted after rebasing onto dev d85e90bc9e. The floor is the measured entry count.
+MINIMUM_FILES = 2443
+# 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
+MINIMUM_FILES = 2445
+# 2026-11-21: re-counted after rebasing onto dev fe84affafc. The floor is the measured entry count.
+MINIMUM_FILES = 2456
+# 2026-11-22: re-counted after rebasing onto dev ddd3c02052. The floor is the measured entry count.
+MINIMUM_FILES = 2461
+# 2026-11-22: re-counted after rebasing onto dev 2f7790873a. The floor is the measured entry count.
+MINIMUM_FILES = 2476
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

@@ -1185,6 +1185,11 @@ _BUDGETS: dict[str, int] = {
     # again right before finalize, for reads that started meanwhile.
     # 2026-11-22, TASK-42342 review 2 (owner rule: raise by the change's own
     # lines): 7093 -> 7095 (+2) -- that drain call is wrapped under 100 columns.
+    # TASK-33621.59, 2026-11-06 (restacked 2026-11-12 onto dev 4b90eb860b):
+    # +9 -- a refused turn whose Stop won over a failed save carries its
+    # restored draft revision, and its attachments return to the draft. The
+    # refusal itself moved to console_received_dispatch.py on dev; dev's row
+    # already covers the growth.
     "tldw_chatbook/Chat/console_runtime.py": 7095,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
