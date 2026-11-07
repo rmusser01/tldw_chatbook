@@ -190,7 +190,10 @@ _BUDGETS: dict[str, int] = {
     # raises a barrier, skips a busy store, bounds its checkpoint wait.
     # 2026-11-06, TASK-39047 (owner size waiver): 2200 -> 2203 (+3) -- the
     # quit's idle close covers media, Dreams and Guardian too.
-    "tldw_chatbook/app_lifecycle.py": 2203,
+    # 2026-11-06, TASK-39117 (owner size waiver): 2203 -> 2207 (+4) -- the
+    # quit's idle close also covers the Workspace, Library Collections and
+    # notifications stores.
+    "tldw_chatbook/app_lifecycle.py": 2207,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -886,6 +889,9 @@ _BUDGETS: dict[str, int] = {
     # thread's handle joins the file's registry, closed idle at quit.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 9453 -> 9534 (+81), TASK-38588 purges stale FTS tokens on a media overwrite.
+    # 2026-11-06, TASK-39118 (owner size waiver): 9453 -> 9475 (+22) -- media
+    # cursors and execute_query hold a registry use, so the quit's idle close
+    # skips a bare read in flight.
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9534,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
