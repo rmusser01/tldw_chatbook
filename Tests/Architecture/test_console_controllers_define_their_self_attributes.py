@@ -287,6 +287,9 @@ def test_a_real_binding_defines_the_name(body: str) -> None:
 _PACKAGE = _REPO_ROOT / "tldw_chatbook"
 _APP_NAMES = {"app", "_app", "app_instance", "_app_instance", "tldw_app"}
 
+#: Other names Chat/ code gives the Console chat controller.
+_CONTROLLER_ALIASES = {"creator", "preparation_owner"}
+
 #: Modules whose ``controller`` is not the Console chat controller.
 _NOT_THE_CONSOLE_CONTROLLER = {
     "tldw_chatbook/UI/Library_Modules/library_file_export.py": (
@@ -367,7 +370,11 @@ def _controller_app_reads(source: str, *, controller_helpers: bool = False) -> l
             if isinstance(receiver, ast.Attribute)
             else ""
         )
-        if "controller" in name.lower() or (name == "self" and id(node) in helpers):
+        if (
+            "controller" in name.lower()
+            or name in _CONTROLLER_ALIASES
+            or (name == "self" and id(node) in helpers)
+        ):
             lines.append(node.lineno)
     return lines
 
@@ -399,6 +406,8 @@ def test_no_module_reads_the_console_controllers_app() -> None:
         "x = controller.app.notify",
         "x = getattr(self._chat_controller, 'app', None)",
         "runtime.chat_controller.app = app",
+        "x = getattr(self.preparation_owner, 'app', None)",
+        "x = getattr(creator, 'app', app)",
     ],
 )
 def test_controller_app_scan_flags_each_shape(source: str) -> None:
