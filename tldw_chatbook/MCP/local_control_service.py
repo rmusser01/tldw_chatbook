@@ -647,6 +647,21 @@ class LocalMCPControlService:
         """
         self._require_allowed("mcp.external_profiles.list.local")
         self._require_allowed("mcp.inventory.list.local")
+        return (
+            *self._catalog_fingerprint_sources(),
+            self.connection_states(profiles),
+        )
+
+    def _catalog_fingerprint_sources(self) -> tuple:
+        """The fingerprint's reads: the manifest's identity, then the store's.
+
+        TASK-33620.15.38: a Console run start makes these off the UI loop
+        (``console_snapshot.read_run_catalog_fingerprint``); this is the one
+        body both routes run.
+
+        Returns:
+            ``(store identity, manifest identity)``.
+        """
         if self.manifest_provider is _default_manifest_provider:
             from pathlib import Path
 
@@ -654,11 +669,7 @@ class LocalMCPControlService:
             manifest: Any = ("source", hashlib.sha256(source).hexdigest())
         else:
             manifest = ("manifest", self.manifest_provider() or {})
-        return (
-            self.store.catalog_fingerprint(),
-            manifest,
-            self.connection_states(profiles),
-        )
+        return (self.store.catalog_fingerprint(), manifest)
 
     def save_external_profile(
         self,
@@ -1912,6 +1923,11 @@ _CONSOLE_STANDARD_METHODS = (
     ("get_external_servers", LocalMCPControlService.get_external_servers),
     ("_project_external_catalog", LocalMCPControlService._project_external_catalog),
     ("get_inventory", LocalMCPControlService.get_inventory),
+    ("catalog_fingerprint", LocalMCPControlService.catalog_fingerprint),
+    (
+        "_catalog_fingerprint_sources",
+        LocalMCPControlService._catalog_fingerprint_sources,
+    ),
 )
 
 

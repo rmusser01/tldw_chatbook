@@ -2789,6 +2789,7 @@ _CONSOLE_STANDARD_METHODS = (
     ("load", MCPPermissionStore.load),
     ("get_kill_switch", MCPPermissionStore.get_kill_switch),
     ("mark_config_changed", MCPPermissionStore.mark_config_changed),
+    ("catalog_fingerprint", MCPPermissionStore.catalog_fingerprint),
 )
 
 
