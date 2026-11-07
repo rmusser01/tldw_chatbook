@@ -157,7 +157,12 @@ MAX_PASS_ADDED_MODULES = 558
 #: 426,388 -> 426,400 (2026-11-06, TASK-39050; owner size waiver): +12 in
 #: `library`, all `library_screen` (a click marks real input before Textual
 #: focuses its target). Modules unchanged, pinned at the measurement.
-MAX_PASS_ADDED_LOC = 426_400
+#: 426,400 -> 426,467 (2026-11-06, TASK-38953 with TASK-38975 and their
+#: review fixes; owner size waiver): re-measured on the round-11 stacked tree.
+#: The growth is in `settings_screen`, a module the route already pre-imports
+#: (one pane at a time at 70 columns and below, and the stale-echo checks).
+#: Modules unchanged, pinned at the measurement.
+MAX_PASS_ADDED_LOC = 426_467
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
