@@ -310,3 +310,27 @@ def test_the_roleplay_source_has_no_numeric_dimension_literal():
     text = re.sub(r"/\*.*?\*/", "", SOURCE.read_text(encoding="utf-8"), flags=re.S)
     assert _DIM.findall(text) == []
     assert _DIM.search("#probe { height: 1; }")  # the pattern can fire
+
+
+def test_the_tag_picker_carries_no_default_css_and_its_rules_ride_the_sheet():
+    """TASK-33910.40: on dev before this change ``TagFilterPicker`` kept its
+    rules in ``DEFAULT_CSS`` (allowlisted); this change moves them here. The
+    picker is pushed only by PersonasScreen, so the lazy sheet is loaded
+    whenever it shows."""
+    from tldw_chatbook.Widgets.Persona_Widgets.tag_filter_picker import (
+        TagFilterPicker,
+    )
+
+    # ModalScreen's own DEFAULT_CSS is inherited; the picker defines none.
+    assert "DEFAULT_CSS" not in vars(TagFilterPicker)
+    sheet = _moved_rules(SHEET.read_text(encoding="utf-8"))
+    selectors = {selector for selector, _body in sheet}
+    for needed in (
+        ".roleplay-items-tag-picker",
+        ".roleplay-items-tag-picker-box",
+        ".roleplay-items-tag-picker-list",
+    ):
+        assert needed in selectors
+    # The picker really wears the classes the sheet styles.
+    picker = TagFilterPicker(["a"], None)
+    assert picker.has_class("roleplay-items-tag-picker")

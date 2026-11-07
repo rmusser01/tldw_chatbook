@@ -45,17 +45,12 @@ class TagFilterPicker(ModalScreen[str | None]):
 
     CANCEL = object()  # distinct from None ("All") so cancel != clear-filter
 
-    DEFAULT_CSS = """
-    TagFilterPicker { align: center middle; }
-    TagFilterPicker > Vertical {
-        width: 50%; max-width: 60; height: auto; max-height: 80%;
-        padding: 1 2; border: round $panel;
-    }
-    TagFilterPicker #tag-filter-list { height: auto; max-height: 16; }
-    """
-
     def __init__(self, tags: list[str], current: str | None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        # Styled by features/_roleplay.tcss (screen_feature_roleplay.tcss):
+        # the picker is pushed only by PersonasScreen, so that lazy sheet is
+        # always loaded when it shows. No DEFAULT_CSS (TASK-33910.40).
+        self.add_class("roleplay-items-tag-picker")
         self._tags = list(tags)
         self._current = current
         self._row_tags: list[str | None] = []
@@ -68,10 +63,10 @@ class TagFilterPicker(ModalScreen[str | None]):
         self._no_match = False
 
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with Vertical(classes="roleplay-items-tag-picker-box"):
             yield Label("Filter by tag", markup=False)
             yield Input(placeholder="Filter tags...", id="tag-filter-search")
-            yield ListView(id="tag-filter-list")
+            yield ListView(id="tag-filter-list", classes="roleplay-items-tag-picker-list")
             yield Static("Enter to pick - Esc to cancel", classes="destination-purpose")
 
     async def on_mount(self) -> None:
