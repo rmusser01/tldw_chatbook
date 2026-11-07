@@ -102,16 +102,16 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
             assert shortcuts[-len(theme_keys) :] == theme_keys
             shortcuts = shortcuts[: -len(theme_keys)]
         keys = tuple(key for key, _label in shortcuts)
-        # Network owns a self-contained save path without a SettingsDraft;
-        # guided categories own the paired save/revert path.
+        # Guided categories own the paired save/revert path; Network's
+        # registered panel (ADR-303 staged, no SettingsDraft) saves and
+        # reverts too (TASK-1378.1).
         has_save = (
             category in GUIDED_SETTINGS_MUTATION_CATEGORIES
             or category is SettingsCategoryId.NETWORK
         )
         assert ("s" in keys) == has_save
         assert ("r" in keys) == (
-            category in GUIDED_SETTINGS_MUTATION_CATEGORIES
-            or category is SettingsCategoryId.ADVANCED_CONFIG
+            has_save or category is SettingsCategoryId.ADVANCED_CONFIG
         )
         # t is only advertised where a test action is actually implemented.
         assert ("t" in keys) == (
@@ -123,7 +123,7 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         expected_labels = []
         if has_save:
             expected_labels.append("save category")
-        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+        if has_save:
             expected_labels.append("revert category")
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             expected_labels.append("revert raw draft")

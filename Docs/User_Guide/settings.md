@@ -117,6 +117,7 @@ when you set a field back by hand.
 | Badge | What it means | Categories |
 |---|---|---|
 | **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Web Search, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
+| **Pending — save with s** | The TLS trust edit waits for **s**; **r** discards it after asking. As with a draft, the rail marks it with **\***, the banner counts it ("State: Pending — save with s · 1 unsaved · revert with r | …"), switching categories or leaving Settings keeps it, and quitting asks about it. | Network |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
 | **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** and, for your own themes, **Rename** / **Delete** / **Export** act at once from the picker, and **Save** / **Save as…** in the editor (behind **Clone** / **New** / **Edit**) store a theme file. | [My Profile](settings/personal-context-profile.md), Theme, Agents, Schedules |
