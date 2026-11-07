@@ -267,14 +267,15 @@ async def test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn(monkeypa
         store = console._ensure_console_chat_store()
         session_id = await _temporary_chat_with_parked_turn(pilot, app, console)
         messages = store.all_messages_for_session(session_id)
-        # The refused send leaves its "Provider blocked" error notice, a
-        # Console SYSTEM row: never loss, so never counted (TASK-33628.16).
-        assert any(message.role is ConsoleMessageRole.SYSTEM for message in messages)
-        unsaved = sum(
-            message.persisted_message_id is None
-            and message.role is not ConsoleMessageRole.SYSTEM
-            for message in messages
-        )
+        # The Temporary prompt is never saved, and the refused send leaves its
+        # "Provider blocked" error notice, a Console SYSTEM row that is never
+        # saved either. The notice is never loss, so only the prompt counts
+        # (TASK-33628.16). Literal roles and count, not the fix's own rule.
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.SYSTEM,
+        ]
+        assert all(message.persisted_message_id is None for message in messages)
 
         dialog = await _ctrl_q_asks(
             pilot, app, events, "the Temporary chat's parked unsent turn"
@@ -282,9 +283,8 @@ async def test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn(monkeypa
 
         rows = _message_rows(dialog)
         assert "Unsent turns needing attention: 1" in rows
-        # The Temporary chat's own messages are never saved, so they count too.
-        assert unsaved >= 1
-        assert f"Temporary or unsaved messages: {unsaved}" in rows
+        # The Temporary chat's own prompt is never saved, so it counts too.
+        assert "Temporary or unsaved messages: 1" in rows
         title = console._session._session_close_display_title(session_id)
         assert any(
             row.startswith("Affected tabs:") and f'"{title}"' in row for row in rows
