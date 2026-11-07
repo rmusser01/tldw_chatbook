@@ -62,4 +62,6 @@ Both fixes are one-line guards at the seam every caller routes through.
 
 **Runs (load 44-64).** Both files: 61 passed at `-n 4`. Covering files (console response rules, end-to-end rules, Personas portrait performance, modal dismissal, quit-in-flight modals and hooks, rule write contention): 273 passed, 1 failed. The failure, `test_console_response_rules.py::test_active_run_copy_takes_priority_over_an_earlier_rule_verdict` (`'Waiting for reply…' == 'Streaming response.'`), fails the same way alone on base 8b762b52fa.
 
+**Lane cost** (serial, the steps' flags, 3 runs, load 43-58): `[disable]` 5.2-8.1 s, `[cancel]` 5.8-8.2 s. The console-p0-gate step's 55 targets ran 269 passed in 1021 s at load 45-54.
+
 Files: `tldw_chatbook/Widgets/Console/response_rules_modal.py`, `tldw_chatbook/UI/Persona_Modules/portrait_regions.py`, the two test files, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

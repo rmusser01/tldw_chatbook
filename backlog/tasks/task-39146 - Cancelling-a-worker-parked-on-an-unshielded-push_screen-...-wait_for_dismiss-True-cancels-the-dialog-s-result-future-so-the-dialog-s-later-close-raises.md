@@ -73,4 +73,6 @@ The shared helper is Textual's own `App.push_screen_wait`, which awaits the same
 
 **Runs.** Covering files (the new file, the three seam files, Chatbooks screen server actions, STTS import scope services, file-picker tooltips, tier-2 media guards, quit-flow choke point, worker-contract script tests): 432 passed, 20 failed on head; the same 20 fail on base 8b762b52fa with the same command (RecoveryRequired in the Chatbooks files, `test_display_messages_batches_mount`). `test_worker_exclusive_group_inventory.py`: 25 passed. The W003 wait census counts `push_screen_wait` and `wait_for_dismiss=True` alike, so its rows are unchanged.
 
+**Lane cost** (serial, 3 runs, load 43-58): `test_no_unshielded_dismiss_waits` 4.2-6.8 s (it parses the package files that name `push_screen`), `test_unshielded_dismiss_wait_forms_are_flagged` 0.7-1.2 s. The Architecture guard contracts step ran 403 passed in 408 s at load 45-60.
+
 Files: the six product modules above, `UI/Screens/personas_screen.py`, the four test files, `Tests/Architecture/test_worker_exclusive_group_inventory.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
