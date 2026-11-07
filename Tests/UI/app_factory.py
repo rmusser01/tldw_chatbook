@@ -233,6 +233,8 @@ def swap_app_aliases(app, **aliases) -> None:
         **aliases: App attribute names and their replacement objects.
     """
     for name, value in aliases.items():
+        if not hasattr(app, name):  # a misspelt alias would swap nothing
+            raise AttributeError(f"app has no alias {name!r}")
         setattr(app, name, value)
     app._publish_application_services()
 
