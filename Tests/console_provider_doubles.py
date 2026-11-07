@@ -21,6 +21,7 @@ this helper attaches it only when ``ready`` is true.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 from collections.abc import AsyncIterator
@@ -124,6 +125,23 @@ def persisted_console_store(
         ),
         **kwargs,
     )
+
+
+async def until_provider_starts(started: asyncio.Event, task: asyncio.Task) -> None:
+    """Wait until a gateway double sets ``started``, or ``task`` ends first.
+
+    No wall-clock bound (TASK-39143, TASK-39138): the suite's ``--timeout``
+    is the backstop for a hang. A task that ends before the provider starts
+    re-raises its own error, or reports its result, instead of leaving the
+    wait to time out with nothing to read.
+    """
+    waiter = asyncio.ensure_future(started.wait())
+    try:
+        await asyncio.wait({waiter, task}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        waiter.cancel()
+    if not started.is_set():
+        raise AssertionError(f"ended before the provider started: {task.result()!r}")
 
 
 def with_destination(resolution: _R) -> _R:

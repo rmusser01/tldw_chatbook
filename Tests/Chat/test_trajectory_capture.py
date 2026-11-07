@@ -25,7 +25,11 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
-from Tests.console_provider_doubles import provider_resolution, with_destination
+from Tests.console_provider_doubles import (
+    provider_resolution,
+    until_provider_starts,
+    with_destination,
+)
 
 # TASK-38111: the real ConsoleChatController reads config (its constructor,
 # hook admission, the regenerate path), which the per-test TLDW_CONFIG_PATH
@@ -660,10 +664,10 @@ async def test_regenerate_cancel_records_stopped_replacement(tmp_path):
         controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
         task = asyncio.create_task(controller.regenerate_message(original.id))
-        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await until_provider_starts(gateway.started, task)
         await asyncio.sleep(0)
         assert controller.stop_active_run() is True
-        result = await asyncio.wait_for(task, timeout=1)
+        result = await task
         assert result.accepted
         siblings, _index, _count = store.siblings_at(original.id)
         sibling = next(item for item in siblings if item.id != original.id)
