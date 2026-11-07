@@ -20,9 +20,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
 from tldw_chatbook.config import (
-    chachanotes_db as global_db_from_config,
-)
-from tldw_chatbook.config import (
     load_console_library_migration_seed,
 )
 
@@ -115,11 +112,6 @@ class NotesInteropService:
             self.unified_db_template = global_db_to_use  # Store the template instance
             logger.info(
                 f"NotesInteropService initialized with unified DB template: {self.unified_db_template.db_path_str}"
-            )
-        elif global_db_from_config:
-            self.unified_db_template = global_db_from_config
-            logger.info(
-                f"NotesInteropService using imported global config DB template: {self.unified_db_template.db_path_str}"
             )
         else:
             self.unified_db_template = None

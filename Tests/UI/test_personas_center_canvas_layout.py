@@ -34,12 +34,12 @@ def stub_characters(monkeypatch):
     monkeypatch.setattr(
         character_handler_module,
         "fetch_all_characters",
-        lambda: [dict(c) for c in CHARACTERS],
+        lambda _db: [dict(c) for c in CHARACTERS],
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: next(
+        lambda _db, character_id: next(
             dict(c) for c in CHARACTERS if str(c["id"]) == str(character_id)
         ),
     )

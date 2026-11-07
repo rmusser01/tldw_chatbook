@@ -10,7 +10,6 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Checkbox, Static
 
-from Tests.app_module_patches import set_app_global
 from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _visible_text,
@@ -718,9 +717,6 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
         configured_default="settings",
         config_overrides={"console": {"raw_cli_permitted": False}},
     )
-    # Keep the factory's no-profile-DB seam alive through mount: this test
-    # exercises real navigation and Settings save ownership, not FTS startup.
-    set_app_global(monkeypatch, "get_chachanotes_db_lazy", lambda: None)
     loaded_config = dict(app.app_config)
     loaded_config["console"] = dict(app.app_config["console"])
     loaded_config["console"]["raw_cli_permitted"] = True

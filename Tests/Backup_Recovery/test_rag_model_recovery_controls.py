@@ -65,7 +65,8 @@ if mode=='rebuild':
  media=MediaDatabase(installed_config.get_media_db_path(),client_id='model-review-fixture')
  media.add_media_with_keywords(url='https://example.invalid/local',title='Local model content',media_type='document',content='local model content '*12,keywords=['local'],overwrite=True)
  instance.media_db=media
- instance.chachanotes_db=installed_config.get_chachanotes_db_lazy()
+ from tldw_chatbook.app_services import open_chachanotes_db
+ instance.chachanotes_db=open_chachanotes_db(installed_config.get_chachanotes_db_path(), client_id=installed_config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
  assert instance.chachanotes_db is not None
 class Host(App):
  def notify(self,message,**kwargs):

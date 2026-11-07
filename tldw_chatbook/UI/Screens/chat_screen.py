@@ -18674,13 +18674,17 @@ class ChatScreen(BaseAppScreen):
         """
         import asyncio as _asyncio
 
-        from ...Utils.doctor import format_doctor_report, run_doctor
+        from ...Utils.doctor import database_integrity_fn, format_doctor_report, run_doctor
         from ..Console_Modules.command_handoff import append_command_output
 
         include_network = "network" in (parse.args or "").lower()
         try:
             checks = await _asyncio.to_thread(
-                run_doctor, include_network=include_network
+                run_doctor,
+                include_network=include_network,
+                integrity_fn=database_integrity_fn(
+                    self.app_instance.services.storage.chachanotes
+                ),
             )
             report = format_doctor_report(checks)
         except Exception as exc:  # noqa: BLE001 - a command must not crash the screen

@@ -40,7 +40,7 @@ def _degraded_app(notifications: list[tuple[str, dict]]):
     """Build a Console app whose ChaChaNotes database could not be opened."""
 
     app = _build_test_app()
-    # `_build_test_app` already patches `get_chachanotes_db_lazy` to None, so
+    # `_build_test_app` already patches `_open_profile_chachanotes` to None, so
     # this is the production post-failure shape verbatim -- no double.
     assert getattr(app, "chachanotes_db", None) is None
     app.chat_api_provider_value = "llama_cpp"

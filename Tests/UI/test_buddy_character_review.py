@@ -246,12 +246,12 @@ async def test_entry_opens_created_character_through_personas_console_action(
     mock_app_instance.chachanotes_db = db
     monkeypatch.setattr(workflow, "get_user_data_dir", lambda: root)
     monkeypatch.setattr(
-        ccp_character_handler, "fetch_all_characters", db.list_character_cards
+        ccp_character_handler, "fetch_all_characters", lambda _db: db.list_character_cards()
     )
     monkeypatch.setattr(
         ccp_character_handler,
         "fetch_character_by_id",
-        lambda actor_id: db.get_character_card_by_id(int(actor_id)),
+        lambda _db, actor_id: db.get_character_card_by_id(int(actor_id)),
     )
     patch_character_paging(monkeypatch)
 

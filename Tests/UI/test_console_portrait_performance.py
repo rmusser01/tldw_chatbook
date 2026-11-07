@@ -686,12 +686,12 @@ async def test_personas_apply_and_remove_handoff_to_mounted_console(
     monkeypatch.setattr(
         handler,
         "fetch_all_characters",
-        lambda: [db.get_character_card_by_id(character_id)],
+        lambda _db: [db.get_character_card_by_id(character_id)],
     )
     monkeypatch.setattr(
         handler,
         "fetch_character_by_id",
-        lambda _id: db.get_character_card_by_id(character_id),
+        lambda _db, _id: db.get_character_card_by_id(character_id),
     )
     patch_character_paging(monkeypatch)
     host = pilot.app

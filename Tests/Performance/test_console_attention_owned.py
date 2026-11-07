@@ -28,7 +28,8 @@ async def exercise():
     from tldw_chatbook.Chat.conversation_local_marks_service import ConversationLocalMarksService
     from tldw_chatbook.Chat import console_preparation_reads as reads
 
-    database = config.get_chachanotes_db_lazy()
+    from tldw_chatbook.app_services import open_chachanotes_db
+    database = open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
     marks = ConversationLocalMarksService(database)
     conversation = database.add_conversation({'title': 'attention control'})
     receipt = '11111111-1111-4111-8111-111111111111'

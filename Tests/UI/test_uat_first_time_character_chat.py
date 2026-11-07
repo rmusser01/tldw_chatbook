@@ -405,25 +405,26 @@ def fresh_profile(tmp_path, monkeypatch):
 
     Args:
         tmp_path: Pytest-provided temporary directory for the user database.
-        monkeypatch: Pytest fixture used to point the app's lazy DB global
-            and notification sink at the isolated profile.
+        monkeypatch: Pytest fixture used to point the app's notification
+            sink at the isolated profile.
 
     Returns:
         Tuple of ``(app, db, notifications)``: the real application object,
         the isolated ``CharactersRAGDB``, and a list that records every
         ``app.notify`` call as ``{"message", "severity"}`` dicts.
     """
-    import tldw_chatbook.config as config_module
+    from dataclasses import replace
 
     db = CharactersRAGDB(str(tmp_path / "chachanotes_uat.db"), "uat-first-run")
-    # The CCP import/list/select helpers resolve the DB through the config
-    # module global via get_chachanotes_db_lazy().
-    monkeypatch.setattr(config_module, "chachanotes_db", db)
-
     app = _build_test_app()
     app.chachanotes_db = db
-    # The app builder constructs the local services while the lazy DB is
-    # patched to None, so re-point their db attribute at the real one
+    # The CCP import/list/select helpers get the DB from the services bundle
+    # (``PersonasScreen._character_db``), which the builder published without one.
+    app.services = replace(
+        app.services, storage=replace(app.services.storage, chachanotes=db)
+    )
+    # The app builder constructs the local services while the profile open
+    # (``_open_profile_chachanotes``) is patched to None, so re-point their db attribute at the real one
     # (production init hands them the live DB directly).
     for service_name in (
         "local_chat_dictionary_service",

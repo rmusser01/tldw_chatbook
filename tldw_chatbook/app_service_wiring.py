@@ -357,6 +357,7 @@ from tldw_chatbook.Writing_Interop import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.app_services import ApplicationServices
     from tldw_chatbook.Library.collections_capture_models import (
         ExternalMediaReference,  # noqa: F401 - retained original importing/patch slot
         ExternalNoteReference,  # noqa: F401 - retained original importing/patch slot
@@ -803,6 +804,8 @@ class ServiceWiringMixin(
     A plain mixin: ``TldwCli.__init__`` still runs the ``_wire_*`` methods
     through ``self``, and it lists this class before ``App`` in its bases.
     """
+
+    services: "ApplicationServices"
 
     @property
     def terminal_session_manager(self) -> "TerminalSessionManager":
@@ -1479,6 +1482,12 @@ class ServiceWiringMixin(
     @server_credential_store_unavailable_reason.setter
     def server_credential_store_unavailable_reason(self, reason: str | None) -> None:
         self._server_credential_store_unavailable_reason = reason
+
+    def _publish_application_services(self) -> None:
+        """Set ``self.services`` once, after composition (ADR-250 section 3)."""
+        from .app_services import assemble_application_services
+
+        self.services = assemble_application_services(self)
 
     def _wire_character_persona_services(self) -> None:
         from .Backup_Recovery.chat_source_participants import (
@@ -3061,6 +3070,8 @@ class ServiceWiringMixin(
         self.local_mcp_control_service = LocalMCPControlService(
             store=self.local_mcp_store,
             policy_enforcer=self.service_policy_enforcer,
+            # The bundle is published after wiring; before then: unavailable.
+            storage_provider=lambda: getattr(getattr(self, "services", None), "storage", None),
         )
         self.unified_mcp_context_store = UnifiedMCPContextStore(
             get_user_data_dir() / "unified_mcp_context.json",

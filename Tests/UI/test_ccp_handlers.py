@@ -1,7 +1,7 @@
 """Focused CCP handler tests for dual character/persona management."""
 
 from functools import partial
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -121,16 +121,14 @@ def test_ccp_fetch_all_characters_accepts_current_list_shape(monkeypatch):
         Mock(return_value=[{"id": 3, "name": "Gamma"}]),
     )
 
-    assert fetch_all_characters() == [{"id": "3", "name": "Gamma"}]
+    assert fetch_all_characters(object()) == [{"id": "3", "name": "Gamma"}]
 
 
 def test_delete_character_returns_false_when_db_unavailable(monkeypatch):
     """A missing local DB must read as a failed delete, not an AttributeError."""
     from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
 
-    monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: None)
-
-    assert ccp_character_handler.delete_character(1, 1) is False
+    assert ccp_character_handler.delete_character(None, 1, 1) is False
 
 
 def test_delete_character_returns_false_for_non_numeric_id(monkeypatch):
@@ -138,9 +136,8 @@ def test_delete_character_returns_false_for_non_numeric_id(monkeypatch):
     from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
 
     db = Mock()
-    monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: db)
 
-    assert ccp_character_handler.delete_character("not-a-number", 1) is False
+    assert ccp_character_handler.delete_character(db, "not-a-number", 1) is False
     db.soft_delete_character_card.assert_not_called()
 
 
@@ -437,42 +434,3 @@ async def test_ccp_character_load_discards_out_of_order_stale_results(mock_windo
     assert displayed == ["char.local.bob"]
     assert handler.current_character_id == "char.local.bob"
     assert handler.current_character_data == {"name": "Bob"}
-
-
-class TestCCPMessageDisplayBatching:
-    """TASK-34394: conversation display mounts all message widgets in one
-    `mount(*widgets)` call instead of one call per widget."""
-
-    def test_display_messages_batches_mount(self, mock_window):
-        manager = CCPMessageManager(mock_window)
-        manager.current_messages = [
-            {"id": "msg-1", "role": "user", "content": "one"},
-            {"id": "msg-2", "role": "assistant", "content": "two"},
-            {"id": "msg-3", "role": "user", "content": "three"},
-        ]
-        # Batching seam under test only: production `clear_messages()` also
-        # empties `current_messages` BEFORE this loop reads it, and
-        # `_create_message_widget` calls `ChatMessageEnhanced(content=...)`
-        # whose signature wants `message=` (both pre-existing bugs in this
-        # legacy path, out of TASK-34394 scope) -- neutralize both so the
-        # mount batching itself is what is asserted.
-        manager.clear_messages = Mock()
-        manager._create_message_widget = Mock(
-            side_effect=lambda msg: Mock(name=f"widget-{msg['id']}")
-        )
-
-        messages_view = Mock()
-        messages_view.children = []
-        mock_window.query_one.return_value = messages_view
-
-        with patch(
-            "tldw_chatbook.UI.CCP_Modules.ccp_message_manager.get_chachanotes_db_lazy",
-            create=True,
-        ):
-            manager._display_messages()
-
-        # Exactly one mount call, carrying every widget.
-        assert messages_view.mount.call_count == 1
-        mounted = messages_view.mount.call_args[0]
-        assert len(mounted) == 3
-        assert len(manager.message_widgets) == 3

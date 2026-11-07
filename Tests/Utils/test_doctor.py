@@ -97,3 +97,46 @@ def test_report_has_no_secrets_and_states_each_check():
     assert "config" in report and "providers" in report
     assert "pass" in report.lower() and "warn" in report.lower()
     assert "add a key" in report
+
+
+# -- TASK-36947.6: the caller supplies the database (ADR-250 section 6) --------
+
+
+def test_run_doctor_uses_the_supplied_integrity_check():
+    checks = {c.name: c for c in run_doctor(integrity_fn=lambda: False)}
+    assert checks["database"].status == "fail"
+    assert "corruption" in checks["database"].detail
+
+
+def test_integrity_check_over_no_database_reports_it_unavailable():
+    from tldw_chatbook.Utils.doctor import database_integrity_fn
+
+    check = check_database_integrity(database_integrity_fn(None))
+    assert check.status == "fail"
+    assert "main database is not available" in check.detail
+    assert check_database_integrity().detail == check.detail
+
+
+async def test_doctor_command_checks_the_services_bundle_database(monkeypatch):
+    """/doctor checks ``services.storage.chachanotes``, not a config global."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Utils import doctor
+
+    seen: list[bool] = []
+
+    def fake_run_doctor(*, include_network, integrity_fn):
+        seen.append(integrity_fn())
+        return []
+
+    monkeypatch.setattr(doctor, "run_doctor", fake_run_doctor)
+    database = SimpleNamespace(check_integrity=lambda: True)
+    storage = SimpleNamespace(chachanotes=database)
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(services=SimpleNamespace(storage=storage)),
+        _append_native_console_system_message=AsyncMock(),
+    )
+    await ChatScreen._console_command_doctor(screen, SimpleNamespace(args=""))
+    assert seen == [True]
