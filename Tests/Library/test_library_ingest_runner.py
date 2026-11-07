@@ -427,8 +427,47 @@ def _allow_test_external_root(app: _IngestRunnerHarness, root: Path) -> None:
     service._descriptor_for = descriptor
 
 
+#: Every Media DB ``_make_db`` opened in the running test (TASK-39049).
+_OPENED_MEDIA_DBS: list[MediaDatabase] = []
+
+
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
-    return MediaDatabase(tmp_path / name, client_id="f3-runner-test")
+    db = MediaDatabase(tmp_path / name, client_id="f3-runner-test")
+    _OPENED_MEDIA_DBS.append(db)
+    return db
+
+
+class _HandleCloser:
+    """Closes one SQLite handle on the thread that opened it, as it exits."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __del__(self):
+        self.conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _close_the_stores_each_test_opens(monkeypatch):
+    """Close the test's stores, so ``--storage-lease-guard`` sees no live lease.
+
+    TASK-39049: 128 tests left their ``_make_db`` handle open. Three left a
+    WorkspaceDB handle that a research retry opened on the loop's executor
+    thread: SQLite refuses to close it from another thread, so a closer kept
+    in that thread's locals closes it when the loop retires the thread.
+    """
+    closers = threading.local()
+    opened = WorkspaceDB._on_connection_opened
+
+    def record(self, conn):
+        closers.__dict__.setdefault("handles", []).append(_HandleCloser(conn))
+        opened(self, conn)
+
+    monkeypatch.setattr(WorkspaceDB, "_on_connection_opened", record)
+    yield
+    while _OPENED_MEDIA_DBS:
+        _OPENED_MEDIA_DBS.pop().close_idle_connections()
+    closers.__dict__.clear()
 
 
 def _write_text_file(tmp_path: Path, name: str, content: str) -> Path:
@@ -780,6 +819,8 @@ async def test_production_catalog_dispatch_failure_uses_current_replacement_line
     assert persisted[receipt.ingest_job_id]["state"] == "failed"
     ingest_db.close()
     workspace_db.close()
+    # Retire the executor threads, so their closers close their handles.
+    await asyncio.get_running_loop().shutdown_default_executor()
 
 
 @pytest.mark.asyncio
@@ -1191,6 +1232,8 @@ async def test_startup_restore_links_a_held_research_job_once_the_store_attaches
         if store is not None:
             store.close()
         workspace_db.close()
+        # Retire the executor threads, so their closers close their handles.
+        await asyncio.get_running_loop().shutdown_default_executor()
 
 
 @pytest.mark.asyncio
