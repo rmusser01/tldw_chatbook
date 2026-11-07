@@ -20,7 +20,7 @@ from functools import wraps
 import asyncio
 from loguru import logger
 
-from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
+from . import pipeline_builder_simple
 
 
 @dataclass
@@ -83,9 +83,9 @@ class PipelineLoader:
 
         # Map of built-in pipeline functions
         self._builtin_functions = {
-            "perform_plain_rag_search": chat_rag_events.perform_plain_rag_search,
-            "perform_full_rag_pipeline": chat_rag_events.perform_full_rag_pipeline,
-            "perform_hybrid_rag_search": chat_rag_events.perform_hybrid_rag_search,
+            "perform_plain_rag_search": pipeline_builder_simple.perform_plain_rag_search,
+            "perform_full_rag_pipeline": pipeline_builder_simple.perform_full_rag_pipeline,
+            "perform_hybrid_rag_search": pipeline_builder_simple.perform_hybrid_rag_search,
         }
 
     def _implemented_middleware(
@@ -348,7 +348,7 @@ class PipelineLoader:
                     )
 
                     # For now, default to semantic search with profile
-                    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+                    from .pipeline_builder_simple import (
                         perform_full_rag_pipeline,
                     )
 
@@ -360,7 +360,7 @@ class PipelineLoader:
             logger.warning(
                 f"Custom pipeline '{pipeline.id}' has no implementation, using default"
             )
-            from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+            from .pipeline_builder_simple import (
                 perform_plain_rag_search,
             )
 
@@ -396,7 +396,7 @@ class PipelineLoader:
 
             # Fallback
             logger.warning(f"Composite pipeline '{pipeline.id}' has no valid strategy")
-            from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+            from .pipeline_builder_simple import (
                 perform_hybrid_rag_search,
             )
 
@@ -605,7 +605,7 @@ class PipelineLoader:
         self, app, query, sources, components: Dict[str, Dict[str, Any]], **kwargs
     ) -> Tuple[List[Dict[str, Any]], str]:
         """Run an ensemble of pipelines."""
-        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+        from .pipeline_builder_simple import (
             format_results_for_llm,
         )
 

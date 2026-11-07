@@ -304,6 +304,7 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
         session.persisted_conversation_id = "conv-not-cached"
         raising_db = _RaisingDB()
         app.chachanotes_db = raising_db
+        app._publish_application_services()
 
         console.refresh(recompose=True)
         await pilot.pause()
@@ -376,6 +377,7 @@ async def test_narrow_button_opens_modal_with_real_listers_wired():
     app.notes_scope_service = notes_spy
     app.media_db = None
     app.chachanotes_db = None
+    app._publish_application_services()
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -477,6 +479,7 @@ async def test_edit_button_seeds_modal_from_held_scope():
     app.notes_scope_service = _SpyNotesScopeService()
     app.media_db = None
     app.chachanotes_db = None
+    app._publish_application_services()
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -507,6 +510,7 @@ async def test_edit_button_seeds_modal_from_held_scope():
 async def test_save_unpersisted_stores_in_holder_and_refreshes_row():
     app = _build_test_app()
     app.media_db = _AlwaysExistsMediaDB()
+    app._publish_application_services()
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -551,6 +555,7 @@ async def test_scope_saved_unpersisted_then_first_send_flush_refreshes_row():
         app = _build_test_app()
         app.chachanotes_db = db
         app.media_db = _AlwaysExistsMediaDB()
+        app._publish_application_services()
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -605,6 +610,7 @@ async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
         app = _build_test_app()
         app.chachanotes_db = db
         app.media_db = _AlwaysExistsMediaDB()
+        app._publish_application_services()
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -638,6 +644,7 @@ async def test_save_persisted_corrupt_metadata_surfaces_honest_notify():
     try:
         app = _build_test_app()
         app.chachanotes_db = db
+        app._publish_application_services()
         notifications: list[tuple[str, dict]] = []
         app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
         host = ConsoleHarness(app)
@@ -687,6 +694,7 @@ async def test_save_persisted_conflict_error_surfaces_specific_notify():
     try:
         app = _build_test_app()
         app.chachanotes_db = db
+        app._publish_application_services()
         notifications: list[tuple[str, dict]] = []
         app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
         host = ConsoleHarness(app)
@@ -730,6 +738,7 @@ async def test_save_persisted_conversation_not_found_surfaces_specific_notify():
     try:
         app = _build_test_app()
         app.chachanotes_db = db
+        app._publish_application_services()
         notifications: list[tuple[str, dict]] = []
         app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
         host = ConsoleHarness(app)
@@ -794,6 +803,7 @@ async def test_clear_button_persisted_session():
         app = _build_test_app()
         app.chachanotes_db = db
         app.media_db = _AlwaysExistsMediaDB()
+        app._publish_application_services()
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -850,6 +860,7 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
         app = _build_test_app()
         app.chachanotes_db = db
         app.media_db = _AlwaysExistsMediaDB()
+        app._publish_application_services()
         conversation_id = db.add_conversation({"title": "Resumed scoped chat"})
         assert conversation_id
         scope = RagScope(
@@ -933,6 +944,7 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
         app = _build_test_app()
         app.chachanotes_db = db
         app.media_db = _AlwaysExistsMediaDB()
+        app._publish_application_services()
         conversation_id = db.add_conversation({"title": "Restart-scoped chat"})
         assert conversation_id
         scope = RagScope(
@@ -1052,6 +1064,7 @@ async def test_scope_chip_shows_count_and_tooltip_when_scoped():
 async def test_scope_chip_refreshes_on_modal_save():
     app = _build_test_app()
     app.media_db = _AlwaysExistsMediaDB()
+    app._publish_application_services()
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -1082,6 +1095,7 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
         app = _build_test_app()
         app.chachanotes_db = db
         app.media_db = _AlwaysExistsMediaDB()
+        app._publish_application_services()
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -1207,6 +1221,7 @@ async def test_workspace_rag_scope_button_disabled_when_registry_unavailable():
     decision: only a REAL registry row can be scoped."""
     app = _build_test_app()
     app.workspace_registry_service = None
+    app._publish_application_services()
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -1392,6 +1407,7 @@ async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
         app = _build_test_app()
         app.chachanotes_db = db
         app.media_db = _AlwaysExistsMediaDB()
+        app._publish_application_services()
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -1436,6 +1452,7 @@ async def test_chip_tooltip_shows_workspace_only_breakdown():
     workspace-scope tooltip (not the conversation-flavored default)."""
     app = _build_test_app()
     app.media_db = _AlwaysExistsMediaDB()
+    app._publish_application_services()
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -1471,6 +1488,7 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
         app = _build_test_app()
         app.chachanotes_db = db
         app.media_db = _AlwaysExistsMediaDB()
+        app._publish_application_services()
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -1533,6 +1551,7 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
     """
     app = _build_test_app()
     app.media_db = _AlwaysExistsMediaDB()
+    app._publish_application_services()
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]

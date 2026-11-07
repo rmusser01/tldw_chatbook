@@ -16,10 +16,8 @@ import json
 
 import pytest
 
-import tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events as chat_rag_events
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
-    BUILTIN_PIPELINES,
-)
+import tldw_chatbook.RAG_Search.pipeline_builder_simple as pipeline_builder_simple
+from tldw_chatbook.RAG_Search.pipeline_builder_simple import BUILTIN_PIPELINES
 import tldw_chatbook.LLM_Calls.Summarization_General_Lib as general_summarization
 
 _WATCHED_PIPELINES = ("plain", "semantic", "hybrid")
@@ -46,9 +44,9 @@ def _snapshot() -> dict:
 @pytest.mark.parametrize(
     "builder",
     (
-        chat_rag_events.perform_plain_rag_search,
-        chat_rag_events.perform_full_rag_pipeline,
-        chat_rag_events.perform_hybrid_rag_search,
+        pipeline_builder_simple.perform_plain_rag_search,
+        pipeline_builder_simple.perform_full_rag_pipeline,
+        pipeline_builder_simple.perform_hybrid_rag_search,
     ),
 )
 async def test_reranker_override_does_not_mutate_global(
@@ -61,7 +59,7 @@ async def test_reranker_override_does_not_mutate_global(
         captured["config"] = config
         return [], "context"
 
-    monkeypatch.setattr(chat_rag_events, "execute_pipeline", fake_execute_pipeline)
+    monkeypatch.setattr(pipeline_builder_simple, "execute_pipeline", fake_execute_pipeline)
 
     await builder(
         None,
@@ -98,20 +96,22 @@ async def test_reranker_override_does_not_mutate_global(
 @pytest.mark.parametrize(
     "builder",
     (
-        chat_rag_events.perform_plain_rag_search,
-        chat_rag_events.perform_full_rag_pipeline,
-        chat_rag_events.perform_hybrid_rag_search,
+        pipeline_builder_simple.perform_plain_rag_search,
+        pipeline_builder_simple.perform_full_rag_pipeline,
+        pipeline_builder_simple.perform_hybrid_rag_search,
     ),
 )
 async def test_rerank_removal_does_not_mutate_global(
     builder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     before = _snapshot()
+    captured: dict = {}
 
     async def fake_execute_pipeline(config, *args, **kwargs):
+        captured["config"] = config
         return [], "context"
 
-    monkeypatch.setattr(chat_rag_events, "execute_pipeline", fake_execute_pipeline)
+    monkeypatch.setattr(pipeline_builder_simple, "execute_pipeline", fake_execute_pipeline)
 
     await builder(
         None,
@@ -122,6 +122,10 @@ async def test_rerank_removal_does_not_mutate_global(
 
     after = _snapshot()
     assert before == after
+    # the removal landed on the per-call copy the pipeline actually ran
+    assert not any(
+        step.get("function") == "rerank_results" for step in captured["config"]["steps"]
+    )
     # the global table still carries its own rerank step untouched
     assert any(
         step.get("function") == "rerank_results"

@@ -117,8 +117,6 @@ tldw_chatbook.Personal_Context.interview_launch	tldw_chatbook.UI.Screens.profile
 tldw_chatbook.Petdex.review	tldw_chatbook.Widgets.Persona_Widgets.petdex_import_review	lazy
 tldw_chatbook.Petdex.review	tldw_chatbook.Widgets.enhanced_file_picker	lazy
 tldw_chatbook.Prompt_Management.prompt_improvement_models	tldw_chatbook.Widgets.Console.console_composer_bar	top
-tldw_chatbook.RAG_Search.pipeline_loader	tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events	lazy
-tldw_chatbook.RAG_Search.pipeline_loader	tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events	top
 tldw_chatbook.Scheduling.events	tldw_chatbook.Widgets.detail_value_row	top
 tldw_chatbook.Third_Party.textual_fspicker.base_dialog	tldw_chatbook.Library.library_browse_location	lazy
 tldw_chatbook.Third_Party.textual_fspicker.base_dialog	tldw_chatbook.Widgets.enhanced_file_picker	lazy

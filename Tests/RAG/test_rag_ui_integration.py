@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Set up logging
 from loguru import logger
 
+from Tests.app_services_doubles import AliasServices
+
 logger.add(sys.stderr, level="INFO")
 
 _RAG_DEPENDENCIES = ("chromadb", "sentence_transformers", "torch")
@@ -55,6 +57,8 @@ class MockSelect:
 
 class MockApp:
     """Mock app with UI elements for testing."""
+
+    services = property(AliasServices)
 
     def __init__(self, rag_settings: Dict[str, Any]):
         # Databases
@@ -295,6 +299,8 @@ async def test_unreadable_ui_elements_degrade_to_no_context():
     )
 
     class BrokenApp:
+        services = property(AliasServices)
+
         def query_one(self, selector: str):
             if "enable" in selector:
                 raise Exception("UI element not found")

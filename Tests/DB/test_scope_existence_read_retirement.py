@@ -5,14 +5,14 @@ import sqlite3
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as scope
+from tldw_chatbook.RAG_Search import scope_evidence as scope
+from tldw_chatbook.app_services import ProfileStorage
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -30,7 +30,7 @@ def test_original_scope_existence_read_retires_only_its_native_handle(
         table = "notes" if kind == "note" else "Media"
         database.get_connection().execute(f"DROP TABLE {table}")
     database.close_connection()
-    app = SimpleNamespace(chachanotes_db=database, media_db=database)
+    profile_storage = ProfileStorage(chachanotes=database, media=database)
     getter = inspect.unwrap(database_type.get_connection)
     captured = {}
 
@@ -49,7 +49,7 @@ def test_original_scope_existence_read_retires_only_its_native_handle(
                 return
             assert code is getter.__code__
             assert frame.f_globals is getter.__globals__
-            assert ancestor.f_locals["app"] is app
+            assert ancestor.f_locals["storage"] is profile_storage
             assert isinstance(connection, sqlite3.Connection)
             participant = database._maintenance_participant
             with storage._lock:
@@ -86,10 +86,10 @@ def test_original_scope_existence_read_retires_only_its_native_handle(
         try:
             if fail_sql:
                 with pytest.raises(scope._ScopeExistenceReadError):
-                    scope._existing_ids_sync(app, kind, frozenset({"missing"}))
+                    scope._existing_ids_sync(profile_storage, kind, frozenset({"missing"}))
             else:
                 assert (
-                    scope._existing_ids_sync(app, kind, frozenset({"missing"}))
+                    scope._existing_ids_sync(profile_storage, kind, frozenset({"missing"}))
                     == frozenset()
                 )
             assert captured, "Original SQLite getter was not observed"

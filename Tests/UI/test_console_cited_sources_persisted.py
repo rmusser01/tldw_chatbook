@@ -223,6 +223,8 @@ def _build_app(db_path: Path, send_path: _SendPath):
 
     app.local_chat_dictionary_service = build_dictionary_service(db)
     app.chat_dictionary_scope_service.local_service = app.local_chat_dictionary_service
+    # The evidence capture reads the services bundle, not the aliases.
+    app._publish_application_services()
     gateway = _CitingGateway()
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)

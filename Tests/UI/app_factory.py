@@ -218,6 +218,9 @@ def attach_chachanotes_db(
     if not db.is_memory_db:
         _created_databases.append(db)
     app.chachanotes_db = db
+    # Code that reads ``app.services.storage`` (the RAG scope/evidence wiring,
+    # TASK-36947.3) must see the same DB as the alias.
+    app._publish_application_services()
     return db
 
 

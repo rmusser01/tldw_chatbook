@@ -131,6 +131,7 @@ async def test_session_scope_resolution_retires_new_workspace_worker_handle(
         resolve_scope_for_session,
     )
     from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+    from Tests.app_services_doubles import with_alias_services
 
     db = WorkspaceDB(tmp_path / "session-scope.sqlite")
     service = LocalWorkspaceRegistryService(db)
@@ -138,7 +139,9 @@ async def test_session_scope_resolution_retires_new_workspace_worker_handle(
     caller = db._held_connection()
     try:
         resolution = await resolve_scope_for_session(
-            SimpleNamespace(chachanotes_db=None, workspace_registry_service=service),
+            with_alias_services(
+                SimpleNamespace(chachanotes_db=None, workspace_registry_service=service)
+            ),
             SimpleNamespace(
                 persisted_conversation_id=None, workspace_id=workspace.workspace_id
             ),
