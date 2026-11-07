@@ -18,6 +18,7 @@ from Tests.Chat.console_close_helpers import close_controller_session
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 from tldw_chatbook.Chat import console_chat_controller as controller_module
+from tldw_chatbook.Chat import console_configuration_capture
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -630,6 +631,46 @@ def _wire_retrieval_evidence_owner(controller, retrieval) -> None:
     controller._frozen_rag_capture = owner["frozen_rag_capture"]
 
 
+def _vision_capable(monkeypatch) -> None:
+    """Make the selected model vision-capable for the turn's vision gate.
+
+    TASK-39045: 3e618d7119 moved the turn's capability capture into
+    ``console_configuration_capture``, so the gate reads that module's
+    ``is_vision_capable``; patching only the controller's copy left an image
+    turn blocked before Library preparation ever ran.
+    """
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
+    monkeypatch.setattr(
+        console_configuration_capture, "is_vision_capable", lambda *_args: True
+    )
+
+
+async def _until_provider_starts(
+    started: asyncio.Event, turn: asyncio.Future, *, timeout: float = 30
+) -> None:
+    """Wait for the provider fence, or fail at once naming the turn's result.
+
+    TASK-38947 / TASK-39045: a bare ``await started.wait()`` hangs to the
+    300 s pytest timeout when the turn ends before the provider (a refusal
+    or a raise never sets ``started``).
+    """
+    waiter = asyncio.ensure_future(started.wait())
+    await asyncio.wait(
+        (waiter, turn), timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+    )
+    if started.is_set():
+        return
+    waiter.cancel()
+    if not turn.done():
+        turn.cancel()
+        pytest.fail(f"the turn never reached the provider within {timeout:g} s")
+    if turn.cancelled():
+        outcome = "cancelled"
+    else:
+        outcome = turn.exception() or turn.result()
+    pytest.fail(f"the turn ended before the provider: {outcome!r}")
+
+
 async def _paused_queued_send(*, persistence=None, gateway=None):
     store = ConsoleChatStore(persistence=persistence)
     policy = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
@@ -647,18 +688,8 @@ async def _paused_queued_send(*, persistence=None, gateway=None):
         controller.run_prompt_chain("owner", session_id=session.id)
     )
     # TASK-38947: a turn refused before the provider (a persistence that
-    # cannot save its mix-in attempt) never sets ``started``; fail at once
-    # with its result instead of waiting out the 300 s pytest timeout.
-    started = asyncio.ensure_future(gateway.started.wait())
-    await asyncio.wait(
-        (started, chain), timeout=30, return_when=asyncio.FIRST_COMPLETED
-    )
-    if not gateway.started.is_set():
-        started.cancel()
-        if not chain.done():
-            chain.cancel()
-            pytest.fail("the owner turn never reached the provider within 30 s")
-        pytest.fail(f"the owner turn ended before the provider: {chain.result()!r}")
+    # cannot save its mix-in attempt) never sets ``started``.
+    await _until_provider_starts(gateway.started, chain)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     first = await controller.queue_prompt(
         session.id, text="frozen queued", expected_revision=snapshot.revision
@@ -1077,7 +1108,7 @@ async def test_live_state_reaches_dispatch_started_only_at_provider_attempt():
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     task = asyncio.create_task(controller.submit_draft("exact user text"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, task)
 
     preparation = store.preparation_for_session(store.active_session_id)
     assert preparation is not None
@@ -1098,7 +1129,7 @@ async def test_close_during_provider_attempt_settles_live_preparation_without_le
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     task = asyncio.create_task(controller.submit_draft("exact user text"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, task)
     session_id = store.active_session_id
     preparation = store.preparation_for_session(session_id)
     assert preparation is not None
@@ -1269,7 +1300,7 @@ async def test_queued_failure_returns_exact_claim_without_foreground_copy():
     chain = asyncio.create_task(
         controller.run_prompt_chain("accepted owner", session_id=session.id)
     )
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, chain)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     admitted = await controller.queue_prompt(
         session.id,
@@ -1355,7 +1386,7 @@ async def test_manual_recovery_continues_same_frozen_send_without_second_submit(
 async def test_text_with_attachment_is_automatic_eligible_and_preserved_until_ready(
     monkeypatch,
 ):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
+    _vision_capable(monkeypatch)
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     session = store.create_session(session_id="session-1")
@@ -1451,7 +1482,10 @@ async def test_skill_refusal_cleans_preparation_and_allows_next_send(monkeypatch
     gateway = _StreamingFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
-    async def refuse(_messages, _turn_context):
+    # 0327cb5cf9 added the call's invocation_source/reference_offsets keywords.
+    async def refuse(
+        _messages, _turn_context=None, *, invocation_source=None, reference_offsets=()
+    ):
         return _messages, "skill refused", (), (), None
 
     monkeypatch.setattr(controller, "_apply_skill_substitution", refuse)
@@ -1582,7 +1616,7 @@ async def test_queued_recovery_reclaims_same_entry_then_advances_without_spin(ac
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
     )
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, chain)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     first = await controller.queue_prompt(
         session.id, text="frozen queued", expected_revision=snapshot.revision
@@ -1799,7 +1833,7 @@ async def test_durable_single_entry_reclaim_releases_its_chain(
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
     )
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, chain)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     only = await controller.queue_prompt(
         session.id, text="only queued", expected_revision=snapshot.revision
@@ -1995,7 +2029,7 @@ async def test_queued_recovery_postaccept_exception_settles_exact_claim_once(
 async def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(
     monkeypatch, action, request
 ):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
+    _vision_capable(monkeypatch)
     captured_contexts = []
 
     async def capture_evidence(_app, launch, *, user_message):
@@ -2298,7 +2332,7 @@ async def test_close_drops_accepted_owner_before_cancelled_task_finally_settles(
     gateway = _BlockingFirstFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     task = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, task)
     session_id = store.active_session_id
     preparation = store.preparation_for_session(session_id)
     assert preparation is not None
@@ -2355,7 +2389,7 @@ async def test_same_text_one_shot_rearm_survives_inflight_send_completion():
     store.set_session_one_shot_prefill(session.id, "same prefill")
 
     task = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, task)
     store.set_session_one_shot_prefill(session.id, "same prefill")
     gateway.release.set()
     result = await task
@@ -2628,7 +2662,7 @@ async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptan
     )
 
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, submit)
     launch_released = state["launch"] is None
     released = list(state["released"])
     gateway.release.set()
@@ -3235,7 +3269,7 @@ async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
         await asyncio.Event().wait()
 
     stream_task = asyncio.create_task(hold_stream())
-    await stream_started.wait()
+    await _until_provider_starts(stream_started, stream_task)
     controller._active_stream_tasks[closed_session.id] = stream_task
 
     closed_loop = asyncio.new_event_loop()
