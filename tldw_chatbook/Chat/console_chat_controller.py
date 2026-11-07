@@ -23322,6 +23322,13 @@ class ConsoleChatController:
         if preparation_id:
             self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
             self._ordinary_outcome_assistant_ids[session_id] = assistant_message_id
+        elif origin.automatic:
+            # TASK-39044: an automatic turn (wake, agent chat start, goal
+            # iteration) has no preparation, so no ordinary outcome of its
+            # own; its terminal transition must not publish under the
+            # chat's previous manual turn's id and reply.
+            self._ordinary_outcome_ids.pop(session_id, None)
+            self._ordinary_outcome_assistant_ids.pop(session_id, None)
         if (
             origin is not ConsoleSubmissionOrigin.MANUAL
             or preserve_composer

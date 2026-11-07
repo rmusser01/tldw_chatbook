@@ -98,9 +98,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33622.15 raised it to 135: test_close_under_quit_question.py and
 # test_modal_quit_in_flight_hooks.py pin Ctrl+Q's still-working answer and a
 # dialog that finishes under "Quit while still working?" closing after Wait
-# (~35 s serial together). The PR's two real-app quit files
-# (test_app_quit_in_flight_modals.py ~2.7 min, test_console_video_picker_cancel.py
-# ~1 min locally) stay out until the lane has a shard with room for them.
+# (~35 s serial together). The PR's two real-app quit files were left out
+# then; test_console_video_picker_cancel.py (~1 min locally) still is.
+# test_app_quit_in_flight_modals.py runs in the lane since TASK-38978, one
+# entry per test (see that row below).
 # TASK-33003.20 adds the production approval batch geometry guard.
 # TASK-34000.1 raised it to 139: the census held 138 files on dev (two past
 # the 136 floor), and Tests/UI/test_library_quit_guard.py joins it. It is a
@@ -869,6 +870,12 @@ MINIMUM_FILES = 1755
 # TASK-39052 review (2026-11-06): append the six per-destination Library
 # grip persistence nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1761
+# TASK-38978 / TASK-38979 / TASK-38980 (2026-11-06): append the Promote
+# write node, the real-key Ctrl+Q in-flight modal tests (17 entries, one per
+# test) and the portrait region editor tests (30 entries, per case for its
+# five heaviest tests) at the tail, split so they spread over consecutive
+# shards. The floor is the measured entry count.
+MINIMUM_FILES = 1809
 
 
 def read_census(path: Path) -> list[str]:

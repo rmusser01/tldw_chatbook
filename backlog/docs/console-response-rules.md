@@ -20,7 +20,7 @@ Global rules can be managed from F4 before opening a Chat, or after the last Cha
 
 **Test** creates an inactive revision. **Save** activates the exact tested definition only if its source and binding are still current. Changed criteria require testing; unchanged predicates and examples can reuse their recorded validation after explicit guidance review. If the original answer is unavailable, select a completed replacement example and Test again. Failed or cancelled testing retains the editor text and the existing pin.
 
-**Disable here** stops a rule in the selected scope. **Exclude here** masks the logical rule, including future inherited revisions. **Delete pin** removes the local override, allowing a broader binding to apply again. **Promote** previews the exact stored revision before applying it to a Workspace or the current profile; private examples and source text stay in their original scope.
+**Disable here** stops a rule in the selected scope. **Exclude here** masks the logical rule, including future inherited revisions. **Delete pin** removes the local override, allowing a broader binding to apply again. **Promote** previews the exact stored revision before applying it to a Workspace or the current profile; private examples and source text stay in their original scope. Once you confirm, the manager shows **Promoting revision N to …**, its actions stay disabled and Escape keeps it open until the write finishes; it then reports whether the revision was promoted, refused or could not be saved. Ctrl+Q during the write says the change is still being saved.
 
 Nearest scope wins: Chat, then Workspace, then current-profile global. Global rules remain local to this profile and device. Promotion is explicit.
 

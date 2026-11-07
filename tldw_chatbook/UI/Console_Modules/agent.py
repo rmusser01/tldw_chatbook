@@ -1033,6 +1033,9 @@ class ConsoleAgentController:
         self._console_subagent_counts_read: dict[frozenset[str], dict[str, Any]] = {}
         self._console_subagent_counts_read_owner: tuple[Any, Any] | None = None
         self._console_historical_read: dict[str, Any] | None = None
+        #: ``(owner, snapshot)`` a superseded same-owner re-read carried, for
+        #: the next re-key to keep showing (TASK-39044).
+        self._console_historical_kept: tuple[tuple, Any] | None = None
         self._historical_reads_held = False  # TASK-33620.15.1 input reads.
         #: TASK-33620.15.1.1: the drilled sub-agent run reads one poll tick
         #: made, as ``(bridge, run_id, record)``; None outside a tick.
@@ -1961,7 +1964,7 @@ class ConsoleAgentController:
         """
         bridge = self._ensure_console_agent_bridge()
         if bridge is None:
-            self._console_historical_read = None
+            self.release_historical_presentation()
             return ()
         conversation_id = self._current_console_rail_conversation_id() or ""
         if not conversation_id:
@@ -1971,7 +1974,7 @@ class ConsoleAgentController:
                 or state["key"]
                 != self._historical_presentation_key(bridge, conversation_id)
             ):
-                self._console_historical_read = None
+                self.release_historical_presentation()
             return ()
         fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
         handles = fleet_snapshot(conversation_id) if fleet_snapshot is not None else []
@@ -2591,6 +2594,16 @@ class ConsoleAgentController:
             )
         return self._console_subagent_counts_cache
 
+    def release_historical_presentation(self) -> None:
+        """Drop the historical read and the rows kept for its re-key (TASK-39044)."""
+        self._console_historical_read = None
+        self._console_historical_kept = None
+
+    @staticmethod
+    def _historical_owner(key: tuple) -> tuple:
+        """The key's owner and chat fields: all but the config and live status."""
+        return key[:3] + key[4:9]
+
     def _historical_presentation_key(self, bridge: Any, conversation_id: str) -> tuple:
         """Capture only process-local source and display ownership identities."""
         from tldw_chatbook import config
@@ -2684,7 +2697,7 @@ class ConsoleAgentController:
             or type(database) is not AgentRunsDB
             or database.is_memory_db
         ):
-            self._console_historical_read = None
+            self.release_historical_presentation()
             return bridge.historical_snapshot(conversation_id)
         key = self._historical_presentation_key(bridge, conversation_id)
         state = self._console_historical_read
@@ -2692,7 +2705,18 @@ class ConsoleAgentController:
             current = state is not None and state["key"] == key
             return (current and state["value"]) or AgentLiveSnapshot()
         if state is None or state["key"] != key:
-            state = {"key": key, "value": None, "pending": False}
+            # TASK-39044: a re-read for the same owner and chat (a config
+            # write or a child's status change re-keys it) keeps showing the
+            # last rows until it lands. Blank rows reset the fleet flags, so
+            # a collapsed Agents section reopened and the rail scrolled.
+            owner = self._historical_owner(key)
+            stale = None
+            if state is not None and self._historical_owner(state["key"]) == owner:
+                stale = state["value"] or state.get("stale")
+            kept, self._console_historical_kept = self._console_historical_kept, None
+            if stale is None and kept is not None and kept[0] == owner:
+                stale = kept[1]
+            state = {"key": key, "value": None, "pending": False, "stale": stale}
             self._console_historical_read = state
         if state["value"] is None and not state["pending"]:
             state["pending"] = True
@@ -2703,7 +2727,7 @@ class ConsoleAgentController:
                 exclusive=False,
                 group="console-agent-history",
             )
-        return state["value"] or AgentLiveSnapshot()
+        return state["value"] or state.get("stale") or AgentLiveSnapshot()
 
 
     async def _load_historical_presentation(
@@ -2758,21 +2782,41 @@ class ConsoleAgentController:
                     if not worker.cancelled():
                         worker.exception()
                     raise
+                current_key = self._historical_presentation_key(bridge, conversation_id)
+                same_owner = (
+                    self._console_agent_bridge is bridge
+                    and (self._current_console_rail_conversation_id() or "")
+                    == conversation_id
+                )
                 if (
                     self._console_historical_read is not state
-                    or self._console_agent_bridge is not bridge
-                    or (self._current_console_rail_conversation_id() or "")
-                    != conversation_id
-                    or state["key"]
-                    != self._historical_presentation_key(bridge, conversation_id)
+                    or not same_owner
+                    or state["key"] != current_key
                 ):
                     if self._console_historical_read is state:
                         self._console_historical_read = None
+                        # The key moved during this read (a config write, or
+                        # a live or child status change): the next re-key
+                        # still shows these rows (TASK-39044).
+                        if same_owner and self._historical_owner(
+                            state["key"]
+                        ) == self._historical_owner(current_key):
+                            self._console_historical_kept = (
+                                self._historical_owner(current_key),
+                                value,
+                            )
+                            # Nothing else is bound to ask again: request
+                            # the sync that re-keys and re-reads.
+                            repaint = getattr(
+                                self._screen, "_request_console_agent_fleet_sync", None
+                            )
+                            if callable(repaint):
+                                repaint()
                     return
                 state["value"] = value
             except asyncio.CancelledError:
                 if self._console_historical_read is state:
-                    self._console_historical_read = None
+                    self.release_historical_presentation()
                 raise
             except Exception:  # noqa: BLE001 - failed historical reads remain retryable.
                 return
@@ -2780,7 +2824,7 @@ class ConsoleAgentController:
             state["pending"] = False
         from ...Chat.console_agent_bridge import AgentLiveSnapshot
 
-        if value == AgentLiveSnapshot():
+        if value == AgentLiveSnapshot() and not state.get("stale"):
             return
         repaint = getattr(self._screen, "_request_console_agent_fleet_sync", None)
         if callable(repaint):

@@ -50,7 +50,7 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
@@ -138,13 +138,39 @@ def _tab_label(console, session_id: str) -> str:
 
 @pytest.mark.asyncio
 async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     """AC#2, the live finding 1a shape: the wake turn's ``●`` painted
     mid-turn (live: by the survivor tick's settle paint; here: by one
     explicit sync while the stream is gated) must flip off RUNNING at the
     terminal edge WITH NO USER INTERACTION -- live it sat stuck for
     minutes until the session was viewed."""
+    from tldw_chatbook.Chat.console_activity_receipts import (
+        ConsoleActivityReceiptService,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    # TASK-39044: the settled wake gets exactly one background toast, not
+    # only its glyph, and no ordinary receipt: a wake has no preparation, so
+    # no ordinary outcome id of its own, and must never publish under the
+    # session's previous manual turn's id. Both counted on the classes,
+    # before mount, so the screen's hook rebinding cannot route around them.
+    outcomes, receipts = [], []
+    notify = ChatScreen._notify_console_run_outcome
+    publish = ConsoleActivityReceiptService.publish_ordinary
+
+    def counted_notify(self, session_id, status):
+        outcomes.append((session_id, status))
+        return notify(self, session_id, status)
+
+    def counted_publish(self, **kwargs):
+        receipts.append(dict(kwargs))
+        return publish(self, **kwargs)
+
+    monkeypatch.setattr(ChatScreen, "_notify_console_run_outcome", counted_notify)
+    monkeypatch.setattr(
+        ConsoleActivityReceiptService, "publish_ordinary", counted_publish
+    )
     app = _app_with_plain_provider_path(tmp_path)
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
@@ -162,16 +188,38 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
         store.append_message(
             target.id, role=ConsoleMessageRole.USER, content="Background topic", persist=True
         )
+        # One ordinary manual turn in the target chat first, viewed, so the
+        # chat holds an earlier turn's ordinary outcome id.
+        store.switch_session(target.id)
+        manual = await controller.submit_draft(
+            "An earlier manual question", session_id=target.id
+        )
+        assert manual.accepted, manual.visible_copy
+        assert await _settle(
+            pilot,
+            lambda: controller.run_state_for(target.id).status
+            is ConsoleRunStatus.COMPLETED,
+        ), "harness precondition: the manual turn must complete"
+        old_outcome_id = controller._ordinary_outcome_ids.get(target.id)
+        assert old_outcome_id, "harness precondition: a prepared manual turn"
+        manual_payloads = len(gateway.payloads)
+        await pilot.pause(0.3)
+        receipts_before_wake = len(receipts)
         store.switch_session(viewed.id)
         _parent, run_id = _terminal_subagent_run(bridge.runs_db, target.persisted_conversation_id)
         gate = asyncio.Event()
         gateway.stream_gate = gate
+        assert controller.notify_run_outcome is not None, (
+            "harness precondition: the screen wires the background toast"
+        )
 
         _drain_from_child_thread(
             controller.fleet_wake,
             _drain(target.persisted_conversation_id, _survivor(run_id, session_id=target.id)),
         )
-        assert await _settle(pilot, lambda: gateway.payloads, seconds=15.0), (
+        assert await _settle(
+            pilot, lambda: len(gateway.payloads) > manual_payloads, seconds=15.0
+        ), (
             "the wake turn never started streaming; "
             f"pending={controller.fleet_wake.has_pending(target.id)!r}, "
             f"delivering={controller.fleet_wake.delivering_conversation_ids()!r}, "
@@ -212,6 +260,17 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
         assert "●" not in label, (
             "task-15862: the wake turn ended but its tab glyph froze at "
             f"RUNNING with no user interaction: {label!r}"
+        )
+        await pilot.pause(0.3)
+        assert [entry for entry in outcomes if entry[0] == target.id] == [
+            (target.id, ConsoleRunStatus.COMPLETED)
+        ], f"the settled wake must toast exactly once: {outcomes}"
+        wake_receipts = [
+            r for r in receipts[receipts_before_wake:] if r["session_id"] == target.id
+        ]
+        assert wake_receipts == [], (
+            "the wake published an ordinary receipt under the previous manual "
+            f"turn's id {old_outcome_id!r}: {wake_receipts}"
         )
         assert "✓" in label, (
             "the settled wake turn's unvisited outcome must reach the tab "

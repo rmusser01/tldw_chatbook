@@ -11,6 +11,12 @@ bring the incident.
 
 ---
 
+## A cache keyed on the config identity must keep its last value while it re-reads (TASK-39044, 2026-11-06)
+
+**Incident.** On dev, four to six of the seven pause-copy cases failed in each run, and the view-all history cases failed too. The Console's historical fleet read keys its cache on `config.current_config_identity()` among other fields (3e618d7119). After any config write (here a Settings save; in the tests a rail-preference write), the next sync re-keyed the cache, saw no value yet, and returned an empty snapshot until the new read landed. That one empty sync reset `_console_fleet_section_auto_opened` and `_console_fleet_inspector_dismissed`, so the Agents section the user had collapsed auto-opened again and the rail scrolled to it. The tests' own closes and clicks lost to that reopen.
+
+**What to do.** When a presentation cache re-keys for the same owner (same bridge, database, store, session and chat; only the config or a live status moved), serve the previous value until the new read lands, and repaint when the new value turns out empty. Before adding a config identity to a cache key, list the one-shot flags its consumers derive from "rows present": one empty answer flips them all.
+
 ## Do not carry a code inside a `str` subclass: it is lost at `.strip()`, and kept it leaks (TASK-33621.11, 2026-10-30)
 
 **Incident.** The setup blocker's sentence was given its readiness code by making

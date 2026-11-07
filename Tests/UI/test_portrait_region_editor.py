@@ -45,6 +45,43 @@ def test_contain_mapping_refuses_padding_and_accounts_for_cell_aspect():
     assert wide.source_point(0, 4) is None
 
 
+async def close_bounded(app, controller, *tasks):
+    """Close the controller in a cleanup without letting an open editor hold it.
+
+    A retired editor left on top keeps the regions worker parked in
+    ``push_screen_wait``, and ``close()`` waits for that worker, so an
+    unbounded cleanup kept a failing case alive past ``--timeout``
+    (TASK-38979). Dismiss a leftover editor, then give up after 10 s.
+    """
+    import asyncio
+
+    from tldw_chatbook.Widgets.Persona_Widgets.portrait_composition_review import (
+        PortraitCompositionReview,
+    )
+
+    if isinstance(
+        app.screen, (region_ui().PortraitRegionEditor, PortraitCompositionReview)
+    ):
+        app.screen.dismiss(False)
+    waiting = {asyncio.ensure_future(controller.close()), *tasks}
+    _, stuck = await asyncio.wait(waiting, timeout=10)
+    for task in stuck:
+        task.cancel()
+    await asyncio.gather(*waiting, return_exceptions=True)
+    assert not stuck, "cleanup still waiting after 10 s: " + str(
+        sorted(task.get_coro().__qualname__ for task in stuck)
+    )
+
+
+async def settled(task, seconds=10):
+    """Await a task for at most ``seconds``, naming it when it is still waiting."""
+    import asyncio
+
+    done, _ = await asyncio.wait({task}, timeout=seconds)
+    assert done, f"{task.get_coro().__qualname__} still waiting after {seconds} s"
+    return task.result()
+
+
 async def prepare(fixture):
     app, screen, db, cid, editor = saved_source(fixture)
     base, recipe, _components = scene()
@@ -76,7 +113,7 @@ async def test_keyboard_confirmation_save_cancel_and_reopen(
     )
     pilot = Pilot(app)
     try:
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(15):
             while not isinstance(app.screen, region_ui().PortraitRegionEditor):
                 await pilot.pause()
         modal = app.screen
@@ -120,7 +157,7 @@ async def test_keyboard_confirmation_save_cancel_and_reopen(
             .run_worker(controller.handle(CharacterPerformanceRequested("regions")))
             .wait()
         )
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(15):
             while not isinstance(app.screen, region_ui().PortraitRegionEditor):
                 await pilot.pause()
         assert app.screen.query_one("#portrait-regions-neutral", Checkbox).value
@@ -262,7 +299,7 @@ async def test_held_save_rejects_retired_authority_and_stale_revision(
     )
     other = None
     try:
-        assert await asyncio.to_thread(entered.wait, 3)
+        assert await asyncio.to_thread(entered.wait, 15)
         if change == "cancel":
             controller.discard()
         elif change == "profile":
@@ -325,11 +362,11 @@ async def test_pointer_padding_resize_and_narrow_keyboard_geometry(
     )
     pilot = Pilot(app)
     try:
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(15):
             while not isinstance(app.screen, region_ui().PortraitRegionEditor):
                 await pilot.pause()
         modal = app.screen
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(15):
             while modal._transform is None:
                 await pilot.pause()
         transform = modal._transform
@@ -437,7 +474,7 @@ async def test_retired_modal_drops_held_preview(
         .wait()
     )
     try:
-        assert await asyncio.to_thread(entered.wait, 3)
+        assert await asyncio.to_thread(entered.wait, 15)
         modal = app.screen
         source = modal.query_one("#portrait-regions-source", Static)
         preview = modal._preview_task
@@ -577,7 +614,7 @@ async def test_open_dialog_retires_after_another_editor_changes_saved_artwork(
     other = None
     cover = None
     try:
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(15):
             while not isinstance(app.screen, kind):
                 await Pilot(app).pause()
         modal = app.screen
@@ -676,14 +713,14 @@ async def test_dialog_validation_is_coalesced_owned_and_drained(
         ).wait()
     )
     try:
-        assert await asyncio.to_thread(entered.wait, 3)
+        assert await asyncio.to_thread(entered.wait, 15)
         for _ in range(20):
             controller._check_context()
         assert len(calls) == 1
         check = controller._review_check_task
         if change == "replacement":
             controller.discard()
-            await action
+            await settled(action)
             assert await controller.handle(CharacterPerformanceRequested("prepare"))
             replacement = controller.draft
             release.set()
@@ -694,18 +731,145 @@ async def test_dialog_validation_is_coalesced_owned_and_drained(
             await Pilot(app).pause(0.05)
             assert not closing.done()
             release.set()
-            await closing
+            await settled(closing)
             assert check.done() and controller.draft is None
         else:
             modal = app.screen
             release.set()
             await check
-            await action
+            await settled(action)
             assert modal._retired and controller.draft is draft
     finally:
         release.set()
-        await controller.close()
-        await action
+        await close_bounded(app, controller, action)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retire_by", ["discard", "close", "backend", "unmount"])
+async def test_retiring_the_editor_before_it_mounts_still_closes_it(
+    personas_editor_with_saved_character, monkeypatch, retire_by
+):
+    """A retire between push and mount closes the editor, so close() returns (TASK-38979)."""
+    import asyncio
+
+    app, screen, _, _, _, controller, _ = await prepare(
+        personas_editor_with_saved_character
+    )
+    editor_class = region_ui().PortraitRegionEditor
+    mounting, release = asyncio.Event(), asyncio.Event()
+    mount = editor_class.on_mount
+
+    async def held_mount(editor):
+        mounting.set()
+        await release.wait()
+        mount(editor)
+
+    # Textual dispatches on_mount from the class __dict__, so this holds the
+    # real editor between push and mount, with is_mounted still False.
+    monkeypatch.setattr(editor_class, "on_mount", held_mount)
+    action = asyncio.create_task(
+        screen.run_worker(
+            controller.handle(CharacterPerformanceRequested("regions"))
+        ).wait()
+    )
+    waiting = {action}
+    try:
+        await asyncio.wait_for(mounting.wait(), 15)
+        modal = app.screen
+        assert isinstance(modal, editor_class) and not modal.is_mounted
+        if retire_by == "discard":
+            controller.discard()
+        else:
+            waiting.add(
+                asyncio.create_task(
+                    controller.close()
+                    if retire_by == "close"
+                    else screen.handle_runtime_backend_changed("local")
+                    if retire_by == "backend"
+                    else screen.on_unmount()
+                )
+            )
+        release.set()
+        # Plain asyncio waits: Pilot would wait on the editor's pump too.
+        _, stuck = await asyncio.wait(waiting, timeout=10)
+        assert not stuck, (
+            f"retired before mount, the editor stayed open (stack "
+            f"{[type(s).__name__ for s in app.screen_stack]}, retired="
+            f"{modal._retired}); still waiting on "
+            f"{sorted(task.get_coro().__qualname__ for task in stuck)}"
+        )
+        assert action.result() is False
+        assert modal not in app.screen_stack and controller.draft is None
+    finally:
+        release.set()
+        await close_bounded(app, controller, *waiting)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retire_by", ["discard", "close"])
+async def test_retiring_the_pair_review_before_it_mounts_still_closes_it(
+    personas_editor_with_saved_character, monkeypatch, retire_by
+):
+    """The pair review had the region editor's gate: a retire between push and
+    mount left it open and close() waiting (TASK-38979's sibling site)."""
+    import asyncio
+
+    from Tests.Character_Chat.test_portrait_compositing import core
+    from tldw_chatbook.Widgets.Persona_Widgets.portrait_composition_review import (
+        PortraitCompositionReview,
+    )
+
+    app, screen, db, _, _, controller, recipe = await prepare(
+        personas_editor_with_saved_character
+    )
+    source = controller.draft.source
+    assert await controller._save_regions(
+        controller._authority, controller.draft, controller._epoch, recipe
+    )
+    base, _, components = scene()
+    db.apply_character_portrait_performance(
+        source,
+        core().assemble_components(base, recipe, components),
+        expected_revision=0,
+        composition_recipe=recipe,
+        expected_regions_revision=1,
+    )
+    controller.discard()
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+    mounting, release = asyncio.Event(), asyncio.Event()
+    mount = PortraitCompositionReview.on_mount
+
+    async def held_mount(review):
+        mounting.set()
+        await release.wait()
+        mount(review)
+
+    monkeypatch.setattr(PortraitCompositionReview, "on_mount", held_mount)
+    action = asyncio.create_task(
+        screen.run_worker(
+            controller.handle(CharacterPerformanceRequested("review"))
+        ).wait()
+    )
+    waiting = {action}
+    try:
+        await asyncio.wait_for(mounting.wait(), 15)
+        review = app.screen
+        assert isinstance(review, PortraitCompositionReview) and not review.is_mounted
+        if retire_by == "discard":
+            controller.discard()
+        else:
+            waiting.add(asyncio.create_task(controller.close()))
+        release.set()
+        _, stuck = await asyncio.wait(waiting, timeout=10)
+        assert not stuck, (
+            f"retired before mount, the pair review stayed open (stack "
+            f"{[type(s).__name__ for s in app.screen_stack]}); still waiting on "
+            f"{sorted(task.get_coro().__qualname__ for task in stuck)}"
+        )
+        assert review not in app.screen_stack and controller.draft is None
+    finally:
+        release.set()
+        await close_bounded(app, controller, *waiting)
 
 
 @pytest.mark.asyncio
@@ -725,7 +889,7 @@ async def test_queued_dialog_validation_cannot_overwrite_discard_status(
         ).wait()
     )
     try:
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(15):
             while not isinstance(app.screen, region_ui().PortraitRegionEditor):
                 await Pilot(app).pause()
         pending = controller._review_check_task
@@ -739,8 +903,7 @@ async def test_queued_dialog_validation_cannot_overwrite_discard_status(
         await check
         assert status.renderable == before
     finally:
-        await controller.close()
-        await action
+        await close_bounded(app, controller, action)
 
 
 @pytest.mark.asyncio
@@ -771,8 +934,13 @@ async def test_save_completion_drops_removed_validation_control(
         return False
 
     try:
-        async with asyncio.timeout(5):
-            while not isinstance(app.screen, region_ui().PortraitRegionEditor):
+        async with asyncio.timeout(15):
+            # Mounted, not only pushed: _pressed ignores an editor that is
+            # not current yet, and a loaded machine shows the gap.
+            while not (
+                isinstance(app.screen, region_ui().PortraitRegionEditor)
+                and app.screen._current()
+            ):
                 await Pilot(app).pause()
         modal = app.screen
         monkeypatch.setattr(modal, "_save", held_save)
@@ -781,7 +949,14 @@ async def test_save_completion_drops_removed_validation_control(
                 Button.Pressed(modal.query_one("#portrait-regions-save", Button))
             )
         )
-        await asyncio.wait_for(entered.wait(), 5)
+        try:
+            await asyncio.wait_for(entered.wait(), 15)
+        except TimeoutError:
+            raise AssertionError(
+                "the held save was never reached: "
+                f"retired={modal._retired} saving={modal._saving} "
+                f"current={modal._current()} draft={controller.draft is not None}"
+            ) from None
         await modal.query_one("#portrait-regions-validation").remove()
         release.set()
         await saving
@@ -790,5 +965,4 @@ async def test_save_completion_drops_removed_validation_control(
         release.set()
         if saving is not None:
             await asyncio.gather(saving, return_exceptions=True)
-        await controller.close()
-        await action
+        await close_bounded(app, controller, action)

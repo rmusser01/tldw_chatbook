@@ -94,8 +94,14 @@ async def test_goal_native_dispatch_is_automatic_fresh_and_returns_exact_native_
     goal, store, session, _controller, coordinator, gateway, calls = build_goal_rig(
         stores, monkeypatch
     )
+    # A saved earlier turn, as production transcripts are: since 7970fbcada a
+    # turn's mix-in attempt anchors to the last USER row and refuses one that
+    # is not in the database (TASK-39044).
     store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="OLD PRIVATE TRANSCRIPT"
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="OLD PRIVATE TRANSCRIPT",
+        persist=True,
     )
     try:
         result = await coordinator.dispatch_once(goal.id)

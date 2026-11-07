@@ -481,7 +481,12 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
         """Fence asynchronous preview completion before retiring its exact owner."""
         self._retired = True
         self._transform = None
-        if self.is_mounted:
+        if not self.is_mounted:
+            # Pushed but not mounted yet: close once it is, or the opener's
+            # push_screen_wait (and the controller's close) never returns
+            # (TASK-38979). The queued call runs after mount.
+            self.call_later(self.retire)
+        else:
             for source in self.query("#portrait-regions-source"):
                 source.update("Region editor retired.")
             for detail in self.query("#portrait-regions-detail"):
