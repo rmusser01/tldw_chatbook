@@ -137,6 +137,25 @@ and memory:
 - **Automatic** compacts and sends without asking.
 - **Off** never compacts.
 
+Turns nobody typed follow the same rule. Under **Ask**, a background
+sub-agent that finishes while the chat is over its trigger does not wake its
+supervisor: nothing is sent, compacted or saved, and no turn is marked
+Failed. The chat shows "Background agent paused: this chat reached its
+compaction threshold …", and the agent fleet section reads **Paused: context
+limit. Results saved. Run /compact to continue.** The results wait until you
+decide:
+
+- `/compact` (or **Compact now**, **Compact and send**, or `/rewind` ▸
+  **Summarize**) lets the agent go on with its results straight away.
+- Setting **When limit nears** to Automatic or Off lets it go on the next
+  time anything in Console settles, for example after your next message.
+- A message you send yourself, with or without compacting, is your own turn;
+  the agent's results keep waiting and stay readable in **View all runs**.
+
+If the chat is still over its trigger when the agent tries again, it pauses
+again; it never retries on its own. A goal run's iterations send the goal's
+handoff instead of the chat's history, so the trigger does not apply to them.
+
 For plain-provider requests with measured inputs, you can see an estimated pause coming. Once the chat's history is over its trigger
 under **Ask**, the header badge reads **Next send pauses to compact** (on
 narrow terminals the badge has no room for it), Inspect's "What happens if I

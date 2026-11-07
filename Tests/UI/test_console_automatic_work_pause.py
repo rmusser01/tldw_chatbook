@@ -118,7 +118,9 @@ async def _saved_pause(bridge, controller, session, reason):
         db.automatic_work.attach_run(parent, chain)
         db.automatic_work.attach_run(child, chain)
         db.automatic_work.pause(
-            chain, reason, review_required=reason != "generation_budget"
+            chain,
+            reason,
+            review_required=reason not in {"generation_budget", "compaction_ask"},
         )
     await controller.fleet_wake.recover()
     assert controller.fleet_wake.pause_reason(cid) == reason
@@ -133,6 +135,8 @@ async def _saved_pause(bridge, controller, session, reason):
         ("model_call_budget", "call limit", "Send a message to continue"),
         ("output_tokens_budget", "reply limit", "Send a message to continue"),
         ("autowake_disabled", "auto off", "Send a message to continue"),
+        # TASK-33621.80: a wake paused at the Ask compaction trigger.
+        ("compaction_ask", "context limit", "Run /compact to continue"),
         ("interrupted_work", "work may have run", "Review View all runs"),
         ("legacy_lineage", "earlier work", "Review View all runs"),
         ("history_unavailable", "history error", "Retry View all runs"),
