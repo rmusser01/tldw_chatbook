@@ -11,7 +11,8 @@ before commit by ``refuse_without_card``: the queued entry returns to the
 head of the queue, and Buddy keeps its text. A send with no preparation (a
 "$" or "/" draft while exchange capture is off) has no card to show and is
 refused by ``refuse_unprepared``; the composer keeps its text, and the
-unsent-turn shelf lists it for Restore.
+unsent-turn shelf lists it for Restore. An agent wake pauses its chain before
+acceptance (``pause_wake_at_ask_trigger``, TASK-33621.80).
 
 The controller imports this module at each call site, not at module scope:
 it is needed only once a turn is sent, and the UI-ready module census
@@ -24,9 +25,16 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
-from tldw_chatbook.Chat.console_context_budget_copy import ask_trigger_refusal_copy
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleSubmissionOrigin,
+)
+from tldw_chatbook.Chat.console_context_budget_copy import (
+    ask_trigger_refusal_copy,
+    wake_ask_pause_copy,
+)
 from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 
 
 async def refuse_at_ask_trigger(
@@ -153,6 +161,67 @@ def refuse_unprepared(
     if echoed_user is not None:
         controller.store.delete_message(echoed_user.id)
     return _refuse_send(controller, session_id, hold, origin, queue_entry_id)
+
+
+async def pause_wake_at_ask_trigger(
+    controller: Any,
+    session: Any,
+    authorization: Any,
+    resolution: Any,
+    turn_context: Any,
+    notice: str,
+) -> Any | None:
+    """Pause an agent wake before acceptance when Ask would hold it.
+
+    TASK-33621.80: a wake has no hold card and nobody waiting on it, so it
+    neither compacts nor sends over the trigger on its own (ADR-052 Ask).
+    Its chain pauses with its results kept (ADR-134) until the user decides:
+    a compaction lifts the pause, as does leaving Ask; a message the user
+    sends is their own turn. Nothing is committed and no turn is Failed.
+
+    Args:
+        controller: The Console chat controller.
+        session: The session the wake would run in.
+        authorization: The wake's live, not yet accepted, authority.
+        resolution: The wake's resolved provider.
+        turn_context: The wake's frozen turn configuration.
+        notice: The wake notice the request would end with.
+
+    Returns:
+        The blocked result to return, or None to go on.
+    """
+
+    if (
+        not isinstance(resolution, ConsoleProviderResolution)
+        or controller._compaction_mode_for(session) is not ContextCompactionMode.ASK
+    ):
+        return None
+    # The request a wake sends: the chat's history, then its notice as a
+    # trailing user-role entry (see the wake branch of the submit path).
+    messages = [
+        *controller._provider_messages_for_session(
+            session.id, annotate_ids=True, turn_context=turn_context
+        ),
+        {"role": ConsoleMessageRole.USER.value, "content": notice},
+    ]
+    hold, _alert = await controller._assess_context_compaction(
+        session_id=session.id,
+        resolution=resolution,
+        provider_messages=messages,
+        uncommitted_user_message_id=None,
+    )
+    if hold is None:
+        return None
+    await controller._fleet_wake.pause_at_ask_trigger(authorization)
+    return controller._block(
+        session.id,
+        wake_ask_pause_copy(
+            used_tokens=hold.used_tokens,
+            budget_tokens=hold.budget_tokens,
+            trigger_tokens=hold.trigger_tokens,
+            estimated=hold.estimated,
+        ),
+    )
 
 
 def _refuse_send(

@@ -1670,6 +1670,15 @@ or consent to anything — a pending approval card is only ever resolved
 by your explicit decision. Every cap (parallel runs, per-child wall
 clock, token ceilings) applies to a wake turn unchanged.
 
+**At the context limit.** Under the default **Ask** compaction policy, a
+wake that would take the chat past its compaction trigger does not run:
+the supervisor is not woken, nothing is saved to the conversation, no turn is
+marked Failed, and the fleet section reads **Paused: context limit. Results
+saved. Run /compact to continue.** Compacting the chat (`/compact`, **Compact now**, or `/rewind` ▸
+**Summarize**) lets the wake go on; so does switching **When limit nears** to
+Automatic or Off. See
+[When a chat reaches its context limit](context-and-rag.md#when-a-chat-reaches-its-context-limit).
+
 **Exactly-once, by ledger.** Every sub-agent run has a durable
 wake-delivery stamp in the run database (`agent_runs.wake_delivered_at`
 — the ledger). One wake bundles *all* of a conversation's undelivered

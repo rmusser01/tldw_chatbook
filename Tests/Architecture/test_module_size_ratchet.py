@@ -265,6 +265,11 @@ _BUDGETS: dict[str, int] = {
     # 28,734 plus TASK-39159's +8, measured.
     # 2026-11-10, TASK-39155 (owner size waiver): 29183 -> 29184 (+1, exact),
     # a session close in progress counts as an explicit cancellation.
+    # 2026-11-06 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): 29173 -> 29185 (+12) -- an agent wake
+    # pauses before acceptance at the Ask trigger (+8), and the two
+    # compaction routes lift that pause (+4); the logic lives in
+    # console_compaction_gate.py and console_fleet_wake.py.
     "tldw_chatbook/Chat/console_chat_controller.py": 28743,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
