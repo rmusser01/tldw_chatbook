@@ -97,6 +97,8 @@ CORE_OWNER_CASES = (
             "detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
             "check_same_thread": False,
             "timeout": 10,
+            # TASK-39118: cursor-use tokens, as ChaChaNotes.
+            "factory": base_db._QuiescentSQLiteConnection,
         },
         {"foreign_keys": 1, "journal_mode": "wal"},
         True,
