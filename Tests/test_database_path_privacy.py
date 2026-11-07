@@ -290,8 +290,13 @@ def test_data_root_probe_validates_before_accessing_the_filesystem(
         pytest.fail("invalid environment-derived path reached lstat")
 
     monkeypatch.setattr(Path, "lstat", unexpected_probe)
+    # TASK-38227: dev pinned this with "unsafe;home"; ";" is a legal
+    # file-name character this PR admits, so the kept double-parent refusal
+    # carries the probe-ordering pin now.
     with pytest.raises(ValueError, match="dangerous pattern"):
-        config._data_root_entry_exists(tmp_path / "unsafe;home" / "data")
+        config._data_root_entry_exists(
+            tmp_path / "a" / "b" / ".." / ".." / "home" / "data"
+        )
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX private lock contract")
@@ -547,7 +552,16 @@ def test_default_database_paths_are_direct_children_of_secured_user_directory(
     assert selected.parent == user_dir
 
 
-@pytest.mark.parametrize("dangerous", ["/tmp/chatbook.db;touch-pwned", "bad\x00.db"])
+@pytest.mark.parametrize(
+    "dangerous",
+    [
+        # TASK-38227: dev pinned this with "/tmp/chatbook.db;touch-pwned"; ";"
+        # is a legal file-name character this PR admits, so the kept
+        # double-parent refusal carries the pin now.
+        "/tmp/a/b/../../chatbook.db",
+        "bad\x00.db",
+    ],
+)
 def test_custom_database_paths_keep_dangerous_input_validation(
     monkeypatch: pytest.MonkeyPatch,
     dangerous: str,

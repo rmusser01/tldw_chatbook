@@ -106,9 +106,10 @@ def test_legitimate_filenames_with_shell_characters_are_not_refused(tmp_path):
         assert validate_path_simple(
             probe, require_exists=True, reject_shell_metacharacters=False
         ) == probe, name
-        with pytest.raises(ValueError):
-            # the default is deliberately unchanged for every other caller
-            validate_path_simple(probe, require_exists=True)
+        # TASK-38227: dev kept the strict default for every other caller, so
+        # this line refused the same file; this PR flips the default and the
+        # opt-out above becomes a no-op that states intent.
+        assert validate_path_simple(probe, require_exists=True) == probe, name
 
 
 def test_both_ingest_boundaries_opt_out_of_the_shell_blacklist(monkeypatch):
