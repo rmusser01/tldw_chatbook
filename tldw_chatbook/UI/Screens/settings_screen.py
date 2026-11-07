@@ -5198,7 +5198,9 @@ class SettingsScreen(BaseAppScreen):
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
 
     def _single_pane_now(self) -> bool:
-        return 0 < self.size.width <= SETTINGS_SINGLE_PANE_MAX_WIDTH
+        # A detached screen has no app to size it (a bare "/" on_key test).
+        width = self.size.width if self.is_attached else 0
+        return 0 < width <= SETTINGS_SINGLE_PANE_MAX_WIDTH
 
     def _sync_single_pane(self, *, list_open: bool | None = None) -> None:
         """Show one pane at a time when narrow (TASK-38953).
@@ -30506,8 +30508,10 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_provider_selection or event.value != event.select.value:
-            return  # TASK-38975 review: a stale (mount) echo is no choice
+        if self._syncing_provider_selection or (
+            event.value != event.select.value and event.value is not Select.NULL
+        ):  # TASK-38975 review: a stale mount echo (task-565's NULL still counts)
+            return
         selected_value = self._select_value_text(event.value)
         provider = (
             self._provider_widget_value()

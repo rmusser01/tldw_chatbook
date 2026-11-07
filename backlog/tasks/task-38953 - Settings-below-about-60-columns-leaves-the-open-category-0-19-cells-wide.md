@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-07 00:06
+updated_date: 2026-11-07 01:38
 labels:
 - follow-up
 - settings
@@ -84,3 +84,4 @@ Review r11g-rev1:
 - I2: "/" (and Esc with a filter set) focused the hidden category filter at 60x24. `_focus_category_search` now shows the rail first in one-pane mode. `test_slash_in_one_pane_mode_opens_the_rail_with_its_filter` was red with the review head's sources (`assert rail.display` false after "/") and is green after.
 - M1: the `settings.md` row now says that Theme lands in its list, and that Tab from the navigation bar lands on ‹ Categories only while the open category is shown.
 - M2: the size ratchet row names TASK-36516's 2026-11-05 note again and splits 2026-11-06's +70 into TASK-38975 +5 and TASK-38953 +65. The pre-import LOC budget moved with it (426,454 -> 426,458, the +4 of the review fixes).
+- Covering run (run.sh, `-n 4`): the "/" fix reached `_single_pane_now()` on a screen that was never pushed (`test_settings_on_key_treats_detached_screen_focus_as_absent` raised `NoActiveAppError` from `self.size`). A detached screen now reads as not narrow. Final sizes: `settings_screen.py` 35,728 (+74 over dev: TASK-38975 +7, TASK-38953 +67) and pre-import LOC 426,462.
