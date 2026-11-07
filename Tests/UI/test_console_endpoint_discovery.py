@@ -402,13 +402,8 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         template.query_one("#endpoint-template-create", Button).press()
         # TASK-33006.4: the created entry opens the real pick-only switcher
         # on itself; typing the served id picks the pair, then it is probed.
-        for _ in range(60):
-            await pilot.pause(0.02)
-            if isinstance(harness.screen, ConsoleModelPopover):
-                break
-        picker = harness.screen
-        assert isinstance(picker, ConsoleModelPopover) and picker._pick_only
-        find = picker.query_one("#console-popover-find", Input)
+        picker, find = await _mounted_pick_popover(harness, pilot)
+        assert picker._pick_only
         assert find.value == f"{display_name} "
         await harness.workers.wait_for_complete()
         find.value = f"{display_name} {model_id}"
@@ -489,7 +484,6 @@ async def test_endpoint_command_create_lands_on_a_pair_in_pick_mode(
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-    from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 
     async def connection(identity, *, app_config):
         del app_config
@@ -519,13 +513,9 @@ async def test_endpoint_command_create_lands_on_a_pair_in_pick_mode(
         template.query_one("#endpoint-template-models", Input).value = ""
         await pilot.pause()
         template.query_one("#endpoint-template-create", Button).press()
-        for _ in range(60):
-            await pilot.pause(0.02)
-            if isinstance(harness.screen, ConsoleModelPopover):
-                break
-        picker = harness.screen
-        assert isinstance(picker, ConsoleModelPopover) and picker._pick_only
-        assert picker.query_one("#console-popover-find", Input).value == "Command box "
+        picker, find = await _mounted_pick_popover(harness, pilot)
+        assert picker._pick_only
+        assert find.value == "Command box "
         await harness.workers.wait_for_complete()
         # The listing's served model is a row before anything is typed.
         served = ("custom-ep:command-box", "served-z")
@@ -827,14 +817,42 @@ def _stub_llama_network(
     return probed
 
 
-async def _console_settled(console, pilot, predicate) -> None:
-    """Let the Console's 0.25 s idle poll pick up a settled result."""
-    for _ in range(40):
+async def _console_settled(console, pilot, predicate, header) -> None:
+    """Wait until readiness settles and the header badge paints its word.
+
+    TASK-38961: the rail rows repaint inside the 0.25 s idle poll, but the
+    header badge repaints through ``_sync_console_control_bar``, which can
+    defer to a coalesced replay (0.2 s or a backoff); a fixed 0.3 s after
+    readiness moved lost that race under load. ``header`` maps the settled
+    readiness to the badge's expected text.
+    """
+    painted = ""
+    for _ in range(300):
         await pilot.pause(0.05)
-        if predicate(console._active_console_settings_readiness()[1]):
-            await pilot.pause(0.3)  # One more tick: the poll repaints.
-            return
-    pytest.fail("Console readiness never moved")
+        readiness = console._active_console_settings_readiness()[1]
+        if predicate(readiness):
+            painted = _rail_text(console, "#workbench-header-status")
+            if painted == header(readiness):
+                return
+    pytest.fail(f"Console readiness or its header badge never settled: {painted!r}")
+
+
+async def _mounted_pick_popover(harness, pilot):
+    """The pushed switcher and its Find, once Find has mounted (TASK-38961).
+
+    The screen is on the stack before its compose has mounted Find, so a
+    wait that stops at the push can query a Find that is not there yet.
+    """
+    from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+
+    for _ in range(300):
+        await pilot.pause(0.02)
+        screen = harness.screen
+        if isinstance(screen, ConsoleModelPopover):
+            find = next(iter(screen.query("#console-popover-find").results(Input)), None)
+            if find is not None and find.is_mounted:
+                return screen, find
+    pytest.fail(f"the pick-mode switcher's Find never mounted: {harness.screen!r}")
 
 
 def _rail_text(console, selector: str) -> str:
@@ -879,7 +897,9 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         await pilot.press("escape")  # Cancel shows only with recovery actions
         await pilot.pause()
         assert harness.screen is console
-        await _console_settled(console, pilot, lambda r: r.blocker is not None)
+        await _console_settled(
+            console, pilot, lambda r: r.blocker is not None, lambda _r: refused
+        )
 
         readiness = console._active_console_settings_readiness()[1]
         assert (readiness.blocker, readiness.recovery_action) == (
@@ -933,7 +953,12 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
 
         server["up"] = True
         retry.press()
-        await _console_settled(console, pilot, lambda r: r.blocker is None)
+        await _console_settled(
+            console,
+            pilot,
+            lambda r: r.blocker is None,
+            lambda r: f"Ready · reachable {r.observed_at.astimezone():%H:%M}",
+        )
 
         assert harness.screen is console  # Retry opened nothing.
         assert len(probed) == reads + 2

@@ -2643,3 +2643,11 @@ Tests/UI/test_console_prompts_modal.py::test_source_switch_clears_foreign_rows_b
 Tests/UI/test_console_prompts_modal.py::test_real_recipe_fill_with_additional_context_reaches_block_review
 Tests/UI/test_console_prompts_modal.py::test_mapped_context_blocks_recipe_save_until_deleted
 Tests/UI/test_console_response_rules.py::test_active_run_copy_takes_priority_over_an_earlier_rule_verdict
+# TASK-38961 (2026-11-07): the refused-settings retry (it waits for the
+# header badge's word) and the two pick-mode create tests (they wait for the
+# switcher's Find to mount), one entry per test; the create test's two cases
+# share one entry, as its first case id holds spaces (24-31 s per case
+# serial at load about 150). Appended at the tail.
+Tests/UI/test_console_endpoint_discovery.py::test_refused_chat_settings_test_blocks_console_until_one_retry
+Tests/UI/test_console_endpoint_discovery.py::test_create_endpoint_with_live_controller_rebase_settles
+Tests/UI/test_console_endpoint_discovery.py::test_endpoint_command_create_lands_on_a_pair_in_pick_mode
