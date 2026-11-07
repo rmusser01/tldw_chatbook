@@ -262,7 +262,9 @@ def _seed_unrelated_history(
                 connection.execute(str(sql))
         connection.execute("COMMIT")
         connection.execute("PRAGMA ignore_check_constraints = OFF")
-        connection.execute("ANALYZE")
+        # No ANALYZE (TASK-36510): no user database has sqlite_stat1, and with
+        # it the planner skip-scanned (conversation_id, message_id) for a bare
+        # message_id probe, hiding a missing leading index from the gate.
         return sum(next(iter(columns.values())) for columns in by_table.values())
     except BaseException:
         if connection.in_transaction:
@@ -273,6 +275,10 @@ def _seed_unrelated_history(
 
 
 def _query_plans(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+    ).fetchone():
+        raise RuntimeError("history gate plans must be read without sqlite_stat1")
     plans: list[dict[str, Any]] = []
     for table, column in _checked_locators():
         rows = connection.execute(

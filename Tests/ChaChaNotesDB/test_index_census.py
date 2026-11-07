@@ -116,6 +116,25 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_response_rule_drafts_scope": IndexPin(
         "console_response_rule_drafts", False, ("scope_kind", "scope_id")
     ),
+    # TASK-36510: v87 voice-promotion message locators.
+    "idx_machine_followup_receipts_assistant_message": IndexPin(
+        "console_machine_followup_receipts", False, ("assistant_message_id",)
+    ),
+    "idx_machine_followup_receipts_parent_message": IndexPin(
+        "console_machine_followup_receipts", False, ("parent_assistant_message_id",)
+    ),
+    "idx_response_rule_assessments_message": IndexPin(
+        "console_response_rule_assessments", False, ("message_id",)
+    ),
+    "idx_response_rule_drafts_message": IndexPin(
+        "console_response_rule_drafts", False, ("message_id",)
+    ),
+    "idx_response_rule_fixtures_message": IndexPin(
+        "console_response_rule_fixtures", False, ("message_id",)
+    ),
+    "idx_response_rule_validations_message": IndexPin(
+        "console_response_rule_validations", False, ("message_id",)
+    ),
     "character_conversation_search_dirty_authority_revision": IndexPin(
         "character_conversation_search_dirty",
         False,
@@ -372,6 +391,12 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     ),
     "idx_hook_continuation_receipts_conversation": IndexPin(
         "console_hook_continuation_receipts", False, ("conversation_id",)
+    ),
+    "idx_hook_continuation_receipts_assistant_message": IndexPin(
+        "console_hook_continuation_receipts", False, ("assistant_message_id",)
+    ),
+    "idx_hook_continuation_receipts_parent_message": IndexPin(
+        "console_hook_continuation_receipts", False, ("parent_assistant_message_id",)
     ),
     "idx_kept_briefings_kept_at": IndexPin("kept_briefings", False, ("kept_at", "id")),
     "idx_kept_scripts_briefing": IndexPin("kept_scripts", False, ("kept_briefing_id",)),
