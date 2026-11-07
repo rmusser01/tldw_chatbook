@@ -951,7 +951,11 @@ _BUDGETS: dict[str, int] = {
     # git exclusion fixes (stored-byte brackets, one neutral refusal, a
     # scope-limited scan, one rule snapshot per call) measure 5,810, the exact
     # measurement of a fresh build.
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5810,
+    # 2026-11-06 owner decision ("expand limits, never contort code"), TASK-38227:
+    # 5810 -> 5814, the generated bundle re-emitted after the vendored
+    # `validate_path_simple` docstring grew by four lines (its shell-metacharacter
+    # default is now opt-in). Measured, not padded.
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5814,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
@@ -969,7 +973,10 @@ _BUDGETS: dict[str, int] = {
     # while the session lease is still held) and its provision-continuation
     # allowlist entry; dev pinned this row while the branch was in flight.
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
-    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
+    # 2026-11-06 owner decision ("expand limits, never contort code"), TASK-38227:
+    # 4775 -> 4776, one comment line at the character-card import boundary saying
+    # shell metacharacters pass since the validator's default flipped. Measured.
+    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4776,
     # 2026-11-04, TASK-38686 (owner size waiver 2026-10-31): +1, the comment
     # on update_prompt_by_id's IMMEDIATE transaction.
     "tldw_chatbook/DB/Prompts_DB.py": 4674,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)

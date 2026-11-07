@@ -199,6 +199,9 @@ def database_path(config: Mapping[str, object], setting_name: str) -> Path:
         return user_data_dir(config) / row[2]
     # Same lexical selection rejection as validate_path_simple(probe_existing=False).
     # Do not import that module here: its metrics dependency bootstraps configuration.
+    # TASK-38227: dev's mirror also refused the shell spellings `| ; && ` $( ${`,
+    # which are legal in a file name that only ever reaches SQLite; the validator
+    # dropped them from its default in the same PR, so the two keep agreeing.
     if any(
         value in str(selected)
         for value in (
@@ -207,12 +210,6 @@ def database_path(config: Mapping[str, object], setting_name: str) -> Path:
             "~/",
             "~\\",
             "\0",
-            "|",
-            ";",
-            "&&",
-            "`",
-            "$(",
-            "${",
         )
     ):
         raise ValueError("invalid_config_path")
