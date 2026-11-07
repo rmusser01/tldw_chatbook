@@ -133,6 +133,52 @@ async def test_category_switch_lands_focus_on_the_selected_rail_button(request):
 
 
 @private_profile_test
+@pytest.mark.parametrize("move", ("none", "key", "click"))
+async def test_a_focus_the_user_moves_before_the_swap_lands_is_kept(request, move):
+    """TASK-39135: a real switch records a pending rail focus that its pane swap
+    applies once the panes are rebuilt. A control the user focused in between,
+    with a real key or click, kept focus only if the swap was quicker. The swap
+    is held on its lock, so the input lands in that window on every run. With
+    no input, the switch still lands focus on the new rail button."""
+    import asyncio
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+
+        await screen._category_swap_lock.acquire()
+        try:
+            await pilot.press("enter")
+            assert screen._category_pane_swap_pending
+            if move == "key":
+                await pilot.press("slash")
+            elif move == "click":
+                await pilot.click("#settings-category-search")
+            if move != "none":
+                assert getattr(host.focused, "id", None) == "settings-category-search"
+        finally:
+            screen._category_swap_lock.release()
+        for _ in range(100):
+            if not screen._category_pane_swap_pending:
+                break
+            await pilot.pause(0.05)
+        assert not screen._category_pane_swap_pending
+        # The swap's own focus goes through the app's call_later queue; this
+        # callback queues behind it.
+        landed = asyncio.Event()
+        host.call_later(landed.set)
+        await asyncio.wait_for(landed.wait(), timeout=5)
+
+        assert screen.active_category == "storage"
+        expected = (
+            "settings-category-storage" if move == "none" else "settings-category-search"
+        )
+        assert getattr(host.focused, "id", None) == expected
+
+
+@private_profile_test
 async def test_category_switch_keeps_compact_pane_classes_at_a_compact_size(request):
     """Compact geometry is only measured at a compact size.
 

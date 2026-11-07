@@ -35573,7 +35573,28 @@ class SettingsScreen(BaseAppScreen):
         self._update_appearance_validation_classes()
         self._update_draft_status_widgets(SettingsCategoryId.APPEARANCE)
 
+    def _withdraw_pending_category_focus(self) -> None:
+        """TASK-39135: the user's own input withdraws a switch's pending landing.
+
+        A pane swap lands the rail focus a real switch recorded, once the panes
+        are rebuilt; a control the user focused in between kept it only when
+        the swap was quicker. Called from the real-input sites, as Library
+        withdraws its stage-pick landing; a switch made by that same input
+        records its focus afterwards.
+        """
+        self._pending_category_focus_value = None
+        self._theme_list_focus_pending = False
+
+    def get_focusable_widget_at(self, x: int, y: int):
+        """TASK-39135: a click is real input before Textual focuses its target."""
+        widget = super().get_focusable_widget_at(x, y)
+        if widget is not None:
+            self._withdraw_pending_category_focus()
+        return widget
+
     def on_key(self, event: Key) -> None:
+        if event.key != "f6":  # F6 queues behind the swap's focus on purpose.
+            self._withdraw_pending_category_focus()
         focused = self._focused_widget()
         is_slash = (
             event.key in {"/", "slash"} or getattr(event, "character", None) == "/"
