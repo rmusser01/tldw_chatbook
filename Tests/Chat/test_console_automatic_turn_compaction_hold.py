@@ -23,6 +23,8 @@ only the provider network is doubled.
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -73,7 +75,8 @@ class _WakeRig:
     """A saved chat over its Ask trigger with one finished background child."""
 
     def __init__(self, tmp_path: Path) -> None:
-        self.db = CharactersRAGDB(tmp_path / "chat.sqlite", client_id="task33621-80")
+        self.db_path = tmp_path / "chat.sqlite"
+        self.db = CharactersRAGDB(self.db_path, client_id="task33621-80")
         self.runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="task33621-80")
         self.app = _AppStub(self.db)
         self.app.local_chat_conversation_service = ChatConversationService(self.db)
@@ -95,13 +98,32 @@ class _WakeRig:
         self.chain = ""
         self.child = ""
 
-    async def over_the_ask_trigger(self) -> None:
-        """Send real turns under Off, then switch the chat to Ask."""
-
+    def _wire(self) -> None:
         self.runtime = ConsoleRuntime(self.app)
         self.runtime.set_chat_store(self.store)
         self.runtime.set_chat_controller(self.controller)
         self.controller.fleet_wake.wire(app=self.app)
+
+    def _remember_conversation(self) -> None:
+        session = next(s for s in self.store.sessions() if s.id == _SESSION)
+        self.cid = str(session.persisted_conversation_id)
+
+    async def under_the_ask_trigger(self) -> None:
+        """One real turn under Ask: the chat is well under its trigger."""
+
+        self._wire()
+        self.store.set_session_context_policy_overrides(_SESSION, _ASK)
+        result = await self.controller.submit_draft(
+            "question-0: explain step 0.", session_id=_SESSION
+        )
+        assert result.accepted is True, result.visible_copy
+        assert not await self._composer_send_would_hold()
+        self._remember_conversation()
+
+    async def over_the_ask_trigger(self) -> None:
+        """Send real turns under Off, then switch the chat to Ask."""
+
+        self._wire()
         for index in range(12):
             result = await self.controller.submit_draft(
                 f"question-{index}: explain step {index} in detail.",
@@ -115,8 +137,7 @@ class _WakeRig:
             self.store.set_session_context_policy_overrides(_SESSION, _OFF)
         else:
             raise AssertionError("the custom budget was never crossed")
-        session = next(s for s in self.store.sessions() if s.id == _SESSION)
-        self.cid = str(session.persisted_conversation_id)
+        self._remember_conversation()
 
     async def _composer_send_would_hold(self) -> bool:
         resolution = await self.gateway.resolve_for_send(None)
@@ -278,6 +299,75 @@ async def test_compacting_the_chat_lets_the_paused_wake_go_on_once(rig) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_resumed_wake_survives_a_concurrent_database_writer(
+    rig, monkeypatch
+) -> None:
+    """The wake's reply is not refused when another writer commits mid-save.
+
+    Live, a wake resumed by /compact starts while Console is still writing,
+    and its mix-in attempt save failed with "database is locked": the turn
+    read "Mix-in attempt could not be saved; response was not sent." and the
+    wake's results were used up. The save reads, then writes; another
+    connection committing in between must make that writer wait, not fail
+    this one.
+    """
+
+    try:
+        await rig.over_the_ask_trigger()
+        rig.finish_a_background_child()
+        wake = rig.controller.fleet_wake
+        assert await rig.wake_paused()
+        with sqlite3.connect(rig.db_path) as setup:
+            setup.execute("CREATE TABLE concurrent_writer (x INTEGER)")
+        persistence = rig.store.persistence
+        real_create = persistence.create_message
+        writer: list[str] = []
+
+        def create_while_another_connection_writes(*args, **kwargs):
+            caller = sys._getframe(1).f_code.co_name
+            if caller == "save_conversation_mixin_attempt" and not writer:
+                # The save's transaction has read; another connection writes.
+                persistence.db.get_connection().execute(
+                    "SELECT count(*) FROM messages"
+                ).fetchone()
+                other = sqlite3.connect(rig.db_path, timeout=0.2)
+                try:
+                    other.execute("INSERT INTO concurrent_writer VALUES (1)")
+                    other.commit()
+                    writer.append("committed")
+                except sqlite3.OperationalError:
+                    writer.append("waited")
+                finally:
+                    other.close()
+            return real_create(*args, **kwargs)
+
+        monkeypatch.setattr(
+            persistence, "create_message", create_while_another_connection_writes
+        )
+
+        compacted, copy = await rig.controller.compact_context_now(_SESSION)
+
+        assert compacted is True, copy
+        assert await _settle(lambda: not wake.has_pending(rig.cid))
+        assert await _settle(lambda: not wake._active)
+        assert writer == ["waited"], "the other writer waits for the save"
+        assistant = [
+            message
+            for message in rig.store.messages_for_session(_SESSION)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ][-1]
+        assert assistant.status == "complete", [
+            m.content
+            for m in rig.store.messages_for_session(_SESSION)
+            if m.role is ConsoleMessageRole.SYSTEM
+        ]
+        assert rig.failed_rows() == []
+        assert rig.attempts() == ["aborted", "completed"]
+    finally:
+        await rig.close()
+
+
+@pytest.mark.asyncio
 async def test_rewind_summarize_also_lets_the_paused_wake_go_on(rig) -> None:
     """/rewind Summarize up to here is a compaction too."""
 
@@ -415,6 +505,126 @@ async def test_turning_ask_off_lets_the_paused_wake_go_on_after_the_next_turn(
         assert len(rig.wake_notices()) == 1
         assert rig.failed_rows() == []
         assert rig.attempts() == ["aborted", "completed"]
+    finally:
+        await rig.close()
+
+
+@pytest.mark.asyncio
+async def test_a_compact_with_nothing_to_summarize_still_lets_the_wake_check(
+    rig,
+) -> None:
+    """A chat brought back under its trigger another way: /compact re-checks.
+
+    Deleting turns (or a /rewind restore) can leave the chat under its trigger
+    with nothing left to summarize. /compact then refuses, but the wake still
+    tries once: under the trigger it goes on (over it, it pauses again).
+    """
+
+    try:
+        await rig.over_the_ask_trigger()
+        rig.finish_a_background_child()
+        wake = rig.controller.fleet_wake
+        assert await rig.wake_paused()
+        users = [
+            message
+            for message in rig.store.messages_for_session(_SESSION)
+            if message.role is ConsoleMessageRole.USER
+        ]
+        rig.store.delete_message(users[1].id)
+        assert not await rig._composer_send_would_hold(), "now under the trigger"
+        streams = rig.gateway.stream_calls
+
+        compacted, copy = await rig.controller.compact_context_now(_SESSION)
+
+        assert compacted is False, copy
+        assert await _settle(lambda: not wake.has_pending(rig.cid)), (
+            copy,
+            rig.attempts(),
+            wake.pause_reason(rig.cid),
+        )
+        assert await _settle(lambda: not wake._active)
+        assert rig.gateway.stream_calls == streams + 1, "the wake replied once"
+        assert len(rig.wake_notices()) == 1
+        assert rig.failed_rows() == []
+        assert rig.attempts() == ["aborted", "completed"]
+    finally:
+        await rig.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failing_wake_probe_never_blocks_the_wake(rig, monkeypatch) -> None:
+    """The wake's Ask probe fails open, as the composer's does."""
+
+    try:
+        await rig.under_the_ask_trigger()
+        streams = rig.gateway.stream_calls
+        real = rig.controller._provider_messages_for_session
+        probes: list[str] = []
+
+        def failing_in_the_probe(*args, **kwargs):
+            if sys._getframe(1).f_code.co_name == "pause_wake_at_ask_trigger":
+                probes.append("probe")
+                raise RuntimeError("history unavailable to the probe")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(
+            rig.controller, "_provider_messages_for_session", failing_in_the_probe
+        )
+        rig.finish_a_background_child()
+        wake = rig.controller.fleet_wake
+
+        assert await _settle(lambda: not wake.has_pending(rig.cid)), (
+            probes,
+            rig.attempts(),
+            wake.pause_reason(rig.cid),
+        )
+        assert await _settle(lambda: not wake._active)
+        assert probes == ["probe"], "the wake's Ask probe ran and failed"
+        assert wake.pause_reason(rig.cid) is None, "not an interrupted-work pause"
+        assert rig.attempts() == ["completed"]
+        assert len(rig.wake_notices()) == 1
+        assert rig.gateway.stream_calls == streams + 1
+        assert rig.failed_rows() == []
+    finally:
+        await rig.close()
+
+
+@pytest.mark.asyncio
+async def test_a_wake_whose_chat_closes_during_its_probe_writes_no_pause(
+    rig, monkeypatch
+) -> None:
+    """A lapsed wake authority records nothing, not even an Ask pause."""
+
+    try:
+        await rig.over_the_ask_trigger()
+        wake = rig.controller.fleet_wake
+        real = rig.controller._assess_context_compaction
+        probed: list[bool] = []
+
+        async def closing_during_the_probe(**kwargs):
+            from_the_wake = (
+                sys._getframe(1).f_code.co_name == "pause_wake_at_ask_trigger"
+            )
+            outcome = await real(**kwargs)
+            if from_the_wake:
+                wake.fence_conversation(rig.cid, generation=1)
+                probed.append(outcome[0] is not None)
+            return outcome
+
+        monkeypatch.setattr(
+            rig.controller, "_assess_context_compaction", closing_during_the_probe
+        )
+        rig.finish_a_background_child()
+
+        assert await _settle(lambda: bool(probed))
+        await asyncio.sleep(0.5)
+
+        assert probed == [True], "the chat was over its trigger"
+        assert wake.pause_reason(rig.cid) is None
+        assert rig.runs_db.automatic_work.snapshot(rig.chain).pause_reason is None
+        assert rig.attempts() == ["aborted"], "the prepared attempt is released"
+        assert rig.wake_notices() == []
+        assert rig.failed_rows() == []
     finally:
         await rig.close()
 

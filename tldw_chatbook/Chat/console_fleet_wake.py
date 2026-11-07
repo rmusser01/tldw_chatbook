@@ -1008,7 +1008,7 @@ class ConsoleFleetWakeCoordinator:
         if session_id:
             self._notify_ui(session_id)
 
-    async def pause_at_ask_trigger(self, authorization: AgentWakeAuthorization) -> None:
+    async def pause_at_ask_trigger(self, authorization: AgentWakeAuthorization) -> bool:
         """Pause a wake refused before acceptance at the Ask compaction trigger.
 
         TASK-33621.80: the prepared attempt is aborted (no generation is
@@ -1017,14 +1017,23 @@ class ConsoleFleetWakeCoordinator:
         it try once more, and a chat still over its trigger pauses again.
 
         Args:
-            authorization: The live wake authority, not yet accepted.
+            authorization: The wake authority, not yet accepted.
+
+        Returns:
+            False, with nothing recorded, when the authority lapsed while the
+            probe ran (its chat closing, or Console shutting down).
         """
+        # Defence in depth: the submit wrapper (a live authority) and accept()
+        # (a lapsed one) mark it too; either way the attempt is aborted.
         authorization.preflight_refused = True
+        if not self.authorizes(authorization, authorization.session_id):
+            return False
         await self._pause(
             authorization.conversation_id,
             authorization.work_chain_id,
             COMPACTION_ASK_PAUSE,
         )
+        return True
 
     def release_compaction_pause(self, session_id: str) -> None:
         """Let a chat's wakes held at the Ask trigger try again once.
