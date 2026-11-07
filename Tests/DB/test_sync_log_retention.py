@@ -774,6 +774,64 @@ async def test_app_unmount_store_close_skips_a_store_with_a_core_operation_runni
     )
 
 
+@pytest.mark.parametrize("window", ["after-getter", "before-fetch"])
+async def test_app_unmount_store_close_never_breaks_a_bare_media_read(
+    window: str, media_db: MediaDatabase, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-39118: a media read outside ``transaction()`` held nothing after
+    its getter returned, so the quit's idle close could land before its
+    statement (``DatabaseError``) or before its fetch (``ProgrammingError``).
+    It must complete, and the close skip media and say so."""
+    import threading
+    from unittest.mock import Mock
+
+    from tldw_chatbook import app_lifecycle as lifecycle_module
+
+    with media_db.transaction() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS quit_probe (n INTEGER NOT NULL)")
+        conn.execute("INSERT INTO quit_probe (n) VALUES (1), (2)")
+    paused, release = threading.Event(), threading.Event()
+    outcome: list[object] = []
+    real_get = media_db.get_connection
+
+    def get_then_pause():
+        conn = real_get()
+        if threading.current_thread() is reader and window == "after-getter":
+            paused.set()
+            release.wait(20)
+        return conn
+
+    monkeypatch.setattr(media_db, "get_connection", get_then_pause)
+
+    def read() -> None:
+        try:
+            cursor = media_db.execute_query("SELECT n FROM quit_probe ORDER BY n")
+            if window == "before-fetch":
+                paused.set()
+                release.wait(20)
+            outcome.append([row[0] for row in cursor.fetchall()])
+        except Exception as exc:  # noqa: BLE001 - the assertion reports it
+            outcome.append(f"{type(exc).__name__}: {exc}")
+            paused.set()
+        finally:
+            media_db.close_connection()
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    assert paused.wait(5)
+    owner = SimpleNamespace(media_db=media_db, loguru_logger=Mock())
+    try:
+        await lifecycle_module.LifecycleMixin._close_main_databases(owner)
+    finally:
+        release.set()
+        reader.join(10)
+
+    assert (outcome, [call.args[0] for call in owner.loguru_logger.info.call_args_list]) == (
+        [[1, 2]],
+        ["Media still in use at quit; its handles close with the process"],
+    )
+
+
 async def test_app_unmount_store_close_skips_a_busy_store_without_blocking(
     chacha_db: CharactersRAGDB,
 ):

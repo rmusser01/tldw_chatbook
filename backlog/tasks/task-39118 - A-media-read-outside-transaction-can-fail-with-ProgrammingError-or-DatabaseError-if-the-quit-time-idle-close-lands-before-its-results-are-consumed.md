@@ -1,8 +1,10 @@
 ---
 id: TASK-39118
 title: "A media read outside transaction() can fail with ProgrammingError or DatabaseError if the quit-time idle close lands before its results are consumed"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-07 02:03
+updated_date: 2026-11-07 06:37
 labels:
 - follow-up
 - database
@@ -42,3 +44,10 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 - [ ] #2 The TASK-39047 media quit tests stay green by name
 - [ ] #3 The notes record any window that remains
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Test first (`Tests/DB/test_sync_log_retention.py`, already on the dreams-boundary sandboxed step): a bare `execute_query` read paused after its getter (before its statement) and after its statement (before its fetch), across `_close_main_databases`; it must return its rows, and the close must skip media with the "still in use" line. Show both red on base.
+2. Give media handles ChaChaNotes' cursor-use tokens: open them with `_QuiescentSQLiteConnection` attached to the file's registry, so a cursor holds a use from its statement until its results are consumed and `close_if_idle` refuses meanwhile.
+3. `execute_query` holds one registry use across its getter and statement, so the close cannot land between them.
+4. Keep the TASK-39047 media quit tests green by name; record the windows that remain (direct `get_connection()` callers between getter and statement).
