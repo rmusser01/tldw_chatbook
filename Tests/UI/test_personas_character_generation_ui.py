@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, TextArea
+from textual.widgets import Button, Input, TextArea
 
 from tldw_chatbook.Character_Chat.character_generation import GENERATABLE_FIELDS
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
@@ -131,6 +131,39 @@ async def test_preview_is_hidden_until_a_generation_arrives():
         panel = app.query_one("#personas-char-editor-generate-preview")
         assert panel.display is False
         assert editor.pending_generation_field is None
+
+
+@pytest.mark.parametrize("session", ["new", "portrait", "load"])
+async def test_a_new_editor_session_closes_and_empties_the_concept_row(session):
+    """TASK-33910.50: the concept row belongs to the session that opened it.
+
+    On origin/dev 29592ecc9b ``new_character`` (New › Character · Blank, and
+    From a portrait with ``actor_pack=True``) and ``load_character`` (Edit)
+    leave a concept row opened by "Generate whole character…" or From a
+    concept showing, with its text; this PR fixes it.
+    """
+    app = _EditorHost()
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        editor = app.query_one(PersonasCharacterEditorWidget)
+        row = editor.query_one("#personas-char-editor-concept-row")
+        concept = editor.query_one("#personas-char-editor-concept", Input)
+        editor.query_one("#personas-char-editor-generate-whole", Button).press()
+        await pilot.pause()
+        concept.value = "a drowned-library archivist"
+        await pilot.pause()
+        assert row.display is True
+
+        if session == "new":
+            editor.new_character()
+        elif session == "portrait":
+            editor.new_character(actor_pack=True)
+        else:
+            editor.load_character({"id": 7, "name": "Detective Sam", "version": 1})
+        await pilot.pause()
+
+        assert row.display is False
+        assert concept.value == ""
 
 
 async def test_name_field_is_not_generatable_per_field():

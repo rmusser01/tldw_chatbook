@@ -171,7 +171,11 @@ MAX_PASS_ADDED_MODULES = 558
 #: `UI/Speech/speech_playback_mixin.py` (a clip handed to the default app is
 #: kept for the bound instead of deleted on Stop, and its progress polling
 #: ends); ADR-097 ledger.
-MAX_PASS_ADDED_LOC = 426_575
+#: 426,575 -> 426,578 (2026-11-07, TASK-33910.50 PR #3431, rebased on dev
+#: cf24ef7ba3; owner decision 2026-11-05 "Re-pin per PR (Rec.)"): dev 426,575
+#: -> head 426,578, +3 LOC in the ccp route (load_character hides and empties
+#: the concept row); no new module. Pinned at the measurement; ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 426_578
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
