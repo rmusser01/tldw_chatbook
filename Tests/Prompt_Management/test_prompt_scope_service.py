@@ -1874,6 +1874,7 @@ def test_local_prompt_service_persists_prompt_collections(tmp_path):
     assert updated["prompt_ids"] == [prompt_id]
     assert membership_updated["name"] == "Renamed"
     assert membership_updated["prompt_ids"] == [second_prompt_id]
+    prompt_db.close_connection()  # --storage-lease-guard (TASK-38976)
 
 
 @pytest.mark.asyncio

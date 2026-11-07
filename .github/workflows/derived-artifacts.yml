@@ -1112,7 +1112,9 @@ jobs:
       # the five Guardian leaks that made that order necessary, and
       # --storage-lease-guard fails any test here that leaves a new live lease.
       # TASK-38966 appends the QwenCloud provider contract file (pure, ~2 s
-      # serial), red on dev in no lane.
+      # serial), red on dev in no lane. TASK-39043 (owner decision 2026-11-06:
+      # only its two small files here) appends the Console sync maintenance
+      # file and the automatic wake recovery file.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1148,6 +1150,8 @@ jobs:
             Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle \
             Tests/Web_Server/test_mobile_service.py \
             Tests/DB/test_sync_log_retention.py \
+            Tests/Backup_Recovery/test_console_sync_maintenance.py \
+            Tests/Chat/test_automatic_wake_recovery.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short
@@ -1321,6 +1325,60 @@ jobs:
             --timeout=180 \
             --tb=short
 
+  recovered-suites:
+    needs: [preflight]
+    # Owner decision (2026-11-06): one job for the non-UI suites that were red
+    # in no PR lane and are now runnable (TASK-38111's RecoveryRequired fix,
+    # TASK-38973's stub screens, TASK-38756's prompt pins), serial under
+    # --storage-lease-guard. Its own job, so the Dreams boundary job keeps its
+    # margin and pr-fast-lane (at its 35-min cap) gains nothing. One more
+    # runner per PR (ADR-103 note, 2026-11-07).
+    #
+    # One invocation, sandboxed suites first, then the bootstrap_profile ones
+    # (module pytestmark): their enrollment would break a sandboxed suite that
+    # followed them (TASK-32873).
+    name: PR lane (recovered suites)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+
+      # TASK-39043: the Console config-sync lifetime and Home citation
+      # retirement suites (~86 s serial each). TASK-38976: the prompt
+      # scope-service and batch suites. Then the bootstrap_profile suites:
+      # TASK-39142's prompt-improvement and keyword-leg files, with TASK-39049's
+      # keyword-leg pool retirement file beside them, and TASK-39049's Library
+      # ingest runner, last.
+      - name: Run the recovered suites
+        run: |
+          pytest \
+            Tests/Backup_Recovery/test_console_config_sync_lifetime.py \
+            Tests/Backup_Recovery/test_home_citation_retirement.py \
+            Tests/Prompt_Management/test_prompt_scope_service.py \
+            Tests/Prompt_Management/test_prompt_batch_models.py \
+            Tests/Prompts_DB/test_prompts_db_batch_mutations.py \
+            Tests/Prompt_Management/test_prompt_improvement_service.py \
+            Tests/RAG_Search/test_keyword_leg_chacha.py \
+            Tests/RAG_Search/test_keyword_leg_db_resolution.py \
+            Tests/RAG_Search/test_keyword_leg_prompts.py \
+            Tests/RAG_Search/test_keyword_leg_pushdown.py \
+            Tests/RAG_Search/test_keyword_leg_tiered_merge.py \
+            Tests/Library/test_library_ingest_runner.py \
+            --storage-lease-guard \
+            --timeout=180 \
+            --tb=short
+
   derived-artifacts:
     permissions:
       actions: read
@@ -1328,7 +1386,7 @@ jobs:
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [preflight, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking, architecture-guards, pr-fast-lane-arch]
+    needs: [preflight, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking, architecture-guards, pr-fast-lane-arch, recovered-suites]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1428,6 +1486,14 @@ jobs:
         run: |
           echo "PR Fast Lane (architecture-review tests) result: ${{ needs.pr-fast-lane-arch.result }}"
           echo "::error::The required architecture-review tests did not succeed."
+          exit 1
+
+      # Owner decision 2026-11-06: same shape again, for the recovered suites.
+      - name: Require successful PR lane (recovered suites)
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.recovered-suites.result != 'success' }}
+        run: |
+          echo "PR lane (recovered suites) result: ${{ needs.recovered-suites.result }}"
+          echo "::error::The required recovered suites did not succeed."
           exit 1
 
       # TASK-38100: diagnostics only; every verdict above remains fail-closed.

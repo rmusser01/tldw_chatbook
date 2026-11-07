@@ -432,6 +432,12 @@ DREAMS_BOUNDARY_TARGETS = (
     # invocations, because their enrollment can break the sandboxed suites
     # that follow; here none follows. It pauses no storage, so need not lead.
     "Tests/DB/test_sync_log_retention.py",
+    # TASK-39043 (owner decision 2026-11-06: only its two small files here,
+    # its two ~86 s files in recovered-suites): TASK-38973's repaired Console
+    # sync maintenance suite (sandboxed, ~17 s serial) and TASK-38971's
+    # automatic wake recovery suite (bootstrap_profile, ~13 s serial).
+    "Tests/Backup_Recovery/test_console_sync_maintenance.py",
+    "Tests/Chat/test_automatic_wake_recovery.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
@@ -500,6 +506,29 @@ ARCH_REVIEW_TARGETS = (
     "Tests/Tools/test_note_tool_user_id.py::test_note_tools_succeed_in_a_process_where_nothing_created_the_db",
     "Tests/Utils/test_optional_deps.py::test_apply_config_eager_flags_propagates_recovery_required",
     "Tests/Architecture/test_agents_chat_boundary.py",
+)
+#: Owner decision (2026-11-06): suites runnable again after being red in no PR
+#: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
+#: first, then the bootstrap_profile ones (TASK-32873).
+RECOVERED_SUITES_TARGETS = (
+    # TASK-39043: TASK-38973's repaired stub-screen suites, ~86 s serial each.
+    "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
+    "Tests/Backup_Recovery/test_home_citation_retirement.py",
+    # TASK-38976: the prompt scope-service and batch suites (TASK-38756's pins).
+    "Tests/Prompt_Management/test_prompt_scope_service.py",
+    "Tests/Prompt_Management/test_prompt_batch_models.py",
+    "Tests/Prompts_DB/test_prompts_db_batch_mutations.py",
+    # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
+    # pool retirement file runs beside its four siblings.
+    "Tests/Prompt_Management/test_prompt_improvement_service.py",
+    "Tests/RAG_Search/test_keyword_leg_chacha.py",
+    "Tests/RAG_Search/test_keyword_leg_db_resolution.py",
+    "Tests/RAG_Search/test_keyword_leg_prompts.py",
+    "Tests/RAG_Search/test_keyword_leg_pushdown.py",
+    "Tests/RAG_Search/test_keyword_leg_tiered_merge.py",
+    # TASK-39049: the Library ingest runner, guard-clean since its tests close
+    # the stores they open (130 live leases before).
+    "Tests/Library/test_library_ingest_runner.py",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
@@ -899,6 +928,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "dreams-tracking",
         "architecture-guards",
         "pr-fast-lane-arch",
+        "recovered-suites",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -932,6 +962,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("dreams-tracking", "Require successful Dreams tracking tests"),
         ("architecture-guards", "Require successful Architecture guard contracts"),
         ("pr-fast-lane-arch", "Require successful PR fast lane (architecture-review tests)"),
+        ("recovered-suites", "Require successful PR lane (recovered suites)"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -948,6 +979,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "dreams-tracking",
         "architecture-guards",
         "pr-fast-lane-arch",
+        "recovered-suites",
     ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
@@ -1266,6 +1298,56 @@ def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None
     assert not set(ARCH_REVIEW_TARGETS) & set(FAST_LANE_TARGETS)
 
 
+def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() -> None:
+    """Owner decision (2026-11-06): the recovered suites' own bounded job.
+
+    One invocation under --storage-lease-guard, sandboxed suites before the
+    bootstrap_profile ones, and each file in no other PR-lane step.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["recovered-suites"]
+
+    assert job["name"] == "PR lane (recovered suites)"
+    assert job["needs"] == ["preflight"]
+    assert job["if"] == LANES
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 20
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    assert shlex.split(install) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    )
+    step = _named_step(job, "Run the recovered suites")
+    assert "if" not in step
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *RECOVERED_SUITES_TARGETS,
+        "--storage-lease-guard",
+        "--timeout=180",
+        "--tb=short",
+    )
+    assert len(set(RECOVERED_SUITES_TARGETS)) == len(RECOVERED_SUITES_TARGETS)
+    for target in RECOVERED_SUITES_TARGETS:
+        assert (PROJECT_ROOT / target).is_file()
+    others = [
+        f"{key}: {candidate['name']}"
+        for key, other in workflow["jobs"].items()
+        if key != "recovered-suites"
+        for candidate in other.get("steps", ())
+        if set(RECOVERED_SUITES_TARGETS)
+        & {
+            target.split("::", 1)[0]
+            for target in _pytest_targets(str(candidate.get("run", "")))
+        }
+    ]
+    assert others == []
+
+
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     """TASK-34929: the Dreams tracking tests run, whole, on every pull request.
 
@@ -1567,6 +1649,9 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("architecture-guards", None),
         ("architecture-guards", "Run Architecture guard contracts"),
         ("derived-artifacts", "Require successful Architecture guard contracts"),
+        ("recovered-suites", None),
+        ("recovered-suites", "Run the recovered suites"),
+        ("derived-artifacts", "Require successful PR lane (recovered suites)"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("dreams-boundary", None),

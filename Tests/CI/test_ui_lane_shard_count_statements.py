@@ -51,10 +51,10 @@ def _counts() -> dict[str, int]:
     apply the UI matrix's max-parallel ceiling after preflight succeeds.
     The PR Fast Lane's three jobs, the Console P0 gate, the Dreams
     tracking tests, the Dreams and Guardian boundary contracts, the
-    Architecture guard contracts and the architecture-review tests since
-    TASK-34916, TASK-35575, TASK-34929, TASK-34986, TASK-38989 and PR #3399
-    each use one runner: a second matrix job among them fails here instead
-    of miscounting.
+    Architecture guard contracts, the architecture-review tests and the
+    recovered suites since TASK-34916, TASK-35575, TASK-34929, TASK-34986,
+    TASK-38989, PR #3399 and the 2026-11-06 owner decision each use one
+    runner: a second matrix job among them fails here instead of miscounting.
     """
     jobs = _jobs(WORKFLOW)
     needs = [name for name in jobs["derived-artifacts"]["needs"] if name != "preflight"]

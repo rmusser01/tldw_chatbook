@@ -140,7 +140,9 @@ INHERITED = {
         "Tests/UI/test_library_modal_dismissal.py",  # TASK-38985
         "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",  # TASK-39052
         "Tests/Web_Server/test_mobile_service.py",  # TASK-39049
-        "Tests/DB/test_sync_log_retention.py",  # TASK-39049, last
+        "Tests/DB/test_sync_log_retention.py",  # TASK-39049
+        "Tests/Backup_Recovery/test_console_sync_maintenance.py",  # TASK-39043
+        "Tests/Chat/test_automatic_wake_recovery.py",  # TASK-39043, last
         "--storage-lease-guard",  # TASK-38986
         "--timeout=180",
         "--tb=short",

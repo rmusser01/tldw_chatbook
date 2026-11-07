@@ -151,10 +151,11 @@ cron entry on `dev`.
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
-  Architecture guard contracts and the architecture-review tests are jobs
-  of their own (TASK-34916, TASK-34929, TASK-34986, TASK-38989, PR #3399),
-  so an ordinary unlabeled,
-  non-GGUF PR now requests 26 test runners in parallel, 27 with perf-guard
+  Architecture guard contracts, the architecture-review tests and the
+  recovered suites are jobs of their own (TASK-34916, TASK-34929,
+  TASK-34986, TASK-38989, PR #3399, owner decision 2026-11-06), so an
+  ordinary unlabeled,
+  non-GGUF PR now requests 27 test runners in parallel, 28 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -402,11 +403,11 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 32 shards. The current total is 41 eligible test jobs per PR
+Current UI lane: 32 shards. The current total is 42 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
-35-min cap, PR #3399).
+35-min cap, PR #3399; 2026-11-07: and `recovered-suites`, below).
 The `max-parallel: 17` ceiling, peak 23 application test runners (24 with
 Perf Guard), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
@@ -448,3 +449,15 @@ fails when it is not `success`. On PR #3334's run 41169081459 lane 2 with these
 suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, 485 s
 serial locally). One more runner per PR: 24 concurrent test runners, 25 with
 perf-guard, 35 eligible test jobs.
+
+2026-11-07 (owner decision 2026-11-06; TASK-39142, TASK-39043, TASK-39049,
+TASK-38976): a job of its own, `recovered-suites` ("PR lane (recovered
+suites)"), runs the non-UI suites that were red in no PR lane and are runnable
+again (TASK-38111, TASK-38973, TASK-38756), serially under
+`--storage-lease-guard` with the same install line, 20-min cap and
+`--timeout=180`; the required check `needs` it and fails when it is not
+`success`. It keeps them out of the Dreams boundary job, which keeps its
+margin, and out of pr-fast-lane, at its 35-min cap. One more runner per PR:
+27 concurrent test runners, 28 with perf-guard, 42 eligible test jobs. (The
+peak-runner sentence of the 2026-10-28 amendment above predates the
+Architecture guard and architecture-review jobs, which already made it 26.)
