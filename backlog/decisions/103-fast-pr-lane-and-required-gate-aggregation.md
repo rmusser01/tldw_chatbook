@@ -459,6 +459,16 @@ again (TASK-38111, TASK-38973, TASK-38756), serially under
 `--timeout=180`; the required check `needs` it and fails when it is not
 `success`. It keeps them out of the Dreams boundary job, which keeps its
 margin, and out of pr-fast-lane, at its 35-min cap. One more runner per PR:
-27 concurrent test runners, 28 with perf-guard, 42 eligible test jobs. (The
-peak-runner sentence of the 2026-10-28 amendment above predates the
-Architecture guard and architecture-review jobs, which already made it 26.)
+27 concurrent test runners, 28 with perf-guard. (The peak-runner sentence of
+the 2026-10-28 amendment above predates the Architecture guard and
+architecture-review jobs, which already made it 26.)
+
+2026-11-07 (TASK-39144; owner decision 2026-11-06: re-deal by measured weight
+first, add shards only if that cannot keep the 5-min margin): the UI lane runs
+34 shards. Per-entry weights from 22 PR runs' shard logs (each entry at its
+slowest), with round 12's new and untimed entries at their local serial
+seconds, put 448 pytest min over the census: a 13.9-min floor per shard at 32,
+about 15.6 min a job with setup, so no order of 32 reaches 15. At 34,
+`scripts/ui_lane_shard_replay.py --rebalance 13.2` (44 swaps) projects
+14.87-14.90 min a job on every shard. `max-parallel` stays 17, so peak runners
+are unchanged; eligible test jobs are 44.
