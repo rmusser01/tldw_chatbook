@@ -297,6 +297,22 @@ def test_sqlite_registry_members_have_explicit_census_rows():
             f"SQLite registry members without a row: {sorted(names - documented)}\n"
             f"rows without a registry member: {sorted(documented - names)}"
         )
+    # TASK-39113: each row's module and target-kind columns, not just its name.
+    policies = {
+        key.value: (value.args[0].value, value.args[1].id)
+        for key, value in zip(registry.keys, registry.values)
+    }
+    rows = {
+        owner: (module, kinds)
+        for owner, module, kinds in re.findall(
+            r"^\| sqlite:([^ |]+) \| ([^ |]+) \| ([^ |]+) \|", DOC.read_text(), re.M
+        )
+    }
+    assert {
+        owner: (rows.get(owner), policy)
+        for owner, policy in policies.items()
+        if rows.get(owner) != policy
+    } == {}
 
 
 def test_census_detects_module_qualified_and_aliased_writable_opens():

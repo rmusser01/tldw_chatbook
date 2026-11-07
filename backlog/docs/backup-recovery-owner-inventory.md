@@ -168,9 +168,9 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:kanban.local | tldw_chatbook/Kanban_Interop/local_kanban_db | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:notes.file_notes_replica | tldw_chatbook/Notes/file_notes_replica | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:notes.library_parent | tldw_chatbook/Notes/Notes_Library | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:notes.sync_state | tldw_chatbook/Notes/note_import_receipts | _PRIVATE_FILE | sqlite/unsupported |
+| sqlite:notes.sync_state | tldw_chatbook/Notes/notes_device_state_store | _PRIVATE_AND_READ_ONLY | sqlite/unsupported |
 | sqlite:notifications.client | tldw_chatbook/Notifications/client_notifications_db | _MEMORY | sqlite/unsupported |
-| sqlite:notifications.event_state | tldw_chatbook/Notifications/event_state_repository | _MEMORY | sqlite/unsupported |
+| sqlite:notifications.event_state | tldw_chatbook/Notifications/event_state_repository | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:rag.chachanotes_keyword_leg | tldw_chatbook/RAG_Search/simplified/rag_service | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:rag.prompts_keyword_leg | tldw_chatbook/RAG_Search/simplified/rag_service | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:research.local | tldw_chatbook/Research_Interop/local_research_service | _PRIVATE_OR_MEMORY | sqlite/domain-recovery-qualified |
