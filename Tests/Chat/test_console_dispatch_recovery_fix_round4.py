@@ -26,6 +26,7 @@ from Tests.Chat.test_console_first_send_atomicity import _controller
 from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 def _checkpoint_rows(db: Any) -> tuple[tuple[Any, ...], ...]:
@@ -182,6 +183,7 @@ async def test_app_disposal_drops_runtime_projection_but_loader_rehydrates_sqlit
     runtime = ConsoleRuntime(SimpleNamespace(persona_buddy_controller=None))
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     await runtime.dispose()
 

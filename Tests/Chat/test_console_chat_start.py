@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from Tests.Chat.console_controller_factory import bind_app, bound_app, update_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app, bound_app, update_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -369,6 +369,9 @@ def creation_controller(handoff_store):
     )
     app.console_runtime = runtime
     bind_app(controller, app)
+    # TASK-36947.4: the controller reaches its runtime through the runtime
+    # reference it holds, not through ``app.console_runtime``.
+    controller._hooks_v2_runtime = runtime
     source = store.create_session(
         title="source",
         workspace_id="global",
@@ -1831,6 +1834,7 @@ async def test_native_start_child_and_wake_share_original_allowance(
     bind_app(controller, app)
     runtime = ConsoleRuntime(app)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     custody_errors = []
     run_custodied = runtime._run_custodied_turn
@@ -2741,6 +2745,7 @@ async def test_native_configured_v2_initialization_and_stop_proposal(
     app.console_runtime = runtime
     bind_app(controller, app)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     initialized = tmp_path / "native-initialized"
     stopped = tmp_path / "native-stop"

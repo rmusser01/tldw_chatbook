@@ -13,6 +13,7 @@ import pytest
 
 from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 from Tests.private_profile import private_profile_test
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 @pytest.mark.asyncio
@@ -36,6 +37,7 @@ async def test_entry_captured_fleet_retains_original_native_owner_before_creator
     runtime = ConsoleRuntime(app, canvas_enabled_reader=lambda: False)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     wake = controller.fleet_wake
     ledger = database.automatic_work
@@ -273,6 +275,7 @@ async def test_custom_facade_cannot_add_recovery_method_or_suppress_finite_clean
 
     runtime = ConsoleRuntime(None, canvas_enabled_reader=lambda: False)
     controller = Controller()
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     if facade == "raising-getter":
         controller.fail = True

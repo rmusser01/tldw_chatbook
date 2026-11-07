@@ -63,6 +63,12 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        # TASK-36947.4: the Console controller reads ``app.services``. Tests
+        # patch service aliases on the app before mounting; republish so the
+        # bundle names them, as composition would have.
+        publish = getattr(self.app_instance, "_publish_application_services", None)
+        if callable(publish):
+            publish()
         await self.push_screen(ChatScreen(self.app_instance))
 
 

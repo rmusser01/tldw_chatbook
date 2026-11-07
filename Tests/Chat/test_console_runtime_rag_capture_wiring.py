@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.Chat.console_controller_factory import bind_app
 
 EVIDENCE = "Staged evidence: ORCHID-7731 is the marker."
 
@@ -45,6 +46,7 @@ def _runtime_controller(tmp_path: Path):
         provider="llama_cpp",
         model="test-model",
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
     controller.prompt_history = PromptHistory(tmp_path / "history.jsonl")
     return runtime, store, controller
 

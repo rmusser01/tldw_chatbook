@@ -24,6 +24,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
 )
 from tldw_chatbook.Workspaces.workspace_tree_state import build_workspace_tree_state
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 @private_profile_test
@@ -315,6 +316,7 @@ async def test_durable_discard_contention_keeps_mounted_reads_and_heartbeat_resp
             runtime = ConsoleRuntime(app=None)
             runtime.set_chat_store(native)
             runtime.set_agent_bridge(bridge)
+            bind_runtime_app(native_controller, runtime)
             runtime.set_chat_controller(native_controller)
         target_session = None
         target_owner = None

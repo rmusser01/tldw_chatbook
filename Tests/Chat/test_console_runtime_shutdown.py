@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleDispatchSettlementError,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 @pytest.mark.asyncio
@@ -131,6 +132,7 @@ def _runtime_with_fleet():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_agent_bridge(bridge)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     return runtime, controller, bridge, store, session
 
@@ -336,6 +338,7 @@ def test_runtime_dispose_rechecks_revision_after_fleet_admission_is_fenced():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_agent_bridge(bridge)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     revision = controller.lifecycle_impact().revision
 
@@ -652,6 +655,7 @@ async def test_session_close_rechecks_revision_after_fleet_admission_is_fenced()
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_agent_bridge(bridge)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     revision = controller.lifecycle_impact(session_id=session.id).revision
 
@@ -704,6 +708,7 @@ async def test_session_close_keeps_fences_when_fleet_drain_fails():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_agent_bridge(bridge)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     revision = controller.lifecycle_impact(session_id=session.id).revision
 

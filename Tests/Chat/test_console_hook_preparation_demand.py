@@ -11,6 +11,7 @@ from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 hook_file = _hook_file
@@ -37,6 +38,7 @@ async def hook_case(hook_file, monkeypatch):
         hook_permissions_accessor=runtime.ensure_hook_permissions,
     )
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     reviews = []
     contexts = []

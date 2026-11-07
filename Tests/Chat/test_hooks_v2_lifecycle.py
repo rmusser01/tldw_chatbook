@@ -13,7 +13,7 @@ from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from tldw_chatbook.Agents.run_hooks import HookOutcome
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from Tests.Chat.console_controller_factory import bind_app, bound_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app, bound_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 hook_file = _hook_file
@@ -38,6 +38,7 @@ async def session_case(tmp_path):
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     accepted = []
     controller.on_submission_accepted = lambda: accepted.append(session.id)
@@ -353,6 +354,7 @@ async def test_mixed_native_and_saved_session_end_survives_host_disposal(
     )
     runtime = ConsoleRuntime(app=bound_app(case.controller))
     runtime.set_chat_store(case.store)
+    bind_runtime_app(case.controller, runtime)
     runtime.set_chat_controller(case.controller)
     permissions = runtime.ensure_hook_permissions()
     case.controller._hook_permissions_accessor = lambda: permissions
@@ -787,6 +789,7 @@ async def test_actual_console_admission_runs_connected_mcp_initializer(
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     async with controlled_stdio_client(tmp_path) as client:
         service = await controlled_service(tmp_path, client)
@@ -1005,6 +1008,7 @@ async def test_failed_console_initialization_discards_nested_turn_context(
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     release, started = tmp_path / "release-sibling", tmp_path / "sibling-started"
     direct_blocks = [{"text": "Runtime context", "lifetime": "runtime"}]
@@ -1156,6 +1160,7 @@ async def test_actual_console_teardown_mcp_uses_captured_runtime_and_normal_guar
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     async with controlled_stdio_client(tmp_path) as client:
         service = await controlled_service(tmp_path, client)
@@ -1314,6 +1319,7 @@ async def test_actual_console_stop_mcp_notification_keeps_one_second_guard_deadl
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     started, release = asyncio.Event(), asyncio.Event()
 
@@ -1427,6 +1433,7 @@ async def test_hook_currentness_does_not_read_unrelated_skill_catalog(
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     async with controlled_stdio_client(tmp_path) as client:
         app.unified_mcp_service = await controlled_service(tmp_path, client)

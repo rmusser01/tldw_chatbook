@@ -5,7 +5,7 @@ import pytest
 from Tests.Plugins.test_owned_mcp_tools import (
     shared_connection_case as _shared_connection_case,
 )
-from Tests.Chat.console_controller_factory import bound_app, update_app
+from Tests.Chat.console_controller_factory import bind_runtime_app, bound_app, update_app
 
 shared_connection_case = _shared_connection_case
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
@@ -116,6 +116,7 @@ async def test_owned_hook_and_plugin_rule_share_final_input(
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     update_app(rig.controller, console_runtime=runtime)
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     try:
         result = await rig.controller.submit_draft(
@@ -172,6 +173,7 @@ async def test_actual_console_composes_owned_mcp_hook_without_automatic_connecti
     )
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     observed, explicit_setup = [], False
     compose = rig.controller._compose_mcp_provider
@@ -257,6 +259,7 @@ async def test_failed_native_dependency_blocks_only_using_component(
     )
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     try:
         blocked = await rig.controller.submit_draft(

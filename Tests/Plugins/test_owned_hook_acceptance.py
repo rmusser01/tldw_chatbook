@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from Tests.Chat.console_controller_factory import bind_app, bound_app, update_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app, bound_app, update_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -64,6 +64,7 @@ async def _runtime(rig):
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     update_app(rig.controller, console_runtime=runtime)
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     try:
         yield runtime
@@ -1176,6 +1177,7 @@ async def _installed_compaction_case(
     controller._agent_runtime_enabled = False
     runtime = ConsoleRuntime(app=bound_app(controller))
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     payloads = []
 

@@ -43,7 +43,7 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
     SkillInstallConfirmCard,
 )
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 # ---------------------------------------------------------------------------
 # rig
@@ -110,6 +110,7 @@ def _detached_rig(*, timeout_seconds: float | None = None):
         controller.mcp_approval_timeout_seconds = lambda: timeout_seconds
     runtime = ConsoleRuntime(app=app)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.attach_view(_View())
     return runtime, controller, store, session, app
@@ -126,6 +127,7 @@ def _never_visited_rig(*, timeout_seconds: float | None = 60.0):
         controller.mcp_approval_timeout_seconds = lambda: timeout_seconds
     runtime = ConsoleRuntime(app=app)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     return runtime, controller, store, session, app
 
@@ -1946,6 +1948,7 @@ async def test_a_wake_delivery_cannot_resolve_a_pending_headless_round(tmp_path)
         # already provides; the fleet coordinator remains wired to ``app``.
         runtime = ConsoleRuntime(app=thread_app)
         runtime.set_chat_store(store)
+        bind_runtime_app(controller, runtime)
         runtime.set_chat_controller(controller)
         runtime.attach_view(_View())
         await _leave(runtime)

@@ -5,7 +5,7 @@ import pytest
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from Tests.private_profile import private_profile_test
-from Tests.Chat.console_controller_factory import bound_app, update_app
+from Tests.Chat.console_controller_factory import bind_runtime_app, bound_app, update_app
 
 native_console = _native_console
 native_package = _native_package
@@ -18,6 +18,7 @@ async def test_review_requires_existing_session_and_current_component(native_con
     rig = native_console
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     installed = await rig.install()
     with pytest.raises(ValueError, match="existing_console_session_required"):
@@ -99,6 +100,7 @@ async def test_reviewed_real_hook_runs_without_a_provider_or_conversation_effect
     await rig.service.commit(trust, trust.operation_id)
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     before = tuple(rig.store.messages_for_session(rig.session.id))
     try:
@@ -248,6 +250,7 @@ async def test_configuration_save_then_reviewed_connection_discovery_grants_no_t
     await rig.service.commit(mapped, mapped.operation_id)
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     before = tuple(rig.store.messages_for_session(rig.session.id))
     try:
@@ -290,6 +293,7 @@ async def test_explicit_admission_refuses_real_occupied_slot_without_consuming_i
     rig = native_console
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     configuration = await rig.controller.capture_turn_configuration_snapshot(
         rig.session.id

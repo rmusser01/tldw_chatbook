@@ -8,8 +8,12 @@ which builds the host over ``fake`` with the production builder
 
 Test apps rarely publish ``app.services``, so members come from the fake's
 alias attributes, exactly the names the controller's old ``getattr`` reads used.
-The host is built once, like production's: set every member and capability on
-the fake BEFORE binding. ``bound_app`` returns the fake for assertions.
+
+A bound host is rebuilt from the fake on every read. Production builds it once,
+because a real app's services and methods never change after composition; a
+test fake is patched after binding (``app.notify = spy``), and the old
+``controller.app`` reads saw that, so the bound host must too. ``bound_app``
+returns the fake for assertions.
 """
 
 from __future__ import annotations
@@ -42,6 +46,18 @@ def host_for_app(app: Any) -> ConsoleControllerHost | None:
     )
 
 
+class _LiveHost:
+    """A host read through ``host_for_app(app)`` on every attribute access."""
+
+    __slots__ = ("_fake_app",)
+
+    def __init__(self, app: Any) -> None:
+        self._fake_app = app
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(host_for_app(self._fake_app), name)
+
+
 def bind_app(controller: Any, app: Any) -> Any:
     """Install the host ``controller`` would have been constructed with.
 
@@ -54,8 +70,7 @@ def bind_app(controller: Any, app: Any) -> Any:
     """
     from tldw_chatbook.Chat.console_chat_controller import _NO_HOST
 
-    host = host_for_app(app)
-    controller._host = host if host is not None else _NO_HOST
+    controller._host = _LiveHost(app) if app is not None else _NO_HOST
     try:
         _BOUND[controller] = app
     except TypeError:  # a controller double that cannot be weakly referenced
@@ -63,20 +78,35 @@ def bind_app(controller: Any, app: Any) -> Any:
     return app
 
 
-def update_app(controller: Any, **attributes: Any) -> None:
-    """Set attributes on the bound fake app, then rebuild the host from it.
+def bind_runtime_app(controller: Any, runtime: Any) -> None:
+    """Bind the runtime's app, as ``set_chat_controller`` did before TASK-36947.4.
 
-    A test that patched ``controller.app.<name>`` after binding would otherwise
-    patch a fake the controller no longer reads.
+    Production builds the host when the runtime constructs the controller; a
+    test that hands the runtime a controller it built itself binds here first.
+    A runtime without an app leaves the controller as it was.
+    """
+    app = getattr(runtime, "_app", None)
+    if app is not None:
+        bind_app(controller, app)
+
+
+def update_app(controller: Any, **attributes: Any) -> None:
+    """Set attributes on the controller's app, as ``controller.app.<name> = ...`` did.
+
+    The app is the bound fake, else the owning runtime's app (which the old
+    ``controller.app`` was); a runtime-built host is then re-bound live so the
+    patch reaches the controller.
 
     Raises:
-        AssertionError: ``controller`` has no bound fake app.
+        AssertionError: ``controller`` has neither a bound fake nor a runtime app.
     """
     app = bound_app(controller)
-    assert app is not None, "bind_app(controller, app) first"
+    if app is None:
+        app = getattr(getattr(controller, "_hooks_v2_runtime", None), "_app", None)
+        assert app is not None, "bind_app(controller, app) first"
+        bind_app(controller, app)
     for name, value in attributes.items():
         setattr(app, name, value)
-    bind_app(controller, app)
 
 
 def bound_app(controller: Any) -> Any:

@@ -1,5 +1,5 @@
 """Native capabilities retain explicit selection and narrowing semantics."""
-from Tests.Chat.console_controller_factory import bind_app, bound_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app, bound_app
 
 
 def test_empty_agent_tool_list_never_inherits():
@@ -372,6 +372,7 @@ async def test_actual_console_owned_hook_reserves_native_custody_before_launch(
     monkeypatch.setattr(HookEngine, "_deliver", observe)
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     try:
         result = await rig.controller.submit_draft("hello", session_id=rig.session.id)
@@ -867,6 +868,7 @@ async def test_actual_console_dependency_failure_blocks_owned_skill_only(
     db = AgentRunsDB(tmp_path / "dependencies.sqlite", client_id="native-dependencies")
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     try:
         bridge = ConsoleAgentBridge(
@@ -1063,6 +1065,7 @@ async def test_revoking_actual_owned_hook_kills_and_reaps_before_settling(
     await rig.service.commit(enable, enable.operation_id)
     runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     send = asyncio.create_task(
         rig.controller.submit_draft("hello", session_id=rig.session.id)

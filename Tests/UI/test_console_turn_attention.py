@@ -44,7 +44,7 @@ from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
     ConsoleVideoCardSpec,
 )
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 
 RECEIPT_A = "11111111-1111-4111-8111-111111111111"
@@ -166,6 +166,7 @@ def test_runtime_attention_is_receipt_or_hidden_decision_and_exact_ack() -> None
     app = _App(marks)
     runtime = ConsoleRuntime(app)
     controller = _DecisionController(("opaque-decision",))
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
 
     assert runtime.recompute_console_attention() is True

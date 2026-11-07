@@ -4,7 +4,6 @@ import asyncio
 import threading
 import time
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 
@@ -273,8 +272,10 @@ async def test_custom_routes_keep_ordinary_composition_shape(
 
 
 @pytest.mark.asyncio
+# TASK-36947.4 removed the "service" case: the controller's MCP service is a
+# host member fixed at construction, so it cannot change under a capture.
 @pytest.mark.parametrize(
-    "change", ["service", "session", "settings", "config", "scratch", "root-guard"]
+    "change", ["session", "settings", "config", "scratch", "root-guard"]
 )
 async def test_changed_owner_refuses_shared_publication_after_native_read(
     snapshot_case, change
@@ -296,9 +297,7 @@ async def test_changed_owner_refuses_shared_publication_after_native_read(
         )
         try:
             await catalog_controls._worker_entered(probe, pending)
-            if change == "service":
-                case.app.unified_mcp_service = SimpleNamespace()
-            elif change == "session":
+            if change == "session":
                 case.store._sessions[case.session.id] = replace(case.session)
             elif change == "settings":
                 case.store._bump_settings_revision(case.session.id)

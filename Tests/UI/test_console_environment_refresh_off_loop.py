@@ -44,7 +44,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     PrEnvState,
     TasksEnvState,
 )
-from Tests.Chat.console_controller_factory import update_app
+from Tests.Chat.console_controller_factory import bind_app, update_app
 
 # Drives the real ChatScreen, controller, store and app: keep the
 # collection-time profile (the per-test redirect fails config admission).
@@ -70,6 +70,7 @@ async def _console_with_admitted_root(root: str):
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.change_review_consent_service = _admitting(root)
+    app._publish_application_services()  # the controller reads the bundle (TASK-36947.4)
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 45)) as pilot:
         console = host.screen_stack[-1]
@@ -243,6 +244,9 @@ async def test_the_narrow_root_read_equals_the_full_snapshots_roots(tmp_path):
         active = chat_controller.store.active_session_id
         own_workspace = chat_controller.store.session_workspace_id(active)
         asked: list = []
+        # TASK-36947.4: a production host is fixed at construction; read the
+        # app live so the swapped consent service reaches the controller.
+        bind_app(chat_controller, screen.app_instance)
         update_app(chat_controller, change_review_consent_service=_admitting_per_workspace(
             root, asked
         ))

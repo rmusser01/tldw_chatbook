@@ -18,7 +18,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Chat.response_rules.models import RuleRuntimeState
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -31,6 +31,7 @@ async def native(tmp_path, request):
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(chats)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     rules = (
         None

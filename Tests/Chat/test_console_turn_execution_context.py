@@ -63,7 +63,7 @@ from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparationSt
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Workspaces import SkippedReviewRoot
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
-from Tests.Chat.console_controller_factory import bind_app, bound_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app, bound_app
 
 
 # Runtime/config authority must retain the profile selected during collection.
@@ -254,6 +254,7 @@ async def test_runtime_custody_transfers_exact_attachments_and_frozen_inputs():
     controller = _CustodyController()
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="turn-custody",
@@ -469,6 +470,7 @@ async def test_runtime_created_controller_captures_owning_workspace_policy(
     controller = runtime.ensure_chat_controller(
         store=store, provider_gateway=SimpleNamespace(), agent_runtime_enabled=False
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
     assert controller._turn_context_provider is None
     if detached:
         view = SimpleNamespace(console_view_hooks=lambda: {})
@@ -698,6 +700,7 @@ async def test_manual_runtime_custody_reaches_the_existing_agent_bridge_once(tmp
             )
 
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     bind_app(controller, SimpleNamespace(workspace_registry_service=Registry()))
     configuration = controller.resolve_runtime_turn_configuration_snapshot(
@@ -863,6 +866,7 @@ async def test_accepted_writable_selection_forwards_exact_live_worktree_authorit
     bind_app(controller, app)
     runtime = ConsoleRuntime(app)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     configuration = controller.resolve_runtime_turn_configuration_snapshot(session.id)
     configuration = ConsoleTurnConfigurationSnapshot.capture(
@@ -925,6 +929,7 @@ async def test_durable_acceptance_survives_cancellation_for_terminal_callback():
     controller = _DurablyAcceptedBlockingController()
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="durably-accepted-cancelled",
@@ -967,6 +972,7 @@ async def test_runtime_custody_releases_only_its_exact_durable_staged_evidence(
     controller = _EvidenceCustodyController()
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     revision = runtime.stage_console_staged_evidence(launch)
 
@@ -1051,6 +1057,7 @@ async def test_runtime_custody_does_not_release_newer_evidence_staged_during_cap
     controller = _EvidenceCustodyController()
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.stage_console_staged_evidence(launch_a)
     capture_started = asyncio.Event()
@@ -1092,6 +1099,7 @@ async def test_pre_durable_custody_failures_keep_ordered_turn_keyed_recoveries()
     controller = _CustodyController(fail_before_acceptance=True)
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     attachments = [
         PendingAttachment(f"/{name}", name, "image", "attachment", data=name.encode())
@@ -1134,6 +1142,7 @@ async def test_recovery_refuses_to_merge_an_ambiguous_live_draft_and_keeps_suffi
     controller = _CustodyController(fail_before_acceptance=True)
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="turn-recovery",
@@ -1175,6 +1184,7 @@ async def test_recovery_restores_exact_objects_before_later_attachment_suffix(
     controller = _CustodyController(fail_before_acceptance=True)
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="turn-recovery",

@@ -1187,7 +1187,7 @@ async def test_committed_building_rows_reach_console_and_public_tool(
         monkeypatch.setattr(
             runtime, "get_project_index_service", lambda app: rig.service
         )
-        monkeypatch.setattr(runtime, "project_index_key", lambda *args: rig.key)
+        monkeypatch.setattr(runtime, "project_index_key_for_service", lambda *args: rig.key)
         controller = object.__new__(ConsoleChatController)
         bind_app(controller, SimpleNamespace())
         service, scopes = await asyncio.to_thread(
@@ -1259,7 +1259,7 @@ async def test_building_without_compatible_commits_is_not_advertised(
         monkeypatch.setattr(
             runtime, "get_project_index_service", lambda app: rig.service
         )
-        monkeypatch.setattr(runtime, "project_index_key", lambda *args: rig.key)
+        monkeypatch.setattr(runtime, "project_index_key_for_service", lambda *args: rig.key)
         controller = object.__new__(ConsoleChatController)
         bind_app(controller, SimpleNamespace())
         _, scopes = await asyncio.to_thread(

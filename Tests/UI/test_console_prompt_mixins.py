@@ -665,6 +665,7 @@ async def test_real_console_prompts_action_retains_browse_and_controls_runtime(
     attach_chachanotes_db(application)
     _configure_native_ready_console(application)
     application.prompt_scope_service = scope
+    application._publish_application_services()  # the controller reads the bundle (TASK-36947.4)
 
     class NativeHarness(ConsoleHarness):
         CSS_PATH = TldwCli.CSS_PATH

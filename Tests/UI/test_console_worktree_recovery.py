@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
 from Tests.Agents.test_agent_worktree_confirmed_recovery import work as _work
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 work = _work
 
@@ -224,6 +224,7 @@ async def test_reopened_record_manual_action_uses_real_controller_card_and_git(
     runtime = ConsoleRuntime(app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime._worktree_recovery = helper
     try:

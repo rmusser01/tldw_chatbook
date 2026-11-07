@@ -13,6 +13,7 @@ from Tests.Chat.test_console_received_intent_custody import _intent
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -31,6 +32,7 @@ async def test_received_draft_publication_obeys_original_save_outcome(
     store.set_session_draft(session.id, "received saved draft")
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     configuration = controller.resolve_turn_configuration_snapshot(session.id)
 
@@ -126,6 +128,7 @@ async def test_complete_ui_request_retains_its_captured_draft_revision(
     store.set_session_draft(session.id, "legacy saved draft", authored_token=(1, 1))
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="complete-ui-draft-witness",

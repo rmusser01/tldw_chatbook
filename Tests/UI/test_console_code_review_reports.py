@@ -94,6 +94,7 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
     review_case, tmp_path
 ):
     import asyncio
+    from functools import partial
     from types import SimpleNamespace
 
     from textual.screen import Screen
@@ -194,7 +195,11 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
                 report,
             )
             controller._session_close_generations.pop(session.id)
-            bind_app(controller, SimpleNamespace())
+            # A closed UI: the presenter's app can no longer present
+            # (TASK-36947.4: the presenter, not the controller, holds the app).
+            controller.review_report_presenter = partial(
+                wiring.present_code_review_original, app=SimpleNamespace()
+            )
             assert not await asyncio.to_thread(
                 controller._present_review_report,
                 session.id,

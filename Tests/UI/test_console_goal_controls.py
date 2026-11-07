@@ -11,6 +11,7 @@ from textual.app import App
 from textual.widgets import Button
 
 from Tests.Agents.test_goal_iteration_report import report
+from Tests.Chat.console_controller_factory import bind_app
 from Tests.Chat.test_console_goal_dispatch import build_goal_rig
 from Tests.Chat.test_goal_conversation_provisioning import stores as _stores_fixture
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
@@ -362,12 +363,13 @@ async def restarted_goal(stores, monkeypatch):
     )
     runtime = ConsoleRuntime(backend)
     runtime._chat_store = store
-    runtime.ensure_chat_controller(
+    controller = runtime.ensure_chat_controller(
         store=store,
         provider_gateway=gateway,
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
+    bind_app(controller, backend)  # test apps publish no services bundle (TASK-36947.4)
     co = runtime.ensure_goal_coordinator()
     await co.recover()
     return co, co.service.get(goal.id), runtime, backend, ordinary, calls

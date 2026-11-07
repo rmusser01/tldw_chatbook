@@ -398,7 +398,8 @@ def test_public_accepted_voice_handoff_enters_runtime_custody() -> None:
             return request.turn_id
 
     controller.store = Store()  # type: ignore[assignment]
-    bind_app(controller, SimpleNamespace(console_runtime=Runtime()))
+    bind_app(controller, SimpleNamespace())
+    controller._hooks_v2_runtime = Runtime()  # the runtime reference (TASK-36947.4)
 
     result = controller.submit_accepted_voice_turn(
         "Exact rolling transcript",
