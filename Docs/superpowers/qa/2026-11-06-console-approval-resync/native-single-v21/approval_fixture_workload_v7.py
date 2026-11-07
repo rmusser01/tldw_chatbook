@@ -404,6 +404,7 @@ class ApprovalFixtureDriver(_RequestOnlyDriver):
         self.gateway = None
         self._original_methods = {}
         self._owner_observations = []
+        self._visible_send_ownership = None
         if getattr(app, "console_provider_gateway_factory", None) is not None:
             raise RuntimeError(
                 "Actual stock Console gateway required; factory override refused"
@@ -774,6 +775,8 @@ class ApprovalFixtureDriver(_RequestOnlyDriver):
             "run_id": None,
             "actual_decisions": None,
             "actual_selection_equality": None,
+            "actual_received_selection_equality": None,
+            "actual_received_selection_boundary": None,
             "unavailable": [
                 "real_provider_argument_generation",
                 "external_provider_network_dispatch",
@@ -785,12 +788,22 @@ class ApprovalFixtureDriver(_RequestOnlyDriver):
         self.current = current
         # Fixed empty history per workload; use public session creation and
         # real durable ownership, not private state mutation.
+        screen = self.app.screen
+        session_owner = screen._session
+        session_owner._capture_console_draft_switch_snapshot()
+        settings, _assistant_defaults = session_owner._new_session_startup_settings(
+            self.workspace_id
+        )
         self.session = self.controller.new_session(
             title="QA-" + correlation[:12],
             workspace_id=self.workspace_id,
+            settings=settings,
+            canonical_settings_baseline=settings,
+            new_chat_default_generation=session_owner._console_new_chat_default_generation(),
             ephemeral=False,
             assistant_kind=None,
         )
+        session_owner.switch_and_bind(self.session.id)
         from tldw_chatbook.Chat.console_chat_controller import (
             list_project_instruction_bindings,
             commit_project_instruction_setup_decision,
@@ -909,13 +922,127 @@ class ApprovalFixtureDriver(_RequestOnlyDriver):
         self._record("fixture_prepared", correlation, shape=shape)
         # Real accepted send, durability, config, runtime, discovery, tool
         # preparation and approval owners; no directly injected verdicts.
-        self.worker = asyncio.create_task(
-            self.controller.submit_draft(
-                "QA-" + correlation[:12] + " inspect the private fixture.",
-                session_id=self.session.id,
-            )
+        self.worker = self._submit_visible_draft(
+            "QA-" + correlation[:12] + " inspect the private fixture."
+        )
+        self._record(
+            "visible_intent_admitted", correlation, boundary="stock_received_intent"
         )
         return self.snapshot()
+
+    def _submit_visible_draft(self, draft):
+        """Delegate the actual composer revision to stock Send; never fall back."""
+        from tldw_chatbook.UI.Console_Modules.wiring import (
+            receive_console_visible_intent,
+        )
+
+        screen = self.app.screen
+        runtime = screen._console_runtime()
+        if (
+            runtime._chat_store is not self.controller.store
+            or runtime._chat_controller is not self.controller
+            or self.controller.store.active_session_id != self.session.id
+            or screen._console_visible_draft_session_id != self.session.id
+        ):
+            raise RuntimeError("Actual current Console send owners do not match")
+        composer = screen._console_composer_or_none()
+        if composer is None:
+            raise RuntimeError("Actual current Console composer unavailable")
+        composer.load_draft(draft)
+        stash = composer.capture_draft_for_send()
+        turn_id = receive_console_visible_intent(screen, draft, self.session.id, stash)
+        if not isinstance(turn_id, str) or not turn_id:
+            raise RuntimeError("Original received-intent entry declined or refused")
+        # No await between admission and retaining the actual runtime-owned task:
+        # a later wait_for_turn lookup can race normal custody retirement.
+        record = runtime._turn_custody.get(turn_id)
+        task = getattr(record, "task", None)
+        intent = getattr(record, "received_intent", None)
+        if (
+            record is None
+            or record.turn_id != turn_id
+            or record.session_id != self.session.id
+            or record.store is not self.controller.store
+            or getattr(intent, "turn_id", None) != turn_id
+            or getattr(intent, "session_id", None) != self.session.id
+            or not isinstance(task, asyncio.Task)
+            or task.get_loop() is not asyncio.get_running_loop()
+        ):
+            raise RuntimeError(
+                "Actual received-intent custody/task identity unavailable"
+            )
+        self._visible_send_ownership = (
+            screen,
+            runtime,
+            record,
+            screen._console_runtime_attachment_generation,
+        )
+        self._record_received_selection(intent)
+        return task
+
+    def _record_received_selection(self, intent):
+        """Observe admitted captured values; never force the legacy selector."""
+        try:
+            selected = intent.selection.provider_selection
+            proof = {
+                "provider_matches": str(selected.provider or "").lower()
+                == self.provider.provider_key,
+                "model_matches": (selected.explicit_model or selected.configured_model)
+                == self.provider.model,
+                "explicit_base_url_matches": str(selected.base_url or "").rstrip("/")
+                == self.provider.base_url.rstrip("/"),
+                "base_url_present": selected.base_url is not None,
+            }
+            with self._lock:
+                current = self.current
+                if current is None:
+                    return
+                current["actual_received_selection_equality"] = proof
+                current["actual_received_selection_boundary"] = (
+                    "actual_received_intent_selection"
+                )
+            self._record(
+                "actual_selection_observed",
+                current["correlation"],
+                boundary="actual_received_intent_selection",
+                **proof,
+            )
+        except Exception as error:
+            self._observation_failed("received_intent_selection", error)
+
+    def _visible_send_lifecycle(self):
+        """Read resident owner handles only; never start or invoke a UI poll."""
+        captured = self._visible_send_ownership
+        if captured is None:
+            return None
+        screen, runtime, record, attachment = captured
+        current = runtime._turn_custody.get(record.turn_id)
+        timer = getattr(screen, "_console_transcript_sync_timer", None)
+        timer_task = getattr(timer, "_task", None)
+        # Timer._active is a cached property: reading __dict__ avoids creating it.
+        active = vars(timer).get("_active") if timer is not None else None
+        return {
+            "turn_id": record.turn_id,
+            "same_screen": self.app.screen is screen,
+            "attachment_matches": screen._console_runtime_attachment_generation
+            == attachment,
+            "runtime_store_matches": runtime._chat_store is self.controller.store,
+            "runtime_controller_matches": runtime._chat_controller is self.controller,
+            "store_active_session_matches": self.controller.store.active_session_id
+            == record.session_id,
+            "custody_record_present": current is not None,
+            "custody_record_matches": current is record,
+            "custody_task_matches": current is record and current.task is self.worker,
+            "custody_released": current is None,
+            "task_done": self.worker.done(),
+            "task_cancelled": self.worker.cancelled(),
+            "timer_present": timer is not None,
+            "timer_task_present": timer_task is not None,
+            "timer_task_done": timer_task.done() if timer_task is not None else None,
+            "timer_active_resident": active is not None,
+            "timer_active_set": active.is_set() if active is not None else None,
+            "poll_asked": getattr(screen, "_console_transcript_poll_asked", None),
+        }
 
     def snapshot(self):
         with self._lock:
@@ -932,6 +1059,11 @@ class ApprovalFixtureDriver(_RequestOnlyDriver):
             "feedback": [],
             "injection_boundary": "owned scripted HTTP responses only; stock gateway/submit/AgentService/ConsoleToolActivity",
         }
+        result["visible_send_lifecycle"] = None
+        try:
+            result["visible_send_lifecycle"] = self._visible_send_lifecycle()
+        except Exception as error:
+            self._observation_failed("visible_send_lifecycle", error)
         result["submission_task"] = None
         task = self.worker
         if task is not None:

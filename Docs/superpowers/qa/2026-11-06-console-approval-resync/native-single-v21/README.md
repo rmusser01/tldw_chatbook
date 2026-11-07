@@ -22,6 +22,7 @@ $Code = Join-Path $Repo 'Docs/superpowers/qa/2026-11-06-console-approval-resync/
 foreach ($Check in 'check_series_method','check_series_spool','check_stage_watchdog','check_preparation_clock','check_qualification_freeze','check_workload_script_protocol','check_diagnostic_policy') {
     & $Python -I -S "$Code/$Check.py" --source-root $Repo --output-root "$Out/controls" --dependencies $Deps
 }
+& $Python -I -S "$Code/check_visible_send_route.py" --source-root $Repo --output-root "$Out/route-controls"
 & $Python -I "$Code/prepare_native_run.py" --source-root $Repo --freeze $Freeze --shared-dependencies $Deps --original-home $OriginalHome --output-root $Out --shape single --columns 120 --rows 40 --method-mode validation
 ~~~
 
@@ -52,3 +53,16 @@ QPC/perf brackets conservatively convert same-machine clocks; captures bound des
 Primary feedback latency is EARLIEST app-prequeue MouseDown→first exact accepted capture upper bound. Preserve BOTH Down/Up, their delivery gap, separate committing Up→card-helper interval (including widget dispatch), and Win32 SendInput brackets. Keep request-complete→local-check separate from local-check→actionable. Prior presented-output→card remains MISSING; scripted text is not paint or real inference.
 
 Warm p95 is nearest rank of all40 valid warm observations, cold separate. Targets remain100ms input→feedback and200ms checks→actionable. Raw runs remain unqualified until Root verifies complete source/worker/effect/process closure. This public packet has not been seeded or run live.
+
+
+### Received-intent fixture correction after f66a validation
+
+The f66a validation reached genuine card approval, accepted feedback and a successful source-pinned Windows fs_read worker. It did not observe terminal UI settlement, so it remains invalid with zero qualified samples. The fixture used direct controller submission rather than the normal visible-send custody route; this is a demonstrated source distinction, not proof of the observed UI cause.
+
+This same packet now captures stock startup session settings, binds the current composer through the existing session owner, loads the synthetic draft and captures its actual stash. One original receive_console_visible_intent call must return a nonempty real turn ID. The fixture retains that matching runtime custody task synchronously before any await. None/empty/refusal or missing/mismatched owner/task identities fails closed, with no direct-submit fallback. Original task results and errors remain authoritative.
+
+Existing snapshots additionally report resident timer/task/event presence, same screen/attachment and custody identity/release. These are read-only observations; they never start a timer, invoke a poll, force final synchronization or set a UI label. Invalid rounds retain their own partial actual stages, while their invalid status and qualification hold remain unchanged.
+
+Finite controls reproduce RED against the exact historical f66a body, then pass 28 delegation/refusal/source-owner checks. All prior pure controls, Ruff and AST checks pass on the successor bytes. See v21-received-intent-route.diff and the received-intent selfcheck receipts. The first live received-intent validation and Root-viewed settled reference remain pending a reviewed commit, fresh diagnostic freeze and explicit launch lease. No new App or timing sample is claimed by this preparation.
+
+The release regression mirrors the real runtime owner clearing custody task, store and intent handles; passive task state is read from the exact retained fixture.worker handle. Admitted provider/model/explicit-base-URL equality is read from the actual intent.selection.provider_selection and tagged actual_received_intent_selection. Missing legacy selection events are not fabricated. An absent explicit URL is recorded honestly and is distinct from canonical endpoint resolution and actual owned HTTP/SDK wire evidence; those guards and proofs remain independent. Selection-observer failures mark the existing QA observation error without replacing the original admitted task or its errors.

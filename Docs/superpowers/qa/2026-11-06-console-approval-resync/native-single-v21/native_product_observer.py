@@ -1640,6 +1640,18 @@ def main():
             result["observer_health_exit_missing"] = True
         result["clock_after"] = clock_bounds(kernel)
         for record in result["rounds"]:
+            # Keep partial real stages even when settlement/refusal invalidates
+            # a round. This does not change its outcome or qualify its timings.
+            record["rehearsal_events"] = [
+                row
+                for row in event_rows
+                if row.get("correlation")
+                and row.get("correlation")
+                == record.get("stage", {})
+                .get("snapshot", {})
+                .get("current", {})
+                .get("correlation")
+            ]
             stages = record.get("rehearsal_events", [])
             times = {}
             for row in stages:
