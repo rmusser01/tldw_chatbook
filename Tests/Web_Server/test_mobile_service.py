@@ -34,6 +34,11 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Chat.console_chat_store import (
     GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER,
 )
+from tldw_chatbook.Chat.approval_presentation import (
+    ApprovalAuthority,
+    ApprovalBatchView,
+    ApprovalRowView,
+)
 from tldw_chatbook.Web_Server.mobile_service import MobileChatService, MobileSendRefused
 
 # The real engine's submit path reads the guarded config loader (turn
@@ -89,6 +94,105 @@ async def _shutdown(service: MobileChatService, subscriber: asyncio.Task) -> Non
     except asyncio.CancelledError:
         pass
     await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+@pytest.mark.parametrize("surface", ["event", "pending"])
+@pytest.mark.parametrize("captured", [True, False])
+def test_mobile_approval_wire_preserves_calls_and_narrows_captured_choices(
+    tmp_path: Path, surface: str, captured: bool
+) -> None:
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=AgentModeGateway())
+    queue = asyncio.Queue()
+    service._subscribers.add(queue)
+    arguments = {"path": "original/path", "nested": {"limit": 3}}
+    call = {
+        "llm_name": "fs_read",
+        "call_id": "call-1",
+        "arguments": arguments,
+        "options": ["approve_once", "approve_session", "deny"],
+        "server_key": "local:__local__",
+        "tool_name": "fs_read",
+        "server_label": "Local tools",
+        "reason": "Permission required",
+        "effects": ["read"],
+        "execution_policy": "bounded_abandonable",
+        "path_precheck_failed": False,
+        "full_command": None,
+        "warning": None,
+        "scope_notice": "This chat",
+        "rationale": "Read requested file",
+        "description": "Read file content",
+    }
+    payload = {
+        "round_id": "round-1",
+        "session_id": "session-1",
+        "run_id": "run-1",
+        "calls": [call, {**call, "call_id": "not-captured"}],
+        "timeout_seconds": 30.0,
+        "deadline_monotonic": 123.0,
+        "summary": None,
+    }
+    if captured:
+        payload.update(
+            view=ApprovalBatchView(
+                round_id="round-1",
+                session_id="session-1",
+                run_id="run-1",
+                revision=1,
+                rows=(
+                    ApprovalRowView(
+                        verdict_key="call-1",
+                        call_count=1,
+                        action_label="Read file",
+                        targets=("original/path",),
+                        authority=ApprovalAuthority(
+                            "local",
+                            "default",
+                            "Default",
+                            "This chat",
+                            "profile",
+                            "call",
+                            "Settings",
+                        ),
+                        legal_decisions=("approve_once", "allow_matching", "deny"),
+                        requires_review=False,
+                        withheld_scope_copy="",
+                        argument_sets=({"private_capture": object()},),
+                    ),
+                ),
+                call_count=1,
+                bulk_once=True,
+                bulk_deny=True,
+            ),
+            presentation_state={"private_ui": object()},
+            presentation_revision=1,
+        )
+    service._mount_approval(payload)
+    if surface == "event":
+        event = queue.get_nowait()
+        assert event.type == "approval_requested"
+        wire = event.to_wire()["payload"]
+    else:
+        wire = service.list_approvals()[0]
+        assert wire["surface"] == "mobile"
+        wire = {key: value for key, value in wire.items() if key != "surface"}
+    expected_calls = [dict(call), {**call, "call_id": "not-captured"}]
+    if captured:
+        expected_calls[0]["options"] = ["approve_once", "deny"]
+        expected_calls[1]["options"] = []
+    assert wire == {
+        "round_id": "round-1",
+        "session_id": "session-1",
+        "run_id": "run-1",
+        "calls": expected_calls,
+        "timeout_seconds": 30.0,
+        "deadline_monotonic": 123.0,
+        "summary": None,
+    }
+    assert json.loads(json.dumps(wire)) == wire
+    assert service._state.pending_approvals["round-1"] is payload
+    assert call["arguments"] is arguments
+    assert call["options"] == ["approve_once", "approve_session", "deny"]
 
 
 class _LoopSafeGate:
@@ -1611,7 +1715,7 @@ async def test_relay_raised_round_lists_with_surface_and_fires_event(
         assert event.session_id == "desktop-session-1"
         assert event.payload["surface"] == "desktop"
         assert event.payload["child_id"] == "child-a"
-        json.dumps(event.to_wire())
+        assert json.loads(json.dumps(event.to_wire()))["payload"] == event.payload
 
         # A mobile round mounts beside it: both surfaces list, correctly
         # labelled, and the mobile entry carries no child binding.

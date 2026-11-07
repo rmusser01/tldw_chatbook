@@ -58,7 +58,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -96,6 +96,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from tldw_chatbook.Web_Server.served_relay_publisher import _relay_calls
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,57 @@ def _wire_safe(value: Any) -> Any:
     return value
 
 
+def _approval_wire_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep the mobile wire fields and the relay's captured-choice narrowing.
+
+    The owner retains the internal view and presentation state. Neither is
+    a wire object; matching arguments still come from the original calls.
+    """
+    raw_calls = payload.get("calls")
+    rows = (
+        [row for row in raw_calls if isinstance(row, Mapping)]
+        if isinstance(raw_calls, list)
+        else []
+    )
+    calls = _relay_calls(raw_calls, payload.get("view"))
+    for row, call in zip(rows, calls):
+        call.update(
+            (key, row[key])
+            for key in (
+                "server_key",
+                "tool_name",
+                "server_label",
+                "reason",
+                "effects",
+                "execution_policy",
+                "path_precheck_failed",
+                "full_command",
+                "warning",
+                "scope_notice",
+                "rationale",
+                "description",
+            )
+            if key in row
+        )
+    return {
+        **{
+            key: payload[key]
+            for key in (
+                "round_id",
+                "session_id",
+                "run_id",
+                "timeout_seconds",
+                "deadline_monotonic",
+                "summary",
+                "surface",
+                "child_id",
+            )
+            if key in payload
+        },
+        "calls": calls,
+    }
+
+
 class MobileSendRefused(RuntimeError):
     """The engine refused a mobile send before a run started."""
 
@@ -196,7 +248,9 @@ class MobileEvent:
         return {
             "type": self.type,
             "session_id": self.session_id,
-            "payload": self.payload,
+            "payload": _approval_wire_payload(self.payload)
+            if self.type == "approval_requested"
+            else self.payload,
             "seq": self.seq,
         }
 
@@ -1226,7 +1280,7 @@ class MobileChatService:
         mobile first, then desktop (insertion order).
         """
         mobile = [
-            {**payload, "surface": "mobile"}
+            {**_approval_wire_payload(payload), "surface": "mobile"}
             for payload in self._state.pending_approvals.values()
         ]
         desktop = [dict(entry) for entry in self._desktop_approvals.values()]

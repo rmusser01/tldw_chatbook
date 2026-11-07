@@ -247,6 +247,7 @@ async def test_feedback_message_compatibility_alias_reaches_current_screen_handl
 
     assert ApprovalFeedbackChanged is ChatApprovalCard.ApprovalFeedbackChanged
     seen = []
+    decisions_seen = []
 
     class FeedbackHarness(App):
         handle_console_approval_decided = ChatScreen.handle_console_approval_decided
@@ -256,12 +257,28 @@ async def test_feedback_message_compatibility_alias_reaches_current_screen_handl
             self._approval_feedback = SimpleNamespace(
                 refresh=lambda session, run: seen.append((session, run))
             )
+            self._console_chat_controller = SimpleNamespace(
+                store=SimpleNamespace(active_session_id="another-chat"),
+                resolve_pending_approval=lambda decisions,
+                *,
+                round_id: decisions_seen.append((decisions, round_id)),
+            )
 
     app = FeedbackHarness()
     async with app.run_test() as pilot:
         app.post_message(ApprovalFeedbackChanged("owning-chat", "owning-run"))
         await pilot.pause()
         assert seen == [("owning-chat", "owning-run")]
+        decision = ChatApprovalCard.ApprovalDecided(
+            {"owning-call": "deny"},
+            round_id="owning-round",
+            denial_reasons={"owning-call": "Keep private"},
+        )
+        app.post_message(decision)
+        await pilot.pause()
+        assert decisions_seen == [({"owning-call": "deny"}, "owning-round")]
+        assert decisions_seen[0][0] is decision.decisions
+        assert decision.decisions.denial_reasons == {"owning-call": "Keep private"}
 
     # A wrapper without the actual @on metadata must not receive this event.
     class UnwiredHarness(App):

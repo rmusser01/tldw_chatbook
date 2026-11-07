@@ -3818,6 +3818,23 @@ def console_view_hooks(self) -> dict[str, Any]:
     }
 
 
+def handle_approval_card_event(screen, event) -> None:
+    """Route feedback to its owner and decisions to the card's captured round.
+
+    Messages can arrive after the active chat changes. Resolve the round
+    shown by the originating card, never whichever chat is active now.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+    event.stop()
+    if isinstance(event, ChatApprovalCard.ApprovalFeedbackChanged):
+        _refresh_approval_feedback(screen, event.session_id, event.run_id)
+        return
+    controller = screen._console_chat_controller
+    if controller is not None:
+        controller.resolve_pending_approval(event.decisions, round_id=event.round_id)
+
+
 def _refresh_approval_feedback(screen, session_id: str, run_id: str) -> None:
     """Attach the optional display collaborator only after an approval emits facts."""
     if screen._approval_feedback is None:

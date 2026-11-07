@@ -188,6 +188,8 @@ EXCEPTION_TYPE_BIND_SITES = frozenset(
         # TASK-39060: each binds type(<x>).__name__ (owner decision, 2026-11-06).
         ("tldw_chatbook/Agents/mcp_tool_provider.py", "MCPToolProvider._persona_floor"),
         ("tldw_chatbook/Agents/persona_policy.py", "parse_persona_policy_from_rules"),
+        # ADR-355: constant path-read failure site; class name only, no path/message.
+        ("tldw_chatbook/RAG_Search/state_paths.py", "_explicit_rag_setting"),
         (
             "tldw_chatbook/Character_Chat/local_character_persona_service.py",
             "normalize_policy_rules",
@@ -424,6 +426,7 @@ EXCEPTION_TYPE_TOKEN_ROWS: dict[tuple[str, str, str], tuple[int, str]] = {
     ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._resolve_runtime", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
     ("tldw_chatbook/Persona_Buddy/controller.py", "load_local_persona_portrait", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
     ("tldw_chatbook/Persona_Buddy/preferences.py", "persist_persona_buddy_preferences", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/RAG_Search/state_paths.py", "_explicit_rag_setting", "keyword"): (1, "constant RAG path-read failure site; loguru bind held to type(exc).__name__ by the bind-site census"),
     ("tldw_chatbook/UI/Console_Modules/dictation.py", "ConsoleDictationController._notify_console_dictation_error", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
     ("tldw_chatbook/UI/Console_Modules/realtime.py", "ConsoleRealtimeController._console_realtime_connect_failed", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
     ("tldw_chatbook/UI/MCP_Modules/mcp_inspector.py", "audit_entry_detail_payload", "string"): (2, "MCP audit display field, not loguru extra"),
