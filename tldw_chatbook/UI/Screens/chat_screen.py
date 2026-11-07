@@ -17902,6 +17902,8 @@ class ChatScreen(BaseAppScreen):
                     ui_ready = True
                 if ui_ready:
                     await self._archive_recovery_view().sync()
+                if poll_record is None:  # Those awaits can outlive the display's 1 s life.
+                    await config_sync.rewarm_console_presentation(self)
                 if not poll_is_current():
                     return False
                 if not config_sync.sync_console_rail_visibility(self):

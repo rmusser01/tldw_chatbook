@@ -152,6 +152,30 @@ async def prepare_console_presentation_sync(screen: Any) -> bool:
     return warmed
 
 
+
+async def rewarm_console_presentation(screen: Any) -> None:
+    """Re-read an expired checked display before a FULL sync's rail step.
+
+    The FULL warms the display before its projection, then awaits the
+    transcript and the archive view. Under load those awaits outlived the
+    display's 1 s life, the rail step refused it, and the whole sync replayed,
+    itself and then its replay, about once a second (r11c-rev2). One read of
+    the expired display replaces that replay; a live display reads nothing.
+    """
+    from .console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        _standard_readiness_projections,
+    )
+
+    projection = getattr(screen, "_console_readiness_config_projection", None)
+    if (
+        type(projection) is ConsoleReadinessConfigProjection
+        and projection in _standard_readiness_projections
+    ):
+        projection.run(lambda: None, life=projection.max_age)  # Expired only.
+        if projection.pending:
+            await projection._settled.wait()
+
 def full_sync_replay_delay(screen: Any) -> bool | float:
     """Delay for the whole-sync replay of a FULL that could not render.
 

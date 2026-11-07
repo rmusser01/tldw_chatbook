@@ -216,6 +216,55 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
 
 
 @pytest.mark.asyncio
+async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
+    monkeypatch,
+):
+    """A FULL sync's own awaits must not expire the display its rail step reads.
+
+    The FULL warms the checked display before its projection, then awaits the
+    transcript and the archive view before its rail-visibility step. Under load
+    those awaits outlived the display's 1 s life, the rail step refused the
+    expired display, and the whole sync replayed. The replay did the same, so
+    an idle Console kept syncing about once a second for as long as the load
+    lasted. That was the flake in
+    ``test_an_unparseable_config_leaves_an_idle_console_idle``: 4 refusals in
+    4 s, all on proof age (1.20-1.33 s), at load about 70. The FULL now warms
+    the display again before its rail step.
+    """
+    clock = _install_clock(monkeypatch)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            projection = await _fresh_display(console)
+            console._stop_console_transcript_sync_timer()  # No run poll.
+            await until(lambda: not projection.pending, timeout=30)
+            real = console._sync_native_console_transcript
+
+            stretch = {"share": 1.2}
+
+            async def slow_transcript(*args, **kwargs):
+                # Load stretched the FULL's awaits.
+                clock.now += projection.max_age * stretch["share"]
+                return await real(*args, **kwargs)
+
+            console._sync_native_console_transcript = slow_transcript
+            console._console_control_bar_replay_whole_sync = False
+            result = await console._sync_native_console_chat_ui()
+            assert result is True and not console._console_control_bar_replay_whole_sync, (
+                "a FULL sync whose awaits outlived the display replayed itself"
+            )
+
+            # A display still live at the rail step is not read again: with
+            # config unparseable each read is a rebuild under the config locks.
+            await until(lambda: not projection.pending, timeout=30)
+            stretch["share"] = 0.6
+            read_at = projection.at
+            assert await console._sync_native_console_chat_ui() is True
+            assert projection.at == read_at, "the rail step re-read a live display"
+
+
+@pytest.mark.asyncio
 async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_tick(
     monkeypatch,
 ):
@@ -583,7 +632,6 @@ def test_a_warm_load_no_owner_saw_still_ends_the_cold_episode(monkeypatch):
     assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [False] * 3
 
 
-
 @pytest.mark.asyncio
 @private_profile_test
 async def test_only_a_successful_config_load_counts_as_a_cache_install(request):
@@ -616,6 +664,7 @@ async def test_only_a_successful_config_load_counts_as_a_cache_install(request):
         f"an unparseable file counted as an install: {loaded} -> {broken} -> {still_broken}"
     )
     assert fixed > still_broken, f"the fixed file installed nothing: {fixed}"
+
 
 def test_the_credential_poll_defers_a_cold_read_once_and_then_stays_idle(monkeypatch):
     """TASK-36511.4: the 0.25 s credential poll warms cold config off the loop.

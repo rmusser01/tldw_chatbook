@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-06 22:29
+updated_date: 2026-11-07 00:34
 labels:
 - follow-up
 - console
@@ -101,6 +101,7 @@ Found in round 8 of the 2026-10-23 burn-down; checked on dev 29592ecc9b, 2026-11
     - The App class is set while current, then cleared under a pushed screen that pops. Before the pop fix (M3: the drop removed) it was red with `an App class cleared under a popped screen still styles the Console`.
   - The breakpoint test now also adds a rule while the Console is current and flips again. A scan cache that ignores the rules (M4) fails with `a rule added to the sheet was not scanned`.
   - It then applies another breakpoint class over the same sheet. A scan cache that ignores the class set (M5) fails with `a new breakpoint class was not scanned`. The first version of that check passed M5 by accident: its rule targeted `#console-shell`, whose subtree holds every node, so the check now targets `#console-transcript-region`.
+- **Review r11c-rev2.** Nothing pinned that a pop with no App change keeps the skip. The covered-screen test now starts by pushing and popping a screen with nothing changed, then returns: under a tenth of the nodes may restyle. M3b drops the record on every pop and fails with `a pop with no App change cost the next return 555 of 555 nodes`.
 - After the review fixes, the changed test files at `-n 4` gave 50 passed (load about 110). Preflight passed, and `Tests/CI` gave 1215 passed and 1 skipped.
 - AC#2's other resume duties are untouched by construction, because only the flag changes. The suspended-screen class is `""` in this app, and the notifications and auto-focus are not asserted. `stack_updates` and the size-change relayout are asserted.
 - 4 repeats of the new tests, serial, at load 50-67: all passed.

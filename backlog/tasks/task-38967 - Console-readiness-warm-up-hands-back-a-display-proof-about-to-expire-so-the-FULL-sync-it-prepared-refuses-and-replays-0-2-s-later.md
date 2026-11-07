@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-06 23:24
+updated_date: 2026-11-07 01:21
 labels:
 - follow-up
 - console
@@ -120,5 +120,20 @@ None of them is on a PR lane. Each passed 6 of 6 here.
   - An earlier interleaved set at load 60-135: base 4 of 4 passed, head 4 of 4 passed.
   - It is a whole-file census entry, so this is listed as a proposed follow-up.
 
-**Files:** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/UI/test_console_pending_facts_cold_readiness.py`, `Tests/UI/test_console_pending_facts_direct_control_cold_readiness.py`, `Tests/UI/test_first_persistence_getter_attribution.py`.
+**Review round (r11c-rev2): the self-replaying FULL sync.** Instrumenting that flake found a product loop in which a FULL sync replays itself.
+- **The loop.** A FULL warms the checked display before its projection, then awaits the transcript and the archive view before its rail-visibility step. Under load those awaits outlived the display's 1 s life, so the rail step refused the expired display and the whole sync replayed. The replay did the same thing.
+  - Measured: in a failing run, all 4 refusals in a 4 s window were on proof age, at 1.20-1.33 s. Every run, passing or failing, showed FULL syncs every 1-2.5 s for as long as the load lasted.
+  - Base has the same path.
+- **The fix.** Before its rail step, a FULL now re-reads the display if, and only if, it has expired: `config_sync.rewarm_console_presentation`, which calls `run(life=max_age)` and awaits the read. One read replaces a whole replay, and a live display reads nothing. With config unparseable, every read is a rebuild under the config locks, so the rail step must not add reads.
+  - A first version called `warm(ahead=...)`. That broke `_refused_warm_up`'s call-through wrapper, which takes no keyword arguments, in 3 tests, so `warm()` keeps its signature.
+- **Test.** `test_a_full_sync_slower_than_the_display_life_does_not_replay_itself` uses the clock harness. The transcript step advances the clock by 1.2x the display life.
+  - Red before the fix: `a FULL sync whose awaits outlived the display replayed itself`.
+  - A second FULL that stretches by only 0.6x must not re-read at the rail step. Under a variant that reads ahead there, it fails with `the rail step re-read a live display`.
+- **Stress.** The unparseable-config test with three neighbours, `-n 4`:
+  - final version, 10 of 10 runs passed at load 40-53;
+  - then 5 interleaved rounds each at load 21-40, base 5 of 5 and head 5 of 5;
+  - earlier, at load 40-87, base failed 2 of 10 (`kept replaying`, 2 full syncs in 2 s).
+- **Not shown deterministic.** At load 48-122, before the final version, two failures had a second mode: `the full sync never pushed`, 4 FULL syncs and 0 core pushes in the 10 s deadline. The core push takes the config locks without blocking and replays the sync when they are busy. With config unparseable, every off-loop config read holds those locks for a failed rebuild, so under extreme load the push can lose every probe for 10 s. Making that deterministic needs a design change, for example a cold read that does not hold the locks, or not replaying the whole sync on lock contention. It stays a proposed follow-up.
+
+**Files:** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/UI/test_console_pending_facts_cold_readiness.py`, `Tests/UI/test_console_pending_facts_direct_control_cold_readiness.py`, `Tests/UI/test_first_persistence_getter_attribution.py`.
 <!-- SECTION:NOTES:END -->

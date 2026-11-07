@@ -829,11 +829,25 @@ async def test_an_app_class_that_moved_while_the_console_was_covered_shows_on_re
     * set while current, cleared under a pushed screen that then pops: Textual
       posts every pop's ``ScreenResume`` with ``refresh_styles=False`` and
       restyles nothing, so the next return must not skip either.
+
+    A pop with no App change keeps the skip.
     """
     host = _switch_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console = await _switched_host(pilot, host)
         await _return_to(host, pilot, console)  # Settle the sheet (see above).
+
+        # A pop with nothing moved keeps the skip (a dropped record on every
+        # pop would bring the full restyle back after each dialog).
+        await host.push_screen(_AwayScreen())
+        await pilot.pause()
+        await host.pop_screen()
+        await pilot.pause()
+        restyled, _ = await _return_to(host, pilot, console)
+        total = sum(1 for _ in console.walk_children(with_self=True))
+        assert len(restyled) * 10 < total, (
+            f"a pop with no App change cost the next return {len(restyled)} of {total} nodes"
+        )
 
         host.add_class(_PROBE_CLASS)
         await pilot.pause()
