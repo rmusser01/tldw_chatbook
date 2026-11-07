@@ -117,7 +117,10 @@ def _default(fn: ast.FunctionDef | ast.AsyncFunctionDef, param: str) -> ast.expr
 
 # ponytail: names are tracked module-wide, not per scope (an over-approximation,
 # so it fails closed); scope it per function if a service ever trips over a
-# reused name.
+# reused name. Deliberately reflective reaches stay unseen: getattr(self, CONST)
+# with CONST == "client", getattr(self, "_require_client")(), and
+# self.__dict__["client"] (none exist today; the Protocols are typing-only, so
+# a miss leaves a stale annotation, not a runtime bug).
 class ClientScan:
     """What one service module does with its client: ``used`` and ``unresolved``."""
 
