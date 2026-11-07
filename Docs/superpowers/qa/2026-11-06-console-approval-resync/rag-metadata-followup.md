@@ -11,3 +11,9 @@ Both moved class ASTs and all other bodies in the four original owners match the
 Root independently reproduced metadata40, Audio12 and119 CI contracts. The required UI-ready import budget passes; Windows eager import count688 retains the identical strict<688 baseline failure. Canonical diagnostic inventory remains730 owners, with7801 TASK-494 calls and16 sink files; only the separately reviewed Audio warning owner changed55 to54. All prior fast-lane/census members and limits remain, with the bounded metadata file enrolled. No new native/browser timing or terminal-settlement qualification is claimed; physical acceptance stays open with zero qualified samples and auto-merge off.
 
 Exact source bindings are in [rag-metadata-source-manifest.json](rag-metadata-source-manifest.json). Private receipts retain original commands, startup/origin/guard evidence, RED/GREEN causes and baseline comparison; no fixture profile or argument content is exported here.
+
+## Latest-dev source integration
+
+The repair was committed at fc1ad3cde5, then all20 PR commits rebased unchanged onto dev a0ae30b7ed (#3426 Windows TTS playback/security). Range-diff reports all20 equal, and all6 repaired RAG product files have identical Git text bytes before and after the rebase. Test and inventory counts above retain their pre-rebase fc1 source scope; the new combined inventory and renewed physical capture have separate receipts. Incoming TTS source, ratchet pins and security policies are preserved.
+
+The source manifest now hashes UTF-8 text with CRLF normalized to LF, matching Git text content across Windows/Linux checkouts. Historical raw-worktree bindings remain available in the preserved fc1 commit. Actual native captures continue to use exact raw-byte source freezes for their own revision; normalized evidence does not authorize a measurement or substitute for those guards.
