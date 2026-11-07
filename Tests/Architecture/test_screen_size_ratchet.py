@@ -337,7 +337,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # kept fleet rows with the historical read (+1 line, no methods). On the
     # round-11 stacked tree, after TASK-38950/38967 used the last of the
     # headroom; exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24617, 741),
+    #: 2026-11-06: re-measured after rebasing onto dev 8b762b52fa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24617/741 -> 24621/741.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24621, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
