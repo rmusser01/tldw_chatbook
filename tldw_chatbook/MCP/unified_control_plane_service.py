@@ -5804,23 +5804,19 @@ class UnifiedMCPControlPlaneService:
                 fingerprint feeds the rug-pull guard (AC#4).
             profile_id: Permission profile to write.
         """
-        store = self.permission_store
-        if store is None:
-            _publish_grant_application("not_applied", error_code="writer_unavailable")
-            return
-        hash_value: str | None = None
-        if server_key not in HASH_FREE_SERVER_KEYS:
-            if tool is None:
-                raise ValueError("tool is required to add an arg rule")
-            hash_value = definition_hash(tool.description, tool.input_schema)
-        store.add_tool_arg_rule(
+        from .arg_rule_approval import apply_exact_arg_rule
+
+        return apply_exact_arg_rule(
+            self.permission_store,
             server_key,
             tool_name,
             args=args,
-            definition_hash=hash_value,
+            tool=tool,
             profile_id=profile_id,
+            publish=_publish_grant_application,
+            hash_definition=definition_hash,
+            hash_free_server_keys=HASH_FREE_SERVER_KEYS,
         )
-        _publish_grant_application("applied", actual_scope="allow_matching")
 
     def arg_rule_allows_call(
         self,
