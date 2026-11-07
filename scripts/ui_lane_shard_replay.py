@@ -26,6 +26,15 @@ Usage:
     gh run view <run-id> --job <job-id> --log > run1/shard1.log
     python scripts/ui_lane_shard_replay.py --shards 32 run1 run2
     python scripts/ui_lane_shard_replay.py --shards 32 --tail 92 --write run1 run2
+
+TASK-39144: ``--rebalance MINUTES`` swaps entries between shards, across the
+whole census, until no shard's replay passes MINUTES of pytest (the census
+header names the value that keeps a job 5 min under its cap); ``--charge
+ENTRY=SECONDS`` prices an entry no log timed. ``--write`` then swaps those
+entries in the census, each with the comment lines directly above it::
+
+    python scripts/ui_lane_shard_replay.py --shards 32 --rebalance 13.2 \\
+        --charge Tests/UI/test_new.py=40 --write run1 run2
 """
 
 from __future__ import annotations
@@ -174,12 +183,70 @@ def entry_seconds(entries: list[str], seconds: dict[str, float]) -> dict[str, fl
 def shard_loads(
     entries: list[str], seconds: dict[str, float], total: int
 ) -> list[float]:
-    """Seconds each round-robin shard carries, using node times when available."""
+    """Seconds each round-robin shard carries, using node times when available.
+
+    Dealt by the checker's own ``shard``, the function the UI lane calls.
+    """
     costs = entry_seconds(entries, seconds)
-    loads = [0.0] * total
-    for index, entry in enumerate(entries):
-        loads[index % total] += costs[entry]
-    return loads
+    return [
+        sum(costs[entry] for entry in _checker.shard(entries, index, total))
+        for index in range(total)
+    ]
+
+
+def rebalanced(
+    entries: list[str],
+    costs: dict[str, float],
+    total: int,
+    target: float,
+    fixed: frozenset[str] = frozenset(),
+) -> tuple[list[str], int]:
+    """Swap entries between shards until each carries at most ``target`` s.
+
+    TASK-39144. A swap trades two entries' census positions, so each shard
+    keeps its slot count and every other entry its slot; the checker's own
+    ``shard`` still deals the result. Each step takes the heaviest shard and
+    the swap with another shard that leaves the pair's heavier side lightest,
+    and only while that shard is over ``target``, so a census already under
+    it does not move. Every swap lowers the sum of squared loads, so the
+    search ends; it stops early when no swap lowers the heaviest shard.
+
+    Args:
+        entries: The census, in file order.
+        costs: Seconds per entry (``entry_seconds``).
+        total: The UI lane's shard count.
+        target: The most seconds a shard may carry.
+        fixed: Entries that must keep their slot.
+
+    Returns:
+        The new census order and the number of swaps it took.
+    """
+    order = list(entries)
+    slots = [_checker.shard(list(range(len(order))), index, total) for index in range(total)]
+    loads = [sum(costs[order[slot]] for slot in shard) for shard in slots]
+    swaps = 0
+    while True:
+        heavy = max(range(total), key=loads.__getitem__)
+        if loads[heavy] <= target:
+            return order, swaps
+        best = None
+        for light in range(total):
+            gap = loads[heavy] - loads[light]
+            for a in slots[heavy] if gap > 0 else ():
+                for b in slots[light]:
+                    moved = costs[order[a]] - costs[order[b]]
+                    if not 0 < moved < gap or {order[a], order[b]} & fixed:
+                        continue
+                    peak = max(loads[heavy] - moved, loads[light] + moved)
+                    if best is None or peak < best[0]:
+                        best = (peak, a, b, light, moved)
+        if best is None:
+            return order, swaps
+        _, a, b, light, moved = best
+        order[a], order[b] = order[b], order[a]
+        loads[heavy] -= moved
+        loads[light] += moved
+        swaps += 1
 
 
 def flattest_tail(
@@ -229,16 +296,48 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tail", type=int, default=0, help="entries to re-order")
     parser.add_argument("--write", action="store_true", help="rewrite the census tail")
     parser.add_argument("--census", type=Path, default=CENSUS_PATH)
+    parser.add_argument(
+        "--charge",
+        action="append",
+        default=[],
+        metavar="ENTRY=SECONDS",
+        help="seconds for an entry no log timed (charge new entries twice their local time)",
+    )
+    parser.add_argument(
+        "--rebalance",
+        type=float,
+        metavar="MINUTES",
+        help="swap entries across the whole census until no shard carries more pytest minutes",
+    )
     args = parser.parse_args(argv)
 
     seconds = worst_case([run_seconds(run) for run in args.runs])
     if not seconds:
         print("no shard logs with pytest file lines found", file=sys.stderr)
         return 2
+    for charge in args.charge:
+        entry, _, spent = charge.rpartition("=")
+        seconds[entry] = float(spent)
     entries = read_census(args.census)  # what the lane deals
     print(
         f"{args.shards} shards, as listed:  {_minutes(shard_loads(entries, seconds, args.shards))}"
     )
+    if args.rebalance is not None:
+        text = args.census.read_text(encoding="utf-8")
+        order, swaps = rebalanced(
+            entries,
+            entry_seconds(entries, seconds),
+            args.shards,
+            args.rebalance * 60,
+            anchored(text),
+        )
+        print(
+            f"{args.shards} shards, {swaps} swaps:  {_minutes(shard_loads(order, seconds, args.shards))}"
+        )
+        if args.write and swaps:
+            args.census.write_text(_swapped(text, order), encoding="utf-8")
+            print(f"swapped {swaps} pairs of entries in {args.census.name}")
+        return 0
     if not args.tail:
         return 0
     head, tail = entries[: -args.tail], entries[-args.tail :]
@@ -253,6 +352,46 @@ def main(argv: list[str] | None = None) -> int:
         args.census.write_text(_reordered(args.census, tail, order), encoding="utf-8")
         print(f"rewrote the last {args.tail} entries of {args.census.name}")
     return 0
+
+
+def _entry_spans(lines: list[str]) -> dict[str, tuple[int, int]]:
+    """Each entry's lines: the comment run right above it, then the entry."""
+    spans = {}
+    for index, line in enumerate(lines):
+        if line.strip() and not line.lstrip().startswith("#"):
+            start = index
+            while start and lines[start - 1].lstrip().startswith("#"):
+                start -= 1
+            spans[line.strip()] = (start, index + 1)
+    return spans
+
+
+def anchored(text: str) -> frozenset[str]:
+    """Entries whose comments open a block (after a blank line or the file's
+    start): those comments head the block, so --rebalance leaves them be."""
+    lines = text.splitlines(keepends=True)
+    return frozenset(
+        entry
+        for entry, (start, _) in _entry_spans(lines).items()
+        if start == 0 or not lines[start - 1].strip()
+    )
+
+
+def _swapped(text: str, order: list[str]) -> str:
+    """The census text with its entries in ``order``, each with its comments.
+
+    Blank lines and block-opening entries (``anchored``) keep their place.
+    """
+    lines = (text if text.endswith("\n") else text + "\n").splitlines(keepends=True)
+    spans = _entry_spans(lines)
+    out: list[str] = []
+    at = 0
+    for old, new in zip(spans, order):
+        start, end = spans[old]
+        out += lines[at:start]
+        out += lines[slice(*spans[new])]
+        at = end
+    return "".join(out + lines[at:])
 
 
 def _reordered(census: Path, tail: list[str], order: list[str]) -> str:
