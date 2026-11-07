@@ -25295,3 +25295,9 @@ minutes:
   default `~/.local/share/tldw_cli/default_user` that previewed as `unknown`.
   Build stores in a separate setup child, or copy store files plainly with
   `shutil.copytree`, and write the config (and its data folder) before any import.
+
+## Raising ChatScreen's screen-size row means editing three files, not one (TASK-36948.3, 2026-11-07)
+
+**Incident.** TASK-36948.3 added one public method to ChatScreen and raised its `test_screen_size_ratchet.py` row by the measured +38 lines and +1 method, as a dated waiver. The brief called that a one-line fix. The serial `Tests/Architecture` run (26 min) then failed two tests that only that full run reaches: `test_console_review_selection_controller_boundary.py` (`LIVE_RATCHET_ROW`) and `test_console_wave6_closeout_inventory.py` (`LIVE_RATCHET_BUDGET`). TASK-38988 put both pins there on purpose, to catch any raise of the row.
+
+**What to do.** When you raise or lower ChatScreen's row, run `grep -rn "LIVE_RATCHET" Tests/Architecture` and re-pin every match to the new row in the same commit.

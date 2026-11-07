@@ -337,7 +337,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # kept fleet rows with the historical read (+1 line, no methods). On the
     # round-11 stacked tree, after TASK-38950/38967 used the last of the
     # headroom; exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24608, 741),
+    # TASK-36948.3, 2026-11-07: same waiver. ChatScreen reports its own unsaved
+    # composer work (has_unsaved_editor_state), so the backup probe stops reading
+    # its private fields: +38 lines, +1 method. Pinned at the exact measurement after the rebase onto dev.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24630, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

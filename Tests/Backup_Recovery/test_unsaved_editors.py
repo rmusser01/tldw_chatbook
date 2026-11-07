@@ -194,6 +194,38 @@ def test_console_transition_and_send_stashes_are_not_reconciled(location):
     assert composer.draft_text() == ("visible draft" if location == "visible" else "")
 
 
+@pytest.mark.parametrize("shape", ["transition", "pending", "stash", "text"])
+def test_console_unknown_draft_shape_refuses_instead_of_clean(shape):
+    """Every value here would read as clean; ChatScreen must refuse instead."""
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import (
+        UnsavedEditor,
+        probe_unsaved_editors,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
+    from tldw_chatbook.Widgets.Console.console_composer_bar import (
+        ConsoleComposerBar,
+        ConsoleDraftStash,
+    )
+
+    composer = ConsoleComposerBar()
+    view = ChatScreen(SimpleNamespace(app_config={}))
+    view.query = lambda kind: [composer]
+    if shape == "transition":
+        view._session._console_draft_switch_snapshot = ("session", "", 1, None)
+    stash = {
+        "stash": SimpleNamespace(text="", segments=[]),
+        "text": ConsoleDraftStash([], b"", False),
+    }.get(shape)
+    view._console_pending_send = (
+        SimpleNamespace(stash=None)
+        if shape == "pending"
+        else _ConsolePendingSend("session", stash, object())
+    )
+    assert probe_unsaved_editors(editors=(view,)) == (
+        UnsavedEditor("Editor", "unknown-editor-state"),
+    )
+
+
 def test_unknown_store_does_not_execute_sessions():
     from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -1074,7 +1106,9 @@ def test_exact_type_names_point_at_their_defining_modules():
     import importlib
 
     pairs = _exact_type_name_pairs()
-    assert len(pairs) >= 35, f"collector found only {len(pairs)} pairs"
+    # 35 -> 33 (TASK-36948.3): ChatScreen checks its own pending-send and
+    # draft-stash types, so the probe no longer names them.
+    assert len(pairs) >= 33, f"collector found only {len(pairs)} pairs"
     wrong = []
     for module, name in sorted(pairs):
         full = "tldw_chatbook." + module
