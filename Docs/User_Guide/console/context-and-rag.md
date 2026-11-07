@@ -1214,7 +1214,10 @@ Two cases work differently for now:
   choose **Console: Citation records…**. The answer only overrides that
   `false`: `true`, or no setting, always means records are on. A profile
   that already has citation records of its own is not asked, because its
-  `false` was set on purpose.
+  `false` was set on purpose. Once you've chosen **Keep records**, `false` in
+  `config.toml` no longer turns records off; choose **Don't keep** from the
+  same palette entry instead. If your answer can't be saved, it
+  lasts only until Chatbook closes.
 
 Dim notices under the reply track verification: "Checking citations…",
 then "Citations repaired" or "Citations repaired · View original attempt"
