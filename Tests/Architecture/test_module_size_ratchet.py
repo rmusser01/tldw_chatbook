@@ -234,7 +234,8 @@ _BUDGETS: dict[str, int] = {
     # pauses before acceptance at the Ask trigger (+8), and the two
     # compaction routes lift that pause (+4); the logic lives in
     # console_compaction_gate.py and console_fleet_wake.py.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29180,
+    # 2026-11-06: re-measured after rebasing onto dev 8b762b52fa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 29180 -> 29192.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29192,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
