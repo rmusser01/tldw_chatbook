@@ -251,9 +251,43 @@ def test_declare_store_refuses_a_missing_closer_and_a_duplicate_owner():
         declare_store("tests.closer_typo", closer="clsoe")(Store)
     with pytest.raises(ValueError, match="db.workspaces"):
         declare_store("db.workspaces", closer="close")(Store)
+    # Same class name, another module: still a different store.
+    impostor = type("WorkspaceDB", (), {"close": Store.close, "__module__": "tests.elsewhere"})
+    with pytest.raises(ValueError, match="db.workspaces"):
+        declare_store("db.workspaces", closer="close")(impostor)
     assert "tests.closer_typo" not in store_declarations
-    assert Store not in repository_types()
+    assert Store not in repository_types() and impostor not in repository_types()
     assert repository_types()[WorkspaceDB] == "db.workspaces"
+
+
+def test_a_retried_store_import_surfaces_its_own_error_then_redeclares(tmp_path, monkeypatch):
+    import importlib
+    import sys
+
+    from tldw_chatbook import DB
+
+    (tmp_path / "retry_probe_store.py").write_text(
+        "from pathlib import Path\n"
+        "from tldw_chatbook.DB import declare_store\n"
+        "@declare_store('tests.retry_probe')\n"
+        "class RetryProbeStore:\n"
+        "    pass\n"
+        "if (Path(__file__).parent / 'fail').exists():\n"
+        "    raise ImportError('real cause')\n"
+    )
+    (tmp_path / "fail").touch()
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(DB, "store_types", DB.store_types)  # restored after the test
+    try:
+        for _ in range(2):  # Python drops a failed module, so the second import reruns it.
+            with pytest.raises(ImportError, match="real cause"):
+                importlib.import_module("retry_probe_store")
+        (tmp_path / "fail").unlink()
+        store = importlib.import_module("retry_probe_store").RetryProbeStore
+        assert [cls for cls, owner in DB.store_types.items() if owner == "tests.retry_probe"] == [store]
+    finally:
+        sys.modules.pop("retry_probe_store", None)
+        DB._store_declarations.pop("tests.retry_probe", None)
 
 
 def test_registration_table_is_built_once_not_per_connection_access(tmp_path):

@@ -57,7 +57,9 @@ def declare_store(owner_id: str, **fields):
 
     Raises:
         TypeError: ``closer`` does not name a callable attribute of ``cls``.
-        ValueError: ``owner_id`` is already declared.
+        ValueError: ``owner_id`` is already declared by another class. A class
+            with the same module and qualified name replaces its entry, because a
+            retried import of a module that failed after the class ran redefines it.
     """
     declaration = StoreDeclaration(owner_id, **fields)
 
@@ -67,10 +69,14 @@ def declare_store(owner_id: str, **fields):
         if closer is not None and not callable(getattr(cls, closer, None)):
             raise TypeError(f"{cls.__qualname__} has no callable closer {closer!r}")
         with _store_lock:  # Store modules can be imported on two threads at once.
-            if owner_id in _store_declarations:
-                raise ValueError(f"backup participant {owner_id!r} is already declared")
+            table = dict(store_types)
+            for previous in [known for known, owner in table.items() if owner == owner_id]:
+                if (previous.__module__, previous.__qualname__) != (cls.__module__, cls.__qualname__):
+                    raise ValueError(f"backup participant {owner_id!r} is already declared")
+                del table[previous]
             _store_declarations[owner_id] = declaration
-            store_types = MappingProxyType({**store_types, cls: owner_id})
+            table[cls] = owner_id
+            store_types = MappingProxyType(table)
         return cls
 
     return register
