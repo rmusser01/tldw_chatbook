@@ -4,7 +4,9 @@
 
 **Incident.** The first draft of `Tests/Architecture/test_server_service_client_protocols.py` collected each service's client calls from attribute reads and `getattr(client, "literal")`, plus a Kanban-only rule for its spec rows. It was green for all 44 services. `server_media_reading_service.py` reaches six client methods (`process_video`, `process_audio`, `process_pdf`, `process_ebook`, `process_document`, `process_plaintext`) through `getattr(self._require_client(), client_method_name)`, and its Protocol listed none of them. A second scan that took a superset instead (every attribute and every string literal in the module that names a `TLDWAPIClient` member) found the six at once.
 
-**What to do.** A census that cannot read a dynamic name must fail on it, not skip it. Resolve the name from what the module binds to it (`<name>="..."` keywords, a dataclass field's positional slot), and record an "unresolved" entry when nothing resolves. Before trusting a narrow scan's green, cross-check it once against a deliberately over-inclusive one.
+The fixed test still failed open. It kept the string literals bound to the name and dropped every other binding, and it reported "unresolved" only when nothing resolved. Review rv-cp added `_rv_call(method_name=_RV_CONST)` and a positional `self._rv_call("get_audio_streaming_limits")` beside one literal call, and the test stayed green.
+
+**What to do.** A census that cannot read a dynamic name must fail on it, not skip it. Resolve the name from what the module binds to it (literals, module constants, the arguments at every same-module call site, a dataclass field's constructor slot), and record an "unresolved" entry for **each** binding that does not resolve, not only when none does. Before trusting a narrow scan's green, cross-check it once against a deliberately over-inclusive one.
 
 ## A test server's sleeping handler is paid in full when `async with server` exits (TASK-38965, 2026-11-06)
 
