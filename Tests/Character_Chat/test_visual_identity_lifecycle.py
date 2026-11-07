@@ -459,3 +459,37 @@ def test_app_injected_notes_database_uses_shared_seed_helper_once(
 
     assert app_module._select_profile_database(SimpleNamespace(db=db), {}) is db
     assert seeded == [db]
+
+
+def test_a_failed_notes_service_keeps_the_one_database_startup_opened(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """TASK-36947.6: no second open (and seeding) after the notes service fails."""
+    import tldw_chatbook.app as app_module
+
+    opened: list[object] = []
+
+    class _Database:
+        def close_connection(self) -> None:
+            pass
+
+    def open_profile(_config):
+        opened.append(_Database())
+        return opened[-1]
+
+    def failing_notes_service(*_args, **_kwargs):
+        raise RuntimeError("notes service failed")
+
+    set_app_global(monkeypatch, "_open_profile_chachanotes", open_profile)
+    set_app_global(monkeypatch, "get_chachanotes_db_path", lambda: tmp_path / "c.db")
+    set_app_global(monkeypatch, "NotesInteropService", failing_notes_service)
+    app = SimpleNamespace(app_config={}, _startup_chachanotes_db=None)
+
+    app_module.TldwCli._init_notes_service(app, "startup-user")
+    selected = app_module._select_profile_database(
+        app.notes_service, app.app_config, app._startup_chachanotes_db
+    )
+
+    assert app.notes_service is None
+    assert selected is opened[0]
+    assert len(opened) == 1

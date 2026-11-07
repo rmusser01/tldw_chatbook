@@ -636,3 +636,22 @@ async def test_every_alias_is_still_the_bundle_field_after_mount(request) -> Non
             assert asyncio.get_running_loop().time() < deadline, "app never reached _ui_ready"
             await asyncio.sleep(0.05)
         assert not _misaligned(app)
+
+
+@private_profile_test
+def test_the_in_app_mcp_delegate_reads_the_bundle_storage(request) -> None:
+    """TASK-36947.6: the TUI wiring hands the in-app MCP delegate the services
+    bundle's storage; before the bundle exists it reports the DBs unavailable."""
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    delegate = app.local_mcp_control_service.runtime_delegate
+    assert delegate._storage_provider is not None
+    assert delegate._storage_provider() is app.services.storage
+    services = app.services
+    del app.services  # as before ``_publish_application_services``
+    try:
+        with pytest.raises(RuntimeError, match="database is unavailable"):
+            delegate._require_chachanotes_db()
+    finally:
+        app.services = services

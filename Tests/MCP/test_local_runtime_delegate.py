@@ -278,3 +278,20 @@ def test_delegate_resolves_host_storage_per_call():
     database = object()
     current["storage"] = SimpleNamespace(chachanotes=database, media=None)
     assert delegate._require_chachanotes_db() is database
+
+
+def test_control_service_hands_its_storage_provider_to_the_default_delegate():
+    """TASK-36947.6: ``LocalMCPControlService(storage_provider=...)`` reaches the
+    delegate it builds, which is how the TUI gives it the services bundle."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
+    database = object()
+    storage = SimpleNamespace(chachanotes=database, media=None)
+    service = LocalMCPControlService(
+        store=SimpleNamespace(),
+        manifest_provider=lambda: {},
+        storage_provider=lambda: storage,
+    )
+    assert service.runtime_delegate._storage_db("chachanotes") is database
