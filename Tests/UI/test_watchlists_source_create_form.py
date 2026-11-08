@@ -246,14 +246,18 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
             ("Forum", "forum"),
         ]
         assert pane.query_one("#sources-create-type", Select).value == "rss"
-        assert not pane.query("#sources-create-frequency")
-        assert not pane.query("#sources-create-ignore-selectors")
+        assert pane.query_one("#sources-create-frequency").display is False
+        assert pane.query_one("#sources-create-ignore-selectors").display is False
         assert pane.query_one("#sources-create-name", Input).value == "Morning"
         assert (
             pane.query_one("#sources-create-url", Input).value == "https://example.test"
         )
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert pane.query_one("#sources-create-watchlist", Select).value == watchlist_id
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        assert destination.display is True
+        assert destination.disabled is True
+        assert destination.value == SourcesPane.UNASSIGNED_DESTINATION
+        assert pane.create_draft_destination == watchlist_id
         assert pane.query_one("#sources-create-tags", Input).value == "news, daily"
 
         await _choose_runtime_backend(screen, pilot, "local")
@@ -266,14 +270,17 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
             ("Web page", "url"),
         ]
         assert pane.query_one("#sources-create-type", Select).value == "rss"
-        assert pane.query_one("#sources-create-frequency", Select).value == 86_400
+        frequency = pane.query_one("#sources-create-frequency", Select)
+        assert frequency.display is True
+        assert frequency.value == 86_400
         await _choose_source_type(pilot, pane, "url")
-        assert (
-            pane.query_one("#sources-create-ignore-selectors", TextArea).text
-            == ".ad\n.counter"
-        )
+        noise = pane.query_one("#sources-create-ignore-selectors", TextArea)
+        assert noise.display is True
+        assert noise.text == ".ad\n.counter"
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert pane.query_one("#sources-create-watchlist", Select).value == watchlist_id
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        assert destination.disabled is False
+        assert destination.value == watchlist_id
 
 
 @pytest.mark.bootstrap_profile
@@ -633,9 +640,16 @@ async def test_tab_walks_the_create_form_in_visual_order(
         if runtime_backend != "local":
             await _choose_runtime_backend(screen, pilot, runtime_backend)
         screen, pane = await _open_sources_create_form(pilot, host)
+        tab_order = field_order
         if runtime_backend == "server":
-            assert not pane.query("#sources-create-frequency")
-            assert not pane.query("#sources-create-ignore-selectors")
+            assert pane.query_one("#sources-create-frequency").display is False
+            assert pane.query_one("#sources-create-ignore-selectors").display is False
+            destination = pane.query_one("#sources-create-watchlist", Select)
+            assert destination.display is True
+            assert destination.disabled is True
+            tab_order = [
+                field_id for field_id in field_order if field_id != destination.id
+            ]
         if source_type != "rss":
             await _choose_source_type(pilot, pane, source_type)
             pane.query_one("#sources-create-name", Input).focus()
@@ -643,13 +657,13 @@ async def test_tab_walks_the_create_form_in_visual_order(
 
         assert screen.focused is not None, "nothing focused; see AC#3 test"
         seen = [screen.focused.id]
-        for _ in range(len(field_order) - 1):
+        for _ in range(len(tab_order) - 1):
             await pilot.press("tab")
             await pilot.pause(0.05)
             seen.append(screen.focused.id if screen.focused else None)
 
-        assert seen == field_order, (
-            f"Tab order through the create form is {seen}, expected {field_order}"
+        assert seen == tab_order, (
+            f"Tab order through the create form is {seen}, expected {tab_order}"
         )
 
         # "Visual order" is not just DOM order: every step must move down the
@@ -728,8 +742,9 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(
             await _choose_runtime_backend(screen, pilot, runtime_backend)
         screen, pane = await _open_sources_create_form(pilot, host)
         if runtime_backend == "server":
-            assert not pane.query("#sources-create-frequency")
-            assert not pane.query("#sources-create-ignore-selectors")
+            assert pane.query_one("#sources-create-frequency").display is False
+            assert pane.query_one("#sources-create-ignore-selectors").display is False
+            assert pane.query_one("#sources-create-watchlist", Select).display is True
         if source_type != "rss":
             await _choose_source_type(pilot, pane, source_type)
 
