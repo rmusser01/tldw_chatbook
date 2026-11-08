@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 def prepare_project_index_scopes(self: ConsoleChatController, admitted_roots):
     """Retire registry handles opened by scope preparation, including guards."""
     try:
-        service = self._host.project_index_service()
+        service = self._host.read_project_index_service()
         with service.registry_connection_scope():
             return _prepare_project_index_scopes_owned(self, admitted_roots)
     except Exception:
@@ -39,7 +39,7 @@ def _prepare_project_index_scopes_owned(self: ConsoleChatController, admitted_ro
             root = local_root_path(
                 authority.root, site="project index scope preparation"
             )
-            service = self._host.project_index_service()
+            service = self._host.read_project_index_service()
             key = project_index_key_for_service(
                 service, authority.workspace_id, authority.binding_id, root
             )

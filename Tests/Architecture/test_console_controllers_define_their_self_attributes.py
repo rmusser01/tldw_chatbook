@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CONSOLE_MODULES = _REPO_ROOT / "tldw_chatbook" / "UI" / "Console_Modules"
 
@@ -424,6 +426,148 @@ def test_controller_app_scan_flags_a_moved_controller_method() -> None:
     assert _controller_app_reads(source) == []
 
 
+def _receiver_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _controller_host_writes(source: str, *, controller_helpers: bool = False) -> list[int]:
+    """Lines rebinding a Console controller's ``_host`` after construction.
+
+    Counts ``<controller>._host = ...`` and ``setattr(<controller>, "_host",
+    ...)``; inside ``ConsoleChatController`` (or a Chat/ helper taking the
+    controller as ``self``), ``self._host = ...`` anywhere but ``__init__``.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(source)
+    controller_self: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "ConsoleChatController":
+            controller_self |= {
+                id(inner)
+                for fn in node.body
+                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and fn.name != "__init__"
+                for inner in ast.walk(fn)
+            }
+    if controller_helpers:
+        controller_self |= {
+            id(inner)
+            for fn in tree.body
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and fn.args.args
+            and fn.args.args[0].arg == "self"
+            for inner in ast.walk(fn)
+        }
+
+    def is_controller(receiver: ast.AST, node: ast.AST) -> bool:
+        name = _receiver_name(receiver)
+        return (
+            "controller" in name.lower()
+            or name in _CONTROLLER_ALIASES
+            or (name == "self" and id(node) in controller_self)
+        )
+
+    lines = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                for leaf in ast.walk(target):
+                    if (
+                        isinstance(leaf, ast.Attribute)
+                        and leaf.attr == "_host"
+                        and is_controller(leaf.value, node)
+                    ):
+                        lines.append(node.lineno)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "setattr"
+            and len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "_host"
+            and is_controller(node.args[0], node)
+        ):
+            lines.append(node.lineno)
+    return sorted(set(lines))
+
+
+def test_nothing_rebinds_the_console_controllers_host() -> None:
+    """The host is bound once, in ``ConsoleChatController.__init__`` (AST, M3)."""
+
+    offenders = []
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        if rel in _NOT_THE_CONSOLE_CONTROLLER:
+            continue
+        offenders += [
+            f"{rel}:{line}"
+            for line in _controller_host_writes(
+                path.read_text(encoding="utf-8"),
+                controller_helpers=rel.startswith("tldw_chatbook/Chat/"),
+            )
+        ]
+    assert not offenders, (
+        f"{offenders} rebind a Console controller's ``_host``; it is built once "
+        "where the app is and passed to the constructor"
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "controller._host = host",
+        "self._chat_controller._host = host",
+        "setattr(controller, '_host', host)",
+        "class ConsoleChatController:\n    def rebind(self):\n        self._host = h",
+    ],
+)
+def test_controller_host_write_scan_flags_each_shape(source: str) -> None:
+    """Negative control: each rebinding shape is caught; ``__init__`` is not."""
+
+    assert len(_controller_host_writes(source)) == 1
+    init = "class ConsoleChatController:\n    def __init__(self):\n        self._host = h"
+    assert _controller_host_writes(init) == []
+
+
+def test_controller_host_for_app_takes_each_member_from_its_slice() -> None:
+    """Each member is the ``ApplicationServices`` field it names (M4)."""
+
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_controller_host import (
+        MEMBER_SOURCES,
+        ConsoleControllerHost,
+        controller_host_for_app,
+    )
+
+    slices: dict[str, SimpleNamespace] = {}
+    expected = {}
+    for member, (slice_name, field) in MEMBER_SOURCES.items():
+        sentinel = object()
+        setattr(slices.setdefault(slice_name, SimpleNamespace()), field, sentinel)
+        expected[member] = sentinel
+    app = SimpleNamespace(services=SimpleNamespace(**slices))
+    host = controller_host_for_app(app)
+    assert {m: getattr(host, m) for m in MEMBER_SOURCES} == expected
+    fields = set(ConsoleControllerHost.__dataclass_fields__)
+    assert set(MEMBER_SOURCES) | {"raw_cli_runtime"} <= fields
+    assert host.raw_cli_runtime is None, "raw_cli_runtime comes from the runtime"
+
+    from tldw_chatbook import app_services
+
+    bundle = app_services.ApplicationServices.__dataclass_fields__
+    for member, (slice_name, field) in MEMBER_SOURCES.items():
+        annotation = str(bundle[slice_name].type)
+        slice_class = getattr(app_services, annotation.split("[", 1)[0].strip())
+        assert field in slice_class.__dataclass_fields__, (member, slice_name, field)
+
+
 @pytest.mark.asyncio
 async def test_console_chat_controller_holds_no_app_after_construction(
     monkeypatch,
@@ -466,3 +610,157 @@ async def test_console_chat_controller_holds_no_app_after_construction(
     finally:
         await built.shutdown()
         await direct.shutdown()
+
+
+# --- TASK-36947.4 fix round 1: nothing the controller reaches holds the app ---
+
+#: Paths the walk does not enter, each with its reason. The owning runtime is
+#: built around the app (ADR-250 rule 4) and outlives the controller.
+_REACHABILITY_EXEMPT_TYPES = {"ConsoleRuntime": "the owning runtime (ADR-250 rule 4)"}
+_NOT_WALKED = (
+    "asyncio", "threading", "logging", "loguru", "sqlite3", "concurrent",
+    "weakref", "_weakrefset", "textual", "rich", "pathlib", "re",
+)
+
+
+def _app_holders(root, app, *, depth: int = 6) -> list[str]:
+    """Paths from ``root`` to ``app`` that end on an object attribute or item.
+
+    The walk enters instance ``__dict__``s, slots and dataclass fields,
+    containers, ``functools.partial`` args and keywords, bound-method
+    ``__self__`` and function closure cells. It skips modules, classes,
+    builtins and the exempt owner types. A path whose last step is a
+    callable binding (partial argument, ``__self__``, closure cell) is a
+    narrow callable over the app (ADR-250 s7) and is allowed; a path whose
+    last step is an attribute or container item is an object holding the
+    app, which is what this guard forbids.
+    """
+    import functools
+    import types
+
+    holders: list[str] = []
+    seen: set[int] = {id(root)}
+    frontier = [(root, "controller")]
+
+    def children(obj):
+        if isinstance(obj, functools.partial):
+            yield obj.func, ".func", "binding"
+            for i, value in enumerate(obj.args):
+                yield value, f".args[{i}]", "binding"
+            for key, value in (obj.keywords or {}).items():
+                yield value, f".keywords[{key}]", "binding"
+            return
+        if isinstance(obj, types.MethodType):
+            yield obj.__self__, ".__self__", "binding"
+            yield obj.__func__, ".__func__", "binding"
+            return
+        if isinstance(obj, types.FunctionType):
+            for i, cell in enumerate(obj.__closure__ or ()):
+                try:
+                    yield cell.cell_contents, f".<cell {i}>", "binding"
+                except ValueError:
+                    continue
+            return
+        if isinstance(obj, dict):
+            for key, value in list(obj.items()):
+                yield value, f"[{key!r}]", "attr"
+            return
+        if isinstance(obj, (list, tuple, set, frozenset)):
+            for i, value in enumerate(list(obj)):
+                yield value, f"[{i}]", "attr"
+            return
+        names = list(getattr(obj, "__dict__", {}) or {})
+        for klass in type(obj).__mro__:
+            names += [n for n in getattr(klass, "__slots__", ()) if isinstance(n, str)]
+        for name in dict.fromkeys(names):
+            try:
+                value = object.__getattribute__(obj, name)
+            except AttributeError:
+                continue
+            yield value, f".{name}", "attr"
+
+    def walkable(obj) -> bool:
+        if obj is None or isinstance(obj, (str, bytes, int, float, bool, complex, type)):
+            return False
+        if isinstance(obj, types.ModuleType):
+            return False
+        if type(obj).__name__ in _REACHABILITY_EXEMPT_TYPES:
+            return False
+        if isinstance(
+            obj,
+            (dict, list, tuple, set, frozenset, functools.partial,
+             types.MethodType, types.FunctionType),
+        ):
+            return True
+        module = (type(obj).__module__ or "").split(".")[0]
+        return module not in _NOT_WALKED and module != "builtins"
+
+    for _level in range(depth):
+        next_frontier = []
+        for obj, path in frontier:
+            for value, step, kind in children(obj):
+                if value is app:
+                    if kind == "attr":
+                        holders.append(path + step)
+                    continue
+                if id(value) in seen or not walkable(value):
+                    continue
+                seen.add(id(value))
+                next_frontier.append((value, path + step))
+        frontier = next_frontier
+    return sorted(holders)
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_no_object_the_console_controller_reaches_holds_the_app(
+    request, tmp_path
+) -> None:
+    """Bounded reachability: from a runtime-built controller over a real app
+    (real ``app.services``), the app is reachable only through narrow callables
+    and the exempt owning runtime -- never as an object's attribute."""
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    app = _build_test_app()
+    app.chachanotes_db = CharactersRAGDB(str(tmp_path / "chacha.db"), "reach")
+    app._wire_chat_conversation_services()
+    app._publish_application_services()
+    runtime = app.console_runtime
+    assert isinstance(runtime, ConsoleRuntime)
+    store = runtime.ensure_chat_store()
+    gateway = runtime.ensure_provider_gateway()
+    bridge = runtime.ensure_agent_bridge(
+        store_factory=lambda: store, provider_gateway_factory=lambda: gateway
+    )
+    controller = runtime.ensure_chat_controller(
+        store=store, provider_gateway=gateway, agent_bridge=bridge
+    )
+    runtime.ensure_archive_recovery()
+    try:
+        assert bridge is not None, "the walk must cover the agent bridge's consumers"
+        holders = _app_holders(controller, app)
+        assert not holders, "objects holding the app:\n" + "\n".join(holders)
+    finally:
+        await runtime.dispose()
+        app.chachanotes_db.close_connection()
+
+
+def test_reachability_walk_flags_an_object_holding_the_app() -> None:
+    """Negative control: an attribute holder is flagged; a narrow callable is not."""
+    import functools
+
+    app = object()
+
+    class Holder:
+        def __init__(self):
+            self._app = app
+
+    class Root:
+        def __init__(self):
+            self.child = {"wake": Holder()}
+            self.notify = functools.partial(print, app)
+
+    assert _app_holders(Root(), app) == ["controller.child['wake']._app"]

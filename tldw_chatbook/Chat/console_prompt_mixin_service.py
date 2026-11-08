@@ -349,11 +349,11 @@ class ConsolePromptMixinService:
         except Exception:  # noqa: BLE001 - source uncertainty must refuse exact capture.
             raise MixinSnapshotUnavailableError("mixin_source_unavailable") from None
 
-        from .console_chat_controller import _NO_HOST
+        from .console_controller_host import NO_HOST
 
         # TASK-36947.4: the owner's host, unless it was built without one.
         owner_host = getattr(self.preparation_owner, "_host", None)
-        if owner_host is _NO_HOST:
+        if owner_host is NO_HOST:
             owner_host = None
 
         def current():

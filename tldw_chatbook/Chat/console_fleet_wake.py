@@ -28,15 +28,10 @@ from tldw_chatbook.Agents.agent_service import (
     coerce_autowake_enabled,
 )
 from tldw_chatbook.Agents.run_log import setting as _setting
-from tldw_chatbook.Chat.console_fleet_attention import (
-    clear_fleet_unseen_completion,
-    set_fleet_unseen_completion,
-)
 from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
     from tldw_chatbook.Agents.fleet_messages import MessageIdentity
-    from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat.console_agent_bridge import FleetChildSettled, FleetDrained
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
@@ -275,7 +270,6 @@ class ConsoleFleetWakeCoordinator:
 
     def __init__(self, controller: ConsoleChatController) -> None:
         self._controller = controller
-        self._app = None
         self._loop = None
         self._registry_lock = threading.RLock()
         self._pending = {}
@@ -408,28 +402,39 @@ class ConsoleFleetWakeCoordinator:
             except asyncio.CancelledError:
                 continue
 
+    def _fleet_mark_callable(self, action: str) -> Callable[[str], bool] | None:
+        host = getattr(self._controller, "host", None)
+        return getattr(host, f"{action}_fleet_unseen_completion", None)
+
+    def _fleet_marks_wired(self) -> bool:
+        return self._fleet_mark_callable("clear") is not None
+
+    def _fleet_mark(self, action: str, conversation_id: str) -> None:
+        """Set or clear the durable unseen mark; a no-op without a host app."""
+        mark = self._fleet_mark_callable(action)
+        if mark is not None:
+            mark(conversation_id)
+
     def wire(
         self,
         *,
-        app: TldwCli | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
         startup_ready: Callable[[], bool] | None = None,
     ) -> None:
-        """Attach runtime services and the loop used to schedule wake delivery.
+        """Attach the loop used to schedule wake delivery and the startup gate.
 
-        Omitted services retain their current bindings. Without an explicit
-        loop, capture the caller's running loop if one exists.
+        Omitted bindings are retained. Without an explicit loop, capture the
+        caller's running loop if one exists. The durable completion marks are
+        the controller host's ``set``/``clear_fleet_unseen_completion``
+        callables (TASK-36947.4); the wake holds no app.
 
         Args:
-            app: Application owning durable completion marks and attention.
             loop: Explicit event loop override for delivery scheduling.
             startup_ready: Predicate allowing recovery after startup readiness;
                 retained when omitted and initially always true.
         """
         if startup_ready is not None:
             self._startup_ready = startup_ready
-        if app is not None:
-            self._app = app
         if loop is not None:
             self._loop = loop
         else:
@@ -996,8 +1001,7 @@ class ConsoleFleetWakeCoordinator:
                     type(exc).__name__,
                 )
                 self._paused[(conversation_id, chain_id)] = "history_unavailable"
-        if self._app is not None:
-            set_fleet_unseen_completion(self._app, conversation_id)
+        self._fleet_mark("set", conversation_id)
         session_id = self._resolve_session_id(conversation_id)
         if session_id:
             self._notify_ui(session_id)
@@ -1312,11 +1316,9 @@ class ConsoleFleetWakeCoordinator:
                 with self._registry_lock:
                     nothing_pending = cid not in self._pending
                 self._release_exact_wakes(cid, attempt.run_ids)
-                if nothing_pending and self._app is not None and not self._disposed and cid not in self._conversation_fences:
-                    if self._conversation_in_view(cid, authorization.session_id):
-                        clear_fleet_unseen_completion(self._app, cid)
-                    else:
-                        set_fleet_unseen_completion(self._app, cid)
+                if nothing_pending and self._fleet_marks_wired() and not self._disposed and cid not in self._conversation_fences:
+                    in_view = self._conversation_in_view(cid, authorization.session_id)
+                    self._fleet_mark("clear" if in_view else "set", cid)
                 return
             await self._pause(
                 cid,
@@ -1573,11 +1575,10 @@ class ConsoleFleetWakeCoordinator:
                 task.get_loop().call_soon_threadsafe(task.cancel)
             except RuntimeError:
                 continue
-        if self._app is not None:
-            try:
-                clear_fleet_unseen_completion(self._app, conversation_id)
-            except Exception:  # noqa: BLE001, S110 - mark cleanup must not interrupt close
-                pass
+        try:
+            self._fleet_mark("clear", conversation_id)
+        except Exception:  # noqa: BLE001, S110 - mark cleanup must not interrupt close
+            pass
 
     def release_conversation_fence(
         self, conversation_id: str, *, generation: int
@@ -1768,13 +1769,13 @@ class ConsoleFleetWakeCoordinator:
                 delivery is None or delivery.authorization is None
             )
         self._release_exact_wakes(conversation_id, run_ids)
-        if clear_attention and idle and self._app is not None:
+        if clear_attention and idle and self._fleet_marks_wired():
             try:
                 eligible = self._runs_db().undelivered_wake_runs(conversation_id)
             except Exception:  # noqa: BLE001 - retain attention on an unreadable ledger
                 return
             if not eligible:
-                clear_fleet_unseen_completion(self._app, conversation_id)
+                self._fleet_mark("clear", conversation_id)
 
     def _publish_active_wakes(
         self, conversation_id: str, run_ids: Sequence[str]

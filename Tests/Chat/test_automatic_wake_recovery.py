@@ -21,7 +21,7 @@ def replacement(rig):
     controller = rig[7]
     wake = ConsoleFleetWakeCoordinator(controller)
     controller._fleet_wake = wake
-    wake.wire(app=rig[1])
+    wake.wire()
     return wake
 
 

@@ -5145,7 +5145,7 @@ class ConsoleRuntime:
                 ArchiveRecoveryRuntime,
             )
 
-            self._archive_recovery = ArchiveRecoveryRuntime(self._app)
+            self._archive_recovery = ArchiveRecoveryRuntime.for_app(self._app)
             if self._chat_controller is not None:
                 self._chat_controller._archive_recovery_runtime = self._archive_recovery
             self._bind_view_hooks()
@@ -5261,7 +5261,6 @@ class ConsoleRuntime:
         # and repeated ensure/read calls return above without auditing owners.
         wake = self._chat_controller.fleet_wake
         wake.wire(
-            app=self._app,
             startup_ready=lambda: bool(getattr(self._app, "_ui_ready", True)),
         )
         wake.start_recovery()

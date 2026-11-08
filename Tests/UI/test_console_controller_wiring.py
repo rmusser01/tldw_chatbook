@@ -612,7 +612,7 @@ async def test_fleet_controller_is_constructed_with_late_bound_screen_edges() ->
 
     wake_calls: list[object] = []
     wake = SimpleNamespace(
-        wire=lambda **kwargs: wake_calls.append(("wire", kwargs.get("app"))) or True,
+        wire=lambda **kwargs: wake_calls.append(("wire", kwargs)) or True,
         seed_from_marks=lambda: wake_calls.append("seed") or True,
         retry_soon=lambda: wake_calls.append("retry"),
         has_pending=lambda conversation_id: conversation_id == "conversation-a",
@@ -640,7 +640,8 @@ async def test_fleet_controller_is_constructed_with_late_bound_screen_edges() ->
     )
     assert controller._console_wake_turn_active("session-b")
     assert controller._fleet_has_unsettled_children() is True
-    assert wake_calls == [("wire", screen.app_instance), "seed", "retry", "retry"]
+    # TASK-36947.4: the wake takes no app; its marks are the controller host's.
+    assert wake_calls == [("wire", {}), "seed", "retry", "retry"]
 
 
 @pytest.mark.asyncio

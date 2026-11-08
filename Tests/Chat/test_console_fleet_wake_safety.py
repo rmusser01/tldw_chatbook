@@ -57,7 +57,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_fleet_marks
 
 
 def _awaiting(task: asyncio.Task) -> str:
@@ -133,7 +133,8 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path,
         controller.set_pending_approval = received.append
         controller.mcp_approval_timeout_seconds = lambda: 30.0
         app = _AppStub(chacha)
-        controller.fleet_wake.wire(app=app)
+        bind_fleet_marks(controller, app)
+        controller.fleet_wake.wire()
         session = store.ensure_session()
         if session.persisted_conversation_id is None:
             store.append_message(session.id, role=ConsoleMessageRole.USER, content="Earlier request", persist=True)
@@ -232,7 +233,8 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
         controller.set_pending_approval = received.append
         controller.mcp_approval_timeout_seconds = lambda: 30.0
         app = _AppStub(chacha)
-        controller.fleet_wake.wire(app=app)
+        bind_fleet_marks(controller, app)
+        controller.fleet_wake.wire()
         session = store.ensure_session()
         if session.persisted_conversation_id is None:
             store.append_message(session.id, role=ConsoleMessageRole.USER, content="Earlier request", persist=True)
@@ -431,7 +433,8 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
 
         controller._agent_bridge.run_reply = capturing_run_reply
         app = _AppStub(chacha)
-        controller.fleet_wake.wire(app=app)
+        bind_fleet_marks(controller, app)
+        controller.fleet_wake.wire()
         session = store.ensure_session()
         if session.persisted_conversation_id is None:
             store.append_message(session.id, role=ConsoleMessageRole.USER, content="Earlier request", persist=True)

@@ -279,7 +279,7 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str] = ()) -> int:
     wake = getattr(controller, "fleet_wake", None)
     if wake is None:
         return 0
-    wake.wire(app=app)
+    wake.wire()
     if not await wake.wait_for_recovery():
         return 0
     # Runtime startup has audited old owners before any launch seed or retry.

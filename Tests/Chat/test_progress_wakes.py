@@ -618,7 +618,7 @@ async def test_restart_progress_attempt_is_review_only_and_report_stays_readable
             rig[2].automatic_work.accept_wake("old-progress", owner_id="old-runtime")
         wake = console_fleet_wake.ConsoleFleetWakeCoordinator(rig[7])
         rig[7]._fleet_wake = wake
-        wake.wire(app=rig[1])
+        wake.wire()
         rig[7]._register_fleet_wake(rig[6])
         monkeypatch.setattr(console_fleet_wake, "autowake_enabled", lambda: True)
         await wake.recover()

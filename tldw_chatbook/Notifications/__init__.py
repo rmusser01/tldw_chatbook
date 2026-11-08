@@ -19,6 +19,7 @@ _EXPORTS = {
         ".notification_dispatch_service",
         "NotificationDispatchService",
     ),
+    "NotifyTarget": (".notification_dispatch_service", "NotifyTarget"),
     "ServerNotificationEventObserver": (
         ".server_notification_events",
         "ServerNotificationEventObserver",
@@ -45,6 +46,7 @@ __all__ = [
     "EventStateRepository",
     "NotificationsScopeService",
     "NotificationDispatchService",
+    "NotifyTarget",
     "ServerNotificationEventObserver",
     "ServerNotificationsService",
     "build_server_notification_feed",

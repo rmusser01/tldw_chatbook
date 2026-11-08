@@ -5,6 +5,7 @@ real methods/globals are read at invocation. Native fixture aliases are retained
 """
 
 from Tests.Chat.console_controller_factory import host_for_app
+from tldw_chatbook.Chat.console_controller_host import NO_HOST
 from tldw_chatbook.Chat import console_chat_controller as ccc
 from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
@@ -190,7 +191,7 @@ def make_interrupt_host(seams):
         # TASK-36947.4: a bound host, else one built over a fake's ``app``.
         read_controller_host=lambda: getattr(seams, "_host", None)
         or host_for_app(getattr(seams, "app", None))
-        or ccc._NO_HOST,
+        or NO_HOST,
         read_controller_ask_user_timeout_seconds=lambda: getattr(
             seams, "ask_user_timeout_seconds", None
         ),

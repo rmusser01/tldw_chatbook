@@ -310,7 +310,7 @@ def test_synchronous_native_construction_defers_one_audit_until_loop_capture(nat
 
     async def start_loop():
         try:
-            controller.fleet_wake.wire(app=app)
+            controller.fleet_wake.wire()
             assert await controller.fleet_wake.wait_for_recovery()
             assert db.automatic_work.snapshot(chain_id).status == "review_required"
         finally:
