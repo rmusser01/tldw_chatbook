@@ -1,7 +1,7 @@
 ---
 id: TASK-39147
 title: Rebuild PR3411 native phase orchestration on existing runtime
-status: In Progress
+status: Done
 created_date: 2026-11-07 15:27
 assignee:
 - '@codex'
@@ -18,13 +18,13 @@ documentation:
 - backlog/decisions/356-native-phase-orchestration-runtime-ownership.md
 - Docs/superpowers/specs/2026-11-07-native-phase-orchestration-rebuild-design.md
 - Docs/superpowers/plans/2026-11-07-native-phase-orchestration-rebuild.md
-updated_date: 2026-11-08 08:38
+updated_date: 2026-11-08 21:14
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Replace PR3411's orchestration implementation with a thin phase coordinator using the existing native agent lifecycle. Preserve approved coding phases, shared-worktree edits, approvals, bounded execution and useful history. This supersedes continued patching of the rejected coordination design; it is not an application rewrite. Work only in the existing checkout, preserve unrelated changes, and stop shared-source edits while another writer owns them. No publication or merge is authorized.
+Replace PR3411's orchestration implementation with a thin phase coordinator using the existing native agent lifecycle. Preserve approved coding phases, shared-worktree edits, approvals, bounded execution and useful history. This supersedes continued patching of the rejected coordination design; it is not an application rewrite. Work only in the existing checkout, preserve unrelated changes, and stop shared-source edits while another writer owns them. Task/QA closure and draft PR setup are explicitly authorized in the 2026-11-08 closeout below; merge remains excluded.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -36,7 +36,7 @@ Replace PR3411's orchestration implementation with a thin phase coordinator usin
 - [x] #5 Shared-tree conflicts serialize correctly and scoped writes require observed-content or observed-absence preconditions; unrelated dirty files survive Stop, cancellation and restart without automatic Git mutation.
 - [x] #6 Restart reconciliation distinguishes uncertain prior effects from live workers, can finish and release obsolete recovery protections, and preserves live-worker protection without blocking unrelated scratch work indefinitely.
 - [x] #7 Bounded private results, history and charges survive restart. Supported result/change-window removal releases quota exactly while retaining history/accounting; existing storage upgrades remain transactional and compatible.
-- [ ] #8 Targeted functional, runtime failure/cancellation, permissions, concurrency, restart, storage, UI and ordinary-chat regression evidence plus lint/format and self-review are recorded. Full-suite execution, automatic commits, pushes, replacement PR publication and merge are excluded.
+- [x] #8 Targeted functional, runtime failure/cancellation, permissions, concurrency, restart, storage, UI and ordinary-chat regression evidence plus lint/format and self-review are recorded. Full-suite execution and merge remain excluded; task-only commits, pushes and replacement PR setup are separately authorized in the closeout below.
 - [x] #9 Planning accounting failures after proven native return release real execution resources, retain known charges and unknown evidence, and remain explicitly reviewable; failed native scopes still retain protection.
 - [x] #10 Upgraded closed history with saved filesystem ownership and no explicit recovery-review marker retains scoped protection until review.
 - [x] #11 A renamed/replaced saved root, including a retargeted symlink, never grants the old history protection over its replacement.
@@ -184,7 +184,14 @@ Reason: use the existing injected live-controller read contract for passive disp
 2. Force the entire existing recovery-region refresh inside the held-lock response-rule regression, preserving all existing deadlines/assertions and adding a no-controller inert-display control. Publish the actual controller slot in the existing callback fixture. Observe deterministic RED before production edits.
 3. Replace passive trace recovery's initializing accessor with the already injected current-controller accessor and make the two provider-recovery display builders read the installed screen controller once; keep the actual current preparation/context-hold/message projection and leave recovery actions/permission/revision/native cleanup unchanged.
 4. Verify held-lock maintenance/rebuild Stop cases, callback/action order and no-controller behavior plus targeted recovery controls; compare lint/format, diagnostics and diffs without raising ratchets. Record exact evidence, preserve all checkout/index states, commit/push and rerun only after the active run and its queue tick complete. Never cancel unrelated runs or the tick; no merge/full sweep/newer-dev integration.
-
+Documentation and draft-PR closeout (explicitly authorized 2026-11-08):
+ADR required: no new ADR
+ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md (existing ADR220 and ADR124 also apply)
+Reason: record already verified behavior/CI and task completion; this closeout changes no runtime or architectural contract.
+1. Reverify run42509127239 on exact published2d4241b, all22 acceptance criteria and complete real checkout/index/375-path preservation.
+2. Use the Backlog CLI on task metadata only to check AC8 and mark Done; record exact source-head CI, qualified local failures and historical evidence without relabeling earlier runs.
+3. Verify that only this task and its QA Markdown change, all executable/build inputs equal the green source, task parsing/criteria and links pass, and preservation remains intact.
+4. Commit through the existing private index and commit-tree/CAS, push only the task branch, and create a draft PR against dev. Record its inherited baseline/divergence and leave merge/newer-dev integration unqualified.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -581,37 +588,66 @@ overlay is not full-filesystem/isolated-Python or Linux qualification; no full s
 external-provider/other-platform UAT, newer-dev integration, PR or merge. AC8 stays
 open for actual overall success on the eventual current pushed head. Dispatch is
 held until the existing run and its separate queue tick complete; neither is cancelled.
+Green CI closeout — 2026-11-08 (user-authorized documentation and PR setup).
+[Derived Artifacts run42509127239](https://github.com/rmusser01/tldw_chatbook/actions/runs/42509127239)
+completed **SUCCESS** on exact [2d4241b78e51bb59f3808fa805bfca0f51ac4e2f](https://github.com/rmusser01/tldw_chatbook/commit/2d4241b78e51bb59f3808fa805bfca0f51ac4e2f),
+tree78c789cf0d79d191f6f8e9508df79aaf61c9f462. All15 selected Linux test jobs,
+aggregate128832706229 and queue tick128834131516 succeeded (17/17 jobs).
+The aggregate covers reproducible styles/Mermaid, pinned Python3.12.11 on Ubuntu24.04,
+profile census, diagnostic inventory, task IDs/readability, schema/index decisions,
+worker contracts, UTC writers, markup and the intact UI census. The run was
+dispatched once; old-head passes were not substituted for this exact-head result.
 
+All22 acceptance criteria are now checked, including AC8's targeted tests,
+recorded lint/changed-range formatting and self-review. The earlier native lifecycle,
+permission/revision, shared-tree, restart/SQLite, ordinary-chat and mounted UAT
+cohorts remain attached to their original versions and bounds. AC20/21/22 are also
+supported by actual Linux CI. The task is Done for its stated, scoped acceptance;
+this is not a claim that every repository test or inherited ratchet passes.
+
+The user now explicitly authorizes the task/QA closure commit, normal task-branch
+push and replacement PR setup. That updates the original publication exclusion;
+merge and newer-dev integration remain outside this closeout. Only two Markdown
+files change after the qualified source commit. Executable/build inputs remain
+byte-identical to2d4241b; its green run does not become an exact-commit result for
+the later documentation/PR head. PR-triggered checks qualify that new head.
+
+Preservation is reverified against the fresh round5 capture: real deve08627a HEAD,
+full real index/status and all375 path states (including untracked300) unchanged.
+This proves continuity from that capture only; older missing temporary bytes cannot
+be reconstructed. The completed CI heartbeat was deleted; it is not restarted.
+
+Retained limits: no full local suite, new external-provider/other-platform UAT,
+latency certification or unrelated archive lineage. The three mounted Undo and one
+mounted provider app-construction refusals reproduce on their recorded unchanged
+parents; selected CI and focused passes do not erase them. Inherited whole-module
+lint/format/size debt remains. The branch comparison with dev includes94 baseline
+commits before the9 TASK-39147 commits,1057 paths from its merge-base, and3584
+base-side commits at inspection. Open a draft with that integration debt explicit;
+no merge, rebase or auto-merge is certified by this closure.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-CI follow-up remains in progress: the published task branch has failing gates;
-previous local UAT does not establish that the full CI contract passes.
+TASK-39147 meets its22 scoped acceptance criteria and is Done. The replacement
+coordinator uses native lifecycle/resource ownership under ADR356, preserves real
+permission/revision/recovery fences, and removes orchestration implementation-identity
+authority. Follow-up native-return/recovery, ordinary-chat, mounted prompt-editor
+and minimal inherited CI repairs retain their targeted RED/GREEN and UAT evidence.
 
-Implemented ADR-356 inline and completed all three review follow-ups without
-restoring implementation-identity checks. The 71 targeted regressions cover honest
-native return/journal retry, shutdown, established and replaced-root fences,
-admitted prompt saves and idempotent closing review/removal.
+[Derived Artifacts run42509127239](https://github.com/rmusser01/tldw_chatbook/actions/runs/42509127239)
+is overall green on exact [2d4241b78e51bb59f3808fa805bfca0f51ac4e2f](https://github.com/rmusser01/tldw_chatbook/commit/2d4241b78e51bb59f3808fa805bfca0f51ac4e2f):
+all15 selected test jobs, aggregate and queue tick succeeded. AC8 is checked.
+The subsequent closure changes task/QA Markdown only and retains that exact-source
+qualification; new PR-head checks remain separate.
 
-Subsequent functional end-to-end verification passed in 217.49s, including Stop,
-coherent backup, isolated restore and rebackup, using explicit 240s overall/60s
-status UAT waits. Five mounted acceptance cases passed, including real two-phase
-Approvals/Acceptances, prompt edits during running/Stop and known/unknown lost
-closing-review delivery. Original timing and two pre-workflow UI probe failures
-remain documented. The subsequent prompt-editor correction keeps all three
-actions visible at 80×24 using native scrolling/docking, including after resize
-and wrapped Library feedback. Targeted regressions, persistence controls, mounted
-running/Stop UAT and painted before/after evidence are recorded in the UAT report.
-No bug-free UI or latency claim is made.
-
-The layout fix originally covered ten task-owned paths. Subsequent task-only
-publication and authorized CI repair commits preserve the original dev checkout,
-index and unrelated work. CI remains in progress; no merge or newer-dev integration
-is authorized. No full local suite, remote provider, other-platform or other PR
-archive-lineage qualification; earlier drift/debt and timeout failures remain
-explicitly qualified.
+Full-suite, new external-provider/other-platform UAT, latency and unrelated archive
+lineages are not certified. Earlier failed timings, local baseline fixture refusals
+and inherited lint/format/size debt remain documented in the QA report. Real checkout,
+index and375 preserved path states remain unchanged. Draft PR setup is now explicitly
+authorized; its heavily diverged dev comparison remains an integration/review limit.
+No merge, auto-merge or newer-dev integration is part of this completion.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

@@ -5,6 +5,9 @@ backup, isolated restore and rebackup. Five mounted acceptance cases passed.
 The prompt-editor clipping found at 80×24 is corrected by the follow-up below.
 Original timing, mounted-test and broader CSS qualifications remain recorded;
 these results are not a certification that all bugs are absent.
+The selected Linux CI contract subsequently passed overall on exact `2d4241b`
+([run42509127239](https://github.com/rmusser01/tldw_chatbook/actions/runs/42509127239));
+see the final closeout section for the source boundary and retained limits.
 
 ## Initial UAT scope and environment
 
@@ -767,3 +770,58 @@ Subsequent candidate changes are Markdown only. AC22 is checked; task In Progres
 and AC8 open. The existing aggregate and separate queue tick must finish before
 another dispatch; they are not cancelled. Actual overall success on the next
 published head remains required.
+
+
+## Final green CI and task closeout — 2026-11-08
+
+[Derived Artifacts run42509127239](https://github.com/rmusser01/tldw_chatbook/actions/runs/42509127239)
+completed **SUCCESS** on exact [2d4241b78e51bb59f3808fa805bfca0f51ac4e2f](https://github.com/rmusser01/tldw_chatbook/commit/2d4241b78e51bb59f3808fa805bfca0f51ac4e2f),
+tree `78c789cf0d79d191f6f8e9508df79aaf61c9f462`. The final result was verified
+with `gh run view` including jobs, and the remote task ref was independently
+confirmed at that same commit. All **17 jobs succeeded**:
+
+- All15 selected test jobs: both PR lanes, Console P0, Dreams tracking/boundaries,
+  and all10 UI shards. The formerly failing UI10 job128818142718 succeeds.
+- Aggregate [128832706229](https://github.com/rmusser01/tldw_chatbook/actions/runs/42509127239/job/128832706229)
+  succeeds, including all static/artifact checks and unchanged pinned Python3.12.11
+  on Ubuntu24.04. Generated sheets/Mermaid, profile/diagnostic/markup/UI censuses,
+  task IDs/readability, table/index decisions, workers and UTC writers pass.
+- Separate queue tick128834131516 succeeds; overall completion was awaited.
+
+Only one dispatch was made on this source head, after old run42501214598 and its
+queue tick finished. That old run's aggregate128810725154 failed only for known
+UI10; its supported runner and artifact checks already passed. Earlier runs and
+local failures retain their own exact-head qualification; none are relabeled green.
+The final full run receipt and preservation packet were retained locally as
+`/tmp/pr39147-ci-exact-head-green-run.json` and `/tmp/pr39147-ci-exact-head-green.json`.
+The public run/job/commit links above are the durable result references.
+
+The Backlog CLI now checks AC8 and sets TASK-39147 Done with all22 acceptance
+criteria checked. The task's native lifecycle, cancellation, permissions, concurrency,
+restart/storage, ordinary-chat, UI, lint/changed-range formatting, documentation/ADR
+and self-review evidence is recorded in this report, the linked plan and task notes.
+The original publication exclusions are superseded only by the user's explicit
+2026-11-08 request for task/QA closure and PR setup; merge remains excluded.
+
+This closure changes only the task and QA Markdown. All executable/build inputs
+remain byte-identical to qualified2d4241b. Its run is exact-source evidence, not a
+claim that the later documentation commit or PR merge result was tested by that
+same run. New PR-head checks are separate. The completed monitor was deleted and
+is not restarted. A draft PR against dev exposes the existing integration limit:
+the inspected comparison contains94 inherited baseline commits before the9 task
+commits,1057 paths since the merge-base, and3584 base-side commits. No newer-dev
+integration, rebase, merge or auto-merge qualification is claimed.
+
+Full real-index/status/HEAD preservation and all375 captured path states (including
+another writer's untracked300) pass the final audit. This proves continuity from
+the fresh round5 capture; earlier lost temporary bytes cannot be recreated. CLI
+status editing uses temporary task metadata, then only the two Markdown blobs are
+published via the existing private index/commit-tree/CAS and a normal task-branch
+push; the actual checkout and index remain untouched.
+
+The scoped Done result retains all earlier limits: no full local suite, new remote
+provider or other-platform UAT, latency certification or unrelated archive lineage.
+Three mounted Undo and one mounted provider local app-construction refusals are
+reproduced on the respective unchanged parents; selected CI does not erase them.
+Inherited whole-module formatting/lint/size debt remains. Earlier timing/setup/CSS
+failures and their qualified source versions remain in the report above.
