@@ -2023,11 +2023,24 @@ def test_the_first_run_message_differs_from_later_presses(monkeypatch):
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
+    first_work = controller._model_preparation
+    first_state = controller.state
     controller.stop()
+    assert first_work is not None
+    assert first_work.done.wait(2), "first warmup did not retire"
+    assert first_state == cvi.STATE_LISTENING
+    assert controller.state == cvi.STATE_IDLE
     first = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
 
     events.clear()
     controller.start()
+    retry_work = controller._model_preparation
+    retry_state = controller.state
+    controller.stop()
+    assert retry_work is not None and retry_work is not first_work
+    assert retry_work.done.wait(2), "retry warmup did not retire"
+    assert retry_state == cvi.STATE_LISTENING
+    assert controller.state == cvi.STATE_IDLE
     second = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
 
     assert first.first_run is True
@@ -2918,9 +2931,26 @@ def test_a_failed_warm_up_is_still_a_first_run_next_time(monkeypatch):
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
+    first_work = controller._model_preparation
+    first_state = controller.state
     controller.stop()
+    assert first_work is not None
+    assert first_work.done.wait(2), "failed warmup did not retire"
+    assert first_state == cvi.STATE_IDLE
+    assert service.started is False
+    _assert_plain_model_failure(_failure_text(events))
+
     events.clear()
     controller.start()
+    retry_work = controller._model_preparation
+    retry_state = controller.state
+    controller.stop()
+    assert retry_work is not None and retry_work is not first_work
+    assert retry_work.done.wait(2), "failed retry did not retire"
+    assert retry_state == cvi.STATE_IDLE
+    assert service.started is False
+    assert len(transcriber.buffer_calls) == 2
+    _assert_plain_model_failure(_failure_text(events))
 
     preparing = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)]
     assert preparing and preparing[0].first_run is True
