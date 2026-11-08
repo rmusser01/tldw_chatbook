@@ -2701,3 +2701,66 @@ Tests/UI/test_console_inspector_focus_carriers.py::test_the_compact_pinned_block
 Tests/UI/test_console_inspector_focus_carriers.py::test_pinned_authority_block_compacts_at_80x24_and_not_at_200x50
 Tests/UI/test_console_inspector_focus_carriers.py::test_environment_four_rows_are_painted_at_80x24
 Tests/UI/test_console_full_config_preparation.py
+Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_preview_ignores_seeded_legacy_human_value
+Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_workbench_exposes_no_human_identity_controls_or_marker
+Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_character_handoff_uses_user_without_profile_override
+Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_profile_rename_does_not_follow_legacy_pointer
+Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_profile_delete_does_not_clear_legacy_pointer
+Tests/UI/test_portrait_region_editor.py::test_retiring_the_editor_before_it_mounts_still_closes_it[cancel]
+Tests/UI/test_cancelled_dialog_waits.py
+# TASK-38977 (2026-11-07): the Prompts modal's unavailable-source copy and
+# recipe-fill gateway pins, and the response-rule active-run copy pin, one
+# entry per test (0.6-9.1 s each serial at load about 27). Appended at the tail.
+Tests/UI/test_console_prompts_modal.py::test_no_matches_retry_and_source_unavailable_are_explicit
+Tests/UI/test_console_prompts_modal.py::test_source_switch_clears_foreign_rows_before_unavailable_result
+Tests/UI/test_console_prompts_modal.py::test_real_recipe_fill_with_additional_context_reaches_block_review
+Tests/UI/test_console_prompts_modal.py::test_mapped_context_blocks_recipe_save_until_deleted
+Tests/UI/test_console_response_rules.py::test_active_run_copy_takes_priority_over_an_earlier_rule_verdict
+# TASK-38961 (2026-11-07): the refused-settings retry (it waits for the
+# header badge's word) and the two pick-mode create tests (they wait for the
+# switcher's Find to mount), one entry per test; the create test's two cases
+# share one entry, as its first case id holds spaces (24-31 s per case
+# serial at load about 150). Appended at the tail.
+Tests/UI/test_console_endpoint_discovery.py::test_refused_chat_settings_test_blocks_console_until_one_retry
+Tests/UI/test_console_endpoint_discovery.py::test_create_endpoint_with_live_controller_rebase_settles
+Tests/UI/test_console_endpoint_discovery.py::test_endpoint_command_create_lands_on_a_pair_in_pick_mode
+# TASK-38968 (2026-11-07): the deferred-Enter pin that only durable
+# acceptance removes a sent draft's captured prefix from the composer (the
+# whole file is 115 s serial; this node 24-39 s per lane run at load 61-89).
+# Appended at the tail.
+Tests/UI/test_console_send_admission_off_pump.py::test_an_enter_deferred_behind_a_send_sends_its_own_capture_only
+# TASK-39120 (2026-11-07): the Inspector-style section, now that its harness
+# loads the app bundle its utility classes live in (38 tests, 50 s serial at
+# load about 150). Appended at the tail.
+Tests/UI/test_console_inspector_section.py
+# TASK-38948 (2026-11-07): the 100 ms Send-feedback budgets (Sending frame,
+# input mutation, input frame), one entry per route (6-9 s each serial at
+# load about 130). Loop CPU is held at any load; wall time only while the
+# load average is under the CPU count.
+# Appended at the tail.
+Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]
+Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]
+# TASK-39133: the llama.cpp "Make default…" handoff reaches Settings on its own channel.
+Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[False-False]
+Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[True-False]
+Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[False-True]
+Tests/UI/test_llamacpp_consumers.py::test_settings_stages_verified_llamacpp_without_persisting
+Tests/UI/test_llamacpp_consumers.py::test_each_default_consumer_leaves_the_other_providers_intent_pending
+Tests/UI/test_llamacpp_consumers.py::test_llamacpp_default_persists_only_after_settings_save
+Tests/UI/test_llamacpp_consumers.py::test_stale_llamacpp_target_cannot_change_console_or_settings
+Tests/UI/test_llamacpp_consumers.py::test_llamacpp_settings_late_owner_expiry_compensates_before_ack
+Tests/UI/test_llamacpp_consumers.py::test_llamacpp_default_recovery_blocks_other_default_until_released
+# TASK-39135: a focus the user moves while a category swap lands is kept.
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[none]
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[key]
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[click]
+# TASK-39134: widening the terminal never narrows the Settings detail pane.
+Tests/UI/test_settings_category_sweep.py::test_widening_the_terminal_never_narrows_the_detail_pane
+# TASK-39135 review r12s-rev1 M1: input that leaves focus in place keeps the landing.
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[pagedown]
+# TASK-39135 review r12s-rev2: a move made mid-rebuild is kept; a Tab into the rebuilt panes is not.
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_while_the_panes_rebuild_is_kept
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_tab_into_the_panes_the_swap_destroys_keeps_the_landing
+# TASK-39135 review r12s-rev3: a focus reset out of the old panes keeps the landing; a control focused in the new pane is kept.
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_reset_out_of_the_old_panes_keeps_the_landing
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_control_chosen_in_the_new_pane_while_the_inspector_rebuilds_is_kept

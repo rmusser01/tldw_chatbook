@@ -876,16 +876,60 @@ MINIMUM_FILES = 1761
 # five heaviest tests) at the tail, split so they spread over consecutive
 # shards. The floor is the measured entry count.
 MINIMUM_FILES = 1809
+# TASK-33910.36 (2026-11-06, rebased on dev 8b762b52fa): append the five
+# TestPersonaHumanIdentityRemoval node ids at the tail (the class errored at
+# setup on dev until this change; the whole file is far over the 30 s
+# per-file budget). The floor is the measured entry count.
+MINIMUM_FILES = 1814
+# TASK-39122 (2026-11-07): append the region editor's cancelled-before-mount
+# case at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1815
+# TASK-39146 (2026-11-07): append the cancelled-dialog-wait file (nine
+# cases, about 10 s) at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1816
+# TASK-38977 (2026-11-07): append the five Prompts modal and response-rule
+# copy/gateway nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1821
+# TASK-38961 (2026-11-07): append the three Console endpoint-discovery
+# retry and pick-mode nodes at the tail. The floor is the measured entry
+# count.
+MINIMUM_FILES = 1824
+# TASK-38968 (2026-11-07): append the send-admission deferred-Enter capture
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1825
+# TASK-39120 (2026-11-07): append the Console Inspector section file at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1826
+# TASK-38948 (2026-11-07): append the two 100 ms Send-feedback route nodes
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1828
+# TASK-39133 / TASK-39135 / TASK-39134 (2026-11-07): append the llama.cpp
+# Settings handoff nodes (9), the moved-focus swap nodes (3) and the detail
+# width sweep (1) at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1841
+# TASK-39135 review r12s-rev1 (2026-11-07): append the PageDown case of the
+# moved-focus swap test at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1842
+# TASK-39135 review r12s-rev2 (2026-11-07): append the mid-rebuild move and
+# the Tab-into-the-rebuilt-panes nodes at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 1844
+# TASK-39135 review r12s-rev3 (2026-11-07): append the focus-reset and the
+# new-pane control nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1846
 # TASK-39142 / TASK-38993 / TASK-39136 (2026-11-07): append the inspector
 # workflow file's 18 tests, the llama.cpp snapshot file's [size0] and its 13
 # plain tests, and TASK-38953's 13 Settings sweep nodes at the tail, one
 # entry each. The floor is the measured entry count.
-MINIMUM_FILES = 1854
+MINIMUM_FILES = 1891
 # Review r12l-rev1 (2026-11-07): append the inspector focus carriers file's 15
 # nodes and the Console full config preparation file at the tail, out of the
 # recovered-suites job (the census holds bootstrap_profile files). The floor
 # is the measured entry count.
-MINIMUM_FILES = 1870
+MINIMUM_FILES = 1907
+# Round-12 restack (2026-11-08): the TASK-39142..39144 blocks above landed on
+# a census that already held the 37 tail entries above them, so their floors
+# count those too; the stacked tail was then re-dealt over 36 shards.
 
 
 def read_census(path: Path) -> list[str]:
