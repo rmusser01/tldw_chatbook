@@ -234,6 +234,92 @@ async def test_a_focus_the_user_moves_while_the_panes_rebuild_is_kept(request):
         assert getattr(host.focused, "id", None) == "settings-category-search"
 
 
+def _hold_recompose(pane):
+    """Hold ``pane``'s next recompose until the returned ``go`` event is set."""
+    import asyncio
+
+    entered, go = asyncio.Event(), asyncio.Event()
+    real_recompose = pane.recompose
+
+    async def held_recompose():
+        entered.set()
+        await go.wait()
+        return await real_recompose()
+
+    pane.recompose = held_recompose
+    return entered, go
+
+
+@private_profile_test
+async def test_a_focus_reset_out_of_the_old_panes_keeps_the_landing(request):
+    """TASK-39135 review r12s-rev3 (I1, third round): focus moved into the OLD
+    detail pane during its held rebuild; the rebuild destroyed it and
+    Textual's focus reset put it on the Domain Defaults group toggle, outside
+    the panes, which read as a user move and cost the landing (Space there
+    collapses the group). Focus that was in the old panes keeps the landing."""
+    import asyncio
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+        detail = screen.query_one("#settings-detail-pane")
+        old = next(w for w in detail.query("*") if w.focusable and w.id)
+        entered, go = _hold_recompose(detail)
+        try:
+            screen._select_category("appearance", restore_focus=True)
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            old.focus()
+            await pilot.pause()
+            assert host.focused is old
+        finally:
+            go.set()
+        await _settle_swap(host, pilot, screen)
+
+        assert screen.active_category == "appearance"
+        assert getattr(host.focused, "id", None) == "settings-category-appearance"
+
+
+@private_profile_test
+async def test_a_control_chosen_in_the_new_pane_while_the_inspector_rebuilds_is_kept(
+    request,
+):
+    """TASK-39135 review r12s-rev3 Minor 2 (the TASK-39046 Review shape): the
+    detail pane is rebuilt and the inspector's rebuild is held. A control
+    focused in the new detail pane then lost focus to the landing. (Focused
+    directly: the swap runs inside a batch, so the new pane has no layout yet
+    and a real click cannot reach it; a key or a handler, like Review's, can.)"""
+    import asyncio
+
+    from textual.widgets import Input
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+        entered, go = _hold_recompose(screen.query_one("#settings-impact-pane"))
+        try:
+            screen._select_category("appearance", restore_focus=True)
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            await pilot.pause()
+            target = next(
+                w
+                for w in screen.query_one("#settings-detail-pane").query(Input)
+                if w.focusable and w.id
+            )
+            target.focus()
+            await pilot.pause()
+            assert host.focused is target
+        finally:
+            go.set()
+        await _settle_swap(host, pilot, screen)
+
+        assert screen.active_category == "appearance"
+        assert host.focused is target
+
+
 @private_profile_test
 async def test_a_tab_into_the_panes_the_swap_destroys_keeps_the_landing(request):
     """TASK-39135 review r12s-rev2 M-a: Overview's "Open Providers & Models"

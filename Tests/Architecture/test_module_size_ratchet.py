@@ -588,7 +588,9 @@ _BUDGETS: dict[str, int] = {
     # copy is composed from one helper (TASK-39133).
     # 2026-11-07, review r12s-rev2 (owner waiver): +28, the landing is also
     # checked after the rebuild, and moves into the rebuilt panes do not count.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35814,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
+    # 2026-11-07, review r12s-rev3 (owner waiver): +38, a focus that was in
+    # the old panes keeps the landing; new detail-pane focus counts as a move.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35852,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

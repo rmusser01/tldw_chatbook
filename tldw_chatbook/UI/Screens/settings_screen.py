@@ -4219,6 +4219,11 @@ class SettingsScreen(BaseAppScreen):
         #: TASK-39135: what had focus when that intent was recorded. A swap
         #: that finds focus elsewhere skips the landing: the user moved it.
         self._pending_category_focus_from: Widget | None = None
+        #: TASK-39135 review r12s-rev3: focus was in the old panes while the
+        #: landing was pending, so a later move may be Textual's focus reset
+        #: after their removal; and whether this swap rebuilt the detail pane.
+        self._pending_focus_reset_possible = False
+        self._pending_detail_rebuilt = False
         # TASK-33072: entering Theme lands in its list after the swap,
         # unless an F6 pressed mid-swap claimed the focus first.
         self._theme_list_focus_pending = False
@@ -4786,6 +4791,8 @@ class SettingsScreen(BaseAppScreen):
                             # Screen torn down (navigated away) mid-swap.
                             continue
                         await pane.recompose()
+                        if pane_id == "#settings-detail-pane":
+                            self._pending_detail_rebuilt = True
                 # A MouseDown already queued on a child's pump can capture that
                 # child DURING the removal drain, after the release above.
                 self.sweep_stale_mouse_capture()
@@ -4820,30 +4827,49 @@ class SettingsScreen(BaseAppScreen):
         """Drop a switch's pending landing and what had focus when it was made."""
         self._pending_category_focus_value = None
         self._pending_category_focus_from = None
+        self._pending_focus_reset_possible = False
+        self._pending_detail_rebuilt = False
         if not keep_theme_list:
             self._theme_list_focus_pending = False
+
+    @staticmethod
+    def _in_category_panes(
+        widget, panes=("settings-detail-pane", "settings-impact-pane")
+    ) -> bool:
+        """Whether ``widget`` is in one of ``panes`` (default: both a swap rebuilds)."""
+        return any(
+            getattr(node, "id", None) in panes for node in widget.ancestors_with_self
+        )
+
+    def _in_new_detail_pane(self, widget) -> bool:
+        """New content: attached in the detail pane after this swap rebuilt it."""
+        return (
+            self._pending_detail_rebuilt
+            and widget.is_attached
+            and self._in_category_panes(widget, ("settings-detail-pane",))
+        )
 
     def _focus_left_pending_origin(self) -> bool:
         """TASK-39135: whether the user moved focus since a switch recorded it.
 
-        Counted only for a move from a widget still attached to a widget
-        outside the two panes the swap rebuilds. Focus that lands in those
-        panes, or Textual's reset after they are removed, cannot be told from
-        the swap's own churn, so the landing stands (review r12s-rev2).
+        - Never after focus was in the old panes: Textual's reset after their
+          removal looks exactly like a move (reviews r12s-rev2 M-a, rev3).
+        - In the panes: only after the detail pane was rebuilt, when an
+          attached widget there can only be new content someone chose.
+        - Outside them: a move from an origin that is still attached.
         """
         origin, focused = self._pending_category_focus_from, self.focused
         if (
             self._pending_category_focus_value is None
-            or origin is None
-            or not origin.is_attached
+            or self._pending_focus_reset_possible
             or focused is None
+            or not focused.is_attached
             or focused is origin
         ):
             return False
-        rebuilt = ("settings-detail-pane", "settings-impact-pane")
-        return not any(
-            getattr(node, "id", None) in rebuilt for node in focused.ancestors_with_self
-        )
+        if self._in_category_panes(focused):
+            return self._in_new_detail_pane(focused)
+        return origin is not None and origin.is_attached
 
     def _focused_id_in_category_panes(self) -> str | None:
         """The focused widget's id, if this swap is about to destroy it.
@@ -25945,8 +25971,12 @@ class SettingsScreen(BaseAppScreen):
                 # focused widget; a call_after_refresh restore races it
                 # (task-1338: focus ended up <none>), so record an intent the
                 # swap consumes after the fresh children mount.
+                self._withdraw_pending_category_focus(keep_theme_list=True)
                 self._pending_category_focus_value = category_value
                 self._pending_category_focus_from = self.focused
+                self._pending_focus_reset_possible = bool(
+                    self.focused and self._in_category_panes(self.focused)
+                )
             else:
                 self.call_after_refresh(self._focus_category, category_value)
             if category_value == SettingsCategoryId.THEME.value:
@@ -25985,6 +26015,14 @@ class SettingsScreen(BaseAppScreen):
 
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
+        if (
+            self._pending_category_focus_value is not None
+            and self._in_category_panes(event.widget)
+            and not self._in_new_detail_pane(event.widget)
+        ):
+            # TASK-39135 review r12s-rev3: focus in the old panes may be reset
+            # once they go, so a later move no longer withdraws the landing.
+            self._pending_focus_reset_possible = True
         self._update_focus_help(event.widget)
         # Clear the pending navigation focus intent only when SATISFIED (the
         # intended widget landed focus). Clearing on any focus is too eager:
