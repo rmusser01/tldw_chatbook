@@ -1263,8 +1263,9 @@ jobs:
       # agent-call thinking file imports Tests/Agents/test_fleet_continuation.py,
       # which imports hypothesis. So does the sandboxed step's query-synthesis
       # file (TASK-42008).
+      # Native save-worker assertions also use the declared pytest-mock spy plugin.
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
+        run: python -m pip install -e . pytest pytest-asyncio pytest-mock pytest-timeout packaging aiohttp-jinja2 hypothesis
 
       # TASK-41508 (2026-11-18): the trace provenance file, whose constructor
       # builder it fixed (sandboxed, no config read): 45 passed in 5.1 s
