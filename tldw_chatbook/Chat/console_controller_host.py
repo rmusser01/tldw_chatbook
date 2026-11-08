@@ -15,20 +15,20 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-#: Service members the controller reads; ``controller_members`` fills them.
-MEMBER_NAMES = (
-    "unified_mcp_service",
-    "workspace_registry_service",
-    "change_review_consent_service",
-    "chachanotes_db",
-    "local_character_persona_service",
-    "prompt_scope_service",
-    "subscriptions_db",
-    "local_watchlists_service",
-    "watchlist_bundle_service",
-    "library_rag_search_service",
-    "raw_cli_runtime",
-)
+#: Each bundle member the controller reads: its ``ApplicationServices`` slice
+#: and field. ``raw_cli_runtime`` (rule 4) is passed in by the runtime.
+MEMBER_SOURCES = {
+    "unified_mcp_service": ("mcp", "unified_mcp_service"),
+    "workspace_registry_service": ("workspace", "workspace_registry_service"),
+    "change_review_consent_service": ("workspace", "change_review_consent_service"),
+    "chachanotes_db": ("storage", "chachanotes"),
+    "local_character_persona_service": ("character_persona", "local"),
+    "prompt_scope_service": ("prompts", "scope"),
+    "subscriptions_db": ("watchlists", "subscriptions_db"),
+    "local_watchlists_service": ("watchlists", "local"),
+    "watchlist_bundle_service": ("watchlists", "watchlist_bundle_service"),
+    "library_rag_search_service": ("library", "library_rag_search_service"),
+}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -59,6 +59,9 @@ class ConsoleControllerHost:
     on_ui_thread: Callable[[], bool] = lambda: False
     is_headless: Callable[[], bool] = lambda: False
     console_attention: Callable[[int, bool], None] | None = None
+    # The fleet wake's durable unseen-completion mark (Chat/console_fleet_attention).
+    set_fleet_unseen_completion: Callable[[str], bool] | None = None
+    clear_fleet_unseen_completion: Callable[[str], bool] | None = None
     # Readers of app state the bundle does not hold, read when used.
     read_app_config: Callable[[Any], Any] = lambda default=None: default
     read_skills_scope_service: Callable[[], Any] = lambda: None
@@ -67,11 +70,11 @@ class ConsoleControllerHost:
     read_new_chat_default_generation: Callable[[], Any] = lambda: 0
     read_watchlists_operation_coordinator: Callable[[], Any] = lambda: None
     read_watchlists_command_service: Callable[[], Any] = lambda: None
-    personal_context_service: Callable[[], Any] | None = None
+    read_personal_context_service: Callable[[], Any] | None = None
     # Operations anchored on the app (ADR-250 rule 5 keeps the skills stack there).
     send_refusal: Callable[[str | None], Awaitable[str | None]] | None = None
     capture_turn_configuration: Callable[..., Awaitable[Any]] | None = None
-    project_index_service: Callable[[], Any] | None = None
+    read_project_index_service: Callable[[], Any] | None = None
     publish_mcp_inspector_counts: Callable[..., None] | None = None
     publish_selected_tool_count: Callable[[str, int], None] | None = None
 
@@ -91,16 +94,8 @@ def controller_members(services: Any) -> dict[str, Any]:
     if services is None:
         return {}
     return {
-        "unified_mcp_service": services.mcp.unified_mcp_service,
-        "workspace_registry_service": services.workspace.workspace_registry_service,
-        "change_review_consent_service": services.workspace.change_review_consent_service,
-        "chachanotes_db": services.storage.chachanotes,
-        "local_character_persona_service": services.character_persona.local,
-        "prompt_scope_service": services.prompts.scope,
-        "subscriptions_db": services.watchlists.subscriptions_db,
-        "local_watchlists_service": services.watchlists.local,
-        "watchlist_bundle_service": services.watchlists.watchlist_bundle_service,
-        "library_rag_search_service": services.library.library_rag_search_service,
+        name: getattr(getattr(services, slice_name), field)
+        for name, (slice_name, field) in MEMBER_SOURCES.items()
     }
 
 
@@ -129,6 +124,8 @@ def console_controller_host(app: Any, **members: Any) -> ConsoleControllerHost:
         on_ui_thread=lambda: threading.get_ident() == getattr(app, "_thread_id", None),
         is_headless=lambda: bool(getattr(app, "is_headless", False)),
         console_attention=functools.partial(_console_attention, app),
+        set_fleet_unseen_completion=functools.partial(_fleet_mark, "set", app),
+        clear_fleet_unseen_completion=functools.partial(_fleet_mark, "clear", app),
         read_app_config=lambda default=None: getattr(app, "app_config", default),
         read_skills_scope_service=lambda: getattr(app, "skills_scope_service", None),
         read_local_skills_service=lambda: getattr(app, "local_skills_service", None),
@@ -144,10 +141,10 @@ def console_controller_host(app: Any, **members: Any) -> ConsoleControllerHost:
         read_watchlists_command_service=lambda: getattr(
             app, "watchlists_command_service", None
         ),
-        personal_context_service=getattr(app, "get_personal_context_service", None),
+        read_personal_context_service=getattr(app, "get_personal_context_service", None),
         send_refusal=functools.partial(_send_refusal, app),
         capture_turn_configuration=functools.partial(_capture_turn_configuration, app),
-        project_index_service=functools.partial(_project_index_service, app),
+        read_project_index_service=functools.partial(_project_index_service, app),
         publish_mcp_inspector_counts=functools.partial(_publish_mcp_inspector_counts, app),
         publish_selected_tool_count=functools.partial(_publish_selected_tool_count, app),
     )
@@ -158,6 +155,15 @@ def _console_attention(app: Any, pending: int, ring: bool) -> None:
     from .console_interrupt_rounds import apply_console_attention
 
     apply_console_attention(app, pending, ring)
+
+
+def _fleet_mark(action: str, app: Any, conversation_id: str) -> bool:
+    """Set or clear one conversation's durable unseen-completion mark."""
+    from . import console_fleet_attention as attention
+
+    if action == "set":
+        return attention.set_fleet_unseen_completion(app, conversation_id)
+    return attention.clear_fleet_unseen_completion(app, conversation_id)
 
 
 async def _send_refusal(app: Any, conversation_id: str | None) -> str | None:
@@ -211,3 +217,7 @@ def _publish_selected_tool_count(app: Any, session_id: str, count: int) -> None:
         counts = {}
     counts[session_id] = count
     app.console_selected_tool_counts = counts
+
+
+#: The host of a controller built without one: every bridge is a no-op.
+NO_HOST = ConsoleControllerHost()

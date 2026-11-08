@@ -1847,7 +1847,7 @@ async def test_native_start_child_and_wake_share_original_allowance(
             raise
 
     runtime._run_custodied_turn = record_custody_error
-    controller.fleet_wake.wire(app=app)
+    controller.fleet_wake.wire()
     controller._agent_bridge.on_fleet_drained(
         "native-integration", controller.fleet_wake.on_fleet_drained
     )

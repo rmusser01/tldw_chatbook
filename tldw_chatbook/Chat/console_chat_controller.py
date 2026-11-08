@@ -173,7 +173,7 @@ from tldw_chatbook.Chat.message_metadata import (
     HANDOFF_LAUNCH_REVIEW_REQUIRED,
 )
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
-from tldw_chatbook.Chat.console_controller_host import ConsoleControllerHost
+from tldw_chatbook.Chat.console_controller_host import NO_HOST, ConsoleControllerHost
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     ProviderContinuationSidecar,
@@ -3521,8 +3521,6 @@ class _ChatCreationObservation:
     parent: dict[str, Any] | None = None
 
 
-_NO_HOST = ConsoleControllerHost()  # a controller built without a host app
-
 
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
@@ -4526,10 +4524,9 @@ class ConsoleChatController:
         #: can read tool metadata later without recomposing.
         self._mcp_provider: Any | None = None
 
-        # -- Host services and UI bridge (TASK-36947.4, ADR-250 s7) ---------
-        #: Members and narrow callables in place of the app. ``_NO_HOST``
-        #: (most controller-only tests) makes every UI bridge a safe no-op.
-        self._host = host if host is not None else _NO_HOST
+        #: TASK-36947.4 (ADR-250 s7): members and narrow callables in place of
+        #: the app; ``NO_HOST`` (no host app) makes every UI bridge a no-op.
+        self._host = host if host is not None else NO_HOST
         #: TASK-32954: one CharacterReadGuard per Console session, kept
         #: across turns (never rebuilt per turn) -- a full read of a field
         #: in one turn must still permit character_save on a later turn of
@@ -5863,6 +5860,10 @@ class ConsoleChatController:
                     error_type=type(exc).__name__,
                 ).warning("capture_policy_resolution_failed")
         return signals
+
+    @property
+    def host(self) -> ConsoleControllerHost:  # read-only: built once, by its owner
+        return self._host
 
     @property
     def run_state(self) -> ConsoleRunState:
@@ -15668,7 +15669,7 @@ class ConsoleChatController:
         away, while the closure was still constructed on every run.
 
         Returns ``None`` whenever MCP tools should not be offered
-        this run: no ``unified_mcp_service`` on the app, the kill switch
+        this run: no ``unified_mcp_service`` on the host, the kill switch
         is on, ``get_kill_switch``/``compose_catalog`` raised, or the
         composed catalog is empty (nothing to register, and -- since
         ``not_connected_count`` is only ever non-zero for servers that
@@ -15988,7 +15989,7 @@ class ConsoleChatController:
         offered this run:
 
         - ``[console] local_tools_enabled`` is false (the master flag);
-        - no ``unified_mcp_service`` on the app -- ADR-300 reuses the MCP
+        - no ``unified_mcp_service`` on the host -- ADR-300 reuses the MCP
           permission store under the synthetic ``local:__local__`` server
           key, so without the service there is no state source, no
           session-approval cache, and no persistence path;
@@ -16515,7 +16516,7 @@ class ConsoleChatController:
         """
         if (
             session_id is None
-            or self._host is _NO_HOST
+            or self._host is NO_HOST
             or (
                 self.set_pending_question is None
                 and not self._interrupt_host.has_retained_decision_target(session_id)
@@ -16557,7 +16558,7 @@ class ConsoleChatController:
         Returns:
             ``{"character_service": CharacterToolService}`` or ``{}``.
         """
-        if session_id is None or self._host is _NO_HOST:
+        if session_id is None or self._host is NO_HOST:
             return {}
         session = next((s for s in self.store.sessions() if s.id == session_id), None)
         if session is None:
@@ -17545,7 +17546,7 @@ class ConsoleChatController:
         ``created_via``/``source_run_id``) Task 8 rehydrates from.
 
         On success the UI-thread completion (``complete_agent_chat_create``)
-        is marshaled via ``app.call_from_thread`` with the new session's
+        is marshaled via ``self._host.call_from_thread`` with the new session's
         placement inputs; the executor itself returns the outcome dict the
         bridge closure renders into the ToolResult.
 
@@ -20761,7 +20762,7 @@ class ConsoleChatController:
             its budget.
         """
 
-        getter = self._host.personal_context_service
+        getter = self._host.read_personal_context_service
         if not callable(getter):
             return None
         if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
@@ -22875,8 +22876,8 @@ class ConsoleChatController:
     def _notify_app(self, message: str, *, severity: str = "warning") -> None:
         """Raise one best-effort toast through the app, never raising.
 
-        Mirrors ``_notify_detached_approval``'s defensive shape: an app double
-        whose ``notify`` takes the message alone, or no app at all, must not
+        Mirrors ``_notify_detached_approval``'s defensive shape: a host
+        ``notify`` taking the message alone, or none (no host app), must not
         turn a refusal into an exception on the send path.
         """
 
@@ -25701,10 +25702,9 @@ class ConsoleChatController:
 
     @property
     def fleet_wake(self) -> ConsoleFleetWakeCoordinator:
-        """The auto-wake coordinator (PR3a-2 Task 5): the screen wires its
-        app object (``fleet_wake.wire``), calls ``seed_from_marks`` at
-        mount BEFORE the first tab sync, and pokes ``retry_soon`` when the
-        composer empties."""
+        """Auto-wake coordinator (PR3a-2 Task 5; marks via host callables): the
+        screen captures its loop (``wire``), calls ``seed_from_marks`` at mount
+        BEFORE the first tab sync, and pokes ``retry_soon`` on an empty composer."""
         return self._fleet_wake
 
     def _register_fleet_wake(self, bridge: Any) -> None:

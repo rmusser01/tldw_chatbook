@@ -13,7 +13,10 @@ from tldw_chatbook.Chat.archive_recovery.contracts import (
     RecoveryCallKey,
     RecoveryConfirmation,
 )
-from tldw_chatbook.Chat.archive_recovery.coordinator import ArchiveRecoveryCoordinator
+from tldw_chatbook.Chat.archive_recovery.coordinator import (
+    ArchiveRecoveryCoordinator,
+    app_recovery_operations,
+)
 from tldw_chatbook.Chat.archive_recovery.result_store import ArchiveResultStore
 from tldw_chatbook.Chat.archive_recovery.search_service import ArchiveSearchService
 
@@ -21,7 +24,9 @@ from tldw_chatbook.Chat.archive_recovery.search_service import ArchiveSearchServ
 def setup(app, *, clock=None, ui=True):
     store = ArchiveResultStore()
     coordinator = ArchiveRecoveryCoordinator(
-        app, store, **({"monotonic": clock} if clock else {})
+        store,
+        **app_recovery_operations(app),
+        **({"monotonic": clock} if clock else {}),
     )
     if ui:
         coordinator.set_presenter(lambda _confirmation: True, lambda _session: True)
@@ -527,7 +532,7 @@ async def test_display_title_fitting_preserves_exact_recovery_identity(
             db.set_conversations_archived(
                 [extra], archived=True, expected_versions={extra: 1}
             )
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _sid: True
     runtime.present_confirmation = lambda _card: True
     try:
@@ -591,7 +596,7 @@ async def test_runtime_retry_retains_pending_and_completed_outcomes_after_page_e
     from tldw_chatbook.Chat.archive_recovery.runtime import ArchiveRecoveryRuntime
 
     app, cid, db = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _: True
     shown = asyncio.Event()
     runtime.present_confirmation = lambda _: (shown.set() or True)

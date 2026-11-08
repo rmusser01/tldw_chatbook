@@ -519,7 +519,13 @@ class MobileChatService:
                 # owner for the local ``fs_*`` tools; no store means fail-closed
                 # ``"ask"``) and the registry (admitted roots; without it the
                 # ``fs_*`` family is never advertised). Every other host member
-                # and capability is absent, as it was on the old app stand-in.
+                # and capability is absent. Two differ from the old app
+                # stand-in (TASK-36947.4): there is no project index service
+                # (the stand-in built one over the profile data dir, but no
+                # mobile binding can be index-enabled, so its scopes were
+                # always empty and the turn never received it), and Console
+                # attention and the inspector counts are not published (the
+                # stand-in only absorbed them as attributes nothing read).
                 host=ConsoleControllerHost(
                     unified_mcp_service=UnifiedMCPControlPlaneService(
                         target_store=None,

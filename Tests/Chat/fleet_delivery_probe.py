@@ -41,7 +41,7 @@ from Tests.Chat.test_console_fleet_wake_safety import (
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.Chat.console_controller_factory import bind_app
+from Tests.Chat.console_controller_factory import bind_app, bind_fleet_marks
 
 
 def report(scenario, **measurements):
@@ -86,7 +86,8 @@ async def test_measure_ready_child_delay(tmp_path):
         agent_bridge=bridge,
         agent_runtime_enabled=False,
     )
-    controller.fleet_wake.wire(app=_AppStub(chacha))
+    bind_fleet_marks(controller, _AppStub(chacha))
+    controller.fleet_wake.wire()
     drained = []
     bridge.on_fleet_drained("probe", drained.append)
     try:
@@ -144,7 +145,8 @@ async def test_measure_other_conversation_delay_during_real_approval(tmp_path):
     controller.set_pending_approval = cards.append
     controller.mcp_approval_timeout_seconds = lambda: 10.0
     wake = controller.fleet_wake
-    wake.wire(app=_AppStub(chacha))
+    bind_fleet_marks(controller, _AppStub(chacha))
+    wake.wire()
     first = store.ensure_session()
     round_id = None
     try:

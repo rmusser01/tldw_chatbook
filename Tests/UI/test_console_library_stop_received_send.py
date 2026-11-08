@@ -30,6 +30,7 @@ import zlib
 import pytest
 from textual.widgets import Button
 
+from Tests.Chat.console_controller_factory import update_app
 from Tests.Chat.test_console_automatic_library_preparation import _pending_image
 from Tests.UI.test_console_library_auto_outcome import (
     _StalledLibrary,
@@ -87,7 +88,7 @@ async def test_stop_during_a_received_sends_library_search_pauses_it(
         monkeypatch, f"library-stop-{beside}", durable=True
     ) as case:
         library = _StalledLibrary()
-        case.host.app_instance.library_rag_search_service = library
+        update_app(case.controller, library_rag_search_service=library)  # live host (TASK-36947.4)
         case.store.stage_session_library_policy(
             case.session.id,
             ConsoleLibraryPolicyCandidate(
@@ -162,7 +163,7 @@ async def test_the_shelf_releases_a_received_sends_library_pause(
         monkeypatch, f"library-shelf-{shelf_action}", durable=True
     ) as case:
         library = _StalledLibrary()
-        case.host.app_instance.library_rag_search_service = library
+        update_app(case.controller, library_rag_search_service=library)  # live host (TASK-36947.4)
         case.store.stage_session_library_policy(
             case.session.id,
             ConsoleLibraryPolicyCandidate(
@@ -249,7 +250,7 @@ async def test_the_cards_cancel_takes_a_received_sends_turn_off_the_shelf(
         monkeypatch, f"library-card-cancel-{composer_shows.split()[-1]}", durable=True
     ) as case:
         library = _StalledLibrary()
-        case.host.app_instance.library_rag_search_service = library
+        update_app(case.controller, library_rag_search_service=library)  # live host (TASK-36947.4)
         case.store.stage_session_library_policy(
             case.session.id,
             ConsoleLibraryPolicyCandidate(

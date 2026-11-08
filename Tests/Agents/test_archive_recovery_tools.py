@@ -91,7 +91,7 @@ async def test_registration_coexists_and_pending_native_teardown_are_one_way(
     recovery_stores, mode
 ):
     app, cid, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _: True
     provider = admitted(runtime)
     registry = ToolCatalogRegistry()
@@ -129,7 +129,7 @@ async def test_admission_cannot_be_minted_by_generic_turn_flags(
     recovery_stores, overrides
 ):
     app, _, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _: True
     assert admitted(runtime, **overrides) is None
     await runtime.shutdown()
@@ -140,10 +140,10 @@ async def test_foreign_issuer_subclass_and_spoofed_mcp_names_fail_closed(
     recovery_stores,
 ):
     app, _, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _: True
     provider = admitted(runtime)
-    other = ArchiveRecoveryRuntime(app)
+    other = ArchiveRecoveryRuntime.for_app(app)
     registry = ToolCatalogRegistry()
     foreign = ArchiveRecoveryToolProvider(other, provider.authority)
     assert not registry.register_archive_recovery_provider(foreign, provider.authority)
@@ -176,7 +176,7 @@ def test_spoofed_issuer_cannot_authenticate_even_exact_provider_class():
 @pytest.mark.asyncio
 async def test_child_and_foreign_actor_cannot_use_activated_primary(recovery_stores):
     app, _, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _: True
     provider = admitted(runtime)
     await asyncio.to_thread(provider.activate, "primary")
@@ -200,7 +200,7 @@ async def test_native_recovery_uses_existing_persona_call_cap(recovery_stores):
     from tldw_chatbook.Agents.run_tool_policy import RunToolPolicy
 
     app, _, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _: True
     provider = admitted(runtime)
     registry = ToolCatalogRegistry()

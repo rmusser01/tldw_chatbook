@@ -956,7 +956,7 @@ def environment_scope_stamp(screen: Any) -> tuple[Any, ...] | None:
         id(controller),
         active,
         session_change_review_admission_stamp(
-            controller._host, controller.store, active
+            controller.host, controller.store, active
         ),
     )
 
@@ -1974,7 +1974,7 @@ def build_console_controllers(
         ensure_agent_bridge=lambda: screen._ensure_console_agent_bridge(),
         wire_wake_coordinator=(
             lambda: (
-                (wake.wire(app=screen.app_instance), True)[1]
+                (wake.wire(), True)[1]
                 if (
                     wake := getattr(
                         screen._console_chat_controller

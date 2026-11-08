@@ -35,7 +35,9 @@ read it BEFORE switching the session to active.
 from __future__ import annotations
 
 import asyncio
+import functools
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
@@ -260,22 +262,41 @@ class ConsoleFleetAttentionConsumer:
 
     def __init__(
         self,
-        app: Any,
         *,
+        read_marks_service: Callable[[], Any],
+        bump_revision: Callable[[], None],
+        read_notify: Callable[[], Any],
+        read_conversation_db: Callable[[], Any],
+        read_screen: Callable[[], Any],
+        read_pending_handoffs: Callable[[], Any],
         loop: asyncio.AbstractEventLoop | None = None,
         receipt_service: Any | None = None,
     ):
-        """Capture the app object and the loop to hop the UI half onto.
+        """Capture narrow readers of app state and the loop to hop onto.
+
+        TASK-36947.4: the consumer holds no app; :meth:`for_app` builds the
+        readers where the app is. Each reader is late-bound, as the
+        attribute reads it replaces were.
 
         Args:
-            app: The application object (marks service, ``notify``,
-                ``pending_handoffs``). App-lifetime; never a screen.
+            read_marks_service: The marks service, or ``None``.
+            bump_revision: Bump the app's unseen-badge revision.
+            read_notify: The app's ``notify``, or ``None``.
+            read_conversation_db: The ChaChaNotes DB for toast titles.
+            read_screen: The active screen.
+            read_pending_handoffs: The pending-handoff store, or ``None``.
             loop: Explicit loop override for tests. When ``None``, the
                 running loop at construction time is captured -- in
                 production that is the app loop, because registration
                 happens during bridge construction on the UI thread.
+            receipt_service: The activity-receipt service, if any.
         """
-        self._app = app
+        self._read_marks_service = read_marks_service
+        self._bump_revision = bump_revision
+        self._read_notify = read_notify
+        self._read_conversation_db = read_conversation_db
+        self._read_screen = read_screen
+        self._read_pending_handoffs = read_pending_handoffs
         self._receipt_service = receipt_service
         if loop is None:
             try:
@@ -283,6 +304,29 @@ class ConsoleFleetAttentionConsumer:
             except RuntimeError:
                 loop = None
         self._loop = loop
+
+    @classmethod
+    def for_app(
+        cls,
+        app: Any,
+        *,
+        loop: asyncio.AbstractEventLoop | None = None,
+        receipt_service: Any | None = None,
+    ) -> ConsoleFleetAttentionConsumer:
+        """The consumer over ``app`` (marks service, ``notify``, handoffs).
+
+        App-lifetime; never a screen.
+        """
+        return cls(
+            read_marks_service=lambda: getattr(app, "conversation_local_marks_service", None),
+            bump_revision=functools.partial(bump_fleet_unseen_revision, app),
+            read_notify=lambda: getattr(app, "notify", None),
+            read_conversation_db=lambda: getattr(app, "chachanotes_db", None),
+            read_screen=lambda: getattr(app, "screen", None),
+            read_pending_handoffs=lambda: getattr(app, "pending_handoffs", None),
+            loop=loop,
+            receipt_service=receipt_service,
+        )
 
     def __call__(self, event: Any) -> None:
         """Handle one drain: mark durably, then hop for the toast.
@@ -339,7 +383,7 @@ class ConsoleFleetAttentionConsumer:
 
     def _write_mark(self, conversation_id: str) -> None:
         """Write the durable unseen mark; never raise into the fan-out."""
-        service = getattr(self._app, "conversation_local_marks_service", None)
+        service = self._read_marks_service()
         if service is None:
             return
         try:
@@ -362,11 +406,11 @@ class ConsoleFleetAttentionConsumer:
         would propagate into the fan-out's per-consumer catch.
         """
         try:
-            bump_fleet_unseen_revision(self._app)
+            self._bump_revision()
             message, severity = fleet_completion_toast_copy(
                 self._conversation_title(conversation_id), statuses
             )
-            notify = getattr(self._app, "notify", None)
+            notify = self._read_notify()
             if callable(notify):
                 notify(message, severity=severity)
             if not self._console_screen_active():
@@ -379,7 +423,7 @@ class ConsoleFleetAttentionConsumer:
 
     def _conversation_title(self, conversation_id: str) -> str:
         """Best-effort display title: DB row, else an open session, else generic."""
-        db = getattr(self._app, "chachanotes_db", None)
+        db = self._read_conversation_db()
         get_conversation = getattr(db, "get_conversation_by_id", None)
         if callable(get_conversation):
             try:
@@ -394,7 +438,7 @@ class ConsoleFleetAttentionConsumer:
                 )
         # An unpersisted session has no DB row; if a Console screen is up,
         # its store still knows the tab title.
-        store = getattr(getattr(self._app, "screen", None), "_console_chat_store", None)
+        store = getattr(self._read_screen(), "_console_chat_store", None)
         sessions = getattr(store, "sessions", None)
         if callable(sessions):
             try:
@@ -419,8 +463,7 @@ class ConsoleFleetAttentionConsumer:
         Duck-typed on a Console-only seam rather than an import of
         ``ChatScreen`` (UI layer) from this Chat-layer module.
         """
-        screen = getattr(self._app, "screen", None)
-        return hasattr(screen, "_ensure_console_chat_controller")
+        return hasattr(self._read_screen(), "_ensure_console_chat_controller")
 
     def _stage_deep_link(self, conversation_id: str, session_id: str) -> None:
         """Stage the mount-claimable deep link; owner-thread only.
@@ -430,7 +473,7 @@ class ConsoleFleetAttentionConsumer:
         and would also drag UI into every Chat-layer test that touches
         this module.
         """
-        store = getattr(self._app, "pending_handoffs", None)
+        store = self._read_pending_handoffs()
         if store is None:
             return
         from tldw_chatbook.Chat.console_chat_models import (
@@ -457,11 +500,12 @@ def register_fleet_attention(
 
     Args:
         bridge: The ``ConsoleAgentBridge`` (or a double) to register on.
-        app: The application object the consumer captures.
+        app: The application object the consumer's narrow readers read.
+        receipt_service: The activity-receipt service, if any.
     """
     register = getattr(bridge, "on_fleet_drained", None) if bridge is not None else None
     if callable(register):
         register(
             ConsoleFleetAttentionConsumer.NAME,
-            ConsoleFleetAttentionConsumer(app, receipt_service=receipt_service),
+            ConsoleFleetAttentionConsumer.for_app(app, receipt_service=receipt_service),
         )

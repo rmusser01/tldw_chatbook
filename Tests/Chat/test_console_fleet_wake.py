@@ -89,7 +89,11 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
-from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
+from Tests.Chat.console_controller_factory import (
+    bind_app,
+    bind_fleet_marks,
+    bind_runtime_app,
+)
 
 
 async def _settle(predicate, seconds: float = 5.0) -> bool:
@@ -270,7 +274,8 @@ def _controller_rig(tmp_path, *, session_title="Research", ensure_run_hooks=None
         agent_runtime_enabled=False,
         ensure_run_hooks=ensure_run_hooks,
     )
-    controller.fleet_wake.wire(app=app)
+    bind_fleet_marks(controller, app)
+    controller.fleet_wake.wire()
     return chacha, app, runs_db, store, session, gateway, bridge, controller
 
 
@@ -514,7 +519,8 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
             agent_bridge=bridge,
             agent_runtime_enabled=False,
         )
-        controller.fleet_wake.wire(app=app)
+        bind_fleet_marks(controller, app)
+        controller.fleet_wake.wire()
         runtime = ConsoleRuntime(app)
         runtime.set_chat_store(store)
         bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)

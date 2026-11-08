@@ -180,7 +180,7 @@ from tldw_chatbook.Home.active_work_adapter import (
 # property below).
 from tldw_chatbook.Library import LocalLibraryCollectionsService  # noqa: F401 - retained original importing/patch slot
 from tldw_chatbook.Library.library_local_rag_search_service import (
-    LibraryLocalRagSearchService,
+    LibraryLocalRagSearchService, LibraryRagSources,
 )
 from tldw_chatbook.LLM_Provider_Catalog import (
     LLMProviderCatalogScopeService,
@@ -205,7 +205,7 @@ from tldw_chatbook.Notes.notes_scope_service import ScopeType
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     ClientNotificationsService,
-    NotificationDispatchService,
+    NotificationDispatchService, NotifyTarget,
     NotificationsScopeService,
     ServerNotificationsService,
 )
@@ -2457,7 +2457,7 @@ class ServiceWiringMixin(
             server_service=self.server_quiz_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        self.library_rag_search_service = LibraryLocalRagSearchService(self)
+        self.library_rag_search_service = LibraryLocalRagSearchService(LibraryRagSources.for_app(self))
         self._init_library_ingest_runtime_state()
         self._wire_research_source_association()
 
@@ -3309,7 +3309,7 @@ class ServiceWiringMixin(
         self.local_watchlists_service.notification_dispatcher = (
             self.notification_dispatch_service
         )
-        self.local_watchlists_service.notification_app = self
+        self.local_watchlists_service.notification_app = NotifyTarget(lambda *a, **k: self.notify(*a, **k))
 
     def _get_dreams_cycle_handler(self) -> Any:  # dreams phase 1
         """Lazily construct and memoize the Dreams cycle handler.

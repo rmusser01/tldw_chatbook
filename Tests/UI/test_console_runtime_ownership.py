@@ -799,7 +799,7 @@ async def test_late_outgoing_ensure_cannot_reclaim_a_successor_attachment():
     """A refused stale claim cannot run any outgoing screen-derived wiring."""
     runtime = ConsoleRuntime(SimpleNamespace())
     wire_calls: list[object] = []
-    wake = SimpleNamespace(wire=lambda **kwargs: wire_calls.append(kwargs["app"]))
+    wake = SimpleNamespace(wire=lambda **kwargs: wire_calls.append(kwargs))
     runtime._chat_controller = SimpleNamespace(
         fleet_wake=wake,
         provider="successor-provider",

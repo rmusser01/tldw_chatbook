@@ -9393,14 +9393,14 @@ class ChatScreen(BaseAppScreen):
         # app, which outlives every view) and presents originals left
         # pending while no view was attached (ADR-281).
         wiring.attach_review_presenter(self._console_chat_controller, self.app_instance)
-        # PR3a-2 Task 5 (auto-wake): the app object (durable-mark clear
-        # seam + marks reads). getattr-guarded because several UI tests
-        # swap in hand-built controller doubles before re-running this
-        # wiring block. `delivery_ui_hook` is a view-hook slot and is
-        # bound by `attach_view` above.
+        # PR3a-2 Task 5 (auto-wake): capture the UI loop. The durable
+        # marks are the controller host's callables (TASK-36947.4).
+        # getattr-guarded because several UI tests swap in hand-built
+        # controller doubles before re-running this wiring block.
+        # `delivery_ui_hook` is a view-hook slot bound by `attach_view`.
         wake = getattr(self._console_chat_controller, "fleet_wake", None)
         if wake is not None:
-            wake.wire(app=self.app_instance)
+            wake.wire()
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 

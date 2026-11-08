@@ -28,7 +28,7 @@ async def test_extracted_review_keeps_archive_exact_once_approval(
     recovery_stores, decision, expected
 ):
     app, _, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _: True
     provider = admitted(runtime)
     assert await asyncio.to_thread(provider.activate, "primary-run")

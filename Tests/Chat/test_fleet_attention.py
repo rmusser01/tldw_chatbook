@@ -328,7 +328,7 @@ def test_a_closed_loop_still_writes_the_mark_and_announces_inline(tmp_path):
         app = _AppStub(chacha)
         closed_loop = asyncio.new_event_loop()
         closed_loop.close()
-        consumer = ConsoleFleetAttentionConsumer(app, loop=closed_loop)
+        consumer = ConsoleFleetAttentionConsumer.for_app(app, loop=closed_loop)
         worker = threading.Thread(
             target=consumer,
             args=(_drain(children=[_child()]),),
@@ -352,7 +352,7 @@ def test_error_and_cancelled_children_are_reported_honestly(tmp_path):
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     try:
         app = _AppStub(chacha)
-        consumer = ConsoleFleetAttentionConsumer(app, loop=None)
+        consumer = ConsoleFleetAttentionConsumer.for_app(app, loop=None)
         consumer(_drain("conv-err", children=[_child("error")]))
         consumer(_drain("conv-cxl", children=[_child("cancelled")]))
         consumer(
@@ -390,7 +390,7 @@ def test_the_toast_names_the_persisted_conversations_title(tmp_path):
             {"title": "Quarterly report", "character_id": 1}
         )
         app = _AppStub(chacha)
-        consumer = ConsoleFleetAttentionConsumer(app, loop=None)
+        consumer = ConsoleFleetAttentionConsumer.for_app(app, loop=None)
         consumer(_drain(conv_id, children=[_child()]))
         assert app.notifications[0][1] == (
             "Background sub-agent finished in “Quarterly report”."
@@ -404,7 +404,7 @@ def test_a_drain_with_no_after_turn_children_is_a_strict_no_op(tmp_path):
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     try:
         app = _AppStub(chacha)
-        consumer = ConsoleFleetAttentionConsumer(app, loop=None)
+        consumer = ConsoleFleetAttentionConsumer.for_app(app, loop=None)
         consumer(
             _drain(
                 children=[_child(after_turn=False), _child("error", after_turn=False)]
@@ -423,7 +423,7 @@ def test_run_id_none_children_still_count(tmp_path):
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     try:
         app = _AppStub(chacha)
-        consumer = ConsoleFleetAttentionConsumer(app, loop=None)
+        consumer = ConsoleFleetAttentionConsumer.for_app(app, loop=None)
         consumer(_drain(children=[_child("error", run_id=None)]))
         assert len(app.notifications) == 1
         assert fleet_unseen_conversation_ids(app) == frozenset({"conv-att"})
@@ -450,7 +450,7 @@ def test_incomplete_receipt_publication_falls_back_to_coarse_mark(tmp_path):
                 )
                 return True
 
-        consumer = ConsoleFleetAttentionConsumer(
+        consumer = ConsoleFleetAttentionConsumer.for_app(
             app, loop=None, receipt_service=_IncompleteReceipts()
         )
         consumer(_drain(children=[_child("error")]))
@@ -473,7 +473,7 @@ def test_deep_link_is_staged_only_while_console_is_not_the_active_screen(
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     try:
         app = _AppStub(chacha)
-        consumer = ConsoleFleetAttentionConsumer(app, loop=None)
+        consumer = ConsoleFleetAttentionConsumer.for_app(app, loop=None)
         consumer(_drain(children=[_child(session_id="sess-9")]))
         assert len(app.staged) == 1
         channel, value = app.staged[0]
