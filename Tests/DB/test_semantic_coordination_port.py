@@ -323,9 +323,11 @@ def test_every_composition_root_installs_the_port_during_startup(
     # The installed trimmer, eager or lazy, forwards to the capture codec.
     assert port._safe_capture_trimmer is not None
     monkeypatch.setattr(
-        console_exchange_capture, "trim_safe_capture_blob", lambda blob: b"codec"
+        console_exchange_capture,
+        "trim_safe_capture_blob",
+        lambda blob: b"codec:" + blob,
     )
-    assert port._safe_capture_trimmer(b"stored") == b"codec"
+    assert port._safe_capture_trimmer(b"stored") == b"codec:stored"
 
 
 def test_every_console_script_is_a_tested_root_or_exempt():
