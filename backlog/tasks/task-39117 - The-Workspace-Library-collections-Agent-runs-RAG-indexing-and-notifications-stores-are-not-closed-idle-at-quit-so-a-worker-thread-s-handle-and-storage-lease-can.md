@@ -101,6 +101,12 @@ The project-index probe was a temporary test file, removed after the run.
 
 **Covering run.** 78 files (RAG ingestion/backfill/indexing, AgentRuns and Agents, kernel-store, Console runtime ownership and the DB owner files) at `-n 4`: 1901 passed, 173 failed, 4 errors in 27.6 min (load 40-90). Every failing node was rerun per file on base `fu-base-r12`: 170 of 175 fail there too. On a rerun on this branch, 4 of the other 5 pass. The fifth, `test_forced_reindex_replaces_stale_vector_chunks_and_clears_query_cache`, fails on base too when run alone (twice on each tree). The earlier 54-file backup/DB/media run is in TASK-39110's and TASK-39118's notes.
 
+**Review r12b-rev2.**
+- **The registry grew with dead connections.** `console_change_review_read.read` (AgentRuns) and `app_collections_wiring`'s capture setup read (Library Collections) close the handle they acquired natively, without unregistering it, so the registry kept one dead connection per read for the session. `SQLiteConnectionQuiescenceRegistry.register` now forgets handles whose native close already happened (the `in_transaction` getter raises), which covers both callers and any later one.
+  - Test `test_registry_stays_flat_when_a_finite_read_closes_its_own_handle[agent_runs|library_collections]` reproduces those reads: before the fix the counts were `[2, 3, 4]`; now they stay flat.
+- **The backfill's `finally` had no test.** `test_backfill_retires_only_the_indexing_db_it_opened[self_opened|caller]`: a DB the backfill opened leaves no lease, and a caller's DB keeps its handle.
+  - Red under two temporary edits: with no retire, `self_opened` failed; retiring the caller's DB as well, `caller` failed.
+
 **Pins and size.**
 - `Tests/DB/test_core_sqlite_owner_privacy.py`'s rag_indexing case expects `check_same_thread=False` now. It is red on dev for another reason: `RAG_Indexing_DB` has no `connect_private_sqlite`.
 - Owner size waiver, dated rows: `app_lifecycle.py` 2203 -> 2207 and `console_runtime.py` 7069 -> 7072.

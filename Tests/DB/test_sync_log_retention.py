@@ -790,6 +790,96 @@ def test_owner_idle_close_never_aborts_a_straggler_write(owner: str, tmp_path: P
     assert (outcome, rows, took < 1.0) == (["committed"], 2, True), took
 
 
+@pytest.mark.parametrize("store", ["agent_runs", "library_collections"])
+def test_registry_stays_flat_when_a_finite_read_closes_its_own_handle(
+    store: str, tmp_path: Path
+):
+    """TASK-39117 review r12b-rev2: the change-review marker read (AgentRuns)
+    and the collections capture setup read (Library Collections) close the
+    handle they acquired natively, without unregistering it, so the registry
+    grew by one dead connection per read for the whole session."""
+    import threading
+
+    from tldw_chatbook.Backup_Recovery.participants import (
+        core_cached_connection,
+        core_closing,
+        core_operation,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+
+    db = (
+        AgentRunsDB(tmp_path / "agent_runs.db")
+        if store == "agent_runs"
+        else LibraryCollectionsDB(tmp_path / "collections.db")
+    )
+    registry = db._connection_quiescence
+
+    def finite_read() -> None:
+        # The shape of console_change_review_read.read and of
+        # app_collections_wiring's capture setup read.
+        local = db._thread_local
+        previous = core_cached_connection(db, getattr(local, "conn", None))
+        connection = None
+        try:
+            with core_operation(db):
+                connection = db._held_connection()
+                connection.execute("SELECT 1").fetchone()
+        finally:
+            if connection is not None and connection is not previous:
+                with core_closing(db, connection) as allowed:
+                    assert allowed
+                    connection.close()
+                    if getattr(local, "conn", None) is connection:
+                        local.conn = None
+
+    try:
+        counts = []
+        for _ in range(3):
+            reader = threading.Thread(target=finite_read)
+            reader.start()
+            reader.join(10)
+            counts.append(registry.connection_count())
+        assert db.close_idle_connections()
+    finally:
+        db.close()
+
+    # The constructor's own handle plus at most the newest read's.
+    assert counts[0] == counts[1] == counts[2] <= 2, counts
+
+
+@pytest.mark.parametrize("owner", ["self_opened", "caller"])
+def test_backfill_retires_only_the_indexing_db_it_opened(
+    owner: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-39117 review r12b-rev2: ``backfill_semantic_index`` retires, on
+    every thread, the indexing DB it opened itself (it never closed it), and
+    leaves a caller's DB open."""
+    from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+    from tldw_chatbook.RAG_Search import ingestion_indexing
+
+    db = RAGIndexingDB(tmp_path / "rag_indexing.db")
+    monkeypatch.setattr(ingestion_indexing, "semantic_indexing_available", lambda: True)
+    monkeypatch.setattr(ingestion_indexing, "_default_indexing_db", lambda: db)
+    service = SimpleNamespace(search=lambda *a, **k: [], vector_store=SimpleNamespace())
+
+    try:
+        summary = asyncio.run(
+            ingestion_indexing.backfill_semantic_index(
+                rag_service=service,
+                indexing_db=db if owner == "caller" else None,
+                item_types=(),
+            )
+        )
+        left = _lease_threads(db)
+    finally:
+        db.close_idle_connections()
+        db.close()
+
+    assert summary["status"] == "ok"
+    assert left == ([] if owner == "self_opened" else ["MainThread"])
+
+
 def _loop_gaps() -> tuple[list[float], asyncio.Task]:
     """Record the event loop's gaps between 20 ms ticks."""
     import time

@@ -233,6 +233,14 @@ class SQLiteConnectionQuiescenceRegistry:
             # will close the newly registered handle before it returns.
             if self._quiescence_token is not None and self._active_acquisitions <= 0:
                 raise RuntimeError("database_maintenance_in_progress")
+            # TASK-39117: forget handles a caller closed natively without
+            # unregistering (a finite read's own close), so the registry does
+            # not grow by one dead connection per read for the session.
+            for key, known in tuple(self._connections.items()):
+                try:
+                    sqlite3.Connection.in_transaction.__get__(known)
+                except sqlite3.ProgrammingError:
+                    del self._connections[key]
             self._connections[id(connection)] = connection
 
     def unregister(self, connection: sqlite3.Connection) -> None:
