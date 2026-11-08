@@ -14,7 +14,6 @@ from Tests.app_module_patches import patch_app_global
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     RaisingLibraryNotesScopeService,
-    RaisingSkillsScopeService,
     RaisingWatchlistsScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -23,7 +22,6 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_library_snapshot,
     _wait_for_personas_snapshot,
-    _wait_for_skills_snapshot,
     _wait_for_wc_snapshot,
 )
 from Tests.UI.app_factory import _build_test_app
@@ -216,6 +214,8 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
 
 
+# The retired Skills destination's failure and no-handoff contract is covered by
+# test_library_skills_retry_recovers_transient_list_failure on Library.
 @pytest.mark.parametrize(
     ("route", "button_selector", "expected_copy", "setup"),
     [
@@ -231,14 +231,8 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             "Watchlists services unavailable; retry Watchlists later.",
             "wc-error",
         ),
-        (
-            "skills",
-            "#skills-attach-to-console",
-            "Skills service unavailable; retry Skills later.",
-            "skills-error",
-        ),
     ],
-    ids=("library", "watchlists", "skills"),
+    ids=("library", "watchlists"),
 )
 @pytest.mark.asyncio
 async def test_service_unavailable_states_disable_false_console_handoffs(
@@ -257,9 +251,6 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         app.watchlist_scope_service = RaisingWatchlistsScopeService()
         app.collections_feeds_scope_service = StaticReadItLaterScopeService([])
         wait_for_snapshot = _wait_for_wc_snapshot
-    elif setup == "skills-error":
-        app.skills_scope_service = RaisingSkillsScopeService()
-        wait_for_snapshot = _wait_for_skills_snapshot
     else:
         raise AssertionError(f"unexpected setup: {setup}")
 
