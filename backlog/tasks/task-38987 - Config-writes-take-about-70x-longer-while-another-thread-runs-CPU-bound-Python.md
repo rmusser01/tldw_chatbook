@@ -106,3 +106,7 @@ Files: `tldw_chatbook/Utils/switch_interval.py` (new), `tldw_chatbook/config.py`
 - `config.py` size budget 8989 -> 8990 (owner waiver).
 
 **Review r12s-rev2 (M-b).** `switch_interval_released()` was not re-entrant: a release nested in a release, or one after a scope opened inside a release, raised `ValueError: list.remove(x)`. Each release now keeps its own snapshot and empties the thread's open-scope list while it lasts. `test_switch_interval_releases_nest_and_reopen` (laned file) was red on 6059958f8c with that `ValueError`, green after; the review's thread/exception probe and 8-thread stress probe show no violations.
+
+**Low-load measurement (2026-11-07, load 14.6-17.0).** The machine reached the filing's range during this round, so base and head were measured back to back with the probe:
+- Spinner, 5 ms: base 7.28-11.98 s and 7.36-12.85 s (the convoy); head 0.60-0.64 s and 0.59-0.69 s. AC#1 holds at the load where base shows the 70x slowdown.
+- Idle: head 0.094-0.099 s (3 of 3 at or under 0.10 s), then 0.106-0.136 s and 0.093-0.136 s in two more rounds; base 0.104-0.105 s, 0.106-0.109 s and 0.105-0.138 s, above 0.10 s in every run at this load (the filing's 0.084-0.091 s was at load 10-13). AC#2 is left unticked for the owner: head shows no idle regression against base, but its absolute 0.10 s held in only one of three rounds.

@@ -925,6 +925,9 @@ MINIMUM_FILES = 1848
 # the Tab-into-the-rebuilt-panes nodes at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 1850
+# TASK-39135 review r12s-rev3 (2026-11-07): append the focus-reset and the
+# new-pane control nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1852
 
 
 def read_census(path: Path) -> list[str]:
