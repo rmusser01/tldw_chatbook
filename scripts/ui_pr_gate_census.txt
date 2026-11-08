@@ -6,9 +6,11 @@
 # TASK-39144 (2026-11-07) keeps each job's slowest run 5 min under its 20-min
 # cap: scripts/ui_lane_shard_replay.py --rebalance swapped 44 pairs of entries,
 # then 35 more once review r12l-rev1's 16 entries joined, then 22 more for 36
-# shards (owner decision 2026-11-07), so no shard replays over 13.3 pytest
-# min (each entry at its slowest in 22 PR runs' logs, an entry no log timed at
-# its local serial seconds); setup adds about 1.7 min a job.
+# shards (owner decision 2026-11-07). After the round-12 restack (2026-11-08)
+# added 37 tail entries, --rebalance 12.7 swapped 40 more: no shard replays
+# over 12.7 pytest min, the floor of 457 min over 36 (each entry at its
+# slowest in 22 PR runs' logs, an entry no log timed at its local serial
+# seconds); setup adds about 1.7 min a job.
 # To append: add entries at the tail as before, replay recent shard logs with
 # each new entry charged (--charge ENTRY=SECONDS, its local serial time), and
 # if a shard passes 13.3 min, run --rebalance 13.3 --write, which swaps
@@ -55,7 +57,7 @@ Tests/UI/test_settings_invalid_env_var_name.py
 Tests/UI/test_console_visible_turn_attention.py::test_turns_finishing_in_the_visible_tab_raise_no_hidden_notice[start_chatting]
 # TASK-33008: a card resumed with nothing detected runs discovery again, and not once a server is found (6 s).
 Tests/UI/test_console_local_server_discovery_card.py::test_a_card_resumed_with_nothing_detected_runs_discovery_again
-Tests/UI/test_console_rename_consistency.py
+Tests/UI/test_console_composer_run_controls.py::test_tab_reaches_a_visibly_focused_stop_and_its_key_stops_the_run
 # TASK-37266..37268: native publication/export or canonical-class governance coverage.
 Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[new-held-writer]
 # Capture review items 9-11: Console Behavior's one frame, one control column,
@@ -89,17 +91,17 @@ Tests/UI/test_console_session_tab_close.py
 # out. Appended, so no other file changes shard.
 Tests/UI/test_library_note_autosave_recovers.py
 Tests/UI/test_roleplay_hostile_text_surfaces.py
-# TASK-33008.2: a recovery's return names no pair and reopens nothing.
-Tests/UI/test_console_provider_return.py::test_a_recoverys_return_names_no_pair_and_reopens_nothing
+# Phase 9 Task 18 review round 1 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial; its bootstrap_profile node runs in the admission-sensitive step (ledger R11).
+# TASK-35190: Chat settings' pick mode reads the session endpoint while the configured one is down, and its pick keeps it (~7 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_pick_mode_reads_this_chats_endpoint_while_the_configured_one_is_down
 # TASK-34406.28: both browser routes reject queued/late/detached reads at
 # approved Quit, retain real native retirement, and preserve Stay (ten cases).
 Tests/UI/test_console_browser_quit_fence.py
 # TASK-33641.2 (ledger R11): the Lab GGUF "Model source:" label and its Select paint on one row at 211x44 and 235x52 (~15 s, private profile).
 Tests/UI/test_llm_gguf_source_modes.py::test_model_source_label_and_value_paint_on_one_row
-Tests/UI/test_console_composer_run_controls.py::test_tab_reaches_a_visibly_focused_stop_and_its_key_stops_the_run
+Tests/UI/test_console_rename_consistency.py
 Tests/UI/test_console_character_section_collapsed_render.py
-# Phase 9 Task 8: TASK-33002.19's mode strip shows a markup-like provider id or endpoint name literally, at open, on a switch and through a later push (3 cases, 25 s, private profile).
-Tests/UI/test_console_mode_strip_literal_text.py
+Tests/UI/test_screen_navigation.py::test_app_shutdown_helper_skips_mcp_disconnect_when_no_sessions
 Tests/UI/test_modal_wide_tier.py::test_every_wide_tier_rule_is_registered
 Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]
 Tests/UI/test_console_first_chat_first_mount.py
@@ -168,7 +170,7 @@ Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_onl
 Tests/UI/test_console_approval_compact_layout.py
 Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[restored-storage]
 Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-storage]
-Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[different-storage]
+Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[panel-replaced-success]
 # TASK-37266..37268: native publication/export or canonical-class governance coverage.
 Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[card-search-Vex-before-publication]
 Tests/UI/test_library_media_editor_dirty_escape.py
@@ -215,8 +217,7 @@ Tests/UI/test_library_note_links_picker_and_preview.py
 # R1 #3 and R3 #9 (a2-N1): the restored-OpenAI review row is read again.
 Tests/UI/test_settings_openai_reconnect_reread.py
 Tests/UI/test_library_media_editor_dirty_escape_extended.py
-# TASK-37266..37268: native publication/export or canonical-class governance coverage.
-Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[temperature-0.70-during-refresh]
+Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-prompt]
 Tests/UI/test_console_settings_saved_defaults.py
 # TASK-33641.3 (ledger R11, review round 1): the backend rows' controls stay inside their rows and clickable under the app stylesheet at 235x52 and 120x45 (2 cases, ~30 s, private profile).
 Tests/UI/test_settings_image_gen_panel.py::test_backend_row_controls_visible_and_clickable_under_real_css
@@ -271,9 +272,7 @@ Tests/UI/test_library_notes_folder_navigator.py::test_locating_a_folder_loads_it
 Tests/UI/test_library_note_autosave_veto_in_place.py
 Tests/UI/test_base_app_screen_tab_region.py
 Tests/UI/test_settings_model_defaults_rows.py::test_help_and_source_text_clear_aa_against_the_detail_pane
-# Phase 9 Task 18 review round 2 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
-# TASK-35190 AC#4: Ctrl+N saves a pair the configured server can send while this chat's endpoint is down, and no endpoint; the configured server is probed only when local (2 cases, ~11 s, private profile).
-Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_reads_the_configured_endpoint
+Tests/UI/test_settings_model_defaults_rows.py::test_every_row_help_fits_console_behaviors_narrower_column
 Tests/UI/test_settings_connect_rows.py::test_the_filtered_list_shows_enter_provider_id_and_the_guide_names_it
 Tests/UI/test_settings_category_sweep.py::test_every_category_is_reachable_by_keyboard_one_pane_at_a_time[2-60]
 Tests/UI/test_settings_default_model_picker.py::test_default_model_is_one_row_and_lists_ids_by_where_they_came_from
@@ -462,11 +461,9 @@ Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accept
 Tests/UI/test_settings_default_model_picker.py::test_a_discovered_model_becomes_the_saved_default_and_joins_the_list
 # Roleplay frame B1 (TASK-33910.2): pure header state, the lazy sheet, FittedText, and TASK-34400's widget-level hostile-text sinks.
 Tests/UI/test_roleplay_frame_state.py
-# R1 #7: Model list over an invalid Custom ID puts the model back.
-Tests/UI/test_settings_custom_id_model_list_rollback.py
+Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[policy-inner]
 Tests/UI/test_console_composer_run_controls.py::test_stop_key_is_advertised_only_while_running_and_stops_the_run
-# Capture 13c: a kept snapshot edit is forgotten once it is reverted (14 s).
-Tests/UI/test_app_quit_under_modal.py::test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted[revert]
+Tests/UI/test_library_file_notes_workspace.py::test_reload_confirmation_revalidates_current_disk_state
 Tests/UI/test_theme_pending_save_drafts.py::test_saved_publication_preserves_raw_edit_before_changed_is_delivered
 Tests/UI/test_adaptive_pane_shell.py
 # Review of #3057, sibling of finding 3: undoing an audio.cpp review merge keeps a pipeline voice edit (12 s, both cases).
@@ -475,7 +472,7 @@ Tests/UI/test_console_visible_turn_attention.py::test_a_turn_finishing_while_con
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_pick_reverted_before_s_leaves_the_file_byte_identical
 # TASK-33006.20: after Esc closes Chat settings the footer is the focused widget's; composer, rail and Inspect footers (composer collapsed too) keep Alt+A and Alt+C at 211x44 (15 s, private profile).
 Tests/UI/test_console_switch_model_entry_points.py::test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer
-Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-create]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[create-chain]
 Tests/UI/test_console_conversation_action_menu.py::test_save_prompt_closes_without_writing_and_restores_focus[escape]
 Tests/UI/test_settings_media_pending_save_drafts.py::test_media_save_acknowledges_only_submitted_draft[later-image-openrouter]
 Tests/UI/test_settings_pick_joins_saved_list.py::test_add_to_model_list_names_what_it_added_or_how_to_choose_a_default[added-then-already-listed]
@@ -483,8 +480,8 @@ Tests/UI/test_settings_media_pending_save_drafts.py::test_media_save_acknowledge
 Tests/UI/test_settings_default_model_picker.py::test_a_click_below_an_open_list_lands_on_the_pressed_control_or_none[released-at-once-model]
 Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-ordinary]
 Tests/UI/test_settings_connect_rows.py::test_provider_and_model_read_edited_only_when_their_own_value_is
-# TASK-33008.4 AC#3: the blocked footer names only the keys that act under the card (25 s).
-Tests/UI/test_console_setup_card_keyboard.py::test_the_blocked_footer_names_only_keys_that_act_under_the_card
+# Post-rebase round 1, finding 1: Ctrl+Q waits for a snapshot Save still writing (15 s).
+Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_waits_for_a_snapshot_save_in_flight
 # Capture fix 2 round 1, finding 4: Ctrl+Q asks about staged drafts first.
 Tests/UI/test_settings_theme_picker_screen.py::test_quit_asks_about_staged_changes_before_the_theme
 Tests/UI/test_settings_model_defaults_rows.py::test_inherit_after_an_option_clears_a_choice_the_select_cannot_show
@@ -526,12 +523,11 @@ Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_onl
 Tests/UI/test_settings_model_defaults_rows.py::test_saving_another_field_keeps_a_choice_the_select_cannot_show
 Tests/UI/test_settings_pick_joins_saved_list.py::test_a_list_changed_while_s_saves_writes_nothing_and_keeps_the_draft
 Tests/UI/test_library_prompt_pending_drafts.py::test_save_ack_mount_refreshes_existing_other_lane
-Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-existing-system]
+Tests/UI/test_library_file_notes_git.py::test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation
 Tests/UI/test_settings_connect_tab_budget.py::test_an_opened_provider_id_row_is_a_sixth_stop_for_anthropic
 Tests/UI/test_personas_pending_avatar_saves.py::test_pending_save_retains_later_upload_and_same_record_next_save[update]
-# Phase 9 Task 18 review round 1 (2026-10-18) appends three entries no lane ran, each 3 of 3 serial; its bootstrap_profile node runs in the admission-sensitive step (ledger R11).
-# TASK-35190: Chat settings' pick mode reads the session endpoint while the configured one is down, and its pick keeps it (~7 s, private profile).
-Tests/UI/test_console_endpoint_discovery.py::test_pick_mode_reads_this_chats_endpoint_while_the_configured_one_is_down
+# TASK-33008.2: a recovery's return names no pair and reopens nothing.
+Tests/UI/test_console_provider_return.py::test_a_recoverys_return_names_no_pair_and_reopens_nothing
 Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-existing-user]
 # Capture fix 2 round 2, finding 1: the quit prompt never stacks on the theme's.
 Tests/UI/test_settings_theme_picker_screen.py::test_quit_with_staged_changes_never_stacks_on_the_theme_prompt
@@ -547,9 +543,7 @@ Tests/UI/test_settings_advanced_disclosures.py::test_a_failed_discovery_reports_
 Tests/UI/test_personas_pending_avatar_saves.py::test_upload_before_save_persists_normally
 Tests/UI/test_personas_pending_avatar_saves.py::test_failed_pending_save_retains_upload_for_same_record_retry
 Tests/UI/test_settings_saved_lists_follow_file.py::test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists
-# TASK-33007.2: Connect's API key source words and Clear key, the Key check
-# row, an endpoint with no shipped default and the card's result line.
-Tests/UI/test_settings_connect_key_rows.py::test_a_key_reads_saved_before_its_base_url_is_set[config-databricks]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-70]
 Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_one_time]
 Tests/UI/test_personas_pending_avatar_saves.py::test_pending_save_retains_later_upload_and_same_record_next_save[create]
 Tests/UI/test_settings_paste_event_origin.py::test_paste_search_typing_and_category_return[size1]
@@ -717,7 +711,11 @@ Tests/UI/test_settings_connect_key_rows.py::test_a_key_reads_saved_before_its_ba
 Tests/UI/test_library_artifacts_focus.py::test_empty_narrow_stage_tab_never_rests_on_an_unseen_reader_control[size1]
 # TASK-33620.9: durable rename publication through the mounted rail menu.
 Tests/UI/test_modal_quit_in_flight_hooks.py
-Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[valid-budget]
+# TASK-38966 (2026-11-06): the discovery row reads a just-listed model's
+# capability from its listing (TASK-34402). Red on dev in no lane since the row
+# read its provider widget (TASK-33007.6); a bare screen, ~3 s alone. Appended
+# at the tail.
+Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_reads_a_fresh_models_capability_from_its_listing
 # TASK-36036: pending mark/clear gestures cannot erase batch ownership.
 Tests/UI/test_schedules_bulk_admission.py::test_pending_batch_refuses_mark_and_clear_gestures
 Tests/UI/test_personas_pending_save_drafts.py::test_failed_pending_save_preserves_draft_and_persisted_version[update-character]
@@ -785,7 +783,8 @@ Tests/UI/test_library_notes_sync_attention.py
 Tests/UI/test_settings_personal_context.py::test_canonical_settings_pending_provenance_uses_cheap_current_owner
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_folder_row_states_lay_out_at_every_width_40_to_235[pairing-pending]
 Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[key-system]
-Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[raw-name]
+# TASK-33005.10 AC#4: a late switcher probe is offered to the owner and loses, and no probe worker ends in error (4 s, private profile).
+Tests/UI/test_console_switcher_local_probe.py::test_closing_mid_probe_raises_nothing_and_a_late_result_loses
 # TASK-33007.7 AC#7: memory and compaction defaults mount, stage and fit a
 # narrow Settings (15-28 s).
 Tests/UI/test_settings_context_memory_controls.py::test_console_memory_controls_mount_stage_and_fit_narrow_settings
@@ -805,16 +804,15 @@ Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_
 Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[write_failure]
 # TASK-33008 review round 5: a card covered at launch (the first-run wizard) runs discovery on the first return (6 s).
 Tests/UI/test_console_local_server_discovery_card.py::test_a_card_covered_at_launch_runs_discovery_again_on_the_first_return
-# TASK-36728/36729: reminder identity/feedback and responsive single-flight quiz Start.
-Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_edits_preserve_captured_reminder_values[serial]
-Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[name]
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+# TASK-33008.2: a NEEDS SETUP row's return reopens Switch model on its provider.
+Tests/UI/test_console_provider_return.py::test_a_needs_setup_rows_return_reopens_switch_model_on_its_provider
 Tests/UI/test_resolve_typed_directory.py
 # TASK-36900: responsive Reader detail, guarded shared-row publication and real teardown.
 Tests/UI/test_watchlists_reader_responsiveness.py::test_ordinary_reader_publishes_one_hydrated_shared_row
 Tests/UI/test_console_feedback_comment_modal.py
 Tests/UI/test_schedules_reminder_edit_identity.py::test_invalid_edit_keeps_its_row_retryable[server:1]
-# TASK-33005.7 (review round 1): one readiness poll tick repaints the identity row with the Key check row, from one verdict (6 s, private profile).
-Tests/UI/test_settings_configuration_hub.py::test_settings_identity_row_follows_the_key_check_row_on_a_poll_tick
+Tests/UI/test_console_inspector_focus_carriers.py::test_environment_four_rows_are_painted_at_80x24
 Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-toggle]
 # TASK-33005.15: evidence settled elsewhere repaints the Overview's Status through the existing poll only (4 s, private profile).
 Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_follows_evidence_settled_elsewhere
@@ -845,8 +843,8 @@ Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_liv
 # disclosure, after Model defaults (16-19 s).
 Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_defaults_appear_before_reference_copy
 Tests/UI/test_personas_pending_save_drafts.py::test_queued_save_acknowledges_widget_submission_before_handler_runs[character]
-# Post-rebase round 1, finding 1: Ctrl+Q waits for a snapshot Save still writing (15 s).
-Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_waits_for_a_snapshot_save_in_flight
+# TASK-33008.4 AC#3: the blocked footer names only the keys that act under the card (25 s).
+Tests/UI/test_console_setup_card_keyboard.py::test_the_blocked_footer_names_only_keys_that_act_under_the_card
 Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[enabled]
 Tests/UI/test_library_notes_work_session.py
 Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_edits_preserve_captured_reminder_values[different]
@@ -866,7 +864,10 @@ Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_corrupt_store_re
 Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_recurring]
 Tests/UI/test_console_toast_clears_header.py
 Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-legacy]
-Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[k]
+# TASK-36380 (2026-10-29): koboldcpp's Discover models lists a bare root and a
+# prefix root where Switch model probes, and a contract-refused endpoint names
+# its reason (one private-profile journey, about 23 s locally).
+Tests/UI/test_settings_default_model_picker.py::test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes
 Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[space]
 Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-backend-away-back]
 Tests/UI/test_watchlists_reader_responsiveness.py::test_newer_selection_reads_before_older_body_finishes[late-failure]
@@ -1011,7 +1012,7 @@ Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_a
 Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-prompt]
 Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[scope-away-back-success]
 Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[during-refresh]
-Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[panel-replaced-failure]
+Tests/UI/test_library_notes_tree_paint_readiness.py::test_tree_settle_waits_for_paint_without_hiding_missing_folders[folders-present]
 # TASK-33008 review round 2: adopting a detected server keeps the configured endpoint (5 s).
 Tests/UI/test_console_provider_persistence_regressions.py::test_detected_server_adoption_keeps_configured_endpoint
 Tests/UI/test_mcp_import_pending_file_drafts.py::test_mcp_picker_file_validation_preserves_raw_draft[size]
@@ -1042,10 +1043,11 @@ Tests/UI/test_study_quiz_create_drafts.py::test_unchanged_create_clears_once_and
 Tests/UI/test_study_quiz_start_responsiveness.py::test_failed_start_reports_the_previous_context_and_allows_retry[runtime-away-back]
 Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure-pending]
 Tests/UI/test_chunking_lab_sample_import_drafts.py::test_pending_sample_read_preserves_accepted_input[back-to-baseline-sample-file]
-Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-prompt]
+# TASK-37266..37268: native publication/export or canonical-class governance coverage.
+Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[temperature-0.70-during-refresh]
 Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-before-inner]
 Tests/UI/test_audiobook_chapter_source_freshness.py::test_programmatic_import_echo_keeps_current_dispatch
-Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[panel-replaced-success]
+Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[different-storage]
 # TASK-36729 review: actual panel retirement and replacement before/after settlement.
 Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-after-shell]
 Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-legacy]
@@ -1123,8 +1125,7 @@ Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_failure_pre
 Tests/UI/test_settings_default_model_picker.py::test_an_unlisted_model_id_is_entered_through_custom_id_and_validated
 Tests/UI/test_dictation_view_retirement.py::test_unmount_retires_before_awaiting_settings_flush
 Tests/UI/test_roleplay_pending_activation.py::test_four_key_find_opens_once_after_matching_publication[late]
-# TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
-Tests/UI/test_console_transcript_poll_stop_removal.py
+Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_preserves_newer_draft[empty-again]
 Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_failure_preserves_authored_recovery[size-sample-file]
 Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[request-shell]
 Tests/UI/test_study_quiz_create_drafts.py::test_unchanged_create_clears_once_and_failed_create_can_retry[create_question]
@@ -1132,8 +1133,7 @@ Tests/UI/test_audiobook_import_source_integrity.py::test_service_import_generate
 Tests/UI/test_settings_provider_view_model.py
 Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[retry-same-answer]
 Tests/UI/test_study_quiz_start_responsiveness.py::test_repeated_start_preserves_one_admitted_request[inner-shell]
-# TASK-33005.10 AC#4: a late switcher probe is offered to the owner and loses, and no probe worker ends in error (4 s, private profile).
-Tests/UI/test_console_switcher_local_probe.py::test_closing_mid_probe_raises_nothing_and_a_late_result_loses
+Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[raw-name]
 Tests/UI/test_console_switcher_saved_default.py::test_a_lifted_default_lists_the_same_models_and_the_more_count
 Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[queued-name]
 Tests/UI/test_console_switcher_saved_default.py::test_chat_settings_model_picker_lists_the_same_order
@@ -1193,11 +1193,7 @@ Tests/UI/test_profile_owned_settings_paths.py
 Tests/UI/test_lab_server_status.py
 # TASK-31966: Send-reason size idempotence, resize and override repair.
 Tests/UI/test_console_composer_reason_restyles.py
-# TASK-35648 and TASK-35649: two CSS governance ratchets that ran in no PR lane.
-# TASK-35648: no lane ran the 2,000 active-line sheet ceiling (ADR-161 spec
-# 3.5), so dev reached 2,004 lines in features/_library_panels.tcss unseen.
-# Static (reads css/ only), about 4-6 s with its private-profile child.
-Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+Tests/UI/test_image_gen_demo_request_lifetime.py::test_superseded_demo_cannot_publish_after_new_request[provider-error]
 Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[audiobook]
 Tests/UI/test_image_gen_demo_request_lifetime.py::test_canceled_demo_without_replacement_cannot_publish[cancel-success]
 Tests/UI/test_review_set_picker_dialog.py
@@ -1257,9 +1253,7 @@ Tests/UI/test_app_instance_warning.py
 Tests/UI/test_dictation_view_retirement.py::test_unstarted_departure_and_repeated_cleanup_never_construct_service
 Tests/UI/test_speech_settings_model.py
 Tests/UI/test_image_gen_demo_request_lifetime.py::test_canceled_demo_without_replacement_cannot_publish[cancel-error]
-# TASK-33007.6: Advanced's one-row disclosures -- order, titles that say their
-# state, state words on every row, one frame level, '/' opening its disclosure.
-Tests/UI/test_settings_advanced_disclosures.py::test_catalog_refresh_rows_say_on_off_and_whether_choices_apply[True]
+Tests/UI/test_speech_effects_placeholder.py::test_opening_it_states_that_it_is_not_built_and_where_it_is_going
 Tests/UI/test_image_gen_demo_request_lifetime.py::test_canceled_demo_without_replacement_cannot_publish[unmount-success]
 # TASK-34751: a card-list rebuild resuming while the app quits ends quietly,
 # not as WorkerFailed(MountError) at teardown (1 Pilot test, plus 4 guard
@@ -1286,14 +1280,16 @@ Tests/UI/test_personas_workbench_foundation.py
 # TASK-36360..36363:48 mounted retry/pending-draft nodes after the complete616-entry dev prefix.
 # Only the48-node tail rotates;46cases retain their previous shard and inherited slots stay fixed.
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_saved_identity_survives_metadata_read_and_later_keyboard_input[held-read]
-Tests/UI/test_personal_context_proposal_review.py::test_provenance_renewal_preserves_proposal_editor_and_acceptance
+# TASK-38714: the owned AgentRunsDB keeps no worker-thread connection open
+# after the Settings ▸ Agents panel unmounts. Appended at the tail.
+Tests/UI/test_settings_agents_offloop_read.py::test_owned_runs_db_retires_every_worker_connection_at_unmount
 Tests/UI/test_file_picker_bookmarks_lazy.py
 Tests/UI/test_first_run_wizard_cancel_route.py
 Tests/UI/test_buddy_workspace_modal.py
 # Whole-PR review of Phase 9, round 1 (in a geometry node's slot): TASK-33003.22 AC#1, the dimension-literal ratchet holds at zero (~4 s, private profile).
 Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
 Tests/UI/test_roleplay_pending_activation.py::test_newer_intent_retires_activation_before_selection_dispatch[reload]
-Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-screen]
+Tests/UI/test_lab_rail_layout.py
 Tests/UI/test_speech_effects_placeholder.py::test_the_rail_entry_is_reachable
 Tests/UI/test_library_footer_focus.py
 Tests/UI/test_schedules_ux_fixes.py
@@ -1312,7 +1308,7 @@ Tests/UI/test_console_control_bar_recovery_height.py
 Tests/UI/test_console_switcher_saved_default.py::test_the_saved_default_leads_its_group_though_saved_last
 # TASK-34786: the local composer host must retire its borrowed app database owners.
 Tests/UI/test_console_tab_switch_binds_composer.py::test_running_harness_retires_actual_borrowed_database_connections
-Tests/UI/test_lab_rail_layout.py
+Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-screen]
 Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[dictation]
 # Capture fix: NOT RUNNING wraps so every name shows whole, and repacks on resize.
 Tests/UI/test_console_switcher_local_probe.py::test_the_not_running_line_wraps_so_every_name_shows_whole
@@ -1320,7 +1316,7 @@ Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[
 Tests/UI/test_personas_dictionary_validation.py
 Tests/UI/test_media_runtime_state.py
 Tests/UI/test_research_source_receipt.py
-Tests/UI/test_library_export_destination_validation.py
+Tests/UI/test_reminder_form.py::test_reminder_form_requires_run_at_for_one_time
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_success_retains_later_raw_draft[generation-mode-create]
 Tests/UI/test_screen_navigation.py::test_navigation_timeout_does_not_cancel_the_in_flight_save
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_success_retains_later_raw_draft[notify-create]
@@ -1337,8 +1333,10 @@ Tests/UI/test_chat_search_enhanced.py
 Tests/UI/test_workbench_fitted_text.py
 Tests/UI/test_server_chatbook_service_lease.py
 Tests/UI/test_screen_footer_hints.py::test_settings_registration_updates_the_screens_own_footer
-Tests/UI/test_speech_effects_placeholder.py::test_opening_it_states_that_it_is_not_built_and_where_it_is_going
-Tests/UI/test_library_rag_legacy_chunk_report.py
+# TASK-33007.6: Advanced's one-row disclosures -- order, titles that say their
+# state, state words on every row, one frame level, '/' opening its disclosure.
+Tests/UI/test_settings_advanced_disclosures.py::test_catalog_refresh_rows_say_on_off_and_whether_choices_apply[True]
+Tests/UI/test_library_file_notes_git.py::test_commit_availability_refresh_cannot_replace_the_active_binding_draft
 Tests/UI/test_console_popover_context_window.py
 Tests/UI/test_screen_navigation.py::test_open_notes_workspace_routes_to_library_notes_list
 # TASK-33008 owner decision D2 (2026-10-17): a keyless 403 hints at a key; a sent key gets none (Settings rows, 1 s).
@@ -1348,16 +1346,17 @@ Tests/UI/test_automation_definition_pending_save_drafts.py::test_discard_later_d
 Tests/UI/test_settings_network_defaults.py
 Tests/UI/test_stts_capability_state.py::test_speech_rail_exposes_and_opens_voice_profiles
 Tests/UI/test_schedules_transfer_actions.py::test_workbench_locks_lifecycle_for_a_transferring_row
-Tests/UI/test_console_character_picker_debounce.py
+# Capture round 1, finding 1: an unknown window reads "unknown", not "tokens".
+Tests/UI/test_console_context_controls.py::test_unknown_model_window_reads_unknown_not_unknown_tokens
 Tests/UI/test_product_maturity_phase39_library_collections.py
 Tests/UI/test_speech_result_delivery.py
 Tests/UI/test_evals_screen.py::test_sample_bench_completion_does_not_yank_a_dirty_bench_editor
 Tests/UI/test_console_workspace_details_tray.py
 Tests/UI/test_evals_bench_editor.py::test_renaming_to_a_taken_name_renders_the_conflict_callout
-Tests/UI/test_evals_bench_editor.py::test_top_k_parse_failure_renders_the_pinned_callout_and_keeps_typed_state
+Tests/UI/test_cancelled_dialog_waits.py
 Tests/UI/test_evals_bench_editor.py::test_saving_a_bench_deleted_elsewhere_renders_an_error_not_a_false_success
 Tests/UI/test_lab_rail_store.py
-Tests/UI/test_automation_definition_pending_save_drafts.py::test_failed_create_unlocks_owner_and_keeps_newer_draft_for_retry
+Tests/UI/test_library_file_notes_git.py::test_a_branch_renders_as_its_short_name
 Tests/UI/test_screen_footer_hints.py::test_library_registration_updates_the_screens_own_footer
 Tests/UI/test_nav_veto_keeps_highlight.py
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_success_retains_later_raw_draft[question-edit]
@@ -1373,11 +1372,10 @@ Tests/UI/test_post_ux_product_roadmap_handoff.py
 Tests/UI/test_file_picker_filters_callable.py
 Tests/UI/test_screen_navigation.py::test_navigation_sync_switch_error_after_stack_transfer_commits_and_propagates
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_success_retains_later_raw_draft[generation-mode-edit]
-Tests/UI/test_screen_navigation.py::test_conversation_route_uses_library_conversation_context
+Tests/UI/test_library_file_notes_workspace.py::test_maintenance_disclosure_keeps_secondary_file_actions_reachable
 Tests/UI/test_screen_reuse_helpers.py
 Tests/UI/test_markdown_hygiene_1995.py
-# TASK-33008.2: a NEEDS SETUP row's return reopens Switch model on its provider.
-Tests/UI/test_console_provider_return.py::test_a_needs_setup_rows_return_reopens_switch_model_on_its_provider
+Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[name]
 Tests/UI/test_console_progress_navigation_owners.py
 Tests/UI/test_stts_capability_state.py::test_stts_window_explains_missing_local_speech_dependencies
 Tests/UI/test_stts_capability_state.py::test_speech_screen_mounts_rail_rows_exactly_once
@@ -1390,15 +1388,7 @@ Tests/UI/test_screen_navigation.py::test_check_action_gates_note_editor_back_to_
 Tests/UI/test_notes_scope_models.py
 Tests/UI/test_screen_navigation.py::test_check_action_gates_rag_use_in_console_to_search_row
 Tests/UI/test_library_url_ingest_submit.py
-# task-35597: the navigation floor, gated on its lane-green nodes only
-# (bootstrap profile at module level; the private-profile alternative would
-# cost ~130 child boots at 5-20 s each). 35 nodes are red on dev's own tree
-# behind the old RecoveryRequired setup mask (stale WorkspaceProbe contracts,
-# the retired bare-'n' landing key, the fresh-instance construction count,
-# Library landing/boot rot -- verified red under fresh private-profile
-# children too) and 5 nodes flake between plain runs; both groups stay
-# ungated until their owners re-pin them.
-Tests/UI/test_screen_navigation.py::test_master_shell_route_inventory_has_known_legacy_routes
+Tests/UI/test_console_auto_rag_on_send.py
 # R1 #13 and #14: literal rows print a provider's name without escaping it.
 Tests/UI/test_settings_plain_provider_names.py
 Tests/UI/test_personas_preview_restore.py
@@ -1422,11 +1412,18 @@ Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_bench_e
 Tests/UI/test_screen_navigation.py::test_file_notes_owner_is_injected_into_fresh_library_workspaces
 Tests/UI/test_evals_bench_editor.py::test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip
 Tests/UI/test_library_file_notes_git_push.py::test_push_panel_availability_is_a_separate_stable_list_action
-Tests/UI/test_console_auto_rag_on_send.py
+# task-35597: the navigation floor, gated on its lane-green nodes only
+# (bootstrap profile at module level; the private-profile alternative would
+# cost ~130 child boots at 5-20 s each). 35 nodes are red on dev's own tree
+# behind the old RecoveryRequired setup mask (stale WorkspaceProbe contracts,
+# the retired bare-'n' landing key, the fresh-instance construction count,
+# Library landing/boot rot -- verified red under fresh private-profile
+# children too) and 5 nodes flake between plain runs; both groups stay
+# ungated until their owners re-pin them.
+Tests/UI/test_screen_navigation.py::test_master_shell_route_inventory_has_known_legacy_routes
 Tests/UI/test_console_retrieval_controller.py
 Tests/UI/test_screen_navigation.py::test_app_wires_local_and_server_skills_services
-# Capture round 1, finding 1: an unknown window reads "unknown", not "tokens".
-Tests/UI/test_console_context_controls.py::test_unknown_model_window_reads_unknown_not_unknown_tokens
+Tests/UI/test_console_character_picker_debounce.py
 Tests/UI/test_screen_navigation.py::test_main_navigation_route_ids_match_shell_destinations
 Tests/UI/test_screen_navigation.py::test_home_route_resolves_to_home_screen
 Tests/UI/test_screen_navigation.py::test_navigation_flush_exception_warns_and_aborts_switch
@@ -1507,7 +1504,7 @@ Tests/UI/test_screen_navigation.py::test_navigation_commit_settles_success_befor
 Tests/UI/test_screen_navigation.py::test_on_key_disarm_is_a_harmless_noop_when_nothing_is_armed
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_falls_back_to_first_row_outside_active_selection
 Tests/UI/test_screen_navigation.py::test_check_action_gates_notes_files_back_to_active_files_mode
-Tests/UI/test_screen_navigation.py::test_primary_routed_screens_use_base_app_screen
+Tests/UI/test_screen_navigation.py::test_screen_load_error_reports_underlying_import_failure
 Tests/UI/test_screen_navigation.py::test_navigation_flush_that_never_returns_does_not_freeze_the_app
 Tests/UI/test_audiobook_import_source_integrity.py::test_pending_file_import_keeps_current_source[clear]
 Tests/UI/test_library_export_cancel.py
@@ -1538,7 +1535,7 @@ Tests/UI/test_screen_navigation.py::test_navigation_flushes_outgoing_screen_and_
 Tests/UI/test_screen_navigation.py::test_action_library_media_bulk_delete_cancel_dismisses_confirmation
 Tests/UI/test_console_chip_focus_contract.py
 Tests/UI/test_screen_navigation.py::test_navigation_completion_reports_prestartup_and_unknown_failures
-Tests/UI/test_reminder_form.py::test_reminder_form_requires_run_at_for_one_time
+Tests/UI/test_library_export_destination_validation.py
 Tests/UI/test_screen_navigation.py::test_all_master_shell_primary_routes_resolve_before_nav_exposure
 Tests/UI/test_screen_navigation.py::test_returning_user_initial_route_preserves_configured_default[library]
 Tests/UI/test_screen_navigation.py::test_navigation_completion_callback_settles_once_for_guard_veto_and_success
@@ -1580,7 +1577,7 @@ Tests/UI/test_screen_navigation.py::test_navigation_survives_screen_mount_failur
 Tests/UI/test_screen_navigation.py::test_file_notes_navigation_transition_blocks_mutation_until_switch_finishes
 Tests/UI/test_screen_navigation.py::test_mcp_shell_routes_resolve_to_settings_destination
 Tests/UI/test_console_fewer_permission_prompts_command.py
-Tests/UI/test_schedules_transfer_actions.py::test_clearing_the_lifecycle_lock_restores_the_buttons
+Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide1]
 Tests/UI/test_screen_navigation.py::test_navigation_post_switch_bookkeeping_failure_reports_success_and_propagates
 # TASK-33008.1: the return lands on the chat it came from.
 Tests/UI/test_console_provider_return.py::test_return_lands_on_the_originating_chat
@@ -1616,12 +1613,13 @@ Tests/UI/test_console_view_worker_groups.py::test_host_drain_retains_finite_pres
 Tests/UI/test_notifications_inbox_responsiveness.py::test_custom_sync_inbox_stays_on_callers_thread
 Tests/UI/test_bulk_selection_tooltips.py
 Tests/UI/test_screen_navigation.py::test_notes_is_not_a_navigable_tab
-Tests/UI/test_screen_navigation.py::test_app_shutdown_helper_skips_mcp_disconnect_when_no_sessions
+# Phase 9 Task 8: TASK-33002.19's mode strip shows a markup-like provider id or endpoint name literally, at open, on a switch and through a later push (3 cases, 25 s, private profile).
+Tests/UI/test_console_mode_strip_literal_text.py
 Tests/UI/test_focus_token_parity.py
 Tests/UI/test_console_archive_resume_errors.py
 Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_awaitable_overrides_keep_callers_loop_and_return_values
 Tests/UI/test_library_file_notes_git.py::test_commit_review_is_literal_complete_and_discloses_included_notes
-Tests/UI/test_library_notes_tree_paint_readiness.py::test_tree_settle_waits_for_paint_without_hiding_missing_folders[folders-present]
+Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[panel-replaced-failure]
 Tests/UI/test_screen_footer_hints.py::test_personas_screen_has_no_recompose_path_while_footer_hints_are_non_persisting
 Tests/UI/test_screen_navigation.py::test_main_navigation_buttons_explain_compact_labels
 Tests/UI/test_front_matter_previews_1993.py
@@ -1656,11 +1654,13 @@ Tests/UI/test_console_composer_run_controls.py::test_stop_routes_are_registered_
 Tests/UI/test_console_provider_return.py::test_a_return_reopens_nothing_over_a_screen_that_took_the_consoles_place
 # TASK-33008.1: the return line names the chat; the key-accepted copy is the recovery's.
 Tests/UI/test_console_provider_return.py::test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy
-Tests/UI/test_screen_navigation.py::test_screen_load_error_reports_underlying_import_failure
+Tests/UI/test_screen_navigation.py::test_primary_routed_screens_use_base_app_screen
 # R3 #1 and #2: Down walks the open model list; Enter picks the id typed in full.
 Tests/UI/test_settings_default_model_list_keys.py
 Tests/UI/test_product_maturity_phase6_release_closeout.py
-Tests/UI/test_settings_model_defaults_rows.py::test_every_row_help_fits_console_behaviors_narrower_column
+# Phase 9 Task 18 review round 2 (2026-10-18) appends one entry no lane ran, 3 of 3 serial.
+# TASK-35190 AC#4: Ctrl+N saves a pair the configured server can send while this chat's endpoint is down, and no endpoint; the configured server is probed only when local (2 cases, ~11 s, private profile).
+Tests/UI/test_console_endpoint_discovery.py::test_make_default_for_new_chats_reads_the_configured_endpoint
 Tests/UI/test_screen_navigation.py::test_screen_load_error_returns_none_for_a_loadable_route
 Tests/UI/test_smart_content_tree_tooltips.py
 Tests/UI/test_screen_navigation.py::test_subscription_route_resolves_to_watchlists_collections_via_alias
@@ -1706,7 +1706,7 @@ Tests/UI/test_console_speech_header_state.py::test_exit_during_model_preparation
 # whole, so its P0 cases are gated as node ids (each ~6-13 s locally at load
 # 13-20); appended at the tail, so no existing entry changes shard.
 Tests/UI/test_console_rail_filter_typing.py::test_typing_across_the_debounce_keeps_case_text_and_focus
-Tests/UI/test_console_rail_filter_typing.py::test_binding_letters_typed_around_rebuilds_stay_in_the_filter
+Tests/UI/test_llamacpp_consumers.py::test_llamacpp_default_persists_only_after_settings_save
 Tests/UI/test_console_rail_filter_typing.py::test_the_match_count_and_rows_follow_one_title_rule
 Tests/UI/test_console_rail_filter_typing.py::test_every_counted_row_is_painted_after_each_filter
 # PR #3251: TASK-36930..36932 and existing-owner CI/search follow-up controls.
@@ -1719,10 +1719,7 @@ Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_sqlite_failure_p
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
-# TASK-36380 (2026-10-29): koboldcpp's Discover models lists a bare root and a
-# prefix root where Switch model probes, and a contract-refused endpoint names
-# its reason (one private-profile journey, about 23 s locally).
-Tests/UI/test_settings_default_model_picker.py::test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes
+Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[k]
 # TASK-36382: five files no lane ran had gone red on dev unseen (deleted
 # sheets and classes, stale tokens, a stale fake, a race-prone wait). The
 # focus contracts, the Evals skill-eval screen, the llama.cpp refresh gate and
@@ -1740,7 +1737,7 @@ Tests/UI/test_css_staleness_manifest.py
 Tests/UI/test_llamacpp_snapshot_settings.py::test_success_canonicalizes_unchanged_f9_draft_and_continues_once[False-leading-zero]
 Tests/UI/test_console_system_prompt.py::test_second_save_to_library_press_cannot_cancel_an_in_flight_save
 Tests/UI/test_llamacpp_setup_refresh_gate.py
-Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+Tests/UI/test_portrait_region_editor.py::test_retired_modal_drops_held_preview[False]
 
 # TASK-18925: verified Console OS-notification Settings persistence journey.
 Tests/UI/test_settings_console_os_notifications_journeys.py
@@ -1802,7 +1799,11 @@ Tests/UI/test_console_key_ownership.py::test_y_on_a_non_text_control_types_inste
 
 # TASK-33620.2: a vision block names the model and never links to setup (AC#4), and a Switch that clears it leaves the keyboard in the draft.
 Tests/UI/test_console_attachment_vision_block.py::test_a_vision_block_names_the_model_and_never_links_to_setup
-Tests/UI/test_image_gen_demo_request_lifetime.py::test_superseded_demo_cannot_publish_after_new_request[provider-error]
+# TASK-35648 and TASK-35649: two CSS governance ratchets that ran in no PR lane.
+# TASK-35648: no lane ran the 2,000 active-line sheet ceiling (ADR-161 spec
+# 3.5), so dev reached 2,004 lines in features/_library_panels.tcss unseen.
+# Static (reads css/ only), about 4-6 s with its private-profile child.
+Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
 # TASK-33620.2 review: with no model chosen, the setup strip owns the composer and the vision row stays hidden.
 Tests/UI/test_console_attachment_vision_block.py::test_with_no_model_chosen_setup_owns_the_strip_and_the_row_stays_hidden
 # TASK-33628.1 (2026-10-27): the Ctrl+Q loss-guard regressions, appended at the
@@ -1908,7 +1909,7 @@ Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_a_retry_connects
 # PR3320 integration: exact accepted owner, temporary privacy and native error boundaries.
 Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[hook]
 Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[memory]
-Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[create-chain]
+Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-create]
 Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[temporary-compose]
 Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[temporary-dispatch]
 Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[postwrite]
@@ -1923,7 +1924,7 @@ Tests/UI/test_console_conversation_inspector.py::test_decode_failure_mentions_us
 Tests/UI/test_console_conversation_inspector.py::test_llama_cpp_capture_note_appears_only_on_llama_cpp_calls
 Tests/UI/test_console_conversation_inspector.py::test_focused_section_list_paints_every_turn_on_its_own_line
 Tests/UI/test_console_conversation_inspector.py::test_context_and_exchange_lists_wrap_rather_than_clip_their_labels
-Tests/UI/test_trace_export_ui.py::test_validation_failure_shows_plain_recovery_copy_and_logs_the_error
+Tests/UI/test_settings_media_pending_save_drafts.py::test_media_pending_clear_keeps_explicit_retyped_local_key[image-openrouter]
 Tests/UI/test_trace_export_ui.py::test_validation_failure_copy_survives_a_snapshot_it_cannot_log
 
 # PR3323: key-await target fences and short Sources modal regressions.
@@ -1947,11 +1948,7 @@ Tests/UI/test_console_compaction_forecast.py::test_the_context_chip_leads_with_t
 # code (mounted ChatScreen; three cases, about 12 s locally), appended at the
 # tail; existing slots stay fixed.
 Tests/UI/test_console_send_strip_codes.py
-# TASK-33621.50/.45 (2026-10-30): Stop on a MiniMax /generate-video reports
-# what MiniMax did with the cancel (recorded live responses, real adapter and
-# fetch_json under the real Console). Cooperative Stop outcomes and real
-# failure control; five tests with a terminal-record-deletion case; appended at the tail, so no existing entry changes shard.
-Tests/UI/test_console_video_stop_outcome.py
+Tests/UI/test_console_prompts_modal.py::test_source_switch_clears_foreign_rows_before_unavailable_result
 Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_over_the_video_save_picker_asks_before_discarding_it
 # Roleplay frame B2b (TASK-33910.4): the tag picker as a combobox (Enter,
 # Down/Up, the first match highlighted) on a real host app, no screen mount
@@ -2026,7 +2023,22 @@ Tests/UI/test_library_file_notes_git.py::test_a_commit_that_settles_mid_removal_
 # next draft, instead of refusing with "Draft changed; Send again." Its file
 # is in no other PR lane; appended at the tail, so no slot moves.
 Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_sends_its_capture_and_keeps_text_typed_after_it
-Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[retry-edited-incorrect]
+# TASK-38980 (2026-11-06): a confirmed Promote's write keeps the rules manager
+# busy and open, then reports promoted, refused or failed (about 3 s each).
+# Appended at the tail.
+# TASK-38978 (2026-11-06): the real-key Ctrl+Q tests for guarded modals
+# (TASK-33622.15, TASK-38747, TASK-38980's Promote write), one entry per test
+# so they spread over consecutive shards (13.5-28.3 s each serial at load
+# about 70, a few seconds each at low load). Appended at the tail.
+# TASK-38979 (2026-11-06): the portrait region editor, now that a retire
+# before mount closes it (and the pair review), one entry per test and per
+# case of its five heaviest tests, so no shard takes more than a few seconds
+# of it (1.2-28.3 s each serial at load about 70). Appended at the tail.
+# Ordered by census_reorder.py: the lightest entries sit on the shards whose slowest recent
+# CI run is not at least 5 min under the 20-min cap; reorder after any restack.
+# Ordered by census_reorder.py: the lightest entries sit on the shards whose slowest recent
+# CI run is not at least 5 min under the 20-min cap; reorder after any restack.
+Tests/UI/test_portrait_region_editor.py::test_unchanged_save_keeps_revision_candidate_and_sample
 # TASK-36524 (2026-11-03): the Evals skill-eval launch panel -- the Run
 # button's subject and model guards, RunRequested and Stop run -- pressed on
 # the real buttons, not by coordinate. 23 tests, 9-11 s serially here at load
@@ -2134,7 +2146,7 @@ Tests/UI/test_library_file_notes_workspace.py::test_save_status_names_local_fold
 Tests/UI/test_library_file_notes_git.py::test_hidden_postflight_starts_no_status_and_transition_wins_admission
 Tests/UI/test_library_file_notes_workspace.py::test_reconcile_tolerates_projection_disappearing_during_unmount
 Tests/UI/test_library_file_notes_git_push.py::test_workspace_push_callback_requires_exact_candidate_and_operation
-Tests/UI/test_library_file_notes_workspace.py::test_file_notes_field_labels_persist_across_path_context
+Tests/UI/test_library_file_notes_workspace.py::test_injected_owner_shutdown_waits_for_root_commit_before_replica_close
 Tests/UI/test_library_file_notes_git.py::test_commit_binding_invalidation_cancels_deferred_form_focus
 Tests/UI/test_library_file_notes_git.py::test_middle_elide_cells_preserves_graphemes_width_and_path_ends
 Tests/UI/test_library_file_notes_git.py::test_selection_uses_stable_group_id_across_refresh
@@ -2161,12 +2173,12 @@ Tests/UI/test_library_file_notes_git.py::test_commit_result_copy_is_scrollable_u
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_navigation_and_key_guidance_use_one_phrase
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_authority_row_tracks_root_save_and_session_git
 Tests/UI/test_library_file_notes_git.py::test_deferred_git_row_focus_does_not_steal_retained_editor
-Tests/UI/test_library_file_notes_git.py::test_workspace_trust_decline_runs_no_status_and_retry_revalidates
+Tests/UI/test_library_file_notes_git.py::test_untrusted_shows_only_trust_action_and_checking_keeps_back_enabled
 Tests/UI/test_library_file_notes_git.py::test_commit_uncertain_recovery_has_literal_reason_and_visible_focus
 Tests/UI/test_library_file_notes_git.py::test_guarded_commit_rebind_clears_draft_with_visible_explanation
 Tests/UI/test_library_file_notes_git.py::test_40x20_actionless_prepare_surface_is_keyboard_scrollable
 Tests/UI/test_library_file_notes_git.py::test_commit_operation_observer_exception_does_not_invent_uncertain
-Tests/UI/test_library_file_notes_git.py::test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation
+Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-existing-system]
 Tests/UI/test_library_file_notes_git.py::test_action_controls_fit_from_visible_label_cells_and_recompute
 Tests/UI/test_library_file_notes_git_push.py::test_workspace_push_keyboard_happy_path_reaches_succeeded_result
 Tests/UI/test_library_file_notes_git_push.py::test_push_authorization_dialog_window_close_declines
@@ -2214,7 +2226,7 @@ Tests/UI/test_library_file_notes_workspace.py::test_saved_authority_with_session
 Tests/UI/test_library_file_notes_workspace.py::test_recently_deleted_survives_a_second_workspace
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_new_and_move_lock_editor_through_path_task
 Tests/UI/test_library_file_notes_workspace.py::test_root_transition_retains_and_freezes_old_document_until_scan_finishes
-Tests/UI/test_library_file_notes_workspace.py::test_injected_owner_shutdown_waits_for_root_commit_before_replica_close
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_field_labels_persist_across_path_context
 Tests/UI/test_library_file_notes_git.py::test_commit_operation_review_is_responsive_and_cancels_service_owned_work
 Tests/UI/test_library_file_notes_workspace.py::test_raw_path_actions_validate_input_before_service_call
 Tests/UI/test_library_file_notes_git.py::test_commit_operation_settled_success_does_not_replay_over_later_draft
@@ -2237,7 +2249,7 @@ Tests/UI/test_library_file_notes_git.py::test_one_session_note_is_not_plural
 Tests/UI/test_library_file_notes_git_push.py::test_push_authorization_disclosure_is_bounded_and_keyboard_reachable
 Tests/UI/test_library_file_notes_git.py::test_unavailable_discovery_exposes_no_trust_or_mutation_action
 Tests/UI/test_library_file_notes_git_push.py::test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_details
-Tests/UI/test_library_file_notes_git.py::test_a_branch_renders_as_its_short_name
+Tests/UI/test_automation_definition_pending_save_drafts.py::test_failed_create_unlocks_owner_and_keeps_newer_draft_for_retry
 Tests/UI/test_library_file_notes_git.py::test_commit_form_meta_pluralises_and_shortens_the_branch
 Tests/UI/test_library_file_notes_git.py::test_action_summary_contract_matrix
 Tests/UI/test_library_file_notes_git_push.py::test_push_panel_progress_is_compact_and_phase_safe
@@ -2253,13 +2265,13 @@ Tests/UI/test_settings_pick_joins_saved_list.py::test_a_discovered_pick_saved_wi
 Tests/UI/test_library_file_notes_workspace.py::test_delayed_old_workspace_cannot_replace_current_workspace_root
 Tests/UI/test_library_file_notes_git.py::test_stage_draft_conflict_names_save_and_editor_recovery
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_builds_shared_adaptive_reader_roles
-Tests/UI/test_library_file_notes_git.py::test_untrusted_shows_only_trust_action_and_checking_keeps_back_enabled
+Tests/UI/test_library_file_notes_git.py::test_workspace_trust_decline_runs_no_status_and_retry_revalidates
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_primary_safe_recovery_actions_bypass_manage
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_save_copy_keeps_editor_editable
 Tests/UI/test_library_file_notes_git.py::test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geometry
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_deep_tree_materializes_only_expanded_levels
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_active_rail_is_unique_and_receives_screen_sync
-Tests/UI/test_library_file_notes_workspace.py::test_maintenance_disclosure_keeps_secondary_file_actions_reachable
+Tests/UI/test_screen_navigation.py::test_conversation_route_uses_library_conversation_context
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_production_shell_preserves_canvas_across_breakpoints
 Tests/UI/test_library_file_notes_git.py::test_commit_operation_cancel_boundary_tracks_exact_child_start
 Tests/UI/test_library_file_notes_git.py::test_guarded_commit_success_renders_and_focuses_fresh_owner_status
@@ -2285,7 +2297,7 @@ Tests/UI/test_library_file_notes_workspace.py::test_folder_files_path_task_admis
 Tests/UI/test_library_file_notes_git.py::test_keyboard_moves_rows_and_focus_without_implicit_enter_action
 Tests/UI/test_library_file_notes_git.py::test_action_layout_tolerates_rows_not_yet_mounted
 Tests/UI/test_library_file_notes_workspace.py::test_fresh_shared_workspace_follows_committed_owner_root
-Tests/UI/test_library_file_notes_git.py::test_commit_availability_refresh_cannot_replace_the_active_binding_draft
+Tests/UI/test_library_rag_legacy_chunk_report.py
 Tests/UI/test_library_file_notes_git_push.py::test_workspace_operation_aba_keeps_newer_exact_observer
 Tests/UI/test_library_file_notes_workspace.py::test_stale_candidate_scan_keeps_old_owner_log_and_service
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_automatic_items_priority_does_not_steal_focus_or_persist
@@ -2305,12 +2317,14 @@ Tests/UI/test_console_archive_recovery_cards.py
 Tests/UI/test_library_file_notes_git.py::test_row_render_worker_is_registered_lazily
 Tests/UI/test_library_file_notes_git.py::test_prepare_session_fixed_regions_remain_visible_at_40_by_20
 Tests/UI/test_library_file_notes_git_push.py::test_push_focus_repair_and_buffered_enter_cannot_cross_operation
-Tests/UI/test_library_file_notes_workspace.py::test_reload_confirmation_revalidates_current_disk_state
+# Capture 13c: a kept snapshot edit is forgotten once it is reverted (14 s).
+Tests/UI/test_app_quit_under_modal.py::test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted[revert]
 Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[source]
 Tests/UI/test_library_file_notes_git_push.py::test_workspace_reopens_original_uncertain_push_without_new_work
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_primary_actions_follow_editor_state
 Tests/UI/test_library_file_notes_workspace.py::test_create_move_delete_protect_and_restore_use_real_service
-Tests/UI/test_mcp_import_pending_file_drafts.py::test_pending_mcp_file_read_preserves_newer_draft[empty-again]
+# TASK-34982: a stopped poll timer still removes the transcript row, and finish_removal's contract (bare hosts; well under 1 s).
+Tests/UI/test_console_transcript_poll_stop_removal.py
 # TASK-37266..37268: native publication/export or canonical-class governance coverage.
 Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[name-Saved-new-before-publication]
 Tests/UI/test_library_file_notes_git.py::test_medium_commit_review_transition_reliably_focuses_edit
@@ -2375,9 +2389,7 @@ Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_ou
 Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[console-behavior-30]
 Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[theme-20]
 Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[theme-30]
-# TASK-38714: the owned AgentRunsDB keeps no worker-thread connection open
-# after the Settings ▸ Agents panel unmounts. Appended at the tail.
-Tests/UI/test_settings_agents_offloop_read.py::test_owned_runs_db_retires_every_worker_connection_at_unmount
+Tests/UI/test_personal_context_proposal_review.py::test_provenance_renewal_preserves_proposal_editor_and_acceptance
 # TASK-38718 review (2026-11-05): the Console send resend guard (TASK-33620.15.2),
 # including the retire_captured_drafts pin, ran in no PR lane. The whole file
 # took 113-118 s serially (three runs, load 5-6), over the 30 s per-file budget,
@@ -2435,7 +2447,7 @@ Tests/UI/test_library_file_notes_workspace.py::test_library_notes_source_choices
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[deleted]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[open-error]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[save-error]
-Tests/UI/test_settings_media_pending_save_drafts.py::test_media_pending_clear_keeps_explicit_retyped_local_key[image-openrouter]
+Tests/UI/test_trace_export_ui.py::test_validation_failure_shows_plain_recovery_copy_and_logs_the_error
 # TASK-38757 re-review (2026-11-05): at 50 columns on the Library screen a
 # created file stays in the editor, a cancelled New (button, Escape, or with a
 # file open) returns to the navigator with New focused, and a failure shown at
@@ -2451,11 +2463,7 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_
 # and the Files grip from the narrow editor (3-7 s each). Appended at the tail.
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[offline-back]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[grip-from-editor]
-# TASK-38966 (2026-11-06): the discovery row reads a just-listed model's
-# capability from its listing (TASK-34402). Red on dev in no lane since the row
-# read its provider widget (TASK-33007.6); a bare screen, ~3 s alone. Appended
-# at the tail.
-Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_reads_a_fresh_models_capability_from_its_listing
+Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[valid-budget]
 Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[folder]
 Tests/UI/test_console_send_resend_guard.py::test_a_hidden_chat_whose_draft_was_replaced_draws_no_was_sent_notice
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_back_leaves_focus_on_a_visible_navigator_control[50]
@@ -2476,7 +2484,9 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_
 Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-40]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-50]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-60]
-Tests/UI/test_library_adaptive_reader_closeout.py::test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[media-70]
+# TASK-33007.2: Connect's API key source words and Clear key, the Key check
+# row, an endpoint with no shipped default and the card's result line.
+Tests/UI/test_settings_connect_key_rows.py::test_a_key_reads_saved_before_its_base_url_is_set[config-databricks]
 Tests/UI/test_modal_wide_tier.py::test_wide_tier_block_exists_in_source_module
 Tests/UI/test_library_adaptive_reader_closeout.py::test_every_other_list_destination_gives_an_opened_list_the_stage[skills]
 Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[key-user]
@@ -2518,7 +2528,7 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_reader_focus_survi
 # narrow stage keeps focus in the list (160, 211 and 235 columns; 6-8 s each).
 # Appended at the tail.
 Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide0]
-Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide1]
+Tests/UI/test_schedules_transfer_actions.py::test_clearing_the_lifecycle_lock_restores_the_buttons
 Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_list_focus_survives_a_widen_that_ends_the_stage[wide2]
 # TASK-38981 re-review 4 (2026-11-06): a user's Shift+Tab to the Items grip
 # during or after a Prompts or Media stage pick's landing keeps focus there
@@ -2556,22 +2566,7 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library
 Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[notes]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[prompts]
 Tests/UI/test_library_adaptive_reader_closeout.py::test_each_destination_library_grip_close_persists[skills]
-# TASK-38980 (2026-11-06): a confirmed Promote's write keeps the rules manager
-# busy and open, then reports promoted, refused or failed (about 3 s each).
-# Appended at the tail.
-# TASK-38978 (2026-11-06): the real-key Ctrl+Q tests for guarded modals
-# (TASK-33622.15, TASK-38747, TASK-38980's Promote write), one entry per test
-# so they spread over consecutive shards (13.5-28.3 s each serial at load
-# about 70, a few seconds each at low load). Appended at the tail.
-# TASK-38979 (2026-11-06): the portrait region editor, now that a retire
-# before mount closes it (and the pair review), one entry per test and per
-# case of its five heaviest tests, so no shard takes more than a few seconds
-# of it (1.2-28.3 s each serial at load about 70). Appended at the tail.
-# Ordered by census_reorder.py: the lightest entries sit on the shards whose slowest recent
-# CI run is not at least 5 min under the 20-min cap; reorder after any restack.
-# Ordered by census_reorder.py: the lightest entries sit on the shards whose slowest recent
-# CI run is not at least 5 min under the 20-min cap; reorder after any restack.
-Tests/UI/test_portrait_region_editor.py::test_unchanged_save_keeps_revision_candidate_and_sample
+Tests/UI/test_study_quiz_attempt_retry.py::test_attempt_submission_preserves_answers_grading_and_history[retry-edited-incorrect]
 Tests/UI/test_portrait_region_editor.py::test_contain_mapping_refuses_padding_and_accounts_for_cell_aspect
 Tests/UI/test_app_quit_in_flight_modals.py::test_an_interview_discard_finishing_while_covered_still_closes_it
 Tests/UI/test_portrait_region_editor.py::test_mask_preview_uses_original_crop_and_compositor_mask
@@ -2583,9 +2578,11 @@ Tests/UI/test_portrait_region_editor.py::test_open_dialog_retires_after_another_
 Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_waits_for_a_confirmed_rule_promote_being_written
 Tests/UI/test_app_quit_in_flight_modals.py::test_a_fork_that_finishes_under_the_quit_question_closes_after_wait
 Tests/UI/test_response_rules_modal.py::test_a_confirmed_promote_keeps_the_manager_busy_and_open_until_it_reports
-Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[policy-inner]
+# R1 #7: Model list over an invalid Custom ID puts the model back.
+Tests/UI/test_settings_custom_id_model_list_rollback.py
 Tests/UI/test_app_quit_in_flight_modals.py::test_an_interview_discard_finishing_under_the_quit_question_closes_after_wait
-Tests/UI/test_portrait_region_editor.py::test_retired_modal_drops_held_preview[False]
+# TASK-36728/36729: reminder identity/feedback and responsive single-flight quiz Start.
+Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_edits_preserve_captured_reminder_values[serial]
 Tests/UI/test_portrait_region_editor.py::test_dialog_validation_is_coalesced_owned_and_drained[replacement]
 Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_waits_for_a_capture_policy_change_being_applied
 Tests/UI/test_portrait_region_editor.py::test_held_save_rejects_retired_authority_and_stale_revision[cancel]
@@ -2699,7 +2696,8 @@ Tests/UI/test_console_inspector_focus_carriers.py::test_rail_scrollbar_thumb_is_
 Tests/UI/test_console_inspector_focus_carriers.py::test_rail_scrollbar_thumb_is_visible_against_its_track[size1]
 Tests/UI/test_console_inspector_focus_carriers.py::test_the_compact_pinned_block_has_both_halves_of_its_geometry
 Tests/UI/test_console_inspector_focus_carriers.py::test_pinned_authority_block_compacts_at_80x24_and_not_at_200x50
-Tests/UI/test_console_inspector_focus_carriers.py::test_environment_four_rows_are_painted_at_80x24
+# TASK-33005.7 (review round 1): one readiness poll tick repaints the identity row with the Key check row, from one verdict (6 s, private profile).
+Tests/UI/test_settings_configuration_hub.py::test_settings_identity_row_follows_the_key_check_row_on_a_poll_tick
 Tests/UI/test_console_full_config_preparation.py
 Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_preview_ignores_seeded_legacy_human_value
 Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_workbench_exposes_no_human_identity_controls_or_marker
@@ -2707,12 +2705,16 @@ Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_chara
 Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_profile_rename_does_not_follow_legacy_pointer
 Tests/UI/test_personas_workbench.py::TestPersonaHumanIdentityRemoval::test_profile_delete_does_not_clear_legacy_pointer
 Tests/UI/test_portrait_region_editor.py::test_retiring_the_editor_before_it_mounts_still_closes_it[cancel]
-Tests/UI/test_cancelled_dialog_waits.py
+Tests/UI/test_evals_bench_editor.py::test_top_k_parse_failure_renders_the_pinned_callout_and_keeps_typed_state
 # TASK-38977 (2026-11-07): the Prompts modal's unavailable-source copy and
 # recipe-fill gateway pins, and the response-rule active-run copy pin, one
 # entry per test (0.6-9.1 s each serial at load about 27). Appended at the tail.
 Tests/UI/test_console_prompts_modal.py::test_no_matches_retry_and_source_unavailable_are_explicit
-Tests/UI/test_console_prompts_modal.py::test_source_switch_clears_foreign_rows_before_unavailable_result
+# TASK-33621.50/.45 (2026-10-30): Stop on a MiniMax /generate-video reports
+# what MiniMax did with the cancel (recorded live responses, real adapter and
+# fetch_json under the real Console). Cooperative Stop outcomes and real
+# failure control; five tests with a terminal-record-deletion case; appended at the tail, so no existing entry changes shard.
+Tests/UI/test_console_video_stop_outcome.py
 Tests/UI/test_console_prompts_modal.py::test_real_recipe_fill_with_additional_context_reaches_block_review
 Tests/UI/test_console_prompts_modal.py::test_mapped_context_blocks_recipe_save_until_deleted
 Tests/UI/test_console_response_rules.py::test_active_run_copy_takes_priority_over_an_earlier_rule_verdict
@@ -2746,7 +2748,7 @@ Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_wh
 Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[False-True]
 Tests/UI/test_llamacpp_consumers.py::test_settings_stages_verified_llamacpp_without_persisting
 Tests/UI/test_llamacpp_consumers.py::test_each_default_consumer_leaves_the_other_providers_intent_pending
-Tests/UI/test_llamacpp_consumers.py::test_llamacpp_default_persists_only_after_settings_save
+Tests/UI/test_console_rail_filter_typing.py::test_binding_letters_typed_around_rebuilds_stay_in_the_filter
 Tests/UI/test_llamacpp_consumers.py::test_stale_llamacpp_target_cannot_change_console_or_settings
 Tests/UI/test_llamacpp_consumers.py::test_llamacpp_settings_late_owner_expiry_compensates_before_ack
 Tests/UI/test_llamacpp_consumers.py::test_llamacpp_default_recovery_blocks_other_default_until_released
