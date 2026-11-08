@@ -267,7 +267,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-39139 (owner size waiver): +4, a prompt mix-in attempt
     # that creates the active leaf's row writes the durable cursor through.
     # 2026-11-08, TASK-39119 review (owner size waiver): +9, the store adopts a reply row saved before provider entry.
-    "tldw_chatbook/Chat/console_chat_store.py": 22454,
+    # 2026-11-08, TASK-39119 review r12p-rev2 (owner size waiver): +10, the
+    # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
+    "tldw_chatbook/Chat/console_chat_store.py": 22464,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
