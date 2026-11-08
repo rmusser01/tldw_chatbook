@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import gc
 import json
 import os
 import sys
@@ -75,7 +76,7 @@ class _NaturalPreparingFrame:
         self.action_at = self.frame_at = self.feedback_frame_at = None
         # Loop-thread CPU at the action and at the Sending frame (TASK-38948).
         self.action_cpu = self.feedback_frame_cpu = None
-        self.while_held = False
+        self.while_held = self.feedback_while_held = False
         self.pending_user_frame_at = self.pending_user_identity = None
         self.pending_user_while_held = False
         self.painted = threading.Event()
@@ -103,6 +104,7 @@ class _NaturalPreparingFrame:
         ):
             self.feedback_frame_at = time.perf_counter()
             self.feedback_frame_cpu = time.thread_time()
+            self.feedback_while_held = not self.case.probe.release.is_set()
         if self.frame_at is None and _update_contains(
             frame.f_locals.get("renderable"), button.region, "Preparing"
         ):
@@ -578,6 +580,11 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
         with preparing.installed(), typing.installed():
             releaser.start()
             try:
+                # Start with no collection owed: a gen-2 pass over the worker's
+                # accumulated heap read as 483 ms of loop CPU in the interval
+                # late in a mixed run (TASK-38948 review r12t-rev1).
+                gc.collect()
+                gc.freeze()
                 # All Send-triggered preparation remains inside this interval.
                 preparing.action_at = time.perf_counter()
                 preparing.action_cpu = time.thread_time()
@@ -622,11 +629,23 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                     if preparing.feedback_frame_at is None
                     else preparing.feedback_frame_at - preparing.action_at,
                 )
+                # A late Sending frame is waited for, so the held-read check
+                # below names it instead of reading None.
+                await _until(
+                    lambda: preparing.feedback_frame_at is not None,
+                    _HELD_READER_SECONDS,
+                )
                 assert preparing.feedback_frame_at is not None
+                # A loaded host only reports wall misses; the Sending frame
+                # must still land before the held read is released.
+                assert preparing.feedback_while_held, (
+                    "Sending painted only after the held read was released"
+                )
                 assert preparing.frame_at is not None and preparing.while_held
                 # Preparing follows the immediate Sending frame at real receipt.
                 assert typing.mutated_while_held and typing.frame_while_held
             finally:
+                gc.unfreeze()
                 stop.set()
                 case.probe.release.set()
                 releaser.join(timeout=_HELD_READER_SECONDS + 2)

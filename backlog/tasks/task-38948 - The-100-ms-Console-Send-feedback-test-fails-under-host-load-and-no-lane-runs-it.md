@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-07 23:51
+updated_date: 2026-11-08 01:28
 labels:
 - follow-up
 - console
@@ -82,6 +82,11 @@ Also changed: the held provider read waited only 0.5 s for the paints. At load 1
 - Probe of loop CPU against GC over 40 more cases at load 57-99: Sending at most 73 ms, of which GC at most 5 ms; input at most 50 ms.
 
 **Lane (AC#4).** UI census tail, one entry per route (`[enter]`, `[send-button]`). Serially in the lane's invocation at load about 130: 9.1 and 6.2 s of call, 25 s of session for both.
+
+**Review r12t-rev1 fixes (2026-11-07).** The reviewer ruled the wall-time gate acceptable: the UI shards run serial pytest on 4-vCPU runners, so the load stays under the CPU count where it gates merges.
+- **The loop-CPU check false-failed** in the reviewer's six-file `-n 4` run at load 40-60: 483 ms of CPU against 100 ms (1456 ms wall), late in a busy worker. My earlier 258 ms at load 31 was the same thing. The likely cause is a gen-2 GC over the worker's accumulated heap inside the interval, plus CPU-time inflation under oversubscription. Fix: `gc.collect()` and `gc.freeze()` just before `action_at`, and `gc.unfreeze()` in `finally`. Re-measured in 10 mixed runs at `-n 4` and load 25-48: prompts modal, composer restyle, Inspector section, response rules and send-admission files first, the 100 ms node last. 20 of 20 cases passed. Sending loop CPU was 32-75 ms (wall 53-248 ms), input-frame CPU 7-70 ms. The cause of the two outliers is inferred, not proven; AC#2 stays ticked on these 20 clean cases.
+- **Sending held-read bound.** `feedback_while_held` is stamped at the Sending frame and asserted, after a bounded wait for a late Sending frame. So a Sending paint that lands after the held read is released fails at any load, wall gate or not. Shown red with a temporary edit that delays every Sending source by 1.0 s: the ack's immediate `sync_run_chip` behind a timer, `run_copy`, the validating copy and the composer's run feedback. In 2 of 2 runs (load 45-47) one route failed with "Sending painted only after the held read was released", and the other read `None` because Sending never painted in time.
+- Touched file, 3 runs at `-n 4` (load 25-61): 17 of 17 each. The census checker and preflight pass.
 
 **Files.** `Tests/UI/test_console_received_intent_feedback.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
 

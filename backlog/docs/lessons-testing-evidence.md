@@ -33,15 +33,21 @@ refusal with appropriately scoped evidence, or state that its payload is unavail
 
 **What to do.** A mounted Console test that navigates away and back must take its Console from the route, never construct one. If a navigation test reads an empty transcript while the store has the rows, check the screen's identity and its attach flags before suspecting the render.
 
-## A probe process cannot excuse a loaded host's latency miss; the loop's own CPU time can hold at any load (TASK-38948, 2026-11-07)
+## A probe process cannot excuse a loaded host's latency miss, and the loop's CPU time is a better but imperfect guard (TASK-38948, 2026-11-07)
 
 **Incident.** The 100 ms Send-feedback budgets failed 19 of 20 runs at load 50 on wall time alone. Two ways of excusing host load were tried and dropped:
 - A separate probe process slept 1 ms at a time, and its late wakes were subtracted from each interval. At load 104-130 the Send-button case read 406 ms, of which the probe accounted for 181 ms, so it still failed. The scheduler favours a thread that mostly sleeps, so the probe stalls far less than the CPU-bound event loop thread.
 - The probe was then used only as a contention signal (stalled at least 10% of the window). At load 48 an input interval read 181 ms while the probe had stalled 9 ms.
 
-What held is the event loop thread's own CPU time over each interval, `time.thread_time()` stamped on the loop at both ends. Over about 100 cases at load 30-178 it stayed at or under 78 ms for the Sending frame and 50 ms for input. GC accounted for at most 5 ms. A 150 ms busy-wait before the paint read 128-243 ms. One case read 258 ms at load 31 with no product change; it was not seen again, and its wall time (347 ms) would have failed a quiet host's wall budget as well. A separate trap in the same test: the held provider read gave up waiting for the paints after 0.5 s, so at load 105 it released before a slow frame and failed `frame_while_held`. That wait is the test's patience, not a budget, and is now 5 s.
+The event loop thread's own CPU time over each interval (`time.thread_time()` stamped on the loop at both ends) held far better: at most 78 ms for the Sending frame over about 100 cases at load 30-178. It is still not load-proof:
+- It read 258 ms at load 31 with no product change.
+- Review r12t-rev1 then saw 483 ms at load 40-60, late in a six-file `-n 4` run, in a worker that had already run many tests. A gen-2 collection over the accumulated heap landing in the interval is the likely cause. CPU time also inflates when threads are oversubscribed or moved to efficiency cores.
 
-**What to do.** Do not infer a busy thread's lost time from another process's sleep latency. Hold the work to its budget in CPU time on the thread that does it, at any load: that assertion never goes vacuous on a loaded runner. If you also gate a wall-clock budget on host load, say plainly in the test and the task that a loaded host only reports wall misses, because a blocking wait slips through there.
+The test now calls `gc.collect()` and `gc.freeze()` before the interval and `gc.unfreeze()` after. Ten mixed runs at load 25-48, with the node last behind five other UI files, then read 32-75 ms (20 of 20). A longer window also collects more unrelated loop CPU: a 0.3 s delay of the Sending paint alone read 100-123 ms.
+
+A separate trap in the same test: the held provider read gave up waiting for the paints after 0.5 s, so at load 105 it released before a slow frame and failed `frame_while_held`. That wait is the test's patience, not a budget, and is now 5 s.
+
+**What to do.** Do not infer a busy thread's lost time from another process's sleep latency. CPU time on the thread that does the work is the better load-tolerant budget, but start the interval with no collection owed (collect, then freeze), and keep the interval short. If you also gate a wall-clock budget on host load, say plainly in the test and the task that a loaded host only reports wall misses. Keep an ordering bound that holds at any load: here the Sending frame must land before the held read is released.
 
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
