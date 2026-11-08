@@ -1465,13 +1465,17 @@ def test_entry_limit_stops_directory_enumeration_before_unbounded_sort(
             return SimpleNamespace(name=f"entry-{self.yielded}")
 
     guarded = GuardedScandir()
-    monkeypatch.setattr(os, "scandir", lambda _directory_fd: guarded)
+    with monkeypatch.context() as fault:
+        fault.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            note_import_discovery.os, "scandir", lambda _directory_fd: guarded
+        )
 
-    with pytest.raises(ImportSelectionError) as raised:
-        discover_import_sources([root], _discovery_bounds(max_entries=2))
+        with pytest.raises(ImportSelectionError) as raised:
+            discover_import_sources([root], _discovery_bounds(max_entries=2))
 
-    assert raised.value.reason_code == "max_entries_exceeded"
-    assert guarded.yielded == 3
+        assert raised.value.reason_code == "max_entries_exceeded"
+        assert guarded.yielded == 3
 
 
 def test_selected_file_count_and_size_limits_fail_closed(tmp_path: Path) -> None:
@@ -1713,15 +1717,21 @@ def test_surrogate_escaped_nested_name_becomes_a_total_safe_failure(
             self.yielded = True
             return SimpleNamespace(name="unsafe-\udcff.md")
 
-    monkeypatch.setattr(os, "scandir", lambda _directory_fd: SurrogateScandir())
+    with monkeypatch.context() as fault:
+        fault.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            note_import_discovery.os,
+            "scandir",
+            lambda _directory_fd: SurrogateScandir(),
+        )
 
-    discovery = discover_import_sources([root], _discovery_bounds())
+        discovery = discover_import_sources([root], _discovery_bounds())
 
-    assert discovery.candidates == ()
-    assert len(discovery.failures) == 1
-    assert discovery.failures[0].reason_code == "nested_unsafe_name"
-    assert "%FF" in discovery.failures[0].display_path
-    assert str(root) not in repr(discovery.failures[0])
+        assert discovery.candidates == ()
+        assert len(discovery.failures) == 1
+        assert discovery.failures[0].reason_code == "nested_unsafe_name"
+        assert "%FF" in discovery.failures[0].display_path
+        assert str(root) not in repr(discovery.failures[0])
 
 
 def test_unsafe_failure_display_cannot_collide_with_literal_percent_filename(
@@ -1783,19 +1793,21 @@ def test_unsupported_descriptor_api_fails_closed_with_a_stable_error(
     """Platforms lacking secure descriptor operations never fall back to path walks."""
     note = tmp_path / "note.md"
     note.write_text("note", encoding="utf-8")
-    monkeypatch.setattr(
-        note_import_discovery.os,
-        "open",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            NotImplementedError("PRIVATE UNSUPPORTED API")
-        ),
-    )
+    with monkeypatch.context() as fault:
+        fault.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            note_import_discovery.os,
+            "open",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                NotImplementedError("PRIVATE UNSUPPORTED API")
+            ),
+        )
 
-    with pytest.raises(ImportSelectionError) as raised:
-        discover_import_sources([note], _discovery_bounds())
+        with pytest.raises(ImportSelectionError) as raised:
+            discover_import_sources([note], _discovery_bounds())
 
-    assert raised.value.reason_code == "secure_discovery_unavailable"
-    assert "PRIVATE" not in str(raised.value)
+        assert raised.value.reason_code == "secure_discovery_unavailable"
+        assert "PRIVATE" not in str(raised.value)
 
 
 def test_close_failure_does_not_mask_a_stable_selected_symlink_error(
@@ -1992,15 +2004,17 @@ def test_unexpected_discovery_errors_close_every_owned_descriptor(
             raise error_type("unexpected discovery failure")
         return real_scandir(descriptor)
 
-    monkeypatch.setattr(note_import_discovery.os, "open", tracked_open)
-    monkeypatch.setattr(note_import_discovery.os, "fstat", injected_fstat)
-    monkeypatch.setattr(note_import_discovery.os, "close", tracked_close)
-    monkeypatch.setattr(note_import_discovery.os, "scandir", injected_scandir)
+    with monkeypatch.context() as fault:
+        fault.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(note_import_discovery.os, "open", tracked_open)
+        fault.setattr(note_import_discovery.os, "fstat", injected_fstat)
+        fault.setattr(note_import_discovery.os, "close", tracked_close)
+        fault.setattr(note_import_discovery.os, "scandir", injected_scandir)
 
-    with pytest.raises(error_type):
-        discover_import_sources([root], _discovery_bounds())
+        with pytest.raises(error_type):
+            discover_import_sources([root], _discovery_bounds())
 
-    assert Counter(closed) == Counter(opened)
+        assert Counter(closed) == Counter(opened)
 
 
 @pytest.mark.parametrize(
@@ -2085,13 +2099,17 @@ def test_canonically_equivalent_sibling_folders_reject_the_whole_scan(
         def __next__(self) -> FolderEntry:
             return next(self.entries)
 
-    monkeypatch.setattr(os, "scandir", lambda _descriptor: FolderScandir())
+    with monkeypatch.context() as fault:
+        fault.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            note_import_discovery.os, "scandir", lambda _descriptor: FolderScandir()
+        )
 
-    with pytest.raises(ImportSelectionError) as raised:
-        discover_import_sources([root], _discovery_bounds())
+        with pytest.raises(ImportSelectionError) as raised:
+            discover_import_sources([root], _discovery_bounds())
 
-    assert raised.value.reason_code == "ambiguous_folder_path"
-    assert str(root) not in str(raised.value)
+        assert raised.value.reason_code == "ambiguous_folder_path"
+        assert str(root) not in str(raised.value)
 
 
 def test_import_bounds_reject_depth_above_absolute_runtime_ceiling() -> None:
@@ -2168,13 +2186,15 @@ def test_missing_secure_discovery_capability_has_a_distinct_stable_reason(
     """Capability absence is distinguishable from an unreadable selected path."""
     note = tmp_path / "note.md"
     note.write_text("note", encoding="utf-8")
-    monkeypatch.delattr(note_import_discovery.os, "O_NOFOLLOW")
+    with monkeypatch.context() as fault:
+        fault.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
+        fault.delattr(note_import_discovery.os, "O_NOFOLLOW")
 
-    with pytest.raises(ImportSelectionError) as raised:
-        discover_import_sources([note], _discovery_bounds())
+        with pytest.raises(ImportSelectionError) as raised:
+            discover_import_sources([note], _discovery_bounds())
 
-    assert raised.value.reason_code == "secure_discovery_unavailable"
-    assert str(note) not in str(raised.value)
+        assert raised.value.reason_code == "secure_discovery_unavailable"
+        assert str(note) not in str(raised.value)
 
 
 def test_failed_entry_stat_is_not_retried_into_an_ambiguous_sibling_directory(
@@ -2232,18 +2252,22 @@ def test_failed_entry_stat_is_not_retried_into_an_ambiguous_sibling_directory(
             raise AssertionError("reappeared entry was traversed")
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr(os, "scandir", lambda _descriptor: RacingScandir())
-    monkeypatch.setattr(note_import_discovery.os, "open", guarded_open)
+    with monkeypatch.context() as fault:
+        fault.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            note_import_discovery.os, "scandir", lambda _descriptor: RacingScandir()
+        )
+        fault.setattr(note_import_discovery.os, "open", guarded_open)
 
-    discovery = discover_import_sources([root], _discovery_bounds())
+        discovery = discover_import_sources([root], _discovery_bounds())
 
-    assert discovery.candidates == ()
-    assert composed.stat_calls == 1
-    assert decomposed.stat_calls == 1
-    assert [failure.reason_code for failure in discovery.failures] == [
-        "nested_unavailable",
-        "nested_unavailable",
-    ]
+        assert discovery.candidates == ()
+        assert composed.stat_calls == 1
+        assert decomposed.stat_calls == 1
+        assert [failure.reason_code for failure in discovery.failures] == [
+            "nested_unavailable",
+            "nested_unavailable",
+        ]
 
 
 def _parse_selection(
@@ -5234,17 +5258,18 @@ def test_discovery_uses_the_shared_path_validator_result(
         calls.append((path, require_exists, probe_existing))
         return validated
 
-    monkeypatch.setattr(
-        note_import_discovery,
-        "validate_path_simple",
-        validate,
-        raising=False,
-    )
+    with monkeypatch.context() as fault:
+        fault.setattr(
+            note_import_discovery,
+            "validate_path_simple",
+            validate,
+            raising=False,
+        )
 
-    discovery = discover_import_sources([selected], _discovery_bounds())
+        discovery = discover_import_sources([selected], _discovery_bounds())
 
-    assert calls == [(selected, False, False)]
-    assert discovery.candidates[0].source.source_path == validated
+        assert calls == [(selected, False, False)]
+        assert discovery.candidates[0].source.source_path == validated
 
 
 @pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
@@ -5260,12 +5285,14 @@ def test_posix_descriptor_cleanup_propagates_interruptions_after_closing_all(
         if descriptor == 2:
             raise interruption()
 
-    monkeypatch.setattr(note_import_discovery.os, "close", close)
+    with monkeypatch.context() as fault:
+        fault.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(note_import_discovery.os, "close", close)
 
-    with pytest.raises(interruption):
-        note_import_discovery._close_descriptors((1, 2))
+        with pytest.raises(interruption):
+            note_import_discovery._close_descriptors((1, 2))
 
-    assert closed == [2, 1]
+        assert closed == [2, 1]
 
 
 def test_directory_descriptors_are_opened_close_on_exec(

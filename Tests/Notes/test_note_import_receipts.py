@@ -1109,12 +1109,13 @@ def test_begin_enforces_absolute_ledger_row_ceiling_before_database_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = tmp_path / "notes-sync.sqlite3"
-    monkeypatch.setattr(receipt_module, "MAX_RECEIPT_LEDGER_ROWS", 5)
+    with monkeypatch.context() as fault:
+        fault.setattr(receipt_module, "MAX_RECEIPT_LEDGER_ROWS", 5)
 
-    with pytest.raises(ImportReceiptError, match="ledger"):
-        NoteImportReceiptRepository(database).begin(_approved(), batch_size=25)
+        with pytest.raises(ImportReceiptError, match="ledger"):
+            NoteImportReceiptRepository(database).begin(_approved(), batch_size=25)
 
-    assert not database.exists()
+        assert not database.exists()
 
 
 def test_begin_seeds_only_approved_effects_and_skip_has_no_mutation_effects(

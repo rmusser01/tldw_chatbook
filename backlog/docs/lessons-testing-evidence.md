@@ -6,6 +6,8 @@
 
 **What to do.** A fixture that protects or faults a tmp_path must own that replacement's complete lifetime. Restore it in that fixture before the temporary-directory fixture tears down, even when the body or its refusal assertion raises. Keep the real guard and its incident assertions intact; retaining every temporary directory only hides the ordering defect.
 
+The same release found Notes discovery fakes patching sharedos.scandir/open/close through temporary cleanup; a synthetic directBaseException could abandon later node finalizers. Ten fault definitions now use body-local contexts and consumer-local OS copies, preserving every existing descriptor/privacy/interruption/ledger assertion. The original20-case sequence then passed with natural process retirement. Fault only the consumer that owns the operation; a discovery scanner is not a valid replacement for pytest cleanup.
+
 
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
