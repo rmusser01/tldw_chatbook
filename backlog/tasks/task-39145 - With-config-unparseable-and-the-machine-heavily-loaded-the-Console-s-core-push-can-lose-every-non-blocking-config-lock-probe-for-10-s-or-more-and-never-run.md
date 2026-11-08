@@ -88,4 +88,18 @@ Owner decision (2026-11-07): "Bounded stop + notice: after a bounded wait (a few
 - `Tests/CI`: 1220 passed, 1 skipped. Preflight passed. `bootbudget.sh`: 32 passed.
 - The new test takes about 21 s alone. Its file is a whole-file UI census entry.
 
+
+**Review r12p-rev1 (2026-11-08).**
+- **I2.** The mounted test was flaky: 2 of 5 runs failed at "the first push after a good load did not run". The live Console's own reads can hold a lock at the single probe after the good load; the product then rightly owes a retry, which the test never fired. The test now fires each owed retry by hand, with a short pause between them, until the push runs (bounded at 40). 20 of 20 at `-n 4`, load 47-57.
+- **M1.** A retry landing during a maintenance pause dropped the probe it owed: neither flag that `_console_sync_maintenance_resume` reads was set. It now sets `_console_sync_requested`, so the resume replays a FULL.
+- **M2.**
+  - Only the push's own retries (`sync_console_core_state(..., retry=True)`) count toward the bound. FULL probes meanwhile neither count nor schedule a second timer, so a 0.2 s poll can no longer use up the bound in about 1.4 s.
+  - A stop with no parse failure ends its episode (the count resets to 0), so later, unrelated contention owes retries again. A stop with a parse failure stays stopped until the next good load.
+  - The User Guide's "about three seconds" holds: the bound is 6 retries 0.5 s apart.
+- **M3.** The stop reads `_CONFIG_CACHE_INSTALLS` before `get_config_load_failure()`. A good install landing between them makes the recorded count stale, so the next notice sync clears the notice.
+- **New tests in the same file** (fake-screen unit tests, a real lock held on another thread):
+  - `test_only_the_push_own_retries_count_and_a_silent_stop_ends_the_episode`. On cebb6681b1's `config_sync.py`: red, `no push retry was owed` (the FULL probes had used up the bound). Under single reverts on head: without the episode reset, `a silent stop kept its episode, so later contention owed no retry`; without the pause flag, `a retry dropped during a maintenance pause...`.
+  - `test_an_install_landing_at_the_stop_never_leaves_the_notice_up`. On cebb6681b1: red, `the notice outlived the good install that landed at the stop`.
+- **Run:** the whole off-loop file passed at `-n 4` (24 passed, load 47-54).
+
 Files: `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/Widgets/Console/console_status_chips.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Docs/User_Guide/console.md`.

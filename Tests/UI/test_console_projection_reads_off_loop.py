@@ -634,6 +634,135 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
     assert screen.pushes == 4 and screen.replays == [True, True]
 
 
+class _CorePushScreen:
+    """The parts of a Console screen the core-state push touches."""
+
+    _console_control_bar_replay_whole_sync = False
+    _console_sync_requested = False
+    _console_sync_maintenance_paused = False
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.app_instance = self.app = SimpleNamespace(
+            app_config={"disk-loaded": True}
+        )
+        self.pushes, self.replays, self.timers = 0, [], []
+
+    def _console_config_snapshot_is_disk_loaded(self, value):
+        return bool(value)
+
+    def _sync_console_chat_core_state(self):
+        self.pushes += 1
+
+    def _request_console_control_bar_sync(self, *, delayed=False):
+        self.replays.append(delayed)
+
+    def set_timer(self, delay, callback):
+        from types import SimpleNamespace
+
+        timer = SimpleNamespace(delay=delay, callback=callback, stopped=False)
+        timer.stop = lambda: setattr(timer, "stopped", True)
+        self.timers.append(timer)
+        return timer
+
+    def query(self, _widget_type):
+        return []
+
+    def fire_retry(self):
+        timer = self._console_core_push_timer
+        assert timer is not None, "no push retry was owed"
+        timer.stop()
+        config_sync.retry_console_core_push(self)
+
+
+def _hold_config_file_lock():
+    """Hold the config file lock on another thread; returns its release."""
+    from tldw_chatbook import config
+
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with config._config_file_lock():
+            held.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(5)
+
+    def stop():
+        release.set()
+        holder.join(5)
+
+    return stop
+
+
+def test_only_the_push_own_retries_count_and_a_silent_stop_ends_the_episode(
+    monkeypatch,
+):
+    """TASK-39145 review: FULL probes cannot shorten the bound, a stop with no
+    parse failure ends its episode, and a retry that lands during a
+    maintenance pause asks the resume for a FULL."""
+    from tldw_chatbook import config
+
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: {})
+    monkeypatch.setattr(config, "_warm_config_cache_hit", dict)
+    monkeypatch.setattr(config, "get_config_load_failure", lambda: None)
+    screen = _CorePushScreen()
+    release = _hold_config_file_lock()
+    try:
+        config_sync.sync_console_core_state(screen)  # A FULL's probe loses.
+        for _ in range(5):  # Poll FULLs probing meanwhile do not count.
+            config_sync.sync_console_core_state(screen)
+        assert len(screen.timers) == 1
+        for _ in range(config_sync.CORE_PUSH_RETRIES):
+            screen.fire_retry()
+        assert screen._console_core_push_timer is None, "the retries did not stop"
+        assert len(screen.timers) == config_sync.CORE_PUSH_RETRIES
+        config_sync.sync_console_core_state(screen)  # Later, unrelated contention.
+        assert screen._console_core_push_timer is not None, (
+            "a silent stop kept its episode, so later contention owed no retry"
+        )
+        screen._console_sync_maintenance_paused = True
+        screen.fire_retry()
+        assert screen._console_sync_requested, (
+            "a retry dropped during a maintenance pause, and the resume replays "
+            "nothing it cannot see"
+        )
+    finally:
+        release()
+    assert screen.pushes == 0 and screen.replays == []
+
+
+def test_an_install_landing_at_the_stop_never_leaves_the_notice_up(monkeypatch):
+    """TASK-39145 review: the stop reads the install count before the parse
+    failure, so a good install landing between them clears the notice."""
+    from tldw_chatbook import config
+
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: {})
+    monkeypatch.setattr(config, "_warm_config_cache_hit", dict)
+    monkeypatch.setattr(config, "_CONFIG_CACHE_INSTALLS", 41)
+
+    def failure_then_good_install():
+        config._CONFIG_CACHE_INSTALLS += 1  # A good load lands here.
+        return object()
+
+    monkeypatch.setattr(config, "get_config_load_failure", failure_then_good_install)
+    screen = _CorePushScreen()
+    release = _hold_config_file_lock()
+    try:
+        config_sync.sync_console_core_state(screen)
+        for _ in range(config_sync.CORE_PUSH_RETRIES):
+            screen.fire_retry()
+    finally:
+        release()
+    config_sync.sync_config_unreadable_notice(screen)
+    assert screen._console_config_unreadable_installs is None, (
+        "the notice outlived the good install that landed at the stop"
+    )
+
+
 def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monkeypatch):
     """TASK-36511: ``retry_after_config_rebuild`` defers while a live read is cold.
 
@@ -1234,6 +1363,16 @@ async def test_a_core_push_held_off_by_failing_reads_stops_and_says_so(
                 path.write_bytes(original)
             await asyncio.to_thread(config.load_settings, True)  # A good load.
             config_sync.sync_console_core_state(console)
+            # The live Console's own reads can hold a lock at that probe; the
+            # push then owes a retry. Fire each one by hand until it pushes.
+            for _ in range(40):
+                if pushes:
+                    break
+                await pilot.pause(0.05)  # Lets a background read let go.
+                timer = console._console_core_push_timer
+                if timer is not None:
+                    timer.stop()
+                    config_sync.retry_console_core_push(console)
             assert pushes == [1], "the first push after a good load did not run"
             assert not notice_visible(), "the notice outlived a good config load"
             assert shown == [True, False]

@@ -478,7 +478,7 @@ def replay_whole_console_sync(screen) -> bool:
     return False
 
 
-def sync_console_core_state(screen) -> None:
+def sync_console_core_state(screen, *, retry: bool = False) -> None:
     """Push the live provider selection only when that read is warm and ours.
 
     TASK-35645: the full UI sync's push reads ``load_settings()`` live, which
@@ -499,6 +499,8 @@ def sync_console_core_state(screen) -> None:
     now retries alone, ``CORE_PUSH_RETRIES`` times ``CORE_PUSH_RETRY_DELAY``
     apart, then stops; if the file cannot be parsed, the status strip says so
     until the next good load. It still never reads config without both locks.
+    Only the push's own retries (``retry``) count toward the bound, so FULL
+    syncs probing meanwhile cannot shorten it.
     """
     from tldw_chatbook import config
 
@@ -528,7 +530,7 @@ def sync_console_core_state(screen) -> None:
         # whole replay still owns it.
         request.retire(owed=True)
     if contended:
-        _retry_core_push_later(screen)
+        _retry_core_push_later(screen, retry)
     else:
         replay_whole_console_sync(screen)
 
@@ -542,35 +544,38 @@ def _end_core_push_contention(screen) -> None:
         timer.stop()
 
 
-def _retry_core_push_later(screen) -> None:
+def _retry_core_push_later(screen, retry: bool) -> None:
     """Owe one push-only retry, or stop and name an unreadable config.toml."""
     from tldw_chatbook import config
 
-    attempts = getattr(screen, "_console_core_push_retries", 0) + 1
+    if getattr(screen, "_console_config_unreadable_installs", None) is not None:
+        return  # Stopped and said so: nothing more until a good load.
+    attempts = getattr(screen, "_console_core_push_retries", 0) + retry
     screen._console_core_push_retries = attempts
-    if attempts <= CORE_PUSH_RETRIES:
+    if attempts < CORE_PUSH_RETRIES:
         if getattr(screen, "_console_core_push_timer", None) is None:
             screen._console_core_push_timer = screen.set_timer(
                 CORE_PUSH_RETRY_DELAY, partial(retry_console_core_push, screen)
             )
         return
-    if (
-        getattr(screen, "_console_config_unreadable_installs", None) is None
-        and config.get_config_load_failure() is not None
-    ):
+    screen._console_core_push_retries = 0  # A silent stop ends the episode.
+    installs = config._CONFIG_CACHE_INSTALLS  # Before the failure, never after.
+    if config.get_config_load_failure() is not None:
         # Once per episode: until a good load moves the install count.
-        screen._console_config_unreadable_installs = config._CONFIG_CACHE_INSTALLS
+        screen._console_config_unreadable_installs = installs
         sync_config_unreadable_notice(screen)
 
 
 def retry_console_core_push(screen) -> None:
     """Run only the core-state push that lost its config-lock probe."""
     screen._console_core_push_timer = None
-    if getattr(screen, "_closing", False) or getattr(
-        screen, "_console_sync_maintenance_paused", False
-    ):
-        return  # The resume's replayed FULL probes again.
-    sync_console_core_state(screen)
+    if getattr(screen, "_closing", False):
+        return
+    if getattr(screen, "_console_sync_maintenance_paused", False):
+        # The resume replays a FULL only for a request it can see.
+        screen._console_sync_requested = True
+        return
+    sync_console_core_state(screen, retry=True)
 
 
 def sync_config_unreadable_notice(screen) -> None:
