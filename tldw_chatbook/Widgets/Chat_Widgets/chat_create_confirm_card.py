@@ -19,7 +19,6 @@ from typing import Any, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.message import Message
 from textual.widgets import Button, Static
 
 

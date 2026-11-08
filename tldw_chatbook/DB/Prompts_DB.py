@@ -65,7 +65,6 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.fts5_match_forms import (
     build_and_match_query,
-    quote_fts5_token,
 )
 from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #

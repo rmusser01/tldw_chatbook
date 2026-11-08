@@ -104,8 +104,9 @@ Sharing requires the optional web extras (`pip install 'tldw_chatbook[web]'`).
 Choose a share name, optional shared username/password, and reachability:
 
 - **This computer only (localhost)** keeps the page on this machine.
-- **Local network (all interfaces)** allows other devices on your LAN. An
-  unprotected LAN share requires typing `share` to confirm.
+- **Local network (all interfaces)** allows other devices on your LAN. It
+  needs a password: turn on **Require a password**, or the dialog refuses to
+  start the share and suggests that or **This computer only**.
 - Leave Port blank to choose a free port automatically.
 
 Starting a share stages immutable copies of the selected ZIPs. Library shows

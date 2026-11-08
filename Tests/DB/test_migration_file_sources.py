@@ -16,7 +16,7 @@ module according to its architecture:
     every ``DB/migrations/*.sql`` is LOAD-BEARING — it is either
     (a) read at runtime by its owning module (ChaChaNotes file-backed
         steps, Workflows' f-string chain, Library_Collections,
-        Subscriptions), or
+        Subscriptions, the recovery dreams/guardian schema policies), or
     (b) a pinned reference/audit twin that a TEST reads, executes, or
         byte-compares (the four Workspace constants' twins, the six
         agent_runs standalone-migration audit records).
@@ -31,6 +31,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,37 +40,75 @@ MIGRATIONS_DIR = REPO_ROOT / "tldw_chatbook" / "DB" / "migrations"
 TESTS_DIR = REPO_ROOT / "Tests"
 DB_PACKAGE_DIR = REPO_ROOT / "tldw_chatbook" / "DB"
 
-#: Matches ``Path(__file__).parent / "migrations" / "<name>.sql"`` (and the
-#: ``with_name`` variant) — the same source shape the packaging test's
-#: ``RUNTIME_MIGRATION_READ`` derives wheel requirements from, kept
-#: deliberately in sync with it.
-RUNTIME_READ_RE = re.compile(r'"migrations"\s*/\s*"([^"\n]+\.sql)"')
+#: Matches every ``"migrations"`` access shape the DB package uses to open
+#: a migration script (TASK-38601): the ``Path(__file__).parent /
+#: "migrations"`` and ``Path(__file__).with_name("migrations")`` forms, the
+#: ``/`` on the same line or continued onto the next, and quoted or
+#: f-string filenames. A strict superset of the packaging test's
+#: ``RUNTIME_MIGRATION_READ`` (which only needs the ChaChaNotes ``parent``
+#: shape). An f-string hit is a TEMPLATE — it carries ``{`` braces and is
+#: materialized against the on-disk directory by
+#: ``_materialize_template`` instead of counting as a concrete filename
+#: (a brace-bearing name would poison the existence check).
+RUNTIME_READ_RE = re.compile(r'"migrations"\)?\s*/\s*f?"([^"\n]+\.sql)"')
 
-#: Modules whose source may open migration files at runtime.
-RUNTIME_READER_MODULES = (
-    "ChaChaNotes_DB.py",
-    "Workspace_DB.py",
-    "Prompts_DB.py",
-    "Library_Collections_DB.py",
-    "Subscriptions_DB.py",
-    "private_sqlite_helper_entry.py",
-)
+
+def _reader_module_sources() -> dict[str, str]:
+    """Every DB module that opens a ``migrations/*.sql``, discovered not listed.
+
+    Scanning the whole package keeps the reader set honest as modules are
+    added or renamed. The hand list this test shipped with (TASK-38601) was
+    already stale: ``recovery_dreams_guardian.py`` and
+    ``recovery_operations.py`` both read migrations and neither was on it,
+    so five dreams steps, the guardian step, and the library_collections
+    v4->v5 step were flagged decorative while being executed at runtime.
+    """
+    sources: dict[str, str] = {}
+    for module_path in sorted(DB_PACKAGE_DIR.glob("*.py")):
+        source = module_path.read_text(encoding="utf-8")
+        if RUNTIME_READ_RE.search(source):
+            sources[module_path.name] = source
+    return sources
+
+
+def _materialize_template(template: str, on_disk: set[str]) -> set[str]:
+    """On-disk filenames an f-string read template can produce at runtime.
+
+    Every interpolation in these reader loops is a schema version number
+    (``f"dreams_v{version}_to_v{version + 1}.sql"``), so each brace group
+    widens to ``\\d+`` — deliberately conservative: a template can only
+    ever claim files whose interpolated parts are numeric.
+    """
+    parts = re.split(r"\{[^{}]*\}", template)
+    pattern = re.compile(r"\d+".join(re.escape(part) for part in parts))
+    return {name for name in on_disk if pattern.fullmatch(name)}
 
 
 def _runtime_read_paths() -> dict[str, set[str]]:
     """Map each reader module to the migration filenames it opens at runtime."""
+    on_disk = {path.name for path in MIGRATIONS_DIR.glob("*.sql")}
     readers: dict[str, set[str]] = {}
-    for module_name in RUNTIME_READER_MODULES:
-        source = (DB_PACKAGE_DIR / module_name).read_text(encoding="utf-8")
-        readers[module_name] = set(RUNTIME_READ_RE.findall(source))
+    for module_name, source in _reader_module_sources().items():
+        literals: set[str] = set()
+        templates: set[str] = set()
+        for name in RUNTIME_READ_RE.findall(source):
+            (templates if "{" in name else literals).add(name)
+        names = set(literals)
+        if module_name != "Workflows_DB.py":
+            for template in templates:
+                names |= _materialize_template(template, on_disk)
+        readers[module_name] = names
     # Workflows_DB builds names dynamically:
     # ``f"workflows_v{source_version}_to_v{source_version + 1}.sql"`` for
-    # every step below its schema version. Derive them exactly as the
-    # runtime does, from the class attribute, never by listing.
-    readers["Workflows_DB.py"] = {
-        f"workflows_v{version}_to_v{version + 1}.sql"
-        for version in range(0, WorkflowsDB.SCHEMA_VERSION)
-    }
+    # every step below its schema version. Derived exactly as the runtime
+    # does, from the class attribute — stricter than any-version template
+    # matching, so this module is excluded from materialization above.
+    readers.setdefault("Workflows_DB.py", set()).update(
+        {
+            f"workflows_v{version}_to_v{version + 1}.sql"
+            for version in range(0, WorkflowsDB.SCHEMA_VERSION)
+        }
+    )
     return readers
 
 
@@ -163,3 +203,55 @@ class TestNoDecorativeMigrationFiles:
             f"comments. Alignment-by-comment is not alignment (task-19565): "
             f"execute the file, pin it with a comparison test, or delete it."
         )
+
+    def test_reader_shape_detection_covers_all_real_source_shapes(self):
+        """Unit proof of the widened detection (TASK-38601).
+
+        Every shape the DB package actually uses must be recognized — the
+        audit's false positives all came from shapes the old regex could
+        not see — and non-reads must not match.
+        """
+        literal_shapes = {
+            r'Path(__file__).parent / "migrations" / "a.sql"': "a.sql",
+            r'Path(__file__).with_name("migrations") / "b.sql"': "b.sql",
+            '(Path(__file__).with_name("migrations")\n'
+            '                     / "c.sql").read_text(encoding="utf-8")': "c.sql",
+        }
+        for shape, expected in literal_shapes.items():
+            (captured,) = RUNTIME_READ_RE.findall(shape)
+            assert captured == expected
+        template_shape = (
+            r'Path(__file__).with_name("migrations") '
+            r'/ f"dreams_v{version}_to_v{version + 1}.sql"'
+        )
+        (template,) = RUNTIME_READ_RE.findall(template_shape)
+        assert "{" in template  # recognized as a template, not a name
+        assert _materialize_template(
+            template, {"dreams_v1_to_v2.sql", "dreams_v9_to_v10.sql", "x.sql"}
+        ) == {"dreams_v1_to_v2.sql", "dreams_v9_to_v10.sql"}
+        for non_read in (
+            'directory = "migrations"',  # no filename opened
+            'other / "not_migrations" / "a.sql"',  # different directory
+            'read_text(encoding="utf-8")',  # no path shape at all
+        ):
+            assert RUNTIME_READ_RE.findall(non_read) == []
+
+    def test_guard_still_flags_a_genuinely_decorative_file(
+        self, tmp_path, monkeypatch
+    ):
+        """End-to-end proof the widened detection did not blind the guard.
+
+        Points the live-directory scan at a scratch directory holding one
+        file no module reads and no test pins, then runs the real
+        load-bearing assertion against it. The fake name is assembled from
+        two fragments on purpose: this file's own literals feed
+        ``_test_referenced_filenames``, and a contiguous quoted name would
+        pin the fake as test-referenced and hollow out the proof.
+        """
+        fake_name = "chachanotes_v99_to_v100_" + "fake.sql"
+        (tmp_path / fake_name).write_text("-- decorative\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "Tests.DB.test_migration_file_sources.MIGRATIONS_DIR", tmp_path
+        )
+        with pytest.raises(AssertionError, match=re.escape(fake_name)):
+            self.test_every_migration_file_is_load_bearing()

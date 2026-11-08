@@ -23,6 +23,7 @@ from .embeddings_wrapper import (
 from .vector_store import (
     SearchResult,
     VectorStore,
+    VectorStoreSearchError,
     ChromaVectorStore,
     InMemoryVectorStore,
     create_vector_store,
@@ -69,6 +70,7 @@ __all__ = [
     # Vector stores
     "SearchResult",
     "VectorStore",
+    "VectorStoreSearchError",
     "ChromaVectorStore",
     "InMemoryVectorStore",
     "create_vector_store",

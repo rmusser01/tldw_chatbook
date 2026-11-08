@@ -60,6 +60,21 @@ MEMORY_PRESSURE_REDUCTION = 0.2  # Fraction to reduce on memory pressure
 _DOC_ID_DELETE_CHUNK_SIZE = 500
 
 
+class VectorStoreSearchError(RuntimeError):
+    """A vector-store search failed at the underlying backend.
+
+    TASK-38591: ``ChromaVectorStore.search`` used to catch every exception
+    and return ``[]``. An empty list is a legitimate, cacheable "no
+    matches" answer, while a transient backend failure (connection drop,
+    locked store, corrupt index read) is NOT -- ``RAGService.search``
+    cached that swallowed ``[]`` for the full cache TTL (default 3600s),
+    poisoning the query for an hour. The store now raises this typed error
+    instead, and callers that must not hard-fail the app
+    (``RAGService.search``) catch it, log it, and degrade to keyword-only
+    or empty results WITHOUT writing them to the cache.
+    """
+
+
 @dataclass
 class SearchResult:
     """Basic search result for backward compatibility."""
@@ -517,6 +532,12 @@ class ChromaVectorStore:
 
         Returns:
             List of matching ``SearchResult`` objects, most similar first.
+
+        Raises:
+            VectorStoreSearchError: The underlying ChromaDB query failed
+                (TASK-38591). Raised instead of the historical swallow to
+                ``[]``: an empty list means "no matches" and is cacheable
+                by callers, a backend failure is not.
         """
         start_time = time.time()
 
@@ -591,7 +612,13 @@ class ChromaVectorStore:
         except Exception as e:
             log_counter("vector_store_search_error", labels={"error": type(e).__name__})
             logger.opt(exception=True).error(f"Search failed: {e}")
-            return []
+            # TASK-38591: never swallow a store failure into ``[]`` -- an
+            # empty result is cacheable, a failure is not. See
+            # ``VectorStoreSearchError``.
+            raise VectorStoreSearchError(
+                f"ChromaDB query failed for collection "
+                f"{self.collection_name!r}: {e}"
+            ) from e
 
     @store_operation
     @store_query
@@ -1430,6 +1457,10 @@ class InMemoryVectorStore:
 
         Returns:
             List of matching ``SearchResult`` objects, most similar first.
+            Scores are on the metric's own scale (TASK-38592), unified with
+            ``ChromaVectorStore``: raw cosine in ``[-1, 1]``,
+            ``1/(1+distance)`` in ``(0, 1]`` for l2, and inner product
+            clamped to ``[0, 1]``.
         """
         with self._lock:
             if "n_results" in kwargs:
@@ -1573,14 +1604,20 @@ class InMemoryVectorStore:
                 if collection_name is None:
                     self._access_order.move_to_end(id_val)
 
-                # Normalize score to [0, 1] range for consistency
-                if self.distance_metric == "cosine":
-                    normalized_score = (score + 1) / 2  # From [-1, 1] to [0, 1]
-                elif self.distance_metric == "l2":
-                    # Convert negative distance to similarity
-                    normalized_score = 1 / (1 + abs(score))
-                else:  # ip
+                # TASK-38592: cosine and l2 similarities from
+                # `_compute_similarity` (and the B3 fast path) are already
+                # on their FINAL scales -- RAW cosine in [-1, 1], matching
+                # ChromaVectorStore's ``1 - distance`` mapping, and
+                # ``1/(1+distance)`` in (0, 1] for l2. The historical
+                # remapping here double-normalized l2 (a perfect match
+                # scored 0.5, and the farther a chunk was the HIGHER it
+                # scored) and rescaled cosine to [0, 1], so the same
+                # score_threshold meant different things per backend. Only
+                # inner product, which is unbounded, still needs clamping.
+                if self.distance_metric == "ip":
                     normalized_score = max(0, min(1, score))  # Clamp to [0, 1]
+                else:  # cosine (raw) and l2 (1/(1+distance))
+                    normalized_score = score
 
                 results.append(
                     SearchResult(

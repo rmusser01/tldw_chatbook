@@ -27,7 +27,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import os
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone

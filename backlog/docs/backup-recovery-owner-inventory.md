@@ -200,7 +200,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The census contains 1607 rows (TASK-39053 reconciliation). Its qualified symbol is the locator-consumer
+The census contains 1603 rows (TASK-39053 reconciliation; TASK-38605 deleted four dead producers). Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -811,7 +811,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/Splash_Screens/custom/custom_image.py | CustomImageEffect._load_and_convert_image | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | FileProcessor.detect_encoding | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | FileProcessor.read_file_content | open | 3 | unsupported | miscellaneous |
-| tldw_chatbook/Utils/Utils.py | safe_read_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | save_to_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | save_to_file | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | verify_checksum | open | 1 | unsupported | miscellaneous |
@@ -877,9 +876,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._create_backup | write | 1 | generic_boundary | tamagotchi.config phase8 exact default ConfigFileStorage; custom JSON ordinary; runtime composition pending |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | dump | 1 | generic_boundary | tamagotchi.config phase8 exact default ConfigFileStorage; custom JSON ordinary; runtime composition pending |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | SQLiteStorage._connect | connect_private_sqlite | 2 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
-| tldw_chatbook/Widgets/activity_log.py | ActivityLogWidget._write_json_export | dump | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/activity_log.py | ActivityLogWidget._write_text_export | write | 3 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/activity_log.py | ActivityLogWidget.export_log | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/audio_troubleshooting_dialog.py | AudioTroubleshootingDialog._apply_and_close | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/audio_troubleshooting_dialog.py | AudioTroubleshootingDialog._initialize_audio | write | 5 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/audio_troubleshooting_dialog.py | AudioTroubleshootingDialog._start_level_test | write | 1 | unsupported | miscellaneous |

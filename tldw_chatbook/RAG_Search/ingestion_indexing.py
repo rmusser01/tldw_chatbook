@@ -756,7 +756,12 @@ async def index_entries(
         entries: Batch of IndexEntry items.
 
     Returns:
-        Summary dict: {'indexed', 'skipped', 'failed', 'errors'}.
+        Summary dict: {'indexed', 'skipped', 'failed', 'errors'}. A
+        partially-stored document (``IndexingResult`` with
+        ``success=True`` AND a non-None ``error`` -- some chunks failed
+        embedding generation, TASK-38591) counts under ``failed`` with the
+        loss in ``errors``, and is NOT marked indexed, so the next pass
+        re-indexes it instead of silently keeping the missing chunks.
     """
     summary: Dict[str, Any] = {"indexed": 0, "skipped": 0, "failed": 0, "errors": []}
 
@@ -885,6 +890,29 @@ async def index_entries(
     for entry in to_index:
         result = results_by_doc.get(entry.document["id"])
         if result is not None and result.success:
+            partial_error = getattr(result, "error", None)
+            if partial_error:
+                # TASK-38591(b): success=True with a non-None error is the
+                # batch path's PARTIAL verdict -- some chunks failed
+                # embedding generation and were never stored. Recording the
+                # item as indexed at its CURRENT last_modified would make
+                # every later pass skip it, silently losing those chunks
+                # forever, so leave its indexing-state row untouched: an
+                # absent or older timestamp re-indexes the item on the next
+                # pass (the unchanged-timestamp retry; re-indexing is
+                # idempotent and the stale-chunk delete above keeps it from
+                # duplicating). Surface the loss so reporting notices.
+                summary["failed"] += 1
+                summary["errors"].append(
+                    f"{entry.item_type} {entry.item_id}: stored with partial "
+                    f"chunk loss ({partial_error}); left for re-indexing"
+                )
+                logger.warning(
+                    f"RAG indexing partially failed for {entry.item_type} "
+                    f"{entry.item_id}: {partial_error} (item left for "
+                    f"re-indexing)"
+                )
+                continue
             summary["indexed"] += 1
             if indexing_db is not None:
                 indexed_records.append(

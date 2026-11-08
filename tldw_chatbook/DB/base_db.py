@@ -1188,14 +1188,20 @@ class BaseDB(ABC):
             logger.debug("Skipping vacuum for in-memory database")
             return
 
+        # TASK-38606: this short-lived connection must close on every path;
+        # closing only on success leaked the handle until GC whenever the
+        # VACUUM itself raised (locked or corrupt file).
+        conn = None
         try:
             conn = self._get_connection()
             conn.execute("VACUUM")
-            conn.close()
             logger.info(f"Successfully vacuumed database: {self.db_path_str}")
         except Exception as e:
             logger.error(f"Failed to vacuum database: {e}")
             raise
+        finally:
+            if conn is not None:
+                conn.close()
 
     def check_integrity(self) -> bool:
         """
@@ -1204,12 +1210,14 @@ class BaseDB(ABC):
         Returns:
             bool: True if integrity check passes, False otherwise
         """
+        # TASK-38606: same all-paths close as vacuum() -- a raised
+        # sqlite3.Error mid-check used to leak the connection until GC.
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("PRAGMA integrity_check")
             result = cursor.fetchone()
-            conn.close()
 
             is_ok = result and result[0] == "ok"
             if is_ok:
@@ -1221,6 +1229,9 @@ class BaseDB(ABC):
         except Exception as e:
             logger.error(f"Failed to check database integrity: {e}")
             return False
+        finally:
+            if conn is not None:
+                conn.close()
 
 
 # Defining callbacks consumed by the optional finite Character display only.

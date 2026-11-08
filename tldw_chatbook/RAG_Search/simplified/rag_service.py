@@ -65,7 +65,12 @@ from tldw_chatbook.Metrics.metrics_logger import (
     timeit,
 )
 from .embeddings_wrapper import EmbeddingsServiceWrapper
-from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
+from .vector_store import (
+    VectorStoreSearchError,
+    create_vector_store,
+    SearchResult,
+    SearchResultWithCitations,
+)
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
@@ -1218,6 +1223,7 @@ class RAGService:
         *,
         metadata_allowlist: Optional[MetadataAllowlist] = None,
         keyword_source_types: Optional[Collection[str]] = None,
+        query_embedding: Any = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Search with optional citations.
@@ -1266,18 +1272,42 @@ class RAGService:
                 all four. The mirror image of ``metadata_allowlist``: it
                 scopes the
                 KEYWORD leg only, so passing it with
-                ``search_type="semantic"`` raises ``ValueError`` rather than
-                silently ignoring the scoping request. It is part of the
-                cache key, so two selections of the same query never share
+                ``search_type="semantic"`` raises ``ValueError`` rather
+                than silently ignoring the scoping request. It is part of
+                the cache key, so two selections of the same query never share
                 an entry.
+            query_embedding: Optional precomputed query vector
+                (task-34390). Semantic searches only -- passing it with any
+                other ``search_type`` raises ``ValueError`` rather than
+                silently ignoring it (the same convention as
+                ``metadata_allowlist``/``keyword_source_types`` above).
+                ``None`` -- the default, and every pre-TASK-34390 caller --
+                embeds the query per call exactly as before. When provided,
+                the vector is threaded down to the semantic leg (including
+                every entry of a union ``metadata_allowlist``) and the
+                embedding service is not consulted for the query. It is NOT
+                part of the cache key: the cache is keyed on the query text
+                (embeddings never key it), and the same query text under the
+                same service produces the same embedding, so a caller-supplied
+                vector cannot invalidate -- or be invalidated by -- a cached
+                entry.
 
         Returns:
-            List of search results (with or without citations)
+            List of search results (with or without citations). A failure
+            of the underlying vector store does NOT raise and does NOT
+            return a cached lie: it is caught
+            (``VectorStoreSearchError``, TASK-38591), logged, and degraded
+            to keyword-only results (``search_type="hybrid"``) or an empty
+            list (``semantic``) WITHOUT writing the degraded result to the
+            cache, so the next search re-attempts the store instead of
+            serving the failure for the cache TTL.
 
         Raises:
             ValueError: If ``metadata_allowlist`` is provided with
-                ``search_type="keyword"``, or if ``keyword_source_types`` is
-                provided with ``search_type="semantic"``.
+                ``search_type="keyword"``, if ``keyword_source_types`` is
+                provided with ``search_type="semantic"``, or if
+                ``query_embedding`` is provided with a ``search_type`` other
+                than ``"semantic"``.
         """
         # Freeze the scope BEFORE anything reads it. This method reads it
         # twice (the cache key, then the legs) and hybrid reads it twice
@@ -1297,6 +1327,17 @@ class RAGService:
             raise ValueError(
                 "keyword_source_types is not supported for search_type='semantic' "
                 "(the semantic leg has no keyword sub-legs to scope)"
+            )
+        # TASK-38580: `EnhancedRAGServiceV2.search` forwards this kwarg
+        # unconditionally (including its default None), so it must be
+        # accepted here for EVERY call through the shared service -- the
+        # regression this guards against is exactly the historical
+        # `keyword_source_types` one this subclass's docstring warns about.
+        if query_embedding is not None and search_type != "semantic":
+            raise ValueError(
+                "query_embedding is only supported for search_type='semantic', "
+                f"not '{search_type}' (only the semantic leg embeds the query; "
+                "pass query_embedding=None for keyword/hybrid searches)"
             )
 
         # Use defaults from config if not specified
@@ -1403,6 +1444,7 @@ class RAGService:
                     include_citations,
                     score_threshold,
                     metadata_allowlist=metadata_allowlist,
+                    query_embedding=query_embedding,
                 )
             elif search_type == "hybrid":
                 results = await self._hybrid_search(
@@ -1478,6 +1520,44 @@ class RAGService:
 
             return results
 
+        except VectorStoreSearchError as e:
+            # TASK-38591: an underlying store failure must degrade instead
+            # of crashing the app, but it must NOT enter the cache. The old
+            # contract swallowed the failure to [] inside the store itself,
+            # and the `put_async` above then served that [] for the full
+            # cache TTL (default 3600s) after ONE transient error.
+            # Returning from this handler skips the cache write by design,
+            # so the next search re-attempts the store.
+            log_counter(
+                "rag_search_store_unavailable", labels={"type": search_type}
+            )
+            logger.warning(
+                f"[{correlation_id}] Vector store search failed; degrading to "
+                f"{'keyword-only' if search_type == 'hybrid' else 'empty'} "
+                f"results (not cached): {type(e).__name__}"
+            )
+            if search_type == "hybrid":
+                # ponytail: the hybrid gather already ran this keyword leg
+                # before the semantic leg raised, so a store outage costs one
+                # repeated local FTS query; keep the leg's result on the
+                # error if that query ever gets expensive.
+                try:
+                    return await self._keyword_search(
+                        query,
+                        top_k,
+                        filter_metadata,
+                        include_citations,
+                        keyword_source_types=keyword_source_types,
+                        metadata_allowlist=metadata_allowlist,
+                    )
+                except Exception as keyword_error:
+                    logger.opt(exception=True).error(
+                        f"[{correlation_id}] Keyword fallback after store "
+                        f"error failed too: {keyword_error}"
+                    )
+                    return []
+            return []
+
         except Exception as e:
             log_counter(
                 "rag_search_error",
@@ -1501,6 +1581,7 @@ class RAGService:
         score_threshold: float = 0.0,
         *,
         metadata_allowlist: Optional[MetadataAllowlist] = None,
+        query_embedding: Any = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """The semantic leg under an allowlist of either shape.
 
@@ -1527,6 +1608,12 @@ class RAGService:
             include_citations: Whether to fetch citations from the store.
             score_threshold: Minimum similarity score to keep.
             metadata_allowlist: One AND-group, or a union of them.
+            query_embedding: Optional precomputed query vector
+                (task-34390/TASK-38580). Shared by every entry of a union
+                allowlist -- the point of the passthrough -- and by the
+                single-entry path. ``None`` embeds the query here exactly as
+                before (once for a union, inside ``_semantic_search``
+                otherwise).
 
         Returns:
             Up to ``top_k`` results, most similar first.
@@ -1540,10 +1627,12 @@ class RAGService:
                 include_citations,
                 score_threshold,
                 metadata_allowlist=entries[0] if entries else None,
+                query_embedding=query_embedding,
             )
 
-        query_embedding = await self.embeddings.create_embeddings_async([query])
-        query_embedding = query_embedding[0]
+        if query_embedding is None:
+            query_embedding = await self.embeddings.create_embeddings_async([query])
+            query_embedding = query_embedding[0]
         merged: List[Any] = []
         for entry in entries:
             merged.extend(

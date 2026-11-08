@@ -15,8 +15,10 @@ Before this task:
      (`APP_COMPONENT_ROOT/Config_Files/config.toml`) that never exists in the
      packaged app, so that half of its merge was always a no-op.
   3. `Utils/Utils.py` imported `chardet` (~21ms, ~40 submodules) at module
-     scope for two rarely-used functions (`safe_read_file`,
-     `FileProcessor.detect_encoding`) that are the module's only callers.
+     scope for two rarely-used functions (`FileProcessor.detect_encoding`
+     and, at the time, `safe_read_file`) that were the module's only
+     callers (`safe_read_file` has since been deleted -- TASK-38605
+     dead-code purge).
 
 This file has three kinds of coverage, matching the task's ACs:
   (a) An UNMOCKED integration test (the T229 `_real_config` pattern -- see
@@ -31,9 +33,9 @@ This file has three kinds of coverage, matching the task's ACs:
   (c) Subprocess-based `sys.modules` assertions proving `chardet` is not
       resident after `import tldw_chatbook.config` (nor after importing
       `tldw_chatbook.Utils.Utils` in isolation), plus in-process functional
-      tests proving `safe_read_file`/`FileProcessor.detect_encoding` still
-      work, and that the current (no try/except) absence behavior --
-      propagating the ImportError from the two call sites -- is unchanged.
+      tests proving `FileProcessor.detect_encoding` still works, and that
+      the current (no try/except) absence behavior --
+      propagating the ImportError from the call site -- is unchanged.
 
       Note: `import tldw_chatbook.app` does end up loading chardet
       transitively, via `requests/__init__.py`'s own top-of-module
@@ -374,8 +376,8 @@ def test_config_import_does_not_load_chardet(tmp_path: Path) -> None:
 
 def test_utils_module_import_does_not_load_chardet(tmp_path: Path) -> None:
     """Plain `import tldw_chatbook.Utils.Utils` must not load chardet --
-    it is now deferred into its two callers (safe_read_file,
-    FileProcessor.detect_encoding)."""
+    it is now deferred into its one remaining caller
+    (FileProcessor.detect_encoding)."""
     result = _run_isolated_python(tmp_path, _UTILS_IMPORT_SNIPPET)
     assert result.returncode == 0, (
         f"import tldw_chatbook.Utils.Utils failed in isolated subprocess:\n"
@@ -386,19 +388,8 @@ def test_utils_module_import_does_not_load_chardet(tmp_path: Path) -> None:
 
 
 class TestChardetConsumersStillWork:
-    """The two functions that actually use chardet must still work
-    correctly now that the import moved inside them."""
-
-    def test_safe_read_file_detects_and_decodes(self, tmp_path):
-        from tldw_chatbook.Utils.Utils import safe_read_file
-
-        sample = tmp_path / "sample.txt"
-        sample.write_bytes("hello from tldw_chatbook – café".encode("utf-8"))
-
-        content = safe_read_file(str(sample))
-
-        assert "hello from tldw_chatbook" in content
-        assert "caf" in content
+    """The function that actually uses chardet must still work
+    correctly now that the import moved inside it."""
 
     def test_file_processor_detect_encoding_returns_a_usable_codec(self, tmp_path):
         from tldw_chatbook.Utils.Utils import FileProcessor
@@ -424,12 +415,17 @@ class TestChardetConsumersStillWork:
         assert "# Title" in content
         assert "Some body text." in content
 
-    def test_safe_read_file_propagates_missing_chardet_unchanged(self, monkeypatch):
+    def test_detect_encoding_propagates_missing_chardet_unchanged(
+        self, monkeypatch, tmp_path
+    ):
         """chardet is a hard (non-optional) dependency (pyproject.toml core
         deps), so no try/except was added around the deferred import --
         preserve the exact prior behavior: if chardet were unimportable, the
         ImportError propagates out of the caller uncaught."""
-        from tldw_chatbook.Utils.Utils import safe_read_file
+        from tldw_chatbook.Utils.Utils import FileProcessor
+
+        sample = tmp_path / "sample.txt"
+        sample.write_bytes(b"content")
 
         real_import = builtins.__import__
 
@@ -441,4 +437,4 @@ class TestChardetConsumersStillWork:
         monkeypatch.setattr(builtins, "__import__", _fail_chardet)
 
         with pytest.raises(ImportError):
-            safe_read_file(__file__)
+            FileProcessor.detect_encoding(str(sample))

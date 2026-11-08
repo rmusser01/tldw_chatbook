@@ -78,6 +78,36 @@ def test_invoke_captures_tool_exception_as_error_result():
     assert result.error  # message captured, no exception escaped
 
 
+def test_invoke_by_name_never_raises_on_non_finite_float_args():
+    # TASK-38610: json.loads ACCEPTS NaN/Infinity literals, so such values
+    # survive provider parsing; the reviewed-args canonicalization
+    # (allow_nan=False) used to raise ValueError straight out of
+    # invoke_by_name, breaking the never-raise dispatch contract. An
+    # uncanonicalizable reviewed call must fail closed as a ToolResult.
+    reg = registry()
+    definition = reg.snapshot_for_hook("calculator")
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        result = reg.invoke_by_name(
+            "calculator",
+            {"expression": "1+1", "scale": bad},
+            expected_definition=definition,
+        )
+        assert isinstance(result, ToolResult)
+        assert result.ok is False
+        assert "canonicalizable" in result.error
+
+
+def test_invoke_by_name_without_review_never_raises_on_non_finite_float_args():
+    # The unreviewed path canonicalizes nothing, so non-finite floats reach
+    # the provider; the builtin calculator rejects the unknown kwarg as a
+    # normal error ToolResult (TASK-38596 behavior), never an exception.
+    result = registry().invoke_by_name(
+        "calculator", {"expression": "1+1", "scale": float("nan")}
+    )
+    assert isinstance(result, ToolResult)
+    assert result.ok is False
+
+
 def test_pseudo_tool_schemas():
     assert SPAWN_TOOL_SCHEMA.name == SPAWN_TOOL_NAME
     assert "task" in SPAWN_TOOL_SCHEMA.parameters["properties"]

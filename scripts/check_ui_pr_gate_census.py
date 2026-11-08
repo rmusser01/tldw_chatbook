@@ -881,6 +881,10 @@ MINIMUM_FILES = 1809
 # setup on dev until this change; the whole file is far over the 30 s
 # per-file budget). The floor is the measured entry count.
 MINIMUM_FILES = 1814
+# TASK-38605 (2026-11-02 audit, re-landed 2026-11-06): the dead MediaViewerPanel
+# and its whole-file entry Tests/UI/test_media_viewer_prompt_search_15477.py are
+# deleted, so the census drops one entry: 1814 - 1 = 1813.
+MINIMUM_FILES = 1813
 
 
 def read_census(path: Path) -> list[str]:

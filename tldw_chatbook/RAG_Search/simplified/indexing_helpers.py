@@ -297,7 +297,15 @@ async def store_documents_batch(
     def _record_success(
         doc: Dict[str, Any], failed_chunk_count: int, chunks_created: int
     ) -> None:
-        """Finalize a stored document's metrics and IndexingResult."""
+        """Finalize a stored document's metrics and IndexingResult.
+
+        A partial store (``failed_chunk_count > 0``) still reports
+        ``success=True`` with the loss in ``error``: this helper's callers
+        decide what "partially stored" means for tracking.
+        ``RAG_Search.ingestion_indexing.index_entries`` (TASK-38591) treats
+        that combination as NOT fully indexed -- no indexing-state row is
+        written, so the item is retried on the next pass.
+        """
         rag_service._docs_indexed += 1
         rag_service._total_chunks_created += chunks_created
 

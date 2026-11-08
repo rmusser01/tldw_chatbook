@@ -20,7 +20,6 @@ from textual.widgets import (
 )
 from textual.widgets.selection_list import Selection
 
-_CONFIRM_PHRASE = "share"
 #: Length bounds enforced at submission (Qodo #2): generous for real use,
 #: small enough to keep manifests, headers, and the page sane.
 _SHARE_NAME_MAX = 200
@@ -126,16 +125,14 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
                 classes="artifact-share-dialog-input",
             )
             yield Static(
-                "Sharing without a password on the local network exposes these "
-                f"artifacts to everyone on that network. Type '{_CONFIRM_PHRASE}' "
-                "to confirm.",
+                # TASK-38608: LAN-without-password is no longer startable
+                # (the controller rejects unauthenticated non-loopback
+                # binds), so the typed-confirmation input is gone; this
+                # label stays as guidance.
+                "Sharing on the local network requires a password: enable "
+                "'Require a password' or choose 'This computer only'.",
                 markup=False,
                 id="share-confirm-label",
-            )
-            yield Input(
-                placeholder=_CONFIRM_PHRASE,
-                id="share-confirm",
-                classes="artifact-share-dialog-input",
             )
             yield Static("", markup=False, id="share-dialog-status")
             with Horizontal():
@@ -180,9 +177,10 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
         self.query_one("#share-password", Input).display = enabled
 
     def _sync_confirm_visibility(self) -> None:
-        needs_confirm = self._bind_choice() == "0.0.0.0" and not self._auth_enabled()
-        self.query_one("#share-confirm-label", Static).display = needs_confirm
-        self.query_one("#share-confirm", Input).display = needs_confirm
+        # TASK-38608: the confirm input is gone; the label surfaces the
+        # password requirement whenever LAN is chosen without auth.
+        needs_warning = self._bind_choice() == "0.0.0.0" and not self._auth_enabled()
+        self.query_one("#share-confirm-label", Static).display = needs_warning
 
     def _status(self, message: str) -> None:
         self.query_one("#share-dialog-status", Static).update(message)
@@ -241,11 +239,14 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
             )
             return
         if self._bind_choice() == "0.0.0.0" and not self._auth_enabled():
-            if self.query_one("#share-confirm", Input).value.strip() != _CONFIRM_PHRASE:
-                self._status(
-                    f"Type '{_CONFIRM_PHRASE}' to share without a password on the local network."
-                )
-                return
+            # TASK-38608: the controller now rejects unauthenticated
+            # non-loopback shares; refuse here with actionable copy rather
+            # than surfacing a generic worker failure after dismissal.
+            self._status(
+                "Local-network sharing requires a password. Enable 'Require a "
+                "password' or choose 'This computer only'."
+            )
+            return
         self.dismiss(
             {
                 "selected_records": selected,

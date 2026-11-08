@@ -19,7 +19,6 @@ from types import MappingProxyType
 from typing import Any, cast
 from urllib.parse import quote
 
-from tldw_chatbook.DB import private_sqlite_files
 from tldw_chatbook.DB.private_sqlite_process import (
     HELPER_ADMISSION,
     HelperLease,

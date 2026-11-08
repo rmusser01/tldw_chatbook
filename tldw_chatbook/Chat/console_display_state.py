@@ -6,7 +6,6 @@ import inspect
 import json
 import re
 from dataclasses import dataclass, field, replace
-from html import escape as html_escape
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 

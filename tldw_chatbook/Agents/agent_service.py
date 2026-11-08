@@ -101,8 +101,8 @@ from .agent_models import (
     STEP_SPAWN,
     STEP_TOOL_CALL,
     FENCE_TOOL_RESULT_PREFIX,
-    FIND_TOOLS_NAME,
-    LOAD_TOOLS_NAME,
+    FIND_TOOLS_NAME,  # noqa: F401 - read as runtime.FIND_TOOLS_NAME by agent_request_execution
+    LOAD_TOOLS_NAME,  # noqa: F401 - read as runtime.LOAD_TOOLS_NAME by agent_request_execution
     TOOL_OUTCOME_CANCELLED,
     TOOL_OUTCOME_TIMEOUT,
     TERMINAL_RUN_STATUSES,

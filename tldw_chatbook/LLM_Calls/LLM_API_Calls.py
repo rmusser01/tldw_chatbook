@@ -41,10 +41,10 @@ from urllib3.util.retry import Retry
 #
 # Import Local libraries
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
-from tldw_chatbook.LLM_Calls.groq import chat_with_groq
-from tldw_chatbook.LLM_Calls.deepseek import chat_with_deepseek
-from tldw_chatbook.LLM_Calls.mistral import chat_with_mistral
-from tldw_chatbook.LLM_Calls.openrouter import chat_with_openrouter
+from tldw_chatbook.LLM_Calls.groq import chat_with_groq  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.deepseek import chat_with_deepseek  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.mistral import chat_with_mistral  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.openrouter import chat_with_openrouter  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
 
 from tldw_chatbook.Provider_Contract import (
     ChatAPIError,
@@ -472,7 +472,14 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
             logger.error(
                 f"OpenAI Embeddings: request failed with status code {response.status_code}"
             )
-            logger.error(f"OpenAI Embeddings: Error response: {response.text}")
+            # TASK-38609: same safe-detail discipline as the chat handlers
+            # (safe_llm_error_detail at the openai chat error path) -- the
+            # raw provider error body never lands in logs at ERROR
+            # unredacted; sensitive runs get the stable redaction.
+            logger.error(
+                "OpenAI Embeddings: Error response: "
+                f"{safe_llm_error_detail(response.text)}"
+            )
             # Propagate HTTPError to be caught by chat_api_call's handler (if this were called from there)
             # Or raise specific error if called directly
             response.raise_for_status()  # This will raise HTTPError
@@ -826,6 +833,9 @@ def chat_with_openai(
                 session_context = create_owned_default_session()
                 session = session_context.__enter__()
                 response = None
+                # TASK-38609: honor the same configured timeout the
+                # non-streaming path uses instead of a hardcoded 180s.
+                stream_timeout = float(openai_config.get("api_timeout", 90.0))
                 try:
                     response = _provider_recovery.openai_post(
                         session,
@@ -833,7 +843,7 @@ def chat_with_openai(
                         headers=headers,
                         json=payload,
                         stream=True,
-                        timeout=180,
+                        timeout=stream_timeout,
                     )
                     if (
                         response.status_code == 400
@@ -852,7 +862,7 @@ def chat_with_openai(
                             headers=headers,
                             json=retry_payload,
                             stream=True,
-                            timeout=180,
+                            timeout=stream_timeout,
                         )
                     response.raise_for_status()
                     if use_responses_api:
@@ -867,7 +877,20 @@ def chat_with_openai(
                     # (a consumer Stop records nothing -- cancelled streams
                     # undercount by policy).
                     openai_stream_final_usage = None
-                    for line in response.iter_lines(decode_unicode=True):
+                    # TASK-38589: iterate BYTES and decode UTF-8 explicitly.
+                    # ``decode_unicode=True`` makes ``requests`` decode with
+                    # the response header's charset -- ISO-8859-1 when a
+                    # llama.cpp/vLLM/LiteLLM endpoint declares
+                    # ``text/event-stream`` WITHOUT ``charset=utf-8`` --
+                    # silently mojibake-ing every non-ASCII character. UTF-8
+                    # is the SSE wire contract (the anthropic path and the
+                    # hosted SSERecordDecoder already decode this way).
+                    for raw_line in response.iter_lines():
+                        line = (
+                            raw_line.decode("utf-8")
+                            if isinstance(raw_line, bytes)
+                            else str(raw_line)
+                        )
                         if line and line.strip():
                             if '"usage"' in line:
                                 usage_candidate = _openai_stream_line_usage(line)
@@ -927,17 +950,7 @@ def chat_with_openai(
 
         else:  # Non-streaming
             logger.debug("OpenAI: Posting request (non-streaming)")
-            retry_count = int(openai_config.get("api_retries", 3))
-            retry_delay = float(
-                openai_config.get("api_retry_delay", 1.0)
-            )  # Ensure float
 
-            retry_strategy = Retry(
-                total=llm_retry_count(retry_count),
-                backoff_factor=retry_delay,
-                status_forcelist=[429, 500, 502, 503, 504],
-                allowed_methods=["POST"],  # Changed from method_whitelist
-            )
             # ADR-222 (TASK-34418): deliberately NOT registry-backed --
             # openai_post() owns and closes the session via the guarded
             # recovery _Operation; see ADR-222 §5.
@@ -3938,7 +3951,16 @@ def chat_with_google(
                 # latest converted usage and record it once at stream end.
                 stream_final_usage = None
                 try:
-                    for line in response.iter_lines(decode_unicode=True):
+                    # TASK-38589: iterate BYTES and decode UTF-8 explicitly;
+                    # ``decode_unicode=True`` decodes with the header charset
+                    # (ISO-8859-1 when the endpoint omits charset=utf-8),
+                    # corrupting non-ASCII Gemini output.
+                    for raw_line in response.iter_lines():
+                        line = (
+                            raw_line.decode("utf-8")
+                            if isinstance(raw_line, bytes)
+                            else str(raw_line)
+                        )
                         if line and line.strip().startswith("data:"):
                             json_str = line.strip()[len("data:") :].strip()
                             try:

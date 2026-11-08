@@ -217,7 +217,17 @@ class SimpleAudioPlayer:
         """Initialize audio player"""
         self._current: AudioPlayerInfo = AudioPlayerInfo()
         self._system = platform.system()
-        self._lock = threading.Lock()  # Thread safety for state management
+        # TASK-38581: this lock MUST be reentrant. pause() and resume()
+        # call other lock-taking methods while still holding it:
+        # pause() -> get_position() + stop() on players without native
+        # pause (afplay, ffplay, paplay, pw-play, aplay), and resume() ->
+        # play() -> stop(). With a plain Lock those paths self-deadlock
+        # permanently -- one Pause click wedged the call forever, and via
+        # AsyncAudioPlayer's single-worker executor it wedged every later
+        # TTS audio call with it. (Scan of this file: pause()/resume() are
+        # the only nested-acquisition sites; every other `with self._lock`
+        # body only touches state directly.)
+        self._lock = threading.RLock()
         self._supports_pause = False  # Whether the player supports native pause
         self._find_player()
 

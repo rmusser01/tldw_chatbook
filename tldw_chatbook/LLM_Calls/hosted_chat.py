@@ -71,11 +71,9 @@ _API_KEY_HEADER = "api-key"
 # scheme plus Content-Type. A provider's extra_headers can never override or
 # duplicate the credential.
 _RESERVED_HEADER_NAMES = frozenset({"authorization", _API_KEY_HEADER, "content-type"})
-# Upper bound on a provider-named Retry-After sleep (seconds). The engine's
-# workers run on threads Stop cannot interrupt, and every hosted provider's
-# api_base_url is user-configurable -- a hostile endpoint naming
-# "Retry-After: 99999999" must never pin the worker for that long.
-_MAX_RETRY_AFTER_SECONDS = 60.0
+# TASK-38609: _MAX_RETRY_AFTER_SECONDS is defined ONCE, directly above its
+# only consumer _retry_delay; an earlier duplicate definition here (same
+# 60.0 value, dead by shadowing) was deleted.
 
 ReasoningDisposition = Literal["displayable", "proprietary", "ignored"]
 

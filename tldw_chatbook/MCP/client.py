@@ -49,7 +49,11 @@ from .tool_results import (
 
 _MCP_PROTOCOL_VERSION = "2025-03-26"
 _REQUEST_TIMEOUT_SECONDS = 10.0
+_TOOL_CALL_TIMEOUT_SETTING_DEFAULT_SECONDS = 60.0
 _TERMINATE_TIMEOUT_SECONDS = 2.0
+# TASK-38611: after teardown, wait at most this long for the child's actual
+# exit before giving up (an unreapable child must not hang callers forever).
+_SETTLE_EXIT_GRACE_SECONDS = 2.0
 CONNECT_TIMEOUT_SECONDS = 30.0
 CATALOG_TIMEOUT_SECONDS = 10.0
 CLEANUP_TIMEOUT_SECONDS = 5.0
@@ -67,6 +71,40 @@ _URI_SCHEME_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*\Z")
 
 class MCPClientError(RuntimeError):
     """Bounded client-side validation failure."""
+
+
+def _configured_request_timeout_seconds() -> float:
+    """Resolve the stdio per-request deadline from the ``[mcp]`` settings.
+
+    TASK-38582: ``[mcp] tool_call_timeout_seconds`` is the one knob that
+    bounds a tool call end to end -- ``UnifiedMCPControlPlaneService
+    ._tool_call_timeout`` (MCP/unified_control_plane_service.py) reads it to
+    bound the outer execution, so the stdio session's wire deadline must
+    honor the same value. Any configured timeout above this module's legacy
+    10 s class default would otherwise fire at the wire first and tear down
+    the server before the outer bound was ever reached. The import stays
+    lazy to keep ``tldw_chatbook.config`` off the boot ratchet path
+    (ADR-097); ``_REQUEST_TIMEOUT_SECONDS`` remains the class-level default
+    for direct constructions that never pass through ``connect_to_server``.
+
+    This knob is availability-only (a deadline, not a permission), so an
+    unreadable config degrades to the default instead of failing the
+    connect: the control plane's own timeout read still fails loudly on the
+    execution path where admission must hold.
+    """
+    try:
+        from tldw_chatbook.config import get_cli_setting
+
+        return float(
+            get_cli_setting(
+                "mcp",
+                "tool_call_timeout_seconds",
+                _TOOL_CALL_TIMEOUT_SETTING_DEFAULT_SECONDS,
+            )
+        )
+    except Exception:  # noqa: BLE001 -- a deadline knob never gates admission
+        logger.debug("MCP request-timeout setting unreadable; using default")
+        return _TOOL_CALL_TIMEOUT_SETTING_DEFAULT_SECONDS
 
 
 def _remaining(deadline: float, message: str) -> float:
@@ -548,6 +586,13 @@ class _StdioJSONRPCConnection:
             return transport_failure("mcp_rpc_error", observation)
         except ValueError:
             return transport_failure("mcp_result_invalid", observation)
+        except TimeoutError:
+            # TASK-38582: a wire deadline with a live transport is a bounded
+            # refuse (same kind the control plane's outer timeout reports),
+            # never a transport failure -- the session stays connected. The
+            # dispatch observation keeps its "uncertain" state: the request
+            # was sent, so the server may still have executed the tool.
+            return transport_failure("mcp_tool_timeout", observation)
         except Exception:  # noqa: BLE001 -- sanitized transport boundary
             return transport_failure("mcp_transport_unavailable", observation)
         finally:
@@ -655,12 +700,25 @@ class _StdioJSONRPCConnection:
                     logger.debug("MCP cancellation notification could not be sent")
             if shared:
                 return await self._retain_shared_request(future)
+            if isinstance(exc, asyncio.TimeoutError) and self._deadline_transport_healthy():
+                # TASK-38582: a deadline with a provably live transport fails
+                # only THIS request; teardown is reserved for transport
+                # uncertainty (reader dead, write errors).
+                raise TimeoutError(
+                    f"Timed out waiting for MCP response to '{method}'"
+                ) from exc
             await self._settle_failed_request()
             if isinstance(exc, asyncio.TimeoutError):
                 raise TimeoutError(f"Timed out waiting for MCP response to '{method}'") from exc
             raise
         except (OSError, RuntimeError, ValueError):
-            await self._settle_failed_request()
+            # TASK-38611: only requests that actually reached the wire may
+            # settle/teardown. Failures before the send completed (profile
+            # params validation, the embedded-newline guard, an already
+            # closed connection) leave the transport's health untouched, so
+            # the session stays up for the next request.
+            if sent:
+                await self._settle_failed_request()
             raise
         finally:
             self._pending_requests.pop(request_id, None)
@@ -669,6 +727,25 @@ class _StdioJSONRPCConnection:
                 self._progress_observers.pop(completed_token, None)
             if not future.done():
                 future.cancel()
+
+    def _deadline_transport_healthy(self) -> bool:
+        """Prove the transport is alive before keeping it after a deadline.
+
+        TASK-38582: a request deadline alone must not tear the session down.
+        Only positive liveness counts: the reader is still up, cleanup has not
+        started, the child has not exited, and its stdin is still writable.
+        Anything less certain keeps the teardown path (transport uncertainty).
+        """
+        if self._reader_unavailable or self._cleanup_complete:
+            return False
+        process = getattr(self, "process", None)
+        if process is None or process.returncode is not None:
+            return False
+        stdin = getattr(process, "stdin", None)
+        if stdin is None:
+            return False
+        is_closing = getattr(stdin, "is_closing", None)
+        return not callable(is_closing) or not is_closing()
 
     def _shared_owned_request(self) -> bool:
         """Only the exact host-owned request may preserve another scope's peer."""
@@ -704,7 +781,19 @@ class _StdioJSONRPCConnection:
                     break
             except Exception:  # noqa: BLE001 -- transport failure is not exit
                 break
+        exit_deadline: float | None = None
         while self.process.returncode is None:
+            # TASK-38611: bound the custody wait. An unreapable child must
+            # surface the transport failure instead of hanging the caller.
+            if exit_deadline is None:
+                exit_deadline = _monotonic() + _SETTLE_EXIT_GRACE_SECONDS
+            elif _monotonic() >= exit_deadline:
+                logger.warning(
+                    "MCP subprocess did not exit within {}s of a failed"
+                    " shared request; giving up the custody wait",
+                    _SETTLE_EXIT_GRACE_SECONDS,
+                )
+                break
             try:
                 await asyncio.sleep(0.05)
             except asyncio.CancelledError:
@@ -716,7 +805,11 @@ class _StdioJSONRPCConnection:
 
         Pending-future failure and cancelled callers do not settle native work.
         Reuse existing teardown once for concurrent requests. If termination
-        fails, wait for actual exit rather than release their source leases.
+        fails, wait for actual exit rather than release their source leases --
+        but only up to ``_SETTLE_EXIT_GRACE_SECONDS`` past teardown: an
+        unreapable child returns control to the caller with the ORIGINAL
+        failure instead of hanging (TASK-38611; the call_tool contract says
+        settlement never waits unbounded).
         """
         process = getattr(self, "process", None)
         if process is None:
@@ -735,17 +828,43 @@ class _StdioJSONRPCConnection:
                 finally:
                     # asyncio's child watcher sets returncode on actual exit.
                     # Teardown can fail or lose its waiter; neither is exit.
+                    exit_deadline: float | None = None
                     while process.returncode is None:
+                        if exit_deadline is None:
+                            exit_deadline = (
+                                _monotonic() + _SETTLE_EXIT_GRACE_SECONDS
+                            )
+                        elif _monotonic() >= exit_deadline:
+                            logger.warning(
+                                "MCP subprocess did not exit within {}s of"
+                                " settlement teardown; leaving it to the OS",
+                                _SETTLE_EXIT_GRACE_SECONDS,
+                            )
+                            return
                         await asyncio.sleep(0.05)
 
             settlement = asyncio.create_task(stop_and_settle())
             self._request_settlement = settlement
         cancelled = False
+        exit_deadline: float | None = None
         while not settlement.done() or process.returncode is None:
             try:
                 if settlement.done():
                     # Normal loop shutdown can cancel settlement itself. Each
                     # request still owns its leases until the child exits.
+                    if process.returncode is None:
+                        # TASK-38611: the settlement finished (or failed) and
+                        # the child still has not exited -- bound that wait.
+                        if exit_deadline is None:
+                            exit_deadline = (
+                                _monotonic() + _SETTLE_EXIT_GRACE_SECONDS
+                            )
+                        elif _monotonic() >= exit_deadline:
+                            logger.warning(
+                                "MCP subprocess never reported exit after"
+                                " settlement; returning the original failure",
+                            )
+                            break
                     await asyncio.sleep(0.05)
                 else:
                     await asyncio.shield(settlement)
@@ -1429,7 +1548,11 @@ class MCPClient:
     @producer_call
     @client_guard
     async def connect_profile(
-        self, profile: TransportProfile, *, observe_connection=None
+        self,
+        profile: TransportProfile,
+        *,
+        observe_connection=None,
+        request_timeout_seconds: Optional[float] = None,
     ) -> bool:
         """Connect a validated direct transport through the existing readiness owner."""
         if not isinstance(profile, TransportProfile):
@@ -1439,6 +1562,7 @@ class MCPClient:
             profile.command,
             list(profile.args),
             dict(profile.env) if profile.env is not None else None,
+            request_timeout_seconds=request_timeout_seconds,
             _profile=profile,
             _observe_connection=observe_connection,
         )
@@ -1452,6 +1576,7 @@ class MCPClient:
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         *,
+        request_timeout_seconds: Optional[float] = None,
         _profile: TransportProfile | None = None,
         _observe_connection=None,
     ) -> bool:
@@ -1462,6 +1587,11 @@ class MCPClient:
             command: Command to run the server
             args: Optional command arguments
             env: Optional environment variables
+            request_timeout_seconds: Per-request wire deadline for the stdio
+                session. Defaults to ``[mcp] tool_call_timeout_seconds``
+                (see :func:`_configured_request_timeout_seconds`) so the
+                session deadline never fires below the configured outer
+                tool-call bound.
 
         Returns:
             True if connection successful
@@ -1562,6 +1692,11 @@ class MCPClient:
                 session = _StdioJSONRPCConnection(
                     process,
                     client_name=self.name,
+                    request_timeout_seconds=(
+                        request_timeout_seconds
+                        if request_timeout_seconds is not None
+                        else _configured_request_timeout_seconds()
+                    ),
                     server_request_dispatcher=connection_dispatcher,
                 )
                 if _profile is not None:

@@ -20,6 +20,21 @@ else:
 from tldw_chatbook.config import CONFIG_TOML_CONTENT, DEFAULT_APP_TTS_CONFIG
 
 
+def _encrypt_all_strings(encryptor, value, password):
+    """Encrypt every non-empty string (recursing into dicts).
+
+    Local stand-in for the retired indiscriminate ``encrypt_config``
+    helper (deleted with the production move to the sensitive-key-scoped
+    ``config.encrypt_api_keys_in_config`` path, TASK-38605); the
+    decrypt-config tests below need a fully-encrypted document as setup.
+    """
+    if isinstance(value, dict):
+        return {k: _encrypt_all_strings(encryptor, v, password) for k, v in value.items()}
+    if isinstance(value, str) and value and not encryptor.is_encrypted(value):
+        return encryptor.encrypt_value(value, password)
+    return value
+
+
 class TestConfigEncryption:
     """Test suite for ConfigEncryption class."""
 
@@ -176,59 +191,22 @@ class TestConfigEncryption:
         )
 
     # Config Encryption Tests
-
-    def test_encrypt_config_simple(self, encryptor, test_password):
-        """Test encryption of a simple config dictionary."""
-        config = {"api_key": "secret_key", "timeout": 30, "enabled": True}
-
-        encrypted_config = encryptor.encrypt_config(config, test_password)
-
-        # String values should be encrypted
-        assert encryptor.is_encrypted(encrypted_config["api_key"])
-        # Non-string values should remain unchanged
-        assert encrypted_config["timeout"] == 30
-        assert encrypted_config["enabled"] is True
-
-    def test_encrypt_config_nested(self, encryptor, test_password, test_config):
-        """Test encryption of nested config dictionary."""
-        encrypted_config = encryptor.encrypt_config(test_config, test_password)
-
-        # Top-level strings encrypted
-        assert encryptor.is_encrypted(encrypted_config["api_key"])
-        assert encryptor.is_encrypted(encrypted_config["api_url"])
-
-        # Nested strings encrypted
-        assert encryptor.is_encrypted(encrypted_config["nested"]["secret"])
-        assert encryptor.is_encrypted(encrypted_config["nested"]["public"])
-
-        # Non-strings unchanged
-        assert encrypted_config["timeout"] == 30
-        assert encrypted_config["enabled"] is True
-
-    def test_encrypt_config_already_encrypted(self, encryptor, test_password):
-        """Test that already encrypted values are not re-encrypted."""
-        # First encryption
-        config = {"api_key": "secret"}
-        encrypted_once = encryptor.encrypt_config(config, test_password)
-
-        # Second encryption
-        encrypted_twice = encryptor.encrypt_config(encrypted_once, test_password)
-
-        # Should be the same (not double-encrypted)
-        assert encrypted_once["api_key"] == encrypted_twice["api_key"]
+    # (The dedicated encrypt_config pin tests were removed with the
+    # indiscriminate encrypt_config helper itself, TASK-38605; the
+    # decrypt_config tests below still exercise the reverse walk.)
 
     def test_decrypt_config_simple(self, encryptor, test_password):
         """Test decryption of encrypted config."""
         config = {"api_key": "secret_key", "timeout": 30}
 
-        encrypted_config = encryptor.encrypt_config(config, test_password)
+        encrypted_config = _encrypt_all_strings(encryptor, config, test_password)
         decrypted_config = encryptor.decrypt_config(encrypted_config, test_password)
 
         assert decrypted_config == config
 
     def test_decrypt_config_nested(self, encryptor, test_password, test_config):
         """Test decryption of nested encrypted config."""
-        encrypted_config = encryptor.encrypt_config(test_config, test_password)
+        encrypted_config = _encrypt_all_strings(encryptor, test_config, test_password)
         decrypted_config = encryptor.decrypt_config(encrypted_config, test_password)
 
         assert decrypted_config == test_config
@@ -236,7 +214,7 @@ class TestConfigEncryption:
     def test_decrypt_config_partial_failure(self, encryptor, test_password):
         """Test that partial decryption failure doesn't crash."""
         config = {"api_key": "secret", "backup_key": "backup_secret"}
-        encrypted_config = encryptor.encrypt_config(config, test_password)
+        encrypted_config = _encrypt_all_strings(encryptor, config, test_password)
 
         # Corrupt one encrypted value
         encrypted_config["api_key"] = encryptor.ENCRYPTION_PREFIX + "corrupted_data"
@@ -289,10 +267,9 @@ class TestConfigEncryption:
 
     def test_detect_api_keys_already_encrypted(self, encryptor, test_password):
         """Test that already encrypted values are not detected as needing encryption."""
-        config = {"api_key": "secret"}
-        encrypted_config = encryptor.encrypt_config(config, test_password)
+        config = {"api_key": encryptor.encrypt_value("secret", test_password)}
 
-        assert encryptor.detect_api_keys(encrypted_config) is False
+        assert encryptor.detect_api_keys(config) is False
 
     def test_detect_api_keys_empty_values(self, encryptor):
         """Test that empty values are not detected as API keys."""
@@ -371,7 +348,7 @@ class TestConfigEncryption:
         }
 
         # Encrypt
-        encrypted = encryptor.encrypt_config(config, test_password)
+        encrypted = _encrypt_all_strings(encryptor, config, test_password)
 
         # Verify encryption happened
         assert encryptor.is_encrypted(encrypted["api_settings"]["openai"]["api_key"])
@@ -596,7 +573,10 @@ class TestDerivedKeyMemoization:
         self, encryptor, test_password, derivation_call_count
     ):
         config = {f"api_key_{i}": f"sk-value-{i}" for i in range(5)}
-        encrypted = encryptor.encrypt_config(config, test_password)
+        encrypted = {
+            key: encryptor.encrypt_value(value, test_password)
+            for key, value in config.items()
+        }
         assert derivation_call_count() == 5
 
         # A save/load cycle decrypts and re-walks the same ciphertexts.

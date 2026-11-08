@@ -276,9 +276,17 @@ def _chat_with_openai_compatible_local_server(
             f"streaming={bool(streaming)}"
         )
     else:
+        # TASK-38609: the previous double-brace f-string logged the literal
+        # template text, never the payload. This is a local-engine request
+        # body -- the credential travels in the Authorization header, never
+        # in the payload (verified), so the non-message fields are safe to
+        # interpolate; user content stays excluded by the comprehension.
+        non_message_payload = {
+            k: v for k, v in payload.items() if k != "messages"
+        }
         logging.debug(
             f"{provider_name} Payload details (excluding messages): "
-            f"{{k: v for k, v in payload.items() if k != 'messages'}}"
+            f"{non_message_payload}"
         )
 
     try:
@@ -301,12 +309,34 @@ def _chat_with_openai_compatible_local_server(
         from tldw_chatbook.Chat.stream_stall_watchdog import (
             self_hosted_read_timeout,
         )
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            get_session,
+            trust_setting_fragment,
+        )
 
         # The first-token watchdog, not this read timeout, ends a cold wait.
         timeout = self_hosted_read_timeout(timeout)
-        session = create_pooled_default_session(
-            mount_retry=retry_strategy,
-            mount_prefixes=("http://", "https://"),
+        # ADR-222 (TASK-38609): one registry session per
+        # (provider, endpoint, retry budget, TLS trust) per thread, replacing
+        # a fresh create_pooled_default_session() per call that sat outside
+        # the registry and was never closed. The retry adapter is baked by
+        # the factory, so its config-derived values (total, backoff) are key
+        # fragments -- a settings change yields a new key and session, not a
+        # stale cached adapter. The factory closure resolves this module's
+        # create_pooled_default_session global at call time so the existing
+        # test seam keeps working. Close semantics are unchanged: the
+        # streaming generator closes the per-call RESPONSE (response.close()
+        # in its finally) and never closes the session, so the registry can
+        # own the session for both paths safely (documented per the item-2
+        # ambiguity resolution: registry-owned sessions for BOTH streaming
+        # and non-streaming).
+        session = get_session(
+            f"local:{provider_name}:{full_api_url}:{trust_setting_fragment()}:"
+            f"retry={retry_strategy.total}:{retry_strategy.backoff_factor}",
+            lambda: create_pooled_default_session(
+                mount_retry=retry_strategy,
+                mount_prefixes=("http://", "https://"),
+            ),
         )
 
         if streaming:
@@ -352,7 +382,18 @@ def _chat_with_openai_compatible_local_server(
                         # the same SSE envelope consumed by all local callers.
                         yield f"data: {json.dumps(response.json())}\n\n"
                     else:
-                        for line in response.iter_lines(decode_unicode=True):
+                        # TASK-38589: iterate BYTES and decode UTF-8 explicitly.
+                        # ``decode_unicode=True`` makes ``requests`` decode with
+                        # the response header's charset -- ISO-8859-1 when a
+                        # local llama.cpp/vLLM/ollama endpoint declares
+                        # ``text/event-stream`` WITHOUT ``charset=utf-8`` (common)
+                        # -- silently mojibake-ing every non-ASCII character.
+                        for raw_line in response.iter_lines():
+                            line = (
+                                raw_line.decode("utf-8")
+                                if isinstance(raw_line, bytes)
+                                else str(raw_line)
+                            )
                             # Return control even for keep-alives so Stop owns
                             # closing the response; invisible chunks stay empty.
                             yield line + "\n\n" if line.startswith("data:") else ""

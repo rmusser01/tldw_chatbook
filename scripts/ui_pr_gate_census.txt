@@ -1,6 +1,6 @@
 # Dated task notes retain insertion-time counts and grouping claims.
 # Current UI lane: 32 shards; evidence: 2026-10-28-textual-followups-implementation.md.
-# TASK-37266..37268 full-census replay checkpoint: the 1184
+# TASK-37266..37268 full-census replay checkpoint: the 1183
 # Complete selectors retain their attached historical notes; all are now
 # placed from worst-observed full-phase replay. The next blank ends this header.
 
@@ -1314,7 +1314,6 @@ Tests/UI/test_automation_definition_pending_save_drafts.py::test_success_retains
 Tests/UI/test_console_trace_maintenance_status.py
 Tests/UI/test_automation_definition_pending_save_drafts.py::test_saved_identity_survives_metadata_read_and_later_keyboard_input[failed-read]
 Tests/UI/test_speech_rail_navigation.py::test_the_body_owns_view_switching
-Tests/UI/test_media_viewer_prompt_search_15477.py
 Tests/UI/test_internal_prompts_editor_modal.py
 Tests/UI/test_speech_playground_model.py
 Tests/UI/test_chat_search_enhanced.py

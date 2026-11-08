@@ -24,7 +24,6 @@ def export_prompts_formatted(
     import os
     import tempfile
     import zipfile  # For markdown if multiple files
-    from datetime import datetime
 
     if not isinstance(db_instance, _source.PromptsDatabase):
         raise TypeError("db_instance must be a PromptsDatabase object.")
@@ -84,7 +83,6 @@ def export_prompts_formatted(
                 )
 
         # --- Perform Export ---
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file_path = "None"
 
         if export_format == "csv":

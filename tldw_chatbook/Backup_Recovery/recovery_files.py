@@ -3,7 +3,6 @@
 from dataclasses import dataclass, replace
 import hashlib
 import json
-import stat
 
 from pydantic import ConfigDict, JsonValue, RootModel
 from pathlib import Path

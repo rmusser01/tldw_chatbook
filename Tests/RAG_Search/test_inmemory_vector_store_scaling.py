@@ -6,9 +6,11 @@ cosine with a fresh ``np.linalg.norm`` of the QUERY per row, ranked with a
 full Python sort, deduped adds with ``id in self.ids`` (an O(n) list scan)
 and maintained the LRU as a plain list (O(n) remove per touch). The rewrite
 keeps the public surface and the observable semantics -- identical ranking,
-score normalization, LRU eviction order, dedupe-replace, cap behavior -- and
-changes only the internals (dict id index, OrderedDict LRU, one cached
-matrix + row norms, one matmul per search).
+LRU eviction order, dedupe-replace, cap behavior -- and changes only the
+internals (dict id index, OrderedDict LRU, one cached matrix + row norms,
+one matmul per search). (Score SCALE is no longer part of that frozen
+surface: TASK-38592 unified the reported scores onto the raw-cosine scale
+ChromaVectorStore uses.)
 
 The naive-cosine oracle below is the golden baseline: it was captured
 against the pre-rewrite implementation and must keep passing afterwards.
@@ -64,8 +66,9 @@ def test_search_matches_naive_cosine():
 
 
 def test_search_scores_match_naive_within_tolerance():
-    """Scores (already (score+1)/2 normalized) track the oracle's ranking
-    scores to float32 dot-product precision."""
+    """Scores (raw cosine, TASK-38592's unified scale -- matching
+    ChromaVectorStore) track the oracle's ranking scores to float32
+    dot-product precision."""
     store = _make_store(50, 8)
     query = np.asarray([0.3, -0.2, 0.1, 0.05, 0.4, 0.0, -0.1, 0.25], dtype=np.float32)
     results = store.search(query, top_k=10)
@@ -76,8 +79,8 @@ def test_search_scores_match_naive_within_tolerance():
         row = np.asarray(store.embeddings[idx], dtype=np.float32)
         row = row / (np.linalg.norm(row) + 1e-12)
         qn = query / (np.linalg.norm(query) + 1e-12)
-        expected_normalized = (float(np.dot(qn, row)) + 1) / 2
-        assert result.score == pytest.approx(expected_normalized, abs=1e-6)
+        expected_raw_cosine = float(np.dot(qn, row))
+        assert result.score == pytest.approx(expected_raw_cosine, abs=1e-6)
 
 
 def test_lru_eviction_and_dedupe():
@@ -211,7 +214,9 @@ def test_concurrent_replace_cannot_publish_stale_similarity_cache(monkeypatch):
 
     result = store.search([1.0, 0.0], top_k=1)[0]
     assert result.document == "new"
-    assert result.score == pytest.approx(0.5)
+    # Raw cosine (TASK-38592): [1,0] vs [0,1] are orthogonal -> 0.0, where
+    # the old (cos+1)/2 mapping reported 0.5.
+    assert result.score == pytest.approx(0.0)
 
 
 

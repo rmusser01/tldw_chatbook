@@ -15,13 +15,11 @@ Key Features:
 
 #
 # Imports
-import base64
 import inspect
 import json
 import logging
 import os
 import re
-from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 from datetime import datetime
 from typing import (
@@ -60,9 +58,6 @@ from ..Provider_Contract import (  # noqa: E402
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     CharactersRAGDB,
-    InputError,
-    ConflictError,
-    CharactersRAGDBError,
 )
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import (  # noqa: E402
     chat_with_openai,
@@ -95,7 +90,6 @@ from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
     ENGINE_RECORDS,
 )
-from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
     is_sensitive_llm_request,
     safe_llm_error_detail,
@@ -1689,12 +1683,14 @@ def chat(
 
     Returns:
         The LLM's response, either as a string (non-streaming) or a generator
-        (streaming). In case of an error during chat processing, a string
-        containing an error message is returned.
+        (streaming).
 
     Raises:
-        Catches internal exceptions and returns an error message string.
-        Exceptions from `chat_api_call` might propagate if not handled by its own try-except blocks.
+        ChatAPIError: The Chat*Error family raised by ``chat_api_call``
+            (authentication, rate limit, bad request, provider, model
+            unavailable, configuration) propagates unchanged on failure.
+        Exception: Any other internal error (e.g. payload ``ValidationError``)
+            propagates as-is. Failures are never stringified into the reply.
     """
     log_counter(
         "chat_attempt_multimodal",
@@ -2255,8 +2251,15 @@ def chat(
             error_reason,
             type(e).__name__,
         )
-        # Consider if the error format should change from just a string
-        return f"An error occurred in the chat function: {str(e)}"
+        # TASK-38602: failures surface as exceptions instead of being
+        # stringified into the assistant reply. Chat*Error family failures
+        # raised by ``chat_api_call`` re-raise unchanged, and every other
+        # exception propagates as-is, so callers can distinguish failure
+        # from content. The previous ``f"An error occurred ..."`` return
+        # made a failed call indistinguishable from a real reply and flowed
+        # raw exception text -- sometimes echoing user input -- into chat
+        # content.
+        raise
 
 
 def parse_tool_calls_from_response(

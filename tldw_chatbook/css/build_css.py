@@ -300,7 +300,9 @@ CSS_MODULES = [
     # _wizards.tcss), so dropping this sheet's copies is a no-op. The other two
     # (.action-spacer, .param-group) were this sheet's SOLE definitions with
     # live users (CodeRepoCopyPasteWindow, MediaViewerPanel) and were moved
-    # verbatim to components/_shared_components.tcss to preserve them.
+    # verbatim to components/_shared_components.tcss to preserve them; both
+    # rules were later removed again (TASK-38605) once those widgets
+    # themselves were deleted.
     "features/_llm-management.tcss",
     # task-33244: "features/_tools-settings.tcss" removed -- it styled the
     # navigation-unreachable legacy Tools & Settings window, deleted along

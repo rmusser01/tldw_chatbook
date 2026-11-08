@@ -540,7 +540,7 @@ def test_guard_reports_a_dropped_table(loaded_settings, derived_reads):
     missing = missing_tables(dropped, derived_reads)
 
     assert list(missing) == ["analysis_defaults"]
-    assert any("media_viewer_panel.py" in site for site in missing["analysis_defaults"])
+    assert missing["analysis_defaults"], "the dropped table must name its read sites"
 
 
 def test_pre_existing_drops_register_is_exact(loaded_settings, derived_reads):

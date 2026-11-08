@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import datetime
-from pathlib import Path
 from typing import Never, Protocol
 
 from loguru import logger

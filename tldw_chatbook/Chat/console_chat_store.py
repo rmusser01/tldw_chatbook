@@ -208,7 +208,6 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     effective_user_display_name,
     expand_character_template,
     normalize_chat_display_name,
-    resolve_console_message_presentation,
     session_assistant_display_name,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import (

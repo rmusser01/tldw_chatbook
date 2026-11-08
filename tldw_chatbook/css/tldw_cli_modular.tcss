@@ -6123,13 +6123,6 @@ PersonalContextReviewModal .personal-context-review-row Input.personal-context-r
 }
 
 
-.action-spacer {
-    width: $ds-width-fill;
-}
-
-.param-group {
-    width: $ds-width-fill;
-}
 
 /* ===== MODULE: features/_console.tcss ===== */
 
@@ -14801,47 +14794,6 @@ Select > SelectCurrent:hover {
 
 
 
-.activity-log-widget {
-    width: $ds-width-full;
-    height: $ds-height-full;
-}
-
-.activity-log-container {
-    width: $ds-width-full;
-    height: $ds-height-full;
-    background: $panel;
-    border: round $primary-darken-2;
-    padding: $ds-space-1;
-}
-
-.activity-log-header {
-    layout: horizontal;
-    margin-bottom: $ds-space-1;
-    align: left middle;
-}
-
-.activity-log-title {
-    text-style: bold;
-
-    width: $ds-width-fill;
-}
-
-.activity-log-actions {
-    layout: horizontal;
-}
-
-.activity-log-actions Button {
-    margin-left: $ds-space-1;
-    min-width: $ds-size-10;
-    height: $ds-size-3;
-}
-
-.activity-log-controls {
-    layout: horizontal;
-    margin-bottom: $ds-space-1;
-    align: left middle;
-}
-
 .filter-button {
     margin-right: $ds-space-1;
     min-width: $ds-size-8;
@@ -14857,96 +14809,6 @@ Select > SelectCurrent:hover {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-}
-
-.log-search-input {
-    width: $ds-size-20;
-}
-
-.activity-log-scroll {
-    height: $ds-height-fill;
-    background: $surface;
-    border: round $primary-darken-3;
-    padding: $ds-space-1;
-}
-
-.log-entries-container {
-    width: $ds-width-full;
-}
-
-
-.log-entry {
-    layout: horizontal;
-    margin-bottom: $ds-space-1;
-    padding: $ds-space-0;
-    align: left top;
-}
-
-.log-timestamp {
-    min-width: $ds-size-10;
-
-    color: $text-muted;
-    text-align: right;
-    padding-right: $ds-space-1;
-}
-
-.log-icon {
-    min-width: $ds-size-3;
-    text-align: center;
-}
-
-.log-category {
-    min-width: $ds-size-12;
-    color: $primary;
-
-    padding: $ds-space-0 $ds-space-1;
-}
-
-.log-message {
-    width: $ds-width-fill;
-    padding-left: $ds-space-1;
-}
-
-
-.log-info {
-    color: $text;
-}
-
-.log-info .log-icon {
-    color: $primary;
-}
-
-.log-success {
-    color: $success;
-}
-
-.log-success .log-message {
-    color: $success;
-}
-
-.log-warning {
-    color: $warning;
-}
-
-.log-warning .log-message {
-    color: $warning;
-}
-
-.log-error {
-    color: $error;
-}
-
-.log-error .log-message {
-    color: $error;
-}
-
-.log-debug {
-    color: $text-muted;
-    text-style: italic;
-}
-
-.log-debug .log-message {
-    color: $text-muted;
 }
 
 

@@ -100,7 +100,9 @@ _BUDGETS: dict[str, int] = {
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/Chat/console_display_state.py": 2875,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
-    "tldw_chatbook/Widgets/Console/console_canvas_card.py": 244,
+    # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
+    # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.
+    "tldw_chatbook/Widgets/Console/console_canvas_card.py": 257,
     "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1680,
     "tldw_chatbook/tldw_api/exceptions.py": 139,
     "tldw_chatbook/tldw_api/utils.py": 175,
@@ -134,7 +136,9 @@ _BUDGETS: dict[str, int] = {
     # on the UI loop.
     # 2026-11-03, TASK-36945.3: 5689 -> 5686 (-3) -- the eager-dependency flag
     # moved from on_mount to the entry points.
-    "tldw_chatbook/app.py": 5686,
+    # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
+    # 5686 -> 5687 (+1), TASK-38600 keeps a test-read import under noqa.
+    "tldw_chatbook/app.py": 5687,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -194,7 +198,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_navigation.py": 1208,
     # TASK-33011: the command-palette providers moved verbatim out of app.py;
     # governed there, so governed here.
-    "tldw_chatbook/app_command_providers.py": 1121,
+    # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
+    # 1121 -> 1126 (+5), TASK-38600 imports quoted annotation names under TYPE_CHECKING.
+    "tldw_chatbook/app_command_providers.py": 1126,
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
     # 2026-11-04 (TASK-38462 regression fix): 742 -> 753 (+11) -- the
@@ -841,7 +847,9 @@ _BUDGETS: dict[str, int] = {
     # connection build closes the connection it opened instead of leaking it.
     # 2026-11-06, TASK-39047 (owner size waiver): 9436 -> 9453 (+17) -- every
     # thread's handle joins the file's registry, closed idle at quit.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9453,
+    # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
+    # 9453 -> 9534 (+81), TASK-38588 purges stale FTS tokens on a media overwrite.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9534,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -951,9 +959,14 @@ _BUDGETS: dict[str, int] = {
     # git exclusion fixes (stored-byte brackets, one neutral refusal, a
     # scope-limited scan, one rule snapshot per call) measure 5,810, the exact
     # measurement of a fresh build.
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5810,
+    # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
+    # 5810 -> 5859 (+49), the exact measurement of a fresh build over TASK-38610's
+    # hooks fixes.
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5859,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
+    # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
+    # 5167 -> 5189 (+22), TASK-38589 decodes legacy SSE streams as UTF-8 at four sites.
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5189,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
@@ -984,7 +997,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
-    "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4516,
+    # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
+    # 4516 -> 4605 (+89), TASK-38591 stops caching swallowed store errors; TASK-38580's
+    # query_embedding refusal.
+    "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4605,
     # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
     # Whisper never sends an enc: key).
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
