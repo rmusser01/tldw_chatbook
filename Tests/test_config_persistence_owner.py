@@ -559,3 +559,26 @@ def test_a_write_waiting_on_another_process_lock_does_not_shorten_the_interval(
     assert results["r"].fully_applied
     assert seen and seen[0] < _SHORT_INTERVAL
     assert sys.getswitchinterval() == default_interval
+
+
+def test_switch_interval_releases_nest_and_reopen(default_interval):
+    """Review r12s-rev2 M-b: a release inside a release, and a release after a
+    scope opened inside one, raised ValueError, because the thread's open
+    scopes still listed the limits the first release had closed."""
+    from tldw_chatbook.Utils.switch_interval import (
+        switch_interval_at_most,
+        switch_interval_released,
+    )
+
+    with switch_interval_at_most(0.0001):
+        with switch_interval_released():
+            with switch_interval_released():
+                assert sys.getswitchinterval() == default_interval
+            with switch_interval_at_most(0.002):
+                assert sys.getswitchinterval() == pytest.approx(0.002)
+                with switch_interval_released():
+                    assert sys.getswitchinterval() == default_interval
+                assert sys.getswitchinterval() == pytest.approx(0.002)
+            assert sys.getswitchinterval() == default_interval
+        assert sys.getswitchinterval() < _SHORT_INTERVAL
+    assert sys.getswitchinterval() == default_interval

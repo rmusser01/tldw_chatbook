@@ -40,7 +40,7 @@ _local = threading.local()
 
 
 def _held() -> list[float]:
-    """The limits of the scopes the calling thread has open."""
+    """The limits of the scopes the calling thread has open and not released."""
     held = getattr(_local, "limits", None)
     if held is None:
         held = _local.limits = []
@@ -96,14 +96,17 @@ def switch_interval_released() -> Iterator[None]:
     Yields:
         None, with this thread's scopes closed; they reopen on exit.
     """
-    held = list(_held())
-    if not held:
+    held = _held()
+    released = list(held)  # this release's own snapshot (re-entrant)
+    if not released:
         yield
         return
+    del held[:]  # while released, the thread holds no open scope
     with _LOCK:
-        _close_locked(held)
+        _close_locked(released)
     try:
         yield
     finally:
         with _LOCK:
-            _open_locked(held)
+            _open_locked(released)
+        held.extend(released)
