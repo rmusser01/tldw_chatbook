@@ -85,7 +85,9 @@ permissions:
 jobs:
   preflight:
     name: CI preflight
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to 26.04 (2026-11-08), where actions/setup-python has
+    # no 3.12.11 build; the Mermaid manifest below pins that exact version.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
