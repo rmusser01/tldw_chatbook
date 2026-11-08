@@ -58,6 +58,7 @@ _EXPECTED_STACK_ORDER = [
 ]
 
 
+@pytest.mark.bootstrap_profile
 async def test_first_paint_excludes_the_four_heavy_center_views(monkeypatch):
     """Compose alone must not mount the deferred views (the perf mechanism)."""
     from Tests.UI.app_factory import _build_test_app
@@ -82,6 +83,7 @@ async def test_first_paint_excludes_the_four_heavy_center_views(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_settled_initial_load_keeps_heavy_views_unmounted():
     """The real load must settle without constructing inactive heavy bodies."""
     from Tests.UI.app_factory import _build_test_app
@@ -104,6 +106,7 @@ async def test_settled_initial_load_keeps_heavy_views_unmounted():
         assert [child.id for child in stack.children] == _EXPECTED_STACK_ORDER
 
 
+@pytest.mark.bootstrap_profile
 async def test_first_use_mounts_only_requested_view_and_caches_it():
     """One requested body mounts once and retains its in-screen form state."""
     from Tests.UI.app_factory import _build_test_app
@@ -132,6 +135,7 @@ async def test_first_use_mounts_only_requested_view_and_caches_it():
         assert not list(screen.query(PersonasLoreDetailWidget))
 
 
+@pytest.mark.bootstrap_profile
 async def test_concurrent_first_use_builds_and_mounts_one_view(monkeypatch):
     """Concurrent requests coalesce behind one per-view mount operation."""
     from Tests.UI.app_factory import _build_test_app
@@ -161,6 +165,7 @@ async def test_concurrent_first_use_builds_and_mounts_one_view(monkeypatch):
         assert len(list(screen.query(PersonasCharacterEditorWidget))) == 1
 
 
+@pytest.mark.bootstrap_profile
 async def test_concurrent_caller_waits_until_mounted_view_is_hydrated(monkeypatch):
     """A queryable-but-unready body must not escape the per-view lock."""
     from Tests.UI.app_factory import _build_test_app
@@ -210,6 +215,7 @@ async def test_concurrent_caller_waits_until_mounted_view_is_hydrated(monkeypatc
         assert len(list(screen.query(PersonasCharacterEditorWidget))) == 1
 
 
+@pytest.mark.bootstrap_profile
 async def test_transient_mount_failure_remains_retryable(monkeypatch):
     """A failed attempt owns no ready state and a later attempt can succeed."""
     from Tests.UI.app_factory import _build_test_app
@@ -252,6 +258,7 @@ async def test_transient_mount_failure_remains_retryable(monkeypatch):
         assert len(list(screen.query(PersonasCharacterEditorWidget))) == 1
 
 
+@pytest.mark.bootstrap_profile
 async def test_unmount_during_population_blocks_stale_hydration(monkeypatch):
     """A mount finishing after lifecycle invalidation is removed, not hydrated."""
     from Tests.UI.app_factory import _build_test_app
@@ -288,6 +295,7 @@ async def test_unmount_during_population_blocks_stale_hydration(monkeypatch):
         assert not list(screen.query(PersonaProfileEditorWidget))
 
 
+@pytest.mark.bootstrap_profile
 async def test_transient_restore_mount_failure_keeps_pending_intent(monkeypatch):
     """A view-mount failure is retryable restore state, not a deleted entity."""
     from Tests.UI.app_factory import _build_test_app
@@ -315,6 +323,7 @@ async def test_transient_restore_mount_failure_keeps_pending_intent(monkeypatch)
         assert screen._restored_from_saved_state is True
 
 
+@pytest.mark.bootstrap_profile
 async def test_inactive_editor_compose_cannot_stall_personas_navigation(monkeypatch):
     """An expensive inactive editor cannot block the default screen arrival."""
     from Tests.UI.app_factory import _build_test_app

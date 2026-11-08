@@ -265,6 +265,7 @@ async def test_completed_chip_includes_fired_reminder_and_archived_definition():
         assert _row_ids(workbench, "definition") == {"def-archived"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_all_chip_excludes_completed_rows():
     async with _App().run_test(size=(160, 48)) as pilot:
@@ -560,6 +561,7 @@ def _counting_definitions_service() -> tuple[_MixedService, list]:
     return service, calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_automations_edit_save_refetches_definitions_immediately():
     """Round 2 pinned that a save marks the cache stale and the NEXT
@@ -708,6 +710,7 @@ async def test_returning_to_the_screen_while_stale_refetches_definitions():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_returning_to_the_screen_when_nothing_is_stale_refetches_nothing():
     """The re-homed consumer's own no-op half: `ScreenResume` fires on
@@ -809,6 +812,7 @@ def _toasts(app) -> list[str]:
 # --- F1: a rail Create ▾ save paints its row without leaving the tab -------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_create_recurring_question_paints_the_new_row():
     """Final review F1: Task 3 moved definition-create onto the Queue
@@ -1148,6 +1152,7 @@ async def test_marking_all_read_from_the_results_tab_clears_the_queue_dots():
 # --- F6: the placeholder matches what search actually matches -------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_filter_placeholder_names_title_and_question():
     """Final review F6: the placeholder still promised type and status
@@ -1304,6 +1309,7 @@ async def _completed_chip_notice(size) -> str:
         ).visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_view_copy_drops_the_chip_hint_when_chips_are_hidden():
     """Final review F10: below width 84 the chip row is hidden while the
@@ -1341,6 +1347,7 @@ class _ServerRunNowService(MockSchedulingServiceMixin):
         return []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_run_now_marks_definitions_stale():
     """Final review F11: the branch's own rule is "mark staleness at each

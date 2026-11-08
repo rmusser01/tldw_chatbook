@@ -111,6 +111,7 @@ def _row_ids(pane: PersonasLibraryPane) -> list[str]:
     return [pane.item_list.row(oid).item_id for oid in pane.item_list.loaded_ids()]
 
 
+@pytest.mark.bootstrap_profile
 async def test_tag_filter_narrows_count_and_resets_offset(
     mock_app_instance, scaled_db, monkeypatch
 ):
@@ -155,6 +156,7 @@ async def test_sort_change_resets_offset(
         assert _pane_visible_rows(pane) == screen._character_total
 
 
+@pytest.mark.bootstrap_profile
 async def test_character_page_reads_run_off_the_event_loop(
     mock_app_instance, scaled_db, monkeypatch
 ):
@@ -229,6 +231,7 @@ async def test_sort_cycle_excludes_relevance_outside_characters_mode(
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 async def test_page_nav_reuses_count_cache(mock_app_instance, scaled_db, monkeypatch):
     """Appending a window for an unchanged filter must not recount."""
     import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
@@ -257,6 +260,7 @@ async def test_page_nav_reuses_count_cache(mock_app_instance, scaled_db, monkeyp
         assert screen._count_cache_key == cache_key
 
 
+@pytest.mark.bootstrap_profile
 async def test_import_offpage_name_conflict_message(
     mock_app_instance, scaled_db, tmp_path, monkeypatch
 ):

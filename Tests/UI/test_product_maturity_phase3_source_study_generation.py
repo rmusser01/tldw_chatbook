@@ -221,6 +221,7 @@ async def _run_study_app(app: TldwCli, scope_context: StudyScopeContext):
         await _close_production_app(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_context_carries_study_pack_source_items() -> None:
     app = _build_test_app()
@@ -258,6 +259,7 @@ async def test_library_source_context_carries_study_pack_source_items() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_study_dashboard_launches_source_selected_study_pack_job() -> None:
     service = RecordingSourceStudyService()
@@ -321,6 +323,7 @@ async def test_server_study_dashboard_launches_source_selected_study_pack_job() 
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_study_dashboard_observes_completed_source_pack_for_reuse() -> (
     None
@@ -382,6 +385,7 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
     notifications.assert_any_call("Study pack ready.", severity="information")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_study_dashboard_keeps_failed_source_pack_generation_recoverable() -> (
     None
@@ -447,6 +451,7 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_study_dashboard_explains_source_generation_server_requirement() -> (
     None

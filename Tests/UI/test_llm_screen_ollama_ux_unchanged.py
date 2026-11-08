@@ -96,6 +96,7 @@ def _gated_buttons(window: LLMManagementWindow) -> list[Button]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ollama_controls_disabled_when_probe_reports_down(monkeypatch):
     app = _build_test_app()
@@ -119,6 +120,7 @@ async def test_ollama_controls_disabled_when_probe_reports_down(monkeypatch):
         assert not start_button.disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ollama_controls_enabled_when_probe_reports_up(monkeypatch):
     app = _build_test_app()
@@ -134,6 +136,7 @@ async def test_ollama_controls_enabled_when_probe_reports_up(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ollama_controls_flip_when_availability_changes_between_ticks(
     monkeypatch,
@@ -162,6 +165,7 @@ async def test_ollama_controls_flip_when_availability_changes_between_ticks(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_screen_switch_mid_probe_leaves_buttons_untouched(monkeypatch):
     """Review finding on task-15473: converting the probe to `async` opened

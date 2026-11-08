@@ -45,6 +45,7 @@ def _report(title: str, lines: list[str]) -> None:
         print(f"  {line}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p1_db_rows_written_while_console_is_unmounted(tmp_path):
     app = _build_test_app()
@@ -224,6 +225,7 @@ async def test_probe_p1_db_rows_written_while_console_is_unmounted(tmp_path):
     _report("P1 -- DB rows written while Console is unmounted", findings)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p1_variant_headless_writer_also_moves_the_active_leaf(tmp_path):
     """The obvious objection to the main probe, closed.
@@ -320,6 +322,7 @@ async def test_probe_p1_variant_headless_writer_also_moves_the_active_leaf(tmp_p
     _report("P1 variant -- headless writer maintains the active leaf", findings)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p1_control_rows_written_while_console_is_mounted(tmp_path):
     """Control: the SAME out-of-band DB append with Console still mounted.

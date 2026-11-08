@@ -81,6 +81,7 @@ async def _reveal_new_workspace_button(console, pilot) -> Button:
     raise AssertionError("New workspace button never settled visible")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_new_workspace_creates_and_activates() -> None:
     """Pressing [New] in the Session rail opens the shared create modal;
@@ -118,6 +119,7 @@ async def test_console_new_workspace_creates_and_activates() -> None:
         assert active.workspace_id.startswith("workspace-local-")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_new_workspace_announces_creation() -> None:
     """TASK-713: creating a workspace must not be silent - the user should be
@@ -161,6 +163,7 @@ async def test_console_new_workspace_announces_creation() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_browser_row_click_announces_workspace_switch() -> None:
     """TASK-713: resuming a conversation from another workspace's group changes

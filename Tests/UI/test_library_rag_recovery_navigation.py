@@ -55,6 +55,7 @@ def _assert_no_submissions(app, service):
     app.submit_library_ingest_job.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -92,6 +93,7 @@ async def test_empty_library_recovery_opens_import_and_retains_draft(theme, size
         _assert_no_submissions(app, service)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -156,6 +158,7 @@ async def test_provider_recovery_routes_and_restores_draft_with_current_readines
             _assert_no_submissions(app, service)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deselecting_existing_sources_does_not_offer_import_recovery():
     host, app, service = _host("textual-dark", populated=True)
@@ -171,6 +174,7 @@ async def test_deselecting_existing_sources_does_not_offer_import_recovery():
         _assert_no_submissions(app, service)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])

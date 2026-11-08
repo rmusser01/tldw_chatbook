@@ -63,6 +63,7 @@ def _no_splash(monkeypatch):
     set_app_global(monkeypatch, "get_cli_setting", fake_get_cli_setting)
 
 
+@pytest.mark.bootstrap_profile
 async def test_initial_load_populates_only_llamacpp_body():
     """The default pane is usable before any inactive pane body is mounted."""
     app = _build_test_app()
@@ -97,6 +98,7 @@ async def test_initial_load_populates_only_llamacpp_body():
         assert all(not list(screen.query(selector)) for selector in inactive_body_selectors)
 
 
+@pytest.mark.bootstrap_profile
 async def test_first_selection_mounts_and_caches_only_requested_view():
     """First use populates one pane; revisiting reuses that pane's state."""
     app = _build_test_app()
@@ -211,6 +213,7 @@ async def test_population_scheduler_guards_duplicate_and_invalid_requests(
         ]
 
 
+@pytest.mark.bootstrap_profile
 async def test_ollama_view_activates_and_renders_after_deferral():
     """The extracted ollama view must render its real content when shown —
     the one view whose body moved out of `compose` (single-substitution
@@ -238,6 +241,7 @@ async def test_ollama_view_activates_and_renders_after_deferral():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_inactive_view_compose_cannot_stall_models_navigation(monkeypatch):
     """An expensive inactive pane must not block the event loop on arrival."""
 
@@ -277,6 +281,7 @@ async def test_inactive_view_compose_cannot_stall_models_navigation(monkeypatch)
         assert max(gaps) < 0.25, f"event loop stalled for {max(gaps):.3f}s"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "view_name,expected", [("ollama", "ollama"), ("private-view-token", "unknown")]
 )

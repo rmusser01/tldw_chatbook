@@ -309,6 +309,7 @@ async def test_initial_first_run_mount_has_no_unrelated_provider_catalog_calls()
     scope_service.discover_models.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(100, 32), (120, 40), (177, 45)])
 @pytest.mark.asyncio
 async def test_provider_connection_controls_scroll_without_displacing_footer(

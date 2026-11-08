@@ -59,6 +59,7 @@ def _snap(screen):
     return (tc_disp, card.display, body_disp, rows)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_first_open_natural_ordering(tmp_path):
     app, gateway = _build_console_app(tmp_path)

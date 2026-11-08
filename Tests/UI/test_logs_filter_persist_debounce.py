@@ -56,6 +56,7 @@ def _spy_writes(window: LogsWindow) -> list[dict]:
     return calls
 
 
+@pytest.mark.bootstrap_profile
 async def test_chip_burst_debounces_into_one_batched_write():
     """A burst of chip clicks lands as exactly ONE write, after the debounce."""
     async with _LogsHarness().run_test(size=(120, 36)) as pilot:
@@ -87,6 +88,7 @@ async def test_chip_burst_debounces_into_one_batched_write():
         assert _saved_logs_section().get("last_level_chip") == "error"
 
 
+@pytest.mark.bootstrap_profile
 async def test_unmount_before_debounce_flushes_the_pending_change():
     """Leaving the screen right after a click must not lose the change."""
     async with _LogsHarness().run_test(size=(120, 36)) as pilot:
@@ -103,6 +105,7 @@ async def test_unmount_before_debounce_flushes_the_pending_change():
     assert _saved_logs_section().get("last_level_chip") == "error"
 
 
+@pytest.mark.bootstrap_profile
 async def test_unmount_without_changes_writes_nothing():
     """Exiting the Logs screen untouched no longer rewrites the config."""
     async with _LogsHarness().run_test(size=(120, 36)) as pilot:
@@ -116,6 +119,7 @@ async def test_unmount_without_changes_writes_nothing():
         assert calls == [], "unmount rewrote the config file although nothing changed"
 
 
+@pytest.mark.bootstrap_profile
 async def test_click_and_click_back_writes_nothing():
     """Returning to the persisted state cancels the pending write."""
     async with _LogsHarness().run_test(size=(120, 36)) as pilot:

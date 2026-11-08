@@ -158,6 +158,7 @@ async def _mounted(pilot):
 
 
 class TestCharacterSaveInPlace:
+    @pytest.mark.bootstrap_profile
     async def test_create_save_stays_in_editor_and_rearms_dirty(
         self, mock_app_instance, route_character_db
     ):
@@ -195,6 +196,7 @@ class TestCharacterSaveInPlace:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
 
+    @pytest.mark.bootstrap_profile
     async def test_twice_save_preserves_greeting_and_bumps_version(
         self, mock_app_instance, route_character_db
     ):
@@ -301,6 +303,7 @@ async def _enter_personas_mode(pilot):
 
 
 class TestPersonaSaveInPlace:
+    @pytest.mark.bootstrap_profile
     async def test_create_save_stays_in_editor_and_persists_new_fields(
         self, mock_app_instance, stub_characters, real_persona_scope_service
     ):
@@ -358,6 +361,7 @@ class TestPersonaSaveInPlace:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
 
+    @pytest.mark.bootstrap_profile
     async def test_list_editor_save_preserves_local_and_unknown_fields(
         self, mock_app_instance, stub_characters, real_persona_scope_service
     ):

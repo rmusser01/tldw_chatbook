@@ -35,6 +35,7 @@ async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
     return bool(predicate())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p1_deferred_startup_runs_and_console_is_absent(tmp_path):
     app = _build_test_app("library")
@@ -66,6 +67,7 @@ async def test_probe_p1_deferred_startup_runs_and_console_is_absent(tmp_path):
     assert reached, "the app never reached _schedule_deferred_startup_work"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p4_the_real_conversation_service_can_be_wired_after_the_db(
     tmp_path,
@@ -135,6 +137,7 @@ def test_probe_p3a_an_unsaved_session_is_keyed_by_its_own_session_id(tmp_path):
         chacha.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p3_ephemeral_conversation_id_leaks_a_permanent_mark(tmp_path):
     """The stale-mark shape: mark an id that names no ChaChaNotes row (an

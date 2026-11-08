@@ -64,6 +64,7 @@ async def _open_skills_reader(screen, pilot) -> None:
     await _wait_for_selector(screen, pilot, "#library-skills-reader-shell")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_mount_three_retained_roles_and_default_to_overview(
     tmp_path,
@@ -114,6 +115,7 @@ async def test_skills_mount_three_retained_roles_and_default_to_overview(
         assert str(selected_row.label).startswith("› ")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_modes_preserve_list_work_and_one_live_draft(
     tmp_path,
@@ -155,6 +157,7 @@ async def test_skill_modes_preserve_list_work_and_one_live_draft(
         assert screen.query_one("#library-skill-edit-region").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_skill_older_detail_result_cannot_replace_newer_generation(
     tmp_path,
@@ -210,6 +213,7 @@ async def test_same_skill_older_detail_result_cannot_replace_newer_generation(
         assert screen._skills_state.editor_state.version == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_skill_older_delete_cannot_reset_a_newer_work_generation(
     tmp_path,
@@ -253,6 +257,7 @@ async def test_same_skill_older_delete_cannot_reset_a_newer_work_generation(
         assert screen._skills_state.view == "editor"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_skill_older_trust_review_cannot_patch_newer_generation(
     tmp_path,
@@ -294,6 +299,7 @@ async def test_same_skill_older_trust_review_cannot_patch_newer_generation(
         assert screen._skills_state.active_review is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_detail_failure_stays_scoped_and_retries_in_work_pane(
     tmp_path,
@@ -352,6 +358,7 @@ async def test_skill_detail_failure_stays_scoped_and_retries_in_work_pane(
         assert screen._skills_state.editor_state.version == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_reader_f6_reaches_items_and_work_regions(tmp_path) -> None:
     app = _build_test_app()
@@ -382,6 +389,7 @@ async def test_skills_reader_f6_reaches_items_and_work_regions(tmp_path) -> None
         assert screen.focused is screen.query_one("#library-skill-mode-overview")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "terminal_size",
@@ -422,6 +430,7 @@ async def test_skills_reader_live_matrix_preserves_modes_work_floor_and_grips(
         assert screen.query_one("#library-skill-overview-region").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_files_mode_is_read_only_and_labels_binary_files(
     tmp_path,
@@ -470,6 +479,7 @@ async def test_skills_files_mode_is_read_only_and_labels_binary_files(
         assert not region.query(TextArea)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_trust_mode_identifies_exact_review_snapshot(tmp_path) -> None:
     app = _build_test_app()
@@ -508,6 +518,7 @@ async def test_skills_trust_mode_identifies_exact_review_snapshot(tmp_path) -> N
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_successful_skill_save_discards_the_reviewed_snapshot(tmp_path) -> None:
     app = _build_test_app()
@@ -544,6 +555,7 @@ async def test_successful_skill_save_discards_the_reviewed_snapshot(tmp_path) ->
         assert screen._skills_state.active_review is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_projection_cannot_consume_work_scroll_receipt(tmp_path) -> None:
     app = _build_test_app()
@@ -566,6 +578,7 @@ async def test_items_projection_cannot_consume_work_scroll_receipt(tmp_path) -> 
         assert screen._skills_state.scroll_pending is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_manual_pane_collapses_are_independent_and_expand_the_sibling(
     tmp_path,
@@ -608,6 +621,7 @@ async def test_skills_manual_pane_collapses_are_independent_and_expand_the_sibli
         assert shell.work.region.width > library_collapsed_width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_trust_posture_sync_keeps_interactive_rows_mounted(
     tmp_path,

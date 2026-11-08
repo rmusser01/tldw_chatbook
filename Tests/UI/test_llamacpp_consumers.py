@@ -47,6 +47,7 @@ def _ready_target(
     return owner, target
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("change_model", "change_endpoint"),
@@ -117,6 +118,7 @@ async def test_console_adopts_verified_llamacpp_for_active_session_only(request)
         assert not app.pending_handoffs.has_pending(HandoffChannel.LLAMACPP_CONSOLE)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_stages_verified_llamacpp_without_persisting():
     app = _console_app()
@@ -150,6 +152,7 @@ async def test_settings_stages_verified_llamacpp_without_persisting():
         assert config_path.read_bytes() == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_llamacpp_default_persists_only_after_settings_save():
     app = _console_app()
@@ -200,6 +203,7 @@ async def test_stale_llamacpp_target_cannot_change_console_or_settings(request):
         assert app.pending_handoffs.has_pending(HandoffChannel.LLAMACPP_DEFAULT)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_llamacpp_settings_late_owner_expiry_compensates_before_ack(monkeypatch):
     app = _console_app()
@@ -279,6 +283,7 @@ async def test_llamacpp_console_adoption_failure_restores_session_and_requeues(
         assert app.pending_handoffs.has_pending(HandoffChannel.LLAMACPP_CONSOLE)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_llamacpp_default_recovery_blocks_other_default_until_released(
     monkeypatch,

@@ -124,6 +124,7 @@ async def _select_seeded_character(pilot, char_id):
 
 
 class TestCharacterWorldBooksScreenWiring:
+    @pytest.mark.bootstrap_profile
     async def test_selecting_character_shows_attached_world_books(
         self,
         mock_app_instance,
@@ -151,6 +152,7 @@ class TestCharacterWorldBooksScreenWiring:
             table = panel.query_one("#personas-char-worldbooks-table", DataTable)
             assert table.row_count == 1
 
+    @pytest.mark.bootstrap_profile
     async def test_character_without_worldbooks_shows_empty_panel(
         self,
         mock_app_instance,
@@ -238,6 +240,7 @@ def stub_character_for_standalone_worldbook(
 
 
 class TestCharacterWorldBookAttachDetach:
+    @pytest.mark.bootstrap_profile
     async def test_attach_via_picker_then_detach_real_db(
         self,
         mock_app_instance,
@@ -344,6 +347,7 @@ class TestEditorSyncWorldBooks:
 
 
 class TestAttachmentSectionsFlowGeometry:
+    @pytest.mark.bootstrap_profile
     @pytest.mark.parametrize("size", [(100, 30), (160, 50)])
     async def test_flowing_sections_do_not_clip_card(
         self,
@@ -397,6 +401,7 @@ class TestAttachmentSectionsFlowGeometry:
 
 
 class TestCharacterAttachmentsWrapperGating:
+    @pytest.mark.bootstrap_profile
     async def test_initial_mount_hides_wrapper_before_any_selection(
         self,
         mock_app_instance,
@@ -426,6 +431,7 @@ class TestCharacterAttachmentsWrapperGating:
                 "before any character is selected"
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_leaving_the_card_view_hides_the_wrapper(
         self,
         mock_app_instance,

@@ -45,6 +45,7 @@ def _build_console_app(tmp_path):
     return app, gateway
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_headless_approval_waits_until_exact_human_resolution(tmp_path):
     """A risk-tagged round remains pending with no Console mounted.

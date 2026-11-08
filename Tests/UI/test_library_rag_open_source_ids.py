@@ -65,6 +65,7 @@ def _app_with_result(source_type, source_id, *, backend=""):
     return app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source_type", ["media", "prompt"])
 @pytest.mark.parametrize(
@@ -125,6 +126,7 @@ async def test_result_open_resolves_exact_local_record(
         prompts.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("source_type", "source_id", "backend"),
@@ -172,6 +174,7 @@ async def test_unresolvable_result_explains_refusal_without_leaving_search(
         assert not app.media_reading_scope_service.detail_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source_type", ["media", "prompt"])
 async def test_missing_record_keeps_the_reader_recovery_visible(

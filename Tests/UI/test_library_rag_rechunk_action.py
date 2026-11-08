@@ -208,6 +208,7 @@ async def test_control_renders_beside_report_line_and_hides_with_it(tmp_path):
         assert app.query_one(f"#{RECHUNK_BUTTON_ID}", Button).display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_press_runs_through_scope_service_and_surfaces_summary(tmp_path):
     db = MediaDatabase(tmp_path / "m.db", client_id="t")

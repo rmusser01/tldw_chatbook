@@ -361,6 +361,7 @@ def test_research_window_engine_start_skips_without_local_service():
     window._start_local_engine("local-run")
 
 
+@pytest.mark.bootstrap_profile
 def test_research_window_engine_start_builds_engine_from_app_service(monkeypatch):
     from tldw_chatbook.Research_Interop.local_research_service import (
         LocalResearchService,
@@ -438,6 +439,7 @@ def test_window_academic_toggle_default_comes_from_config(monkeypatch):
     assert window.academic_enabled is True
 
 
+@pytest.mark.bootstrap_profile
 def test_window_engine_start_passes_paper_fn_only_when_toggle_on(monkeypatch):
     from tldw_chatbook.Research_Interop.local_research_service import (
         LocalResearchService,
@@ -891,6 +893,7 @@ def test_parse_provider_tokens_validates_and_dedupes():
     assert _parse_provider_tokens("pubmed, <script>x") == []
 
 
+@pytest.mark.bootstrap_profile
 def test_window_engine_start_passes_configured_pipeline_params(monkeypatch):
     """task-17371: the window's own launch path shipped with NO search_params,
     so every window-launched run died in the pipeline's validation

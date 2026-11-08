@@ -26,6 +26,7 @@ class _FailedRetrieval:
         raise RuntimeError("private backend failure detail")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -89,6 +90,7 @@ async def test_retrieval_failure_is_visible_and_same_query_can_retry(
         assert not screen.query("#library-rag-service-error")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -125,6 +127,7 @@ async def test_retrieval_notice_keeps_paid_disclosure_visible(size, theme, monke
         assert "Retrieval failed. Run again to retry." in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retry_notice_is_not_restored_by_suspended_old_status_refresh(
     monkeypatch,

@@ -160,6 +160,7 @@ def no_snapshot_splash(monkeypatch):
         ))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad", [{"keep_count": 0}, {"keep_count": 1.5}, {"enabled": "yes"}]
@@ -209,6 +210,7 @@ async def test_malformed_f9_preferences_leave_provider_surface_and_revert_recove
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f9_snapshot_save_rejects_noninteger_values_without_coercion(
     no_snapshot_splash,
@@ -230,6 +232,7 @@ async def test_f9_snapshot_save_rejects_noninteger_values_without_coercion(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw", ["027", "+27", " 27 "])
 @pytest.mark.parametrize("combined", [False, True])
@@ -282,6 +285,7 @@ async def test_success_canonicalizes_unchanged_f9_draft_and_continues_once(
             ), screen._provider_save_result
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f9_save_preserves_new_edits_while_persistence_waits(
     no_snapshot_splash, monkeypatch
@@ -346,6 +350,7 @@ async def test_f9_save_preserves_new_edits_while_persistence_waits(
         assert screen._provider_draft().is_dirty
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f9_snapshot_draft_uses_category_save_offthread_and_reverts(monkeypatch):
     from tldw_chatbook.config import get_cli_setting
@@ -395,6 +400,7 @@ async def test_f9_snapshot_draft_uses_category_save_offthread_and_reverts(monkey
         assert field.value == "27"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f9_stale_snapshot_draft_requires_revert_before_save(monkeypatch):
     from tldw_chatbook.config import get_cli_setting

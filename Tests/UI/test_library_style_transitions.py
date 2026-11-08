@@ -58,6 +58,7 @@ async def test_media_row_height_round_trips_without_remounting():
             assert row.region.height == height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ordinary_emergency_canvas_releases_previous_fractional_width():
     app = _build_test_app()

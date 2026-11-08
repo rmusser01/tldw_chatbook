@@ -199,6 +199,7 @@ def _seed_library_sources(app) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(90, 32), (140, 42), (180, 50)])
 async def test_library_contract_layout_regions_survive_terminal_sizes(
@@ -251,6 +252,7 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
         assert not screen.query("#library-row-ingest-import-export")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_status_row_preserves_unavailable_taxonomy() -> None:
     """ "Unavailable" (vs. policy-denied "Wrong source") taxonomy must survive;
@@ -279,6 +281,7 @@ async def test_library_status_row_preserves_unavailable_taxonomy() -> None:
         assert lookup_error in details_body
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_status_row_preserves_policy_recovery_status() -> None:
     """Policy-denied lookups keep the "Wrong source" taxonomy label, now on

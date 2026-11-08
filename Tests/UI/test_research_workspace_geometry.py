@@ -38,6 +38,7 @@ def _painted_text(svg: str) -> str:
     return " ".join(plain.split())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("size", "visible_panes"),
@@ -75,6 +76,7 @@ async def test_production_hierarchy_paints_contained_workspace_frames(
             assert not screen.query_one(f"#research-{pane_id}-pane").display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size", [(160, 40), (120, 30), (100, 30), (84, 24), (80, 24), (60, 20)]
@@ -119,6 +121,7 @@ async def test_active_sources_keeps_essential_controls_painted_and_reachable(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size", [(160, 40), (120, 30), (100, 30), (84, 24), (80, 24), (60, 20)]
@@ -189,6 +192,7 @@ async def test_active_studio_quick_note_actions_reflow_and_focus_into_view(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 40), (60, 20)])
 async def test_production_runs_window_stays_inside_remaining_screen_content(
@@ -211,6 +215,7 @@ async def test_production_runs_window_stays_inside_remaining_screen_content(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_wide_chat_uses_grid_except_two_fixed_reveal_handles() -> None:
     from textual.widgets import Button
@@ -236,6 +241,7 @@ async def test_wide_chat_uses_grid_except_two_fixed_reveal_handles() -> None:
         assert chat.region.width == grid.content_region.width - 8
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(220, 50), (120, 30), (80, 24)])
 async def test_production_runs_view_lays_out_vertically_with_usable_regions(
@@ -291,6 +297,7 @@ async def test_production_runs_view_lays_out_vertically_with_usable_regions(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_production_runs_view_paints_create_and_detail_controls() -> None:
     """TASK-31795 regression: with the collapsed layout nothing was

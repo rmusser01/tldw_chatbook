@@ -79,6 +79,7 @@ async def test_trust_dialog_text_and_validation_are_readable(
         assert results == ["synthetic-qa-passphrase"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -341,6 +342,7 @@ async def test_import_choice_and_exact_trust_approval_journey(
         assert body.text == "Keep this unsaved draft."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_receipt_ignores_delayed_echo_and_stale_presentation(
     tmp_path, monkeypatch

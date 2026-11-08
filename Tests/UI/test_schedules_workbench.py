@@ -226,6 +226,7 @@ class WorkbenchTestAppWithMixedService(ConsolidatedCSSApp):
     scheduling_service = MockSchedulingServiceWithWatchlist()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_schedules_workbench_renders_panes():
     app = WorkbenchTestApp()
@@ -239,6 +240,7 @@ async def test_schedules_workbench_renders_panes():
         assert pilot.app.screen.query_one("#scheduling-inspector-pane") is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_owner_requires_an_active_server_id():
     """A lazy server-service wrapper is not itself an available connection."""
@@ -288,6 +290,7 @@ async def test_select_task_updates_detail():
         assert "Test" in title.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_follow_selector_exists():
     app = WorkbenchTestApp()
@@ -2636,6 +2639,7 @@ async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_pa
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_row_is_read_only_for_an_interval_automation(tmp_path):
     """Qodo finding 8, the other half: an `interval` schedule has no
@@ -3406,6 +3410,7 @@ async def test_empty_queue_shows_friendly_empty_state():
         assert "Press n" in empty_state.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_task_selected_shows_friendly_copy():
     """With no scheduling service, the detail pane prompts task selection."""
@@ -3498,6 +3503,7 @@ async def test_conflict_card_shows_for_conflict_status():
         assert "Conflicted Task" in conflict_text.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_follow_console_ignored_when_disabled():
     """Pressing the disabled Follow-in-Console button does nothing."""
@@ -3519,6 +3525,7 @@ async def test_follow_console_ignored_when_disabled():
         assert not isinstance(pilot.app.screen, DeleteConfirmationDialog)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_tasks_service_error_notifies_and_uses_empty_state():
     """A service failure surfaces an error notification; on the very
@@ -3664,6 +3671,7 @@ async def test_load_tasks_service_error_keeps_the_last_good_rows():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_tasks_failure_logs_which_step_raised():
     """UAT Major 5's logging hook: a bare `logger.exception("Failed to
@@ -4114,6 +4122,7 @@ def test_sync_failed_event():
     assert msg.error == "timeout"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mixed_sync_cycle_toasts_success_and_surfaces_the_phase_failure():
     """UAT finding 3c pin: a cycle whose reminder phase succeeded (and,
@@ -4253,6 +4262,7 @@ async def test_reminder_dispatched_message_reaches_the_workbench_through_a_live_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_liveness_strip_gets_its_own_faster_interval_timer():
     """UAT finding 3d pin: the scheduler-liveness strip used to be
@@ -4312,6 +4322,7 @@ class WorkbenchTestAppWithLongTitleService(ConsolidatedCSSApp):
         self.scheduling_service = _LongTitleMockSchedulingService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ticker_rerender_preserves_datatable_horizontal_scroll():
     """31713 AC#2: `DataTable.clear()` unconditionally resets `scroll_x`
@@ -4351,6 +4362,7 @@ async def test_ticker_rerender_preserves_datatable_horizontal_scroll():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_suspend_and_resume_pause_and_restart_the_liveness_timer_too():
     """The liveness timer must follow the same hidden-clock discipline
@@ -4596,6 +4608,7 @@ async def test_conflicts_tab_resolve_false_does_not_post_message():
         assert table.row_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persisted_policy_refusal_is_not_surfaced_as_sync_error():
     """task-2722: older builds persisted the local-mode policy refusal as a
@@ -4635,6 +4648,7 @@ async def test_persisted_policy_refusal_is_not_surfaced_as_sync_error():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_sync_error_still_surfaces():
     """Guard for task-2722: only policy refusals are filtered from display."""
@@ -4659,6 +4673,7 @@ async def test_real_sync_error_still_surfaces():
         assert "connection refused" in str(error_widget.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_strip_fields_do_not_abut():
     """task-2723: 'Last pull: —Last push: —<error text>' rendered as one
@@ -4763,6 +4778,7 @@ class _RailTestApp(ConsolidatedCSSApp):
 # --- redesign PR-4, task 5: the retirement -------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_workbench_composes_one_surface_with_no_tab_chrome():
     """The retirement's headline claim, asserted on the real widget tree.
@@ -4823,6 +4839,7 @@ async def test_the_workbench_composes_one_surface_with_no_tab_chrome():
         assert workbench.query_one("#scheduling-results-badge", Button).region.width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_hidden_when_nothing_unread():
     app = _RailTestApp(_RailService(unread=False))
@@ -4958,6 +4975,7 @@ async def test_conflict_resolution_buttons_click_target_is_already_3_rows():
         assert "Use local" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflicts_badge_defaults_to_no_count():
     app = _RailTestApp(_RailService())
@@ -5007,6 +5025,7 @@ async def test_results_badge_shows_unread_count_and_pushes_global_overlay():
         assert pilot.app.screen is workbench
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_results_badge_defaults_to_no_count():
     app = _RailTestApp(_RailService())
@@ -5171,6 +5190,7 @@ async def test_view_results_button_pushes_the_definition_filtered_results_overla
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definition(
     tmp_path,
@@ -5285,6 +5305,7 @@ async def test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definiti
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_due_for_selection(
     tmp_path,
@@ -5343,6 +5364,7 @@ async def test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_d
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_button_keeps_an_active_source_active_and_due_for_selection(
     tmp_path,
@@ -5398,6 +5420,7 @@ async def test_duplicate_button_keeps_an_active_source_active_and_due_for_select
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_pause_followup_returning_non_saved_warns_without_a_success_toast(
     tmp_path,
@@ -5473,6 +5496,7 @@ async def test_duplicate_pause_followup_returning_non_saved_warns_without_a_succ
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_pause_followup_raising_warns_and_never_reports_failed_to_duplicate(
     tmp_path,
@@ -5578,6 +5602,7 @@ async def test_definition_filtered_overlay_heading_escapes_the_definition_name(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_status_strip_sync_widget_is_compact_at_narrow_width():
     """redesign PR-2, Task 3: the strip's width-triggered compact path --
@@ -5595,6 +5620,7 @@ async def test_status_strip_sync_widget_is_compact_at_narrow_width():
         assert "compact" in sync_status.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_status_strip_sync_widget_is_not_compact_at_wide_width():
     app = _RailTestApp(_RailService())
@@ -5950,6 +5976,7 @@ async def test_first_row_added_to_empty_queue_is_not_truncated():
 # pending. -------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_on_owner_server_reprobes_during_the_mount_probe_window(tmp_path):
     """A genuinely configured, about-to-be-confirmed server must not get a
@@ -5993,6 +6020,7 @@ async def test_on_owner_server_reprobes_during_the_mount_probe_window(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_action_sync_now_reprobes_during_the_mount_probe_window(tmp_path):
     """Same probe-window bug as `_on_owner_server`, for the `s` key --
@@ -6051,6 +6079,7 @@ async def test_action_create_reminder_reprobes_during_the_mount_probe_window(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_on_mount_settles_orphaned_transfer_without_any_sync_running(
     tmp_path,
@@ -6875,6 +6904,7 @@ def _stub_ready_health(monkeypatch) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_owner_action_marks_stale_before_resolving(
     tmp_path, monkeypatch

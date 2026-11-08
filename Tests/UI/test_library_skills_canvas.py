@@ -1167,6 +1167,7 @@ def test_build_library_skills_state_tolerates_empty_controller_page():
     assert state.count == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_committed_mutation_marks_applied_page_stale_before_exact_refresh():
     screen = LibraryScreen(_build_test_app())
     scope = SkillBrowseScope(query="review", sort="status", page=2)
@@ -1355,6 +1356,7 @@ async def test_handle_library_skill_row_vetoed_while_dirty():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_skills_row_press_renders_list_canvas():
     """Pressing the Skills rail row -- with a fake service exposing
@@ -1387,6 +1389,7 @@ async def test_library_shell_skills_row_press_renders_list_canvas():
         assert blocked_row.has_class("library-skill-row-blocked")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_skills_row_press_selects_row():
     """Pressing a skill row selects it (recording-only for now -- the
@@ -1413,6 +1416,7 @@ async def test_library_shell_skills_row_press_selects_row():
         assert screen._skills_state.selected_skill_name == "code-review"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_skills_sort_strip_picks_and_recomposes():
     """task-14902: pressing Sort opens the direct-pick strip; picking a
@@ -1449,6 +1453,7 @@ async def test_library_shell_skills_sort_strip_picks_and_recomposes():
         assert "Status" in str(sort_button.label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_skills_filter_submitted_rebuilds_state():
     app = _build_test_app()
@@ -1478,6 +1483,7 @@ async def test_library_shell_skills_filter_submitted_rebuilds_state():
         assert screen._skills_state.filter == "review"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((100, 30), (170, 48)))
 @pytest.mark.asyncio
 async def test_library_skills_45_item_pager_is_visible_and_reaches_middle_page(
@@ -1554,6 +1560,7 @@ async def test_library_skills_45_item_pager_is_visible_and_reaches_middle_page(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skills_page_previous_returns_to_the_prior_exact_page():
     app = _build_test_app()
@@ -1654,6 +1661,7 @@ class _FailOnceSkillsScopeService(_FakeSkillsScopeService):
         return await super().list_skills(**kwargs)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skills_retry_recovers_transient_list_failure():
     """`handle_library_skills_retry` had ZERO coverage anywhere in the four
@@ -1692,6 +1700,7 @@ async def test_library_skills_retry_recovers_transient_list_failure():
         assert not screen.query("#library-skills-retry")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("width", "items_open", "items_width"),
@@ -1755,6 +1764,7 @@ async def test_library_skills_items_priority_floor_moves_with_the_grip_width(
         assert shell.effective_layout.reader_width >= 48
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skills_manual_items_priority_survives_compact_layout_sync(
     monkeypatch: pytest.MonkeyPatch,
@@ -1809,6 +1819,7 @@ async def test_library_skills_manual_items_priority_survives_compact_layout_sync
         assert screen.query_one("#library-skills-pager").region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skills_filter_focus_survives_loading_ready_recompose():
     app = _build_test_app()
@@ -1857,6 +1868,7 @@ async def test_library_skills_filter_focus_survives_loading_ready_recompose():
         assert current_filter.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committed_mutation_refresh_with_no_focus_identity_restores_live_focus():
     """`_refresh_library_skills_after_committed_mutation` never passes an
@@ -1965,6 +1977,7 @@ _TAB_BAR_CLICK_BUG_SKILL_CONTENT = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_path):
     """Regression lock for the Phase-2 gate's tab-bar-click finding.
@@ -2162,6 +2175,7 @@ async def _open_real_skill_editor(host, pilot, skill_name: str) -> LibraryScreen
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_trust_service_snapshot_preserves_open_skill_draft(
     tmp_path: Path,
@@ -2227,6 +2241,7 @@ async def test_missing_trust_service_snapshot_preserves_open_skill_draft(
         assert description.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skill_mode_switch_is_targeted_and_remembered(
     tmp_path, monkeypatch
@@ -2282,6 +2297,7 @@ async def test_library_skill_mode_switch_is_targeted_and_remembered(
         assert screen._skills_state.dirty is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skill_tool_filter_is_read_only_until_keyboard_selection(
     tmp_path,
@@ -2370,6 +2386,7 @@ async def test_library_skill_tool_filter_is_read_only_until_keyboard_selection(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_editor_tool_filter_toggles_and_discard_are_genuinely_pressed(
     tmp_path,
@@ -2447,6 +2464,7 @@ async def test_skill_editor_tool_filter_toggles_and_discard_are_genuinely_presse
         assert screen._skills_state.dirty is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_editor_conflict_reload_clears_conflict_and_refetches(tmp_path):
     """`handle_library_skill_conflict_reload` had ZERO `.press()` coverage
@@ -2526,6 +2544,7 @@ async def _wait_for_revoke_button_disabled(screen, pilot, *, expected: bool) -> 
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_revoke_button_enabled_for_a_granted_skill_and_pressing_it_revokes(
     tmp_path,
@@ -2588,6 +2607,7 @@ async def test_revoke_button_enabled_for_a_granted_skill_and_pressing_it_revokes
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_revoke_button_disabled_when_the_skill_has_no_grant(tmp_path):
     """With no standing grant, the Revoke button stays disabled once the
@@ -2831,6 +2851,7 @@ def test_library_skill_trust_setup_explanation_css_block_matches_review_files_pa
             assert pinned in review_files_block
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
     """task-448 P0 regression: switching Library rail rows while the skill
@@ -2872,6 +2893,7 @@ async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
         assert screen.query_one("#library-skill-name", Input).value == "dirty-demo"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skill_back_veto_notifies_unsaved_changes():
     """task-449: the Back-to-list dirty veto must produce visible feedback
@@ -2906,6 +2928,7 @@ async def test_library_skill_back_veto_notifies_unsaved_changes():
         assert "Unsaved skill changes" in notifications[-1][0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_switch_veto_notifies_unsaved_changes():
     """task-449 companion to the task-448 guard: when the rail switch is
@@ -2938,6 +2961,7 @@ async def test_library_shell_rail_switch_veto_notifies_unsaved_changes():
         assert "Unsaved skill changes" in notifications[-1][0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skill_new_cancel_leaves_without_saving():
     """A new Skill always offers one explicit Cancel exit without saving."""
@@ -2968,6 +2992,7 @@ async def test_library_skill_new_cancel_leaves_without_saving():
         assert screen._skills_state.dirty is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_flush_pending_work_skill_veto_notifies():
     """task-449: a dirty skill edit vetoing screen-level navigation
@@ -3083,6 +3108,7 @@ async def test_skill_editor_trust_panel_renders_review_content_preview():
         assert "reviewable body content" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_render_trust_panel_patches_review_content_in_place():
     """task-414: capturing a review patches the content preview without a
@@ -3355,6 +3381,7 @@ async def test_skill_editor_scroll_to_actions_lands_on_save_row():
         assert canvas.scroll_offset.y > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_save_success_consumes_scroll_receipt_after_recompose():
     app = _build_test_app()
@@ -3388,6 +3415,7 @@ async def test_create_save_success_consumes_scroll_receipt_after_recompose():
         assert screen.query_one("#library-skill-trust-panel")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_dirty_clears_stale_saved_status():
     """Typing after a save must clear the lingering 'Saved.' -- the status
@@ -3640,6 +3668,7 @@ async def test_skill_editor_model_override_is_read_only():
         assert model_input.value == "gpt-4o"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_footer_u_hint_only_registered_on_search_row():
     """task-420: the u action hard-gates on the Search/RAG row; the footer
@@ -4057,6 +4086,7 @@ async def test_action_library_skill_back_closes_more_actions_before_exit():
     assert focused == [True]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_skill_editor_focuses_name_field():
     app = _build_test_app()

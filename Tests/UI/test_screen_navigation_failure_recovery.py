@@ -109,6 +109,7 @@ def _wire_failing_navigation(
     return switched
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escaped_navigation_exception_notifies_and_rolls_back_nav_bar(
     monkeypatch,
@@ -134,6 +135,7 @@ async def test_escaped_navigation_exception_notifies_and_rolls_back_nav_bar(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_failure_while_study_screen_on_top_does_not_box_library(
     monkeypatch,
@@ -170,6 +172,7 @@ async def test_navigation_failure_while_study_screen_on_top_does_not_box_library
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dispatched_navigation_failure_still_records_worker_failed(
     monkeypatch,

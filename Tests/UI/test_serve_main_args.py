@@ -3,6 +3,8 @@ host/port/title/debug into run_web_server instead of ignoring them."""
 
 from unittest.mock import patch
 
+import pytest
+
 from tldw_chatbook.app import _build_arg_parser
 
 
@@ -16,6 +18,7 @@ def test_serve_flags_parse_on_shared_parser():
     assert args.host == "0.0.0.0"
 
 
+@pytest.mark.bootstrap_profile
 def test_main_module_routes_serve_args(monkeypatch):
     """The __main__ serve branch must pass parsed args to run_web_server.
 

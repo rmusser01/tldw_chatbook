@@ -90,6 +90,7 @@ def _shadow_run_worker(window: LLMManagementWindow) -> list[dict]:
     return constructions
 
 
+@pytest.mark.bootstrap_profile
 async def test_inactive_screen_tick_constructs_no_worker(monkeypatch):
     """Five ticks against a covered Models screen must construct zero
     workers (pre-fix: five)."""
@@ -112,6 +113,7 @@ async def test_inactive_screen_tick_constructs_no_worker(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_active_screen_tick_schedules_one_exclusive_worker(monkeypatch):
     """The active case keeps its worker semantics: one worker per tick,
     exclusive within the ``ollama-api-state`` group, errors contained."""

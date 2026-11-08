@@ -94,6 +94,7 @@ async def _back_to_query(screen, pilot):
     return current
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("start", [(170, 48), (80, 24)])
@@ -143,6 +144,7 @@ async def test_resize_retains_visible_focus_and_reverse_tab_returns_to_query(
         assert len(service.calls) == len(calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outside_panel", [False, True])
 @pytest.mark.parametrize("size", [(80, 24), (170, 24)])

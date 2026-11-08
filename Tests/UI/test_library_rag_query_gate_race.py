@@ -31,6 +31,7 @@ def _state(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stale", "latest"),
@@ -100,6 +101,7 @@ async def test_snapshot_gate_survives_a_suspended_status_refresh(
         assert screen.query_one("#library-rag-query-quiet-line", Static) is quiet
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snapshot_cannot_enable_run_without_its_disclosure_widget(monkeypatch):
     host = LibraryProductionCSSHarness(_build_test_app())
@@ -116,6 +118,7 @@ async def test_snapshot_cannot_enable_run_without_its_disclosure_widget(monkeypa
         assert screen.query_one("#library-rag-run-query", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 50), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])

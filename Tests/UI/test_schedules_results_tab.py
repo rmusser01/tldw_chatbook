@@ -583,6 +583,7 @@ async def test_badge_and_table_span_every_owner(results_db):
         assert table.row_count == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflicts_badge_renders_too(results_db):
     """The Conflicts badge is the one PR-6's Results badge was copied from
@@ -1287,6 +1288,7 @@ async def test_hosted_mark_all_read_action_fans_out(results_db):
         assert db.get_automation_result(r2)["review_state"] == "read"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_results_query_merges_local_and_server_id_spaces(results_db):
     """redesign PR-4 task 2: a definition mirrored from the server can
@@ -1322,6 +1324,7 @@ async def test_definition_results_query_merges_local_and_server_id_spaces(result
         assert {row["id"] for row in results} == {local_result_id, server_result_id}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_unread_result_ids_merges_both_id_spaces(results_db):
     """`_definition_unread_result_ids` counterpart of the query merge test

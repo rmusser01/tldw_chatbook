@@ -172,6 +172,7 @@ async def test_at_the_floor_the_queue_is_full_width_and_the_rows_paint(tmp_path)
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_the_floor_the_chips_collapse_to_the_cycling_control(tmp_path):
     """Spec S11: the four chips collapse into one cycling control rather
@@ -231,6 +232,7 @@ async def test_at_the_floor_the_chip_keys_are_independent_of_chip_visibility(tmp
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_the_floor_the_rail_and_status_strip_stay_readable(tmp_path):
     """The rail header used to hide entirely below 84, taking `Create ▾`,
@@ -322,6 +324,7 @@ async def test_at_the_floor_enter_pushes_the_hosted_definition_detail(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_pops_the_pushed_detail_back_to_the_queue(tmp_path):
     app = BundledCSSWorkbenchApp()
@@ -392,6 +395,7 @@ async def test_escape_with_a_hosted_editor_open_closes_the_editor_not_the_screen
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_is_reachable_at_the_floor(tmp_path):
     app = BundledCSSWorkbenchApp()
@@ -537,6 +541,7 @@ async def test_results_and_conflicts_are_reachable_at_the_floor(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_mid_width_layout_keeps_the_docked_detail_and_does_not_push(tmp_path):
     """~110 columns: the detail pane is docked (only the inspector yields),
@@ -667,6 +672,7 @@ async def test_escape_blurs_the_queue_filter_so_chip_keys_reach_the_screen(tmp_p
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_lifecycle_row_paints_without_scrolling_at_a_tall_docked_size(
     tmp_path,
@@ -762,6 +768,7 @@ async def test_the_lifecycle_row_paints_in_the_80x24_pushed_detail(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_pushed_pane_repaints_from_the_same_refresh_as_the_docked_one(
     tmp_path,

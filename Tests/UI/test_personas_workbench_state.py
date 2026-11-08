@@ -270,6 +270,7 @@ def _seed_preview_turns(screen) -> "PersonasPreviewPane":
 class TestWorkbenchSelectionRestore:
     """AC#1: selection, mode, and center view survive the round-trip."""
 
+    @pytest.mark.bootstrap_profile
     async def test_save_restore_preserves_character_selection_and_center(
         self, mock_app_instance, stub_characters
     ):
@@ -312,6 +313,7 @@ class TestWorkbenchSelectionRestore:
 class TestPreviewRestore:
     """AC#2: the preview conversation (greeting + turns) survives the round-trip."""
 
+    @pytest.mark.bootstrap_profile
     async def test_delayed_character_load_keeps_user_label_neutral(
         self, mock_app_instance, stub_characters
     ):
@@ -335,6 +337,7 @@ class TestPreviewRestore:
             await pilot.pause()
             assert pane.transcript_text() == ("Elara: Greetings, traveller.\nUser: hi")
 
+    @pytest.mark.bootstrap_profile
     async def test_restore_refreshes_provider_readout_without_character_load(
         self, mock_app_instance, stub_characters
     ):
@@ -373,6 +376,7 @@ class TestPreviewRestore:
             )
             assert screen2.preview._readout_nav_provider == "anthropic"
 
+    @pytest.mark.bootstrap_profile
     async def test_save_restore_preserves_preview_greeting_and_turns(
         self, mock_app_instance, stub_characters
     ):
@@ -412,6 +416,7 @@ class TestPreviewRestore:
             assert pane2.transcript_text() == expected_transcript
             assert screen2.preview.history == saved["personas_preview"]["history"]
 
+    @pytest.mark.bootstrap_profile
     async def test_late_character_loaded_worker_does_not_erase_restored_turns(
         self, mock_app_instance, stub_characters
     ):

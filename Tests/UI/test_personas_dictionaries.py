@@ -721,6 +721,7 @@ async def _select_first(pilot, screen):
 
 
 class TestLibraryMetaRows:
+    @pytest.mark.bootstrap_profile
     async def test_meta_row_renders_two_lines(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -749,6 +750,7 @@ class TestLibraryMetaRows:
             prompt = item_list.get_option_at_index(0).prompt
             assert any(str(span.style) == "dim" for span in prompt.spans)
 
+    @pytest.mark.bootstrap_profile
     async def test_metaless_rows_stay_single_line(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -764,6 +766,7 @@ class TestLibraryMetaRows:
             item = item_at(screen, 0)
             assert item.meta is None and len(item.lines) == 1
 
+    @pytest.mark.bootstrap_profile
     async def test_meta_row_geometry_not_clipped(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -793,6 +796,7 @@ class TestLibraryMetaRows:
 
 
 class TestDictionariesList:
+    @pytest.mark.bootstrap_profile
     async def test_mode_lists_dictionaries_with_meta(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -808,6 +812,7 @@ class TestDictionariesList:
                 screen.query_one("#personas-mode-placeholder", Static).display is False
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_list_requests_inactive_records(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -817,6 +822,7 @@ class TestDictionariesList:
             list_calls = [c for c in fake_dict_service.calls if c[0] == "list"]
             assert list_calls and list_calls[-1][1].get("include_inactive") is True
 
+    @pytest.mark.bootstrap_profile
     async def test_search_filters_by_name(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -829,6 +835,7 @@ class TestDictionariesList:
             names = [item.name for item in list_state(screen).items]
             assert names == ["Medical Abbrev"]
 
+    @pytest.mark.bootstrap_profile
     async def test_dictionaries_chip_no_longer_coming_soon(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -838,6 +845,7 @@ class TestDictionariesList:
             chip = screen.query_one("#personas-mode-dictionaries", Button)
             assert "soon" not in str(chip.label).lower()
 
+    @pytest.mark.bootstrap_profile
     async def test_empty_state_prompts_create(self, mock_app_instance, stub_characters):
         service = FakeDictScopeService([])
         mock_app_instance.chat_dictionary_scope_service = service
@@ -1003,6 +1011,7 @@ class TestDictionaryDetailWidget:
 
 
 class TestDictionarySelection:
+    @pytest.mark.bootstrap_profile
     async def test_select_shows_detail_and_inspector(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1049,6 +1058,7 @@ class TestDictionarySelection:
                 == "attach arrives in a later update"
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_mode_switch_clears_detail(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1074,6 +1084,7 @@ class TestDictionaryEntries:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_add_entry_roundtrip(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1100,6 +1111,7 @@ class TestDictionaryEntries:
             metas = [item.meta for item in list_state(screen).items]
             assert "3 rules" in metas
 
+    @pytest.mark.bootstrap_profile
     async def test_delete_entry_reindexes(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1123,6 +1135,7 @@ class TestDictionaryEntries:
             detail = screen.query_one("#personas-dictionary-detail")
             assert detail.entry_ids_in_order() == ["local:chat_dictionary_entry:1:0"]
 
+    @pytest.mark.bootstrap_profile
     async def test_update_entry_persists(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1147,6 +1160,7 @@ class TestDictionaryEntries:
             await pilot.pause()
             assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HRV"
 
+    @pytest.mark.bootstrap_profile
     async def test_arrow_key_highlight_syncs_form_before_update(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1176,6 +1190,7 @@ class TestDictionaryEntries:
             assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HR"
             assert fake_dict_service.records[1]["entries"][0]["pattern"] == "BP"
 
+    @pytest.mark.bootstrap_profile
     async def test_move_down_sends_full_order_and_reorders(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1205,6 +1220,7 @@ class TestDictionaryEntries:
             ]
             assert str(table.get_cell_at((0, 0))) == "HR"
 
+    @pytest.mark.bootstrap_profile
     async def test_form_roundtrips_new_fields(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1232,6 +1248,7 @@ class TestDictionaryEntries:
                 5,
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_priority_input_validates_integer(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1256,6 +1273,7 @@ class TestDictionarySettings:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_save_persists_and_refreshes_row(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1290,6 +1308,7 @@ class TestDictionarySettings:
                 inspector.query_one("#personas-selected-name", Static).renderable
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_settings_edit_marks_dirty_and_guards_navigation(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1308,6 +1327,7 @@ class TestDictionarySettings:
             # Roleplay frame B1: the header's unsaved chip (spec R24).
             assert screen.query_one("#personas-header-unsaved").display is True
 
+    @pytest.mark.bootstrap_profile
     async def test_reverting_edit_clears_dirty_flag(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1334,6 +1354,7 @@ class TestDictionarySettings:
             assert screen.state.has_unsaved_changes is False
             assert chip.display is False
 
+    @pytest.mark.bootstrap_profile
     async def test_conflict_surfaces_status_not_crash(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1365,6 +1386,7 @@ class TestDictionaryNewDuplicate:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_new_creates_disambiguated_and_selects(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1386,6 +1408,7 @@ class TestDictionaryNewDuplicate:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Untitled dictionary 2" in names
 
+    @pytest.mark.bootstrap_profile
     async def test_duplicate_copies_entries_and_strategy(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1426,6 +1449,7 @@ class TestDictionaryNewDuplicate:
             ):
                 assert dup.get(field) == src.get(field), field
 
+    @pytest.mark.bootstrap_profile
     async def test_duplicate_button_hidden_only_for_personas(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1448,6 +1472,7 @@ class TestDictionaryNewDuplicate:
             assert dup.display is True
             assert dup.disabled is False
 
+    @pytest.mark.bootstrap_profile
     async def test_duplicate_survives_failed_strategy_copy(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1510,6 +1535,7 @@ class TestDictionaryToggleDelete:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_space_toggles_enabled_and_meta(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1526,6 +1552,7 @@ class TestDictionaryToggleDelete:
             rows = {(i.name, i.state, i.meta) for i in list_state(screen).items}
             assert ("Medical Abbrev", "off", "2 rules") in rows
 
+    @pytest.mark.bootstrap_profile
     async def test_delete_confirms_then_removes(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -1550,6 +1577,7 @@ class TestDictionaryToggleDelete:
             assert screen.query_one(PersonasDictionaryDetailWidget).display is False
             assert screen.state.selected_entity_id is None
 
+    @pytest.mark.bootstrap_profile
     async def test_delete_cancelled_keeps_record(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -1568,6 +1596,7 @@ class TestDictionaryToggleDelete:
             await pilot.pause()
             assert 1 in fake_dict_service.records
 
+    @pytest.mark.bootstrap_profile
     async def test_space_turning_a_dictionary_off_toasts_the_undo_string(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -1593,6 +1622,7 @@ class TestDictionaryToggleDelete:
             assert fake_dict_service.records[1]["enabled"] is True
             assert notices == ["Medical Abbrev turned off · space to undo"]
 
+    @pytest.mark.bootstrap_profile
     async def test_space_toggle_keeps_cursor_on_unselected_row(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1619,6 +1649,7 @@ class TestDictionaryToggleDelete:
             await pilot.pause()
             assert fake_dict_service.records[2]["enabled"] is False
 
+    @pytest.mark.bootstrap_profile
     async def test_space_toggle_on_selected_preserves_unsaved_edits(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1674,6 +1705,7 @@ class TestDictionaryTryIt:
         original, processed = word_diff("same text", "same text")
         assert not original.spans and not processed.spans
 
+    @pytest.mark.bootstrap_profile
     async def test_run_renders_diff(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1704,6 +1736,7 @@ class TestDictionaryTryIt:
             run_calls = [c for c in fake_dict_service.calls if c[0] == "process"]
             assert run_calls
 
+    @pytest.mark.bootstrap_profile
     async def test_no_differences_state(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1723,6 +1756,7 @@ class TestDictionaryTryIt:
             status = screen.query_one("#personas-dict-tryit-status", Static)
             assert "No differences" in str(status.renderable)
 
+    @pytest.mark.bootstrap_profile
     async def test_preview_pane_swapped_by_mode(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1747,6 +1781,7 @@ class TestDictionaryTryIt:
             assert screen.query_one(PersonasDictionaryTryItWidget).display is False
             assert screen.query_one(PersonasPreviewPane).display is True
 
+    @pytest.mark.bootstrap_profile
     async def test_tryit_renders_summary_and_fired_lines(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1773,6 +1808,7 @@ class TestDictionaryTryIt:
             )
             assert "BP" in fired and "blood pressure" in fired and "×1" in fired
 
+    @pytest.mark.bootstrap_profile
     async def test_tryit_renders_near_miss_with_reason(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1799,6 +1835,7 @@ class TestDictionaryTryIt:
             )
             assert "1 fired" in summary and "1 skipped" in summary
 
+    @pytest.mark.bootstrap_profile
     async def test_tryit_budget_flag_shows(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1825,6 +1862,7 @@ class TestDictionaryTryIt:
             )
             assert "token budget" in nearmiss
 
+    @pytest.mark.bootstrap_profile
     async def test_tryit_degrades_without_diagnostics(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1861,6 +1899,7 @@ class TestDictionaryValidationPanel:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_findings_listed_and_jump_moves_cursor(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1892,6 +1931,7 @@ class TestDictionaryValidationPanel:
             table = screen.query_one("#personas-dict-entries-table", DataTable)
             assert table.cursor_row == 2  # jumped to the duplicate (index 2)
 
+    @pytest.mark.bootstrap_profile
     async def test_multi_finding_entry_does_not_crash_and_jump_selects_by_index(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1933,6 +1973,7 @@ class TestDictionaryValidationPanel:
                 screen.query_one("#personas-dict-entry-probability", Input).value == "0"
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_panel_clears_on_clean_dictionary(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1947,6 +1988,7 @@ class TestDictionaryValidationPanel:
                 == 0
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_entries_tab_scrolls_buttons_reachable_when_short(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1974,6 +2016,7 @@ class TestDictionaryValidationPanel:
             )
             assert scroll.scroll_offset.y > 0  # the scroll genuinely moved
 
+    @pytest.mark.bootstrap_profile
     async def test_clear_empties_validation_panel(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2007,6 +2050,7 @@ class TestDictionaryValidationPanel:
 
 
 class TestTryItDisabledReason:
+    @pytest.mark.bootstrap_profile
     async def test_disabled_entry_renders_reason(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2041,6 +2085,7 @@ class TestDictionaryMalformedProbability:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_garbage_probability_does_not_crash_and_falls_back_to_100(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2080,6 +2125,7 @@ class TestDictionaryValidationMarkupSafety:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_validation_option_renders_markup_inert(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2134,6 +2180,7 @@ class TestDictionaryStatsTab:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_stats_render_service_plus_client_enrichment(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2151,6 +2198,7 @@ class TestDictionaryStatsTab:
             assert "Priority: 0..5" in body
             assert "tokens" in body  # approximate token total line
 
+    @pytest.mark.bootstrap_profile
     async def test_selection_loads_the_record_once_and_derives_stats(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2186,6 +2234,7 @@ class TestDictionaryStatsTab:
         assert "Entries: 2" in body
         assert "Dictionary enabled: yes" in body
 
+    @pytest.mark.bootstrap_profile
     async def test_stats_refreshed_after_settings_save(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2227,6 +2276,7 @@ class TestDictionaryVersionsTab:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_versions_listed_with_baseline(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2240,6 +2290,7 @@ class TestDictionaryVersionsTab:
             assert table.row_count >= 1
             assert str(table.get_cell_at((0, 1))) == "baseline"
 
+    @pytest.mark.bootstrap_profile
     async def test_view_shows_snapshot_summary(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2269,6 +2320,7 @@ class TestDictionaryVersionsTab:
                 and "sorted_evenly" in snapshot
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_revert_confirms_then_restores(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -2321,6 +2373,7 @@ class TestDictionaryVersionsTab:
                 screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
             )  # detail reloaded
 
+    @pytest.mark.bootstrap_profile
     async def test_revert_refreshes_inspector_name(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -2373,6 +2426,7 @@ class TestDictionaryVersionsTab:
                 == "Selected: Medical Abbrev"
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_versions_table_renders_bracketed_name_safely(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2403,6 +2457,7 @@ class TestDictionaryExport:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_export_json_writes_file_and_reports_path(
         self,
         mock_app_instance,
@@ -2437,6 +2492,7 @@ class TestDictionaryExport:
             status = str(screen.query_one("#personas-dict-status", Static).renderable)
             assert "Exported to" in status and str(files[0]) in status
 
+    @pytest.mark.bootstrap_profile
     async def test_markdown_export_gates_on_lossy_confirm(
         self,
         mock_app_instance,
@@ -2498,6 +2554,7 @@ class TestDictionaryImport:
         )
         return captured
 
+    @pytest.mark.bootstrap_profile
     async def test_import_button_visible_in_dictionaries_mode(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2508,6 +2565,7 @@ class TestDictionaryImport:
             assert btn.display is True
             assert "dictionary" in str(btn.tooltip).lower()
 
+    @pytest.mark.bootstrap_profile
     async def test_import_json_file_selects_new_dictionary(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2557,6 +2615,7 @@ class TestDictionaryImport:
             )
             assert imported["strategy"] == "character_lore_first"
 
+    @pytest.mark.bootstrap_profile
     async def test_import_conflict_renames_and_succeeds(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2586,6 +2645,7 @@ class TestDictionaryImport:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Medical Abbrev (imported)" in names  # data.name mutated, retried
 
+    @pytest.mark.bootstrap_profile
     async def test_import_markdown_uses_filename_stem(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2601,6 +2661,7 @@ class TestDictionaryImport:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "field-notes" in names
 
+    @pytest.mark.bootstrap_profile
     async def test_import_bad_json_creates_nothing(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2614,6 +2675,7 @@ class TestDictionaryImport:
             await pilot.pause()
             assert len(fake_dict_service.records) == before
 
+    @pytest.mark.bootstrap_profile
     async def test_import_non_utf8_file_notifies_no_crash(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2632,6 +2694,7 @@ class TestDictionaryImport:
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
 
+    @pytest.mark.bootstrap_profile
     async def test_import_json_array_notifies_no_crash(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2650,6 +2713,7 @@ class TestDictionaryImport:
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
 
+    @pytest.mark.bootstrap_profile
     async def test_import_json_null_data_notifies_no_crash(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2669,6 +2733,7 @@ class TestDictionaryImport:
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
 
+    @pytest.mark.bootstrap_profile
     async def test_import_oversized_file_notifies_no_crash(
         self,
         mock_app_instance,
@@ -2701,6 +2766,7 @@ class TestDictionaryImport:
                 for message, severity in notifications
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_import_deeply_nested_json_notifies_no_crash(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2719,6 +2785,7 @@ class TestDictionaryImport:
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
 
+    @pytest.mark.bootstrap_profile
     async def test_import_completion_skipped_when_mode_changed(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2770,6 +2837,7 @@ class TestDictionaryImport:
 
 
 class TestDictionaryAttachmentsTab:
+    @pytest.mark.bootstrap_profile
     async def test_empty_state_when_unattached(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2780,6 +2848,7 @@ class TestDictionaryAttachmentsTab:
             empty = screen.query_one("#personas-dict-attachments-empty", Static)
             assert "Not attached" in str(empty.renderable)
 
+    @pytest.mark.bootstrap_profile
     async def test_load_attachments_renders_rows(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2798,6 +2867,7 @@ class TestDictionaryAttachmentsTab:
 
 
 class TestDictionaryAttachFlow:
+    @pytest.mark.bootstrap_profile
     async def test_attach_via_picker_then_detach(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):

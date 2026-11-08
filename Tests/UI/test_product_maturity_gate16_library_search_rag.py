@@ -1430,6 +1430,7 @@ def test_answer_region_footer_also_renders_for_an_abstained_answer(monkeypatch) 
     assert "$0.0012" in str(provenance_static.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_empty_results_render_quiet_state_end_to_end() -> None:
     """(RAG-33/Task 11) Full plumbing: a real zero-row service outcome
@@ -1496,6 +1497,7 @@ def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
     assert r"\[green]trusted\[/]" in combined
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_mode_mounts_native_panel_without_leaving_library() -> (
     None
@@ -1538,6 +1540,7 @@ async def test_library_search_rag_mode_mounts_native_panel_without_leaving_libra
         assert active_row_button.has_class("library-rail-row-selected")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query() -> (
     None
@@ -1580,6 +1583,7 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert "Tab: move panes" not in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_task_loop_orders_query_before_scope_and_results() -> (
     None
@@ -1606,6 +1610,7 @@ async def test_library_search_rag_task_loop_orders_query_before_scope_and_result
         assert "Scope: all local sources" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() -> None:
     app = _build_test_app()
@@ -1660,6 +1665,7 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
         # by test_library_shell.py.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_cold_boot_recovery_banner_agrees_with_real_source_counts() -> (
     None
@@ -1718,6 +1724,7 @@ async def test_library_search_rag_cold_boot_recovery_banner_agrees_with_real_sou
         assert notes_toggle.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_snapshot_that_enables_run_also_lands_paid_notice() -> (
     None
@@ -1807,6 +1814,7 @@ async def test_library_search_rag_snapshot_that_enables_run_also_lands_paid_noti
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_query_updates_action_and_survives_recompose() -> None:
     app = _build_test_app()
@@ -1928,6 +1936,7 @@ def test_fts_only_hybrid_result_row_renders_keyword_match_not_a_band() -> None:
     assert str(title.renderable) == "1. Incident Review | keyword match"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_run_query_renders_service_results_and_calls_scope() -> (
     None
@@ -1995,6 +2004,7 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
         assert len(screen.query("#library-rag-service-error")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() -> None:
     """(Task 8) Full plumbing: a rag-mode outcome whose `diagnostics` carry
@@ -2057,6 +2067,7 @@ async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() ->
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_keyword_mode_never_renders_coverage_note() -> None:
     """Keyword mode's per-source fan-out keeps the "per source" heading
@@ -2098,6 +2109,7 @@ async def test_library_search_rag_keyword_mode_never_renders_coverage_note() -> 
         assert not screen.query("#library-rag-coverage-note")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_selected_result_launches_console_live_work() -> None:
     app = _build_test_app()
@@ -2179,6 +2191,7 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
     app.open_chat_with_handoff.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_use_in_console_warns_before_navigating_when_locked_task_2852() -> (
     None
@@ -2246,6 +2259,7 @@ async def test_library_use_in_console_warns_before_navigating_when_locked_task_2
     assert LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE in notified_messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_use_in_console_configured_console_no_locked_notice_task_2852() -> (
     None
@@ -2314,6 +2328,7 @@ async def test_library_use_in_console_configured_console_no_locked_notice_task_2
     assert LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE not in notified_messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_selected_result_evidence_metadata() -> None:
     """``LibrarySearchRagPanel`` surfaces the row provenance badge, snippet,
@@ -2377,6 +2392,7 @@ async def test_library_search_rag_selected_result_evidence_metadata() -> None:
         assert "Citations: Incident Review p.2" in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button() -> (
     None
@@ -2433,6 +2449,7 @@ async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button()
     app.open_chat_with_handoff.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -> None:
     app = _build_test_app()
@@ -2487,6 +2504,7 @@ async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -
 # --- Task 12/RAG-36: keyboard-traversable evidence cards --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_tab_reaches_and_focuses_evidence_card() -> None:
     """Tab from the query input eventually lands on the first evidence
@@ -2544,6 +2562,7 @@ async def test_library_search_rag_tab_reaches_and_focuses_evidence_card() -> Non
         assert "focus" in card.pseudo_classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_enter_on_focused_card_selects_evidence() -> None:
     """Enter on a focused evidence card selects it, same as clicking its
@@ -2596,6 +2615,7 @@ async def test_library_search_rag_enter_on_focused_card_selects_evidence() -> No
         assert screen.query_one("#library-rag-result-card-1").has_focus is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_o_on_focused_card_opens_like_button() -> None:
     """`o` on a focused evidence card routes to the same open path as the
@@ -2654,6 +2674,7 @@ async def test_library_search_rag_o_on_focused_card_opens_like_button() -> None:
         assert screen._media_state.detail["title"] == "Transcript A"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_u_on_focused_card_selects_then_stages() -> None:
     """The focused-card fast path: `u` on a focused-but-not-yet-selected
@@ -2706,6 +2727,7 @@ async def test_library_search_rag_u_on_focused_card_selects_then_stages() -> Non
     app.open_chat_with_handoff.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_server_result_launches_server_console_live_work() -> (
     None
@@ -2782,6 +2804,7 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
     app.open_chat_with_handoff.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_run_query_renders_persistent_recovery_without_service(
     monkeypatch,
@@ -2860,6 +2883,7 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
         assert "Recovery: Settings > RAG." in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_run_query_preserves_panel_instances_during_updates() -> (
     None
@@ -2901,6 +2925,7 @@ async def test_library_search_rag_run_query_preserves_panel_instances_during_upd
         assert screen.query_one("#library-search-rag-panel") is panel
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_worker_completion_ignores_unmounted_screen(
     monkeypatch,
@@ -3096,6 +3121,7 @@ def test_answer_region_flags_a_non_validated_status_with_no_recovery_copy() -> N
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_rag_mode_generates_answer_after_results_land(
     monkeypatch,
@@ -3161,6 +3187,7 @@ async def test_library_search_rag_rag_mode_generates_answer_after_results_land(
         assert str(run_button.label) != "Answering…"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_mode_toggle_mid_answer_discards_stale_answer() -> (
     None
@@ -3237,6 +3264,7 @@ async def test_library_search_rag_mode_toggle_mid_answer_discards_stale_answer()
         assert screen._library_rag_panel_state().retrieval_status != "answering"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_new_search_mid_answer_leaves_no_dangling_status() -> (
     None
@@ -3336,6 +3364,7 @@ async def test_library_search_rag_new_search_mid_answer_leaves_no_dangling_statu
         assert str(run_button.label) != "Answering…"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_keyword_mode_never_calls_the_answer_seam() -> None:
     """(d) Keyword Search mode answers nothing and calls no provider, ever --
@@ -3372,6 +3401,7 @@ async def test_library_search_rag_keyword_mode_never_calls_the_answer_seam() -> 
         assert not screen.query("#library-rag-answer")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_zero_results_answer_needs_no_provider(
     monkeypatch,
@@ -3429,6 +3459,7 @@ async def test_library_search_rag_zero_results_answer_needs_no_provider(
         assert screen._rag_search_state.answer_in_flight is False
 
 
+@pytest.mark.bootstrap_profile
 def test_library_rag_answer_state_survives_restore_without_dangling_status() -> None:
     """Save/restore carries the answer with the results it belongs to (the
     same lifecycle `_rag_search_state.diagnostics`/`_rag_search_state.searched_query`
@@ -3480,6 +3511,7 @@ def test_library_rag_answer_state_survives_restore_without_dangling_status() -> 
     assert restored._library_rag_panel_state().retrieval_status == "ready"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_disabled_answer_seam_generates_nothing() -> None:
     """The network-safety contract, pinned rather than assumed: an app whose
@@ -3535,6 +3567,7 @@ class GatedLibraryRagSearchService(StaticLibraryRagSearchService):
         return self.result
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_starting_a_new_search_drops_the_previous_answer() -> (
     None
@@ -3615,6 +3648,7 @@ async def test_library_search_rag_starting_a_new_search_drops_the_previous_answe
         assert screen._rag_search_state.answer_in_flight is False
 
 
+@pytest.mark.bootstrap_profile
 def test_library_rag_answer_seam_absent_resolves_to_the_shipping_default() -> None:
     """(PR-3 Task 4 review) The path PRODUCTION takes, which no other test
     exercises: the shipping `TldwCli` carries no `library_rag_answer_chat`
@@ -3652,6 +3686,7 @@ def test_library_rag_answer_seam_absent_resolves_to_the_shipping_default() -> No
     assert screen._library_rag_answer_chat_kwargs() == {"chat": fake}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_panel_refresh_rechecks_the_panel_after_taking_the_lock() -> None:
     """(PR-3 Task 4 review) The panel-presence check happens before the
@@ -3704,6 +3739,7 @@ async def test_panel_refresh_rechecks_the_panel_after_taking_the_lock() -> None:
 # compositions are the gap this section closes.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_all_weak_matches_reach_the_generation_prompt() -> (
     None
@@ -3762,6 +3798,7 @@ async def test_library_search_rag_all_weak_matches_reach_the_generation_prompt()
         assert "Semantic search found nothing from" not in user_message
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_uncited_answer_renders_recovery_callout_end_to_end() -> (
     None

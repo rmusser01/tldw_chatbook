@@ -67,6 +67,7 @@ def _compositor_text(svg: str) -> str:
     return unescape(joined).replace("\xa0", " ")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (100, 30), (160, 48)])
 async def test_console_attention_glyph_survives_production_shell_viewports(size):
@@ -87,6 +88,7 @@ async def test_console_attention_glyph_survives_production_shell_viewports(size)
         assert button.region.width > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_narrow_80x24_keeps_transcript_visible():
     """LY-08: at 80x24 the transcript is the single pane; rails and handles
@@ -110,6 +112,7 @@ async def test_console_narrow_80x24_keeps_transcript_visible():
         assert console.query_one("#console-inspector-rail-handle").display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_narrow_90x24_collapses_left_rail_with_handles():
     """LY-08: the narrow band (84-99 cols) keeps the collapse handles; only
@@ -131,6 +134,7 @@ async def test_console_narrow_90x24_collapses_left_rail_with_handles():
         assert main_column.outer_size.width >= 56
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_narrow_60x18_renders_ready_empty_state():
     """LY-09: at 60x18 the ready empty-state line renders inside the
@@ -160,6 +164,7 @@ async def test_console_narrow_60x18_renders_ready_empty_state():
         assert "Ready · not tested — type a message to begin." in _visible_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 18), (80, 24)])
 async def test_console_compact_height_keeps_header_controls_and_row_budget(
@@ -204,6 +209,7 @@ async def test_console_compact_height_keeps_header_controls_and_row_budget(
             assert copy in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width", [60, 90, 140, 235])
 @pytest.mark.parametrize("status", ["ready", "running", "blocked"])
@@ -261,6 +267,7 @@ async def test_console_header_speech_controls_stay_left_of_status(
         assert resume.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_header_subtitle_yields_width_before_fixed_controls() -> None:
     """Only the descriptive subtitle shrinks as the terminal narrows."""
@@ -304,6 +311,7 @@ async def test_console_header_subtitle_yields_width_before_fixed_controls() -> N
         assert "Hands-free" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_recovery_controls_resize_bar_one_two_one() -> None:
     """Recovery visibility and bar height change atomically without a blank row."""
@@ -339,6 +347,7 @@ async def test_console_recovery_controls_resize_bar_one_two_one() -> None:
         assert resume.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recovery_sync_during_teardown_skips_pruned_buttons() -> None:
     """Qodo #2947 follow-on: teardown prunes the buttons before their row, and a
@@ -359,6 +368,7 @@ async def test_recovery_sync_during_teardown_skips_pruned_buttons() -> None:
         assert bar.auto_speak_paused is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_retry_speech_button_routes_without_resuming() -> None:
     app = _build_test_app()
@@ -393,6 +403,7 @@ async def test_console_retry_speech_button_routes_without_resuming() -> None:
         resume.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_live_resize_narrowing_collapses_left_rail():
     """A live resize across the 100-col threshold re-evaluates the rail
@@ -441,6 +452,7 @@ async def _open_inspector_narrow(console, pilot) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(120, 35), (100, 30)])
 @pytest.mark.asyncio
 async def test_scope_row_never_paints_a_bare_label(size):
@@ -496,6 +508,7 @@ async def test_scope_row_never_paints_a_bare_label(size):
 # --- TASK-24605 -------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 35)])
 @pytest.mark.asyncio
 async def test_inspector_fold_hint_renders_wherever_content_overflows(size):
@@ -563,6 +576,7 @@ async def test_inspector_fold_hint_renders_wherever_content_overflows(size):
 # --- TASK-32327: responsive force-collapse posts a visible notice -------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_responsive_collapse_posts_notice_once_per_rail():
     """TASK-32327: when a width rule force-closes a rail the user had open,

@@ -31,6 +31,7 @@ def _snapshot(screen, count, *, schedule_reconcile=True):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("initial_count", [0, 1])
 @pytest.mark.parametrize("rebuild", ["navigate", "screen", "panel"])

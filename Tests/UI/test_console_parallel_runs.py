@@ -56,6 +56,7 @@ def _transcript_text(console) -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_sessions_run_concurrently_and_interrupt_is_scoped() -> None:
     app = _build_test_app()
@@ -103,6 +104,7 @@ async def test_two_sessions_run_concurrently_and_interrupt_is_scoped() -> None:
         assert controller.run_state_for(session_b).status is ConsoleRunStatus.COMPLETED
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_second_session_send_does_not_cancel_first_sessions_worker() -> None:
     """Regression guard for the shared-group bug this task fixes: before the
@@ -155,6 +157,7 @@ async def test_second_session_send_does_not_cancel_first_sessions_worker() -> No
         await pilot.pause(0.1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_visible_action_only_cancels_viewed_session_background_completes() -> (
     None
@@ -245,6 +248,7 @@ async def test_stop_visible_action_only_cancels_viewed_session_background_comple
         assert controller.run_state_for(session_b).status is ConsoleRunStatus.COMPLETED
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_run_never_mutates_viewed_transcript() -> None:
     """Task 4 (background-write audit): the real seam the audit found is
@@ -296,6 +300,7 @@ async def test_background_run_never_mutates_viewed_transcript() -> None:
         assert "SHOULD-NOT-APPEAR" in _transcript_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_run_sensitivity_reverting_the_gate_fails() -> None:
     """Sensitivity check for the test above (TDD requirement): with the
@@ -340,6 +345,7 @@ async def test_background_run_sensitivity_reverting_the_gate_fails() -> None:
             del console._append_native_console_system_message
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_and_sidebar_show_run_markers_and_fleet_line() -> None:
     """Task 8 (parallel-agents spec §6): a background session's live run
@@ -377,6 +383,7 @@ async def test_tab_and_sidebar_show_run_markers_and_fleet_line() -> None:
         assert "1 other agents running, 0 waiting for approval." in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_viewed_idle() -> (
     None
@@ -1002,6 +1009,7 @@ async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown(
         assert len(toasts) == 2, f"expected the new round to toast, got {toasts}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_completion_fires_single_toast() -> None:
     """Task 10 (background completion toasts, parallel-agents spec): a
@@ -1043,6 +1051,7 @@ async def test_background_completion_fires_single_toast() -> None:
         assert len([n for n in notifications if "finished" in n]) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_toast_resolver_projects_raw_session_and_workspace_names():
     app = _build_test_app()
@@ -1068,6 +1077,7 @@ async def test_fleet_toast_resolver_projects_raw_session_and_workspace_names():
         assert session.workspace_id == "workspace-raw"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_approval_toast_escapes_projected_raw_identity():
     app = _build_test_app()
@@ -1098,6 +1108,7 @@ async def test_background_approval_toast_escapes_projected_raw_identity():
         assert session.title == raw_title
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status", "verb"),
@@ -1168,6 +1179,7 @@ def _assert_widget_and_ancestors_displayed(widget) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_summary_line_is_reachable_on_the_live_rendered_surface() -> None:
     """Fix round 2 (parallel-agents spec §6 live-smoke finding): the Agent
@@ -1335,6 +1347,7 @@ def _assert_painted_at_own_region(host, widget) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_summary_line_intersects_the_visible_viewport_default_sections() -> (
     None
@@ -1380,6 +1393,7 @@ async def test_fleet_summary_line_intersects_the_visible_viewport_default_sectio
         _assert_painted_at_own_region(host, fleet_summary)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_summary_line_intersects_the_visible_viewport_collapsed_sections() -> (
     None
@@ -1410,6 +1424,7 @@ async def test_fleet_summary_line_intersects_the_visible_viewport_collapsed_sect
         _assert_painted_at_own_region(host, fleet_summary)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_summary_line_occupies_no_row_when_fleet_is_quiet() -> None:
     """Hidden-at-zero (task-1140 fix round 1 requirement): pinning the
@@ -1493,6 +1508,7 @@ def _no_persisted_agent_open_true(console) -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_collapse_of_agent_section_sticks_across_busy_payload_changes() -> (
     None
@@ -1564,6 +1580,7 @@ async def test_manual_collapse_of_agent_section_sticks_across_busy_payload_chang
         _no_persisted_agent_open_true(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_agent_section_auto_opens_again_for_new_busy_window_after_quiet() -> None:
     """TASK-915 AC2: once the fleet quiets, the sticky dismissal releases so
@@ -1628,6 +1645,7 @@ async def test_agent_section_auto_opens_again_for_new_busy_window_after_quiet() 
         _no_persisted_agent_open_true(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_reopen_of_agent_section_clears_busy_dismissal() -> None:
     """TASK-915: a manual reopen (not just a quiet fleet) also releases the
@@ -2283,6 +2301,7 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
                         controller._active_cancel_events.pop(background)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigating_away_with_busy_fleet_is_lossless_under_reuse() -> None:
     """TASK-31520 rewrite of the TASK-1143 (F5) journey.
@@ -2390,6 +2409,7 @@ async def test_navigating_away_with_busy_fleet_is_lossless_under_reuse() -> None
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_storm_with_busy_fleet_never_raises_a_dialog() -> None:
     """TASK-31520 rewrite of the TASK-1230 zombie-modal journey.

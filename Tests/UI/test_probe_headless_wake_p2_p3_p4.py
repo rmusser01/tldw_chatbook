@@ -119,6 +119,7 @@ def _terminal_survivor_run(runs_db, conversation_id, *, result="child answer"):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p2_post_unmount_fanout(tmp_path):
     app = _build_test_app()
@@ -210,6 +211,7 @@ async def test_probe_p2_post_unmount_fanout(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p3_controller_survives_unmount(tmp_path, monkeypatch):
     app = _build_test_app()
@@ -362,6 +364,7 @@ async def test_probe_p3_controller_survives_unmount(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.slow
 def test_probe_p4_headless_approval_cost():
     """No UI wired at all: no `app`, no `set_pending_approval`.

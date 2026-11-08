@@ -27,6 +27,7 @@ def _assert_painted(screen, widget):
     assert region.intersection(clip) == region, (widget.id, region, clip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -107,6 +108,7 @@ async def test_result_arrival_keeps_current_keyboard_control_painted(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("foreign_focus", [False, True])
