@@ -11,6 +11,7 @@ from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.Chat.console_controller_factory import update_app
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.events import Key, Paste
@@ -3927,9 +3928,9 @@ async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider(
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
         controller = console._ensure_console_chat_controller()
-        app.unified_mcp_service = FakeMCPService(
+        update_app(controller, unified_mcp_service=FakeMCPService(
             catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        )
+        ))
 
         provider = await controller._compose_mcp_provider()
         assert provider is not None
@@ -3962,11 +3963,11 @@ async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
         controller = console._ensure_console_chat_controller()
-        app.unified_mcp_service = FakeMCPService(
+        update_app(controller, unified_mcp_service=FakeMCPService(
             catalog_records=[
                 _catalog_record("stale", [_tool_dict("run")], is_connected=False),
             ],
-        )
+        ))
 
         provider = await controller._compose_mcp_provider()
         assert provider is not None

@@ -241,7 +241,7 @@ def main() -> int:
     hyde: dict[str, bool] = {}
     with tempfile.TemporaryDirectory() as tmp:
         rt = build_eval_runtime(corpus, tmp)
-        seam = LibraryLocalRagSearchService(rt.app)
+        seam = LibraryLocalRagSearchService.from_app(rt.app)
         lookup = slug_lookup_from(rt.slug_to_source)
         cfg = rt.service.config.search
         original = getattr(cfg, "default_search_mode", None)

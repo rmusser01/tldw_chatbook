@@ -650,7 +650,7 @@ class _ProbeApp:
 
         self.chachanotes_db = get_chachanotes_db_lazy()
         self.notes_user_id = "probe16588"
-        self.library_rag_search_service = LibraryLocalRagSearchService(self)
+        self.library_rag_search_service = LibraryLocalRagSearchService.from_app(self)
 
     def notify(self, *args, **kwargs) -> None:  # pragma: no cover - shim
         pass

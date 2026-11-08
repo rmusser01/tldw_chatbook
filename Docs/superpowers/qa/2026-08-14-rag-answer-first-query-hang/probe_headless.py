@@ -56,7 +56,7 @@ class FakeApp:
         self.chachanotes_db = CharactersRAGDB(
             data_dir / "tldw_chatbook_ChaChaNotes.db", client_id="probe15810"
         )
-        self.library_rag_search_service = LibraryLocalRagSearchService(self)
+        self.library_rag_search_service = LibraryLocalRagSearchService.from_app(self)
 
     def notify(self, *a, **k):
         pass
