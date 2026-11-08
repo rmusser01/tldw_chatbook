@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
 assignee:
 - '@codex'
-updated_date: 2026-11-08 06:53
+updated_date: 2026-11-08 07:09
 ---
 
 ## Description
@@ -285,6 +285,15 @@ Reason: Test-only constructor parity for an existing shutdown registry; no runti
 2. Initialize only that existing native constructor field to an empty dictionary in _make_scripted_server; keep all three original test functions, assertions, native shutdown and 120-second case limits unchanged.
 3. Run the complete three-case shell file on a fresh unused epoch771. Retain the nine readiness passes only by measured Test/helper/production identity; never call mixed767 all green.
 4. Require fresh original whole browser and mounted UAT, strict raw evidence audit and independent review before source commit/publication. No full repository suite or changes to runtime/auth/focus/worker/permission/durability limits.
+### Actual devb590 conflict reconciliation before publication (2026-11-08 UTC)
+
+ADR required: no. ADR path: N/A; existing ADR-097/121/244/353 apply. Reason: reconcile existing integration metadata without a new runtime, ownership or authority design.
+
+1. Preserve independently accepted exact eaa0a56661f25c437fed5ff829e97629bfeb5b46 (57paths/all9796tested bindings/normalhooks0/alloriginalUAT complete) and all refs/objects/stashes/evidence/122 artifacts. It remains unpublished: read-only compatibility with actual devb590 proves four conflicts in preimportTest, ADR097, censuschecker and censusfile. Snapshot070346Z confirms actualPRc7f796/drafttrue/autooff/queueon/devb590/0threads.
+2. Make this native plan-only normal commit, then rebase onto fresh dev with all original commits and existing Voice merge topology preserved; never merge dev. Preserve every conflict stage/preimage before manual resolution. No concurrent source/index/HEAD mutation during owned tests or commits, no prunes/discards/gc.log or stash removal.
+3. Preserve both histories and actual count policy; retain the current2096 census prefix/positions/all357MCPonce, append five actual incoming selectors once (expected2101floor), keep32shards/maxparallel17/job20/case180. Keep preimport426199 if combined measurement meets it. Source-count owner waiver applies without code contortions; every runtime/auth/focus/readiness/restore/picker/worker/buffer/permission/FTS/ownership/durability limit stays unchanged.
+4. Inspect changed runtime/Test/producer inputs, qualify the combined affected original cohorts and coverage/preflights at original budgets/profiles/assertions, and rerun ORIGINAL whole browser/mounted on fresh epochs because incoming dev changes real MCP/TTS inputs. Retain unaffected successes only by explicit measured source/consumer continuity; eaa0's UAT/review never qualifies a successor automatically. No full repository suite or live profiles/providers/devices.
+5. Prove topology/patch/preservation continuity, update bounded sourceQA/native notes, normal source commit/hooks, actual tested SHA256/Gitblob/mode bindings, independent EXACT NEW-head review/register, then fresh actual-ref/exact-leased publication autooff and new source OWN hosted gates. Status stays In Progress; final exact4path completion metadata and its OWN review/CI remain deferred. Queue owns armed branch/rebase/combinedCI, and verified auto/merge precedes automation deletion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
