@@ -547,8 +547,6 @@ class ConsolePromptMixinService:
         import asyncio
         from functools import partial
 
-        from tldw_chatbook.DB.base_db import run_owned_db_call
-
         from .console_prompt_mixins import MixinSnapshotUnavailableError
 
         session = self._session(session_id)
@@ -590,26 +588,7 @@ class ConsolePromptMixinService:
                 },
             )
 
-            async def save_owned_attempt():
-                # Memory databases have thread-local connections; keep the
-                # receipt on the same owner as the native turn commit.
-                if getattr(persistence.db, "is_memory_db", False):
-                    return callback()
-                return await run_owned_db_call(persistence.db, callback)
-
-            worker = asyncio.create_task(save_owned_attempt())
-            cancelled = False
-            try:
-                while not worker.done():
-                    try:
-                        await asyncio.shield(worker)
-                    except asyncio.CancelledError:
-                        cancelled = True
-                worker.result()
-            except Exception:  # noqa: BLE001 - uncertain persistence refuses dispatch.
-                raise MixinSnapshotUnavailableError(
-                    "mixin_attempt_save_failed"
-                ) from None
+            cancelled = await self._run_owned_save(callback)
         else:
             cancelled = False
         if (
@@ -628,6 +607,86 @@ class ConsolePromptMixinService:
             self.publish_accepted_usage(
                 session_id, batch.snapshot, observed_revision=observed_revision
             )
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _run_owned_save(self, callback: Callable[[], Any]) -> bool:
+        """Run one native save to its end on its owner; return whether we were cancelled."""
+        import asyncio
+
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+
+        from .console_prompt_mixins import MixinSnapshotUnavailableError
+
+        persistence = self.persistence
+
+        async def save_owned():
+            # Memory databases have thread-local connections; keep the
+            # receipt on the same owner as the native turn commit.
+            if getattr(persistence.db, "is_memory_db", False):
+                return callback()
+            return await run_owned_db_call(persistence.db, callback)
+
+        worker = asyncio.create_task(save_owned())
+        cancelled = False
+        try:
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    cancelled = True
+            worker.result()
+        except Exception:  # noqa: BLE001 - uncertain persistence refuses dispatch.
+            raise MixinSnapshotUnavailableError("mixin_attempt_save_failed") from None
+        return cancelled
+
+    async def save_pending_reply(
+        self, session_id: str, assistant_message_id: str
+    ) -> None:
+        """Save an anchorless turn's empty reply row before provider entry.
+
+        TASK-39119 review: a wake or goal iteration records no mix-in attempt,
+        and the attempt's transaction was the only save of its reply row before
+        the provider; a failed or interrupted automatic reply then left no row
+        to show or retry. This is the same write without the attempt. Best
+        effort: such a turn had no pre-provider save before either.
+        """
+        import asyncio
+        from functools import partial
+
+        from loguru import logger
+
+        from .console_prompt_mixins import MixinSnapshotUnavailableError
+
+        session = self._session(session_id)
+        assistant = self.store.get_message(assistant_message_id)
+        persistence = self.persistence
+        if (
+            session.ephemeral
+            or session.persisted_conversation_id is None
+            or assistant.persisted_message_id is not None
+            or not callable(getattr(persistence, "save_pending_assistant", None))
+            or getattr(persistence, "db", None) is None
+        ):
+            return
+        binding = (session.incarnation_id, session.conversation_binding_revision)
+        callback = partial(
+            persistence.save_pending_assistant,
+            session.persisted_conversation_id,
+            assistant.id,
+            self.store.durable_parent_for_message(assistant.id),
+            assistant.metadata.to_json() if assistant.metadata is not None else None,
+        )
+        try:
+            cancelled = await self._run_owned_save(callback)
+        except MixinSnapshotUnavailableError:
+            logger.warning("Console reply row could not be saved before provider entry")
+            return
+        if self.store._sessions.get(session_id) is session and binding == (
+            session.incarnation_id,
+            session.conversation_binding_revision,
+        ):
+            self.store.adopt_saved_pending_assistant(assistant.id)
         if cancelled:
             raise asyncio.CancelledError
 

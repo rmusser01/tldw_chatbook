@@ -1284,20 +1284,13 @@ class ChatPersistenceService:
 
         with operation_owned_connection(self.db), self.db.transaction() as cursor:
             if pending_assistant is not None:
-                parent_id, metadata_json = pending_assistant
                 if (
                     native_message_ids.get(batch.assistant_message_id)
                     != batch.assistant_message_id
                 ):
                     raise ValueError("mixin_pending_anchor_conflict")
-                self.create_message(
-                    conversation_id=conversation_id,
-                    sender="assistant",
-                    content="",
-                    message_id=batch.assistant_message_id,
-                    parent_message_id=parent_id,
-                    metadata_json=metadata_json,
-                    assistant_generation_state="accepted",
+                self._create_pending_assistant(
+                    conversation_id, batch.assistant_message_id, *pending_assistant
                 )
             with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
                 MixinAttemptContribution(batch).write_exact(
@@ -1305,6 +1298,32 @@ class ChatPersistenceService:
                     conversation_id=conversation_id,
                     native_message_ids=native_message_ids,
                 )
+
+    def save_pending_assistant(
+        self,
+        conversation_id: str,
+        message_id: str,
+        parent_id: str | None,
+        metadata_json: str | None,
+    ) -> None:
+        """Save an anchorless turn's empty reply row before provider entry (TASK-39119)."""
+        with operation_owned_connection(self.db), self.db.transaction():
+            self._create_pending_assistant(
+                conversation_id, message_id, parent_id, metadata_json
+            )
+
+    def _create_pending_assistant(
+        self, conversation_id, message_id, parent_id, metadata_json
+    ) -> None:
+        self.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="",
+            message_id=message_id,
+            parent_message_id=parent_id,
+            metadata_json=metadata_json,
+            assistant_generation_state="accepted",
+        )
 
     def get_conversation_mixin_fork_state(
         self, conversation_id: str, *, message_ids: Mapping[str, str]

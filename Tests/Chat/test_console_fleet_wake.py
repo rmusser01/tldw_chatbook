@@ -794,6 +794,48 @@ async def test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_failed_wake_reply_is_saved_as_failed(tmp_path, request):
+    """TASK-39119 review: a wake takes no mix-in anchor, and the attempt's
+    transaction was its reply row's only save before provider entry. Without
+    it a failed wake reply left no row: nothing to show or retry after a
+    restart. The empty reply row is saved before the provider is entered."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="An earlier question",
+            persist=True,
+        )
+
+        def provider_down():
+            raise RuntimeError("provider down")
+
+        gateway.on_stream = provider_down
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+
+        def failed_rows():
+            return chacha.get_connection().execute(
+                "SELECT content, deleted, assistant_generation_state FROM messages "
+                "WHERE conversation_id=? AND lower(sender)='assistant'",
+                (session.persisted_conversation_id,),
+            ).fetchall()
+
+        assert await _settle(lambda: gateway.payloads)
+        assert await _settle(
+            lambda: [tuple(row) for row in failed_rows()] == [("", 0, "failed")]
+        ), f"the failed wake reply was not saved as failed: {failed_rows()}"
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path, request):
     """Refusal direction of notification dedupe: the provider blocks the first
     attempt -> no notice row, pending + mark retained; the retry

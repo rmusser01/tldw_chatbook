@@ -25029,6 +25029,9 @@ class ConsoleChatController:
             ),
             None,
         ) if wake_authorization is None else None
+        if current_user is None and wake_authorization is not None:
+            # The attempt's write was the reply row's only pre-provider save.
+            await self.prompt_mixin_service().save_pending_reply(owner_id, assistant_message_id)
         if current_user is not None:
             attempt_id = mixin_attempt_id or turn_context.library_authority.attempt_id
             assistant_row = self.store.get_message(assistant_message_id)

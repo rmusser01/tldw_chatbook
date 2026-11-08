@@ -244,7 +244,8 @@ _BUDGETS: dict[str, int] = {
     # dev's 29,167 plus TASK-39138's +4.
     # 2026-11-07, TASK-39119 (owner size waiver): +2, a wake or goal iteration
     # takes no mix-in anchor from an earlier turn's USER row.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29184,
+    # 2026-11-08, TASK-39119 review (owner size waiver): +3, an anchorless wake or goal iteration saves its reply row first.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29185,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -265,7 +266,8 @@ _BUDGETS: dict[str, int] = {
     # the owner-scope nesting order is documented: 22,445, the exact measurement.
     # 2026-11-07, TASK-39139 (owner size waiver): +4, a prompt mix-in attempt
     # that creates the active leaf's row writes the durable cursor through.
-    "tldw_chatbook/Chat/console_chat_store.py": 22449,
+    # 2026-11-08, TASK-39119 review (owner size waiver): +9, the store adopts a reply row saved before provider entry.
+    "tldw_chatbook/Chat/console_chat_store.py": 22454,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -1019,7 +1021,8 @@ _BUDGETS: dict[str, int] = {
     # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
     # a legacy/imported chat's missing Library-policy row (the safe
     # Never/Blocked default its turn ran under) instead of refusing it.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4239,
+    # 2026-11-08, TASK-39119 review (owner size waiver): +19, the pending reply row save without a mix-in attempt.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4258,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The

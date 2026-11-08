@@ -4,7 +4,7 @@ title: "Automatic Console turns anchor their mix-in attempt to an earlier, unrel
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: '2026-11-07 07:14'
+updated_date: '2026-11-08 00:35'
 labels:
 - follow-up
 - console
@@ -69,6 +69,19 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 **Size.** `console_chat_controller.py` grows by 2 lines (comment); its row in `Tests/Architecture/test_module_size_ratchet.py` was raised 29180 -> 29182 under the owner size waiver, with a dated comment.
 
-**Lanes.** Both new tests sit in files whose nodes run in no PR lane outside `pr-fast-lane`, which takes no additions. Proposed for the lanes stream.
+**Review r12p-rev1 I1 (2026-11-08).** Skipping the anchor also skipped `accept_attempt`, and its `pending_assistant` write was the reply row's only save before provider entry. A failed wake or goal reply therefore left no row (the live row was failed with no `persisted_message_id`): nothing to show or Retry after a restart, and an interruption kept nothing.
+- An anchorless wake-authorized turn now calls `ConsolePromptMixinService.save_pending_reply` before provider entry. It makes the same write (`ChatPersistenceService.save_pending_assistant`, which shares `_create_pending_assistant` with the attempt save) on the same owned DB path (`_run_owned_save`, extracted from `accept_attempt`). The store then adopts the row (`adopt_saved_pending_assistant`, shared with `publish_prompt_mixin_attempt`).
+- It is best effort, as an anchorless wake already was on base in a chat with no USER rows: a failed save logs and the turn proceeds, so no new copy is needed.
+- Tests, red on cebb6681b1 and green after:
+  - `Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed`: the provider raises, and `messages` must hold `('', 0, 'failed')`. Red: `[]`.
+  - `Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed`: the same for a goal iteration. Red (I1 product files reverted): `[]`.
+- Covering run at `-n 4` (the mix-in suites, wake, goal dispatch, chat start, progress wakes, goal light surface, viewless hooks, chat fork, retry accounting): 806 passed, 1 failed. The failure was `test_repeated_start_cannot_reprovision_an_accepted_attempt`, which waits 3 s for the provider. It passed alone on head and base, and the whole goal-dispatch file passed 3 of 3 at `-n 4` on head (load 37-43). The pre-provider save adds one owned DB write before that 3 s window.
+- Size rows raised under the owner waiver (2026-11-08): `console_chat_store.py` 22445 -> 22454, `chat_persistence_service.py` 4239 -> 4258, `console_chat_controller.py` 29182 -> 29185.
 
-Files: `tldw_chatbook/Chat/console_chat_controller.py`, `Tests/Chat/test_console_fleet_wake.py`, `Tests/Chat/test_console_goal_dispatch.py`, `Tests/Chat/test_console_chat_start.py`, `Tests/Architecture/test_module_size_ratchet.py`.
+**Lanes (for the lanes stream; workflows not edited).** These TASK-39119 nodes run in no PR lane (their files are laned only in `pr-fast-lane`, which takes no additions):
+- `Tests/Chat/test_console_fleet_wake.py::test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row`
+- `Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_turn`
+- `Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed`
+- `Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed`
+
+Files: `tldw_chatbook/Chat/console_chat_controller.py`, `tldw_chatbook/Chat/console_prompt_mixin_service.py`, `tldw_chatbook/Chat/chat_persistence_service.py`, `tldw_chatbook/Chat/console_chat_store.py`, `Tests/Chat/test_console_fleet_wake.py`, `Tests/Chat/test_console_goal_dispatch.py`, `Tests/Chat/test_console_chat_start.py`, `Tests/Architecture/test_module_size_ratchet.py`.

@@ -154,6 +154,35 @@ async def test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_tu
 
 
 @pytest.mark.asyncio
+async def test_a_failed_goal_iteration_reply_is_saved_as_failed(stores, monkeypatch):
+    """TASK-39119 review: with no mix-in attempt, a goal iteration's reply row
+    still gets its pre-provider save, so a failed reply is kept as failed."""
+
+    def provider_down(**_kwargs):
+        raise RuntimeError("provider down")
+
+    goal, store, session, _controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch, provider_down
+    )
+    try:
+        await coordinator.dispatch_once(goal.id)
+        assert calls, "the iteration never reached the provider"
+        rows = (
+            stores[1]
+            .db.get_connection()
+            .execute(
+                "SELECT content, deleted, assistant_generation_state FROM messages "
+                "WHERE conversation_id=? AND lower(sender)='assistant'",
+                (goal.conversation_id,),
+            )
+            .fetchall()
+        )
+        assert [tuple(row) for row in rows] == [("", 0, "failed")], rows
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("commit_completed", [False, True])
 async def test_failed_acceptance_never_calls_preparation_or_provider(
     stores, monkeypatch, commit_completed
