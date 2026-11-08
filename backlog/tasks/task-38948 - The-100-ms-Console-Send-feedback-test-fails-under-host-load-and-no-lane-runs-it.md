@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-08 01:28
+updated_date: 2026-11-08 02:56
 labels:
 - follow-up
 - console
@@ -84,9 +84,14 @@ Also changed: the held provider read waited only 0.5 s for the paints. At load 1
 **Lane (AC#4).** UI census tail, one entry per route (`[enter]`, `[send-button]`). Serially in the lane's invocation at load about 130: 9.1 and 6.2 s of call, 25 s of session for both.
 
 **Review r12t-rev1 fixes (2026-11-07).** The reviewer ruled the wall-time gate acceptable: the UI shards run serial pytest on 4-vCPU runners, so the load stays under the CPU count where it gates merges.
-- **The loop-CPU check false-failed** in the reviewer's six-file `-n 4` run at load 40-60: 483 ms of CPU against 100 ms (1456 ms wall), late in a busy worker. My earlier 258 ms at load 31 was the same thing. The likely cause is a gen-2 GC over the worker's accumulated heap inside the interval, plus CPU-time inflation under oversubscription. Fix: `gc.collect()` and `gc.freeze()` just before `action_at`, and `gc.unfreeze()` in `finally`. Re-measured in 10 mixed runs at `-n 4` and load 25-48: prompts modal, composer restyle, Inspector section, response rules and send-admission files first, the 100 ms node last. 20 of 20 cases passed. Sending loop CPU was 32-75 ms (wall 53-248 ms), input-frame CPU 7-70 ms. The cause of the two outliers is inferred, not proven; AC#2 stays ticked on these 20 clean cases.
+- **The loop-CPU check false-failed** in the reviewer's six-file `-n 4` run at load 40-60: 483 ms of CPU against 100 ms (1456 ms wall), late in a busy worker. My earlier 258 ms at load 31 was the same thing. The likely cause is a gen-2 GC over the worker's accumulated heap inside the interval, plus CPU-time inflation under oversubscription. Fix: `gc.collect()` just before `action_at`. Round 1 also froze and unfroze the heap; review r12t-rev2 dropped that pair, see below. Re-measured in 10 mixed runs at `-n 4` and load 25-48: prompts modal, composer restyle, Inspector section, response rules and send-admission files first, the 100 ms node last. 20 of 20 cases passed. Sending loop CPU was 32-75 ms (wall 53-248 ms), input-frame CPU 7-70 ms. The cause of the two outliers is inferred, not proven; AC#2 stays ticked on these 20 clean cases.
 - **Sending held-read bound.** `feedback_while_held` is stamped at the Sending frame and asserted, after a bounded wait for a late Sending frame. So a Sending paint that lands after the held read is released fails at any load, wall gate or not. Shown red with a temporary edit that delays every Sending source by 1.0 s: the ack's immediate `sync_run_chip` behind a timer, `run_copy`, the validating copy and the composer's run feedback. In 2 of 2 runs (load 45-47) one route failed with "Sending painted only after the held read was released", and the other read `None` because Sending never painted in time.
 - Touched file, 3 runs at `-n 4` (load 25-61): 17 of 17 each. The census checker and preflight pass.
+
+**Review r12t-rev2 fix (2026-11-07).** `gc.unfreeze()` in the test's `finally` emptied the whole worker's frozen set. That set includes what the product freezes at UI-ready (`freeze_long_lived_heap`) and at screen pre-import, so later timing-sensitive tests in the same worker or serial shard would carry that heap in gen 2. The `gc.freeze()`/`gc.unfreeze()` pair is dropped; `gc.collect()` stays. On CPython 3.12 a full collection zeroes the long-lived pending count, so no automatic full pass can run within the short interval.
+- Re-measured with the reviewer's six-file set (endpoint discovery, Inspector section, prompts modal, received-intent feedback, response rules, store continuity) at `-n 4`, 6 runs at load 31-67.
+- The node passed 12 of 12 cases. Sending loop CPU was 36-76 ms (wall 74-369 ms), input-frame CPU 7-71 ms.
+- The other failures in those runs were in other files: the 4 RecoveryRequired store-continuity nodes, TASK-35567's node, the response-rules load failures already seen on dev, and at load 49-61 single failures of seven prompts-modal tests outside this task.
 
 **Files.** `Tests/UI/test_console_received_intent_feedback.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
 

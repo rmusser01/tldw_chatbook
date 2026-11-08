@@ -582,9 +582,11 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
             try:
                 # Start with no collection owed: a gen-2 pass over the worker's
                 # accumulated heap read as 483 ms of loop CPU in the interval
-                # late in a mixed run (TASK-38948 review r12t-rev1).
+                # late in a mixed run (TASK-38948 review r12t-rev1). A full
+                # collection zeroes CPython's long-lived pending count, so no
+                # automatic full pass can run within the short interval. No
+                # freeze: unfreezing would empty the product's own frozen set.
                 gc.collect()
-                gc.freeze()
                 # All Send-triggered preparation remains inside this interval.
                 preparing.action_at = time.perf_counter()
                 preparing.action_cpu = time.thread_time()
@@ -645,7 +647,6 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                 # Preparing follows the immediate Sending frame at real receipt.
                 assert typing.mutated_while_held and typing.frame_while_held
             finally:
-                gc.unfreeze()
                 stop.set()
                 case.probe.release.set()
                 releaser.join(timeout=_HELD_READER_SECONDS + 2)
