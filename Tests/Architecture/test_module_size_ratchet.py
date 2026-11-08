@@ -238,7 +238,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-39138 (owner size waiver): +3, a send to a closed chat
     # reaches its dispatch-gap result, and a close mid-stream reads "Session
     # closed." again instead of the ownership-changed result.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29183,
+    # 2026-11-07, TASK-39138 review r12c-rev1 (owner size waiver): +1, the
+    # custody-refusal comment moved onto its own line above the check.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29184,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.

@@ -9757,8 +9757,9 @@ class ConsoleChatController:
         target_id = session_id or self.store.active_session_id or ""
         if origin is ConsoleSubmissionOrigin.MANUAL and target_id:
             await self._chat_start.withdraw_for_manual(target_id)
+            # A closed session skips this refusal to reach the dispatch-gap result.
             if not await self.store.drain_agent_handoff(target_id) and target_id in self.store._sessions:
-                return ConsoleSubmitResult(  # a closed session reaches the dispatch-gap result
+                return ConsoleSubmitResult(
                     False, False, "Draft custody is unconfirmed."
                 )
         if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START:
