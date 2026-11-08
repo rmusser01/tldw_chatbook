@@ -430,7 +430,10 @@ DREAMS_BOUNDARY_TARGETS = (
     # ~10-20 s serial. Last, after every sandboxed target: TASK-32873's note
     # (derived-artifacts.yml) keeps bootstrap-profile suites out of sandboxed
     # invocations, because their enrollment can break the sandboxed suites
-    # that follow; here none follows. It pauses no storage, so need not lead.
+    # that follow. The sandboxed Console sync maintenance file below follows
+    # it safely: each of its tests runs its body in a subprocess with its own
+    # HOME and config (test_home_citation_retirement._run), which the
+    # in-process enrollment cannot reach. It pauses no storage, so need not lead.
     "Tests/DB/test_sync_log_retention.py",
     # TASK-39043 (owner decision 2026-11-06: only its two small files here,
     # its two ~86 s files in recovered-suites): TASK-38973's repaired Console
@@ -529,11 +532,6 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-39049: the Library ingest runner, guard-clean since its tests close
     # the stores they open (130 live leases before).
     "Tests/Library/test_library_ingest_runner.py",
-    # TASK-39043 / TASK-39142: two Tests/UI files whose module pytestmark is
-    # bootstrap_profile, so the UI census may not hold them (ledger R11,
-    # TASK-32873); guard-clean, ~25 s and ~160 s serial at load 50-160.
-    "Tests/UI/test_console_full_config_preparation.py",
-    "Tests/UI/test_console_inspector_focus_carriers.py",
     # TASK-39124: the built-in pixel buddy file, no Persona_Visual file ran on
     # a PR lane before. Sandboxed, yet last: it passed after the
     # bootstrap_profile suites in every timed run of the step.

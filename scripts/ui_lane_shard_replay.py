@@ -301,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="ENTRY=SECONDS",
-        help="seconds for an entry no log timed (charge new entries twice their local time)",
+        help="seconds for an entry no log timed (charge it its local serial time; see the census header)",
     )
     parser.add_argument(
         "--rebalance",

@@ -467,8 +467,10 @@ architecture-review jobs, which already made it 26.)
 first, add shards only if that cannot keep the 5-min margin): the UI lane runs
 34 shards. Per-entry weights from 22 PR runs' shard logs (each entry at its
 slowest), with round 12's new and untimed entries at their local serial
-seconds, put 448 pytest min over the census: a 13.9-min floor per shard at 32,
-about 15.6 min a job with setup, so no order of 32 reaches 15. At 34,
-`scripts/ui_lane_shard_replay.py --rebalance 13.2` (44 swaps) projects
-14.87-14.90 min a job on every shard. `max-parallel` stays 17, so peak runners
-are unchanged; eligible test jobs are 44.
+seconds, put 452 pytest min over the census: a 14.1-min floor per shard at 32,
+about 15.8 min a job with setup, so no order of 32 reaches 15. At 34,
+`scripts/ui_lane_shard_replay.py --rebalance` (79 swaps in all) projects
+15.0 min a job on every shard with those entries at their local seconds, and
+about 14.7 at the median CI-to-local ratio (0.73) measured on twelve timed
+entries; 35 shards would project about 14.6. `max-parallel` stays 17, so peak
+runners are unchanged; eligible test jobs are 44.

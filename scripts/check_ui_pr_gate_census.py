@@ -881,6 +881,11 @@ MINIMUM_FILES = 1809
 # plain tests, and TASK-38953's 13 Settings sweep nodes at the tail, one
 # entry each. The floor is the measured entry count.
 MINIMUM_FILES = 1854
+# Review r12l-rev1 (2026-11-07): append the inspector focus carriers file's 15
+# nodes and the Console full config preparation file at the tail, out of the
+# recovered-suites job (the census holds bootstrap_profile files). The floor
+# is the measured entry count.
+MINIMUM_FILES = 1870
 
 
 def read_census(path: Path) -> list[str]:
