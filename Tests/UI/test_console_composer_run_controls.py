@@ -38,6 +38,7 @@ from Tests.UI import pump_probe
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_dictation import FakeDictationSession
 from Tests.UI.test_console_native_chat_flow import (
+    _build_console_send_test_app,
     _select_llamacpp_console,
     _staged_image_attachment,
 )
@@ -69,8 +70,7 @@ class _PaletteConsoleHarness(ConsoleHarness):
 def _held_run_host(harness=ConsoleHarness):
     """Build a Console whose next send streams one chunk, then holds."""
 
-    app = _build_test_app()
-    attach_chachanotes_db(app)
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     gateway = GatedGateway()
@@ -249,22 +249,19 @@ def _user_turns(store) -> int:
     )
 
 
-def _spy_sends(console) -> list:
-    """Record every entry into the visible send path (pass-through).
-
-    `_send_console_message_from_visible_action` is where the `ui_action`
-    console_send_stage is recorded; this wraps it without changing it, so a
-    key that wrongly reaches the send path shows up here.
-    """
+def _spy_sends(console, monkeypatch) -> list:
+    """Record visible send requests before native or legacy dispatch."""
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement
 
     calls: list = []
-    original = console._send_console_message_from_visible_action
+    original = send_acknowledgement.request_visible_send
 
-    async def spy(**kwargs):
-        calls.append(kwargs)
-        return await original(**kwargs)
+    def spy(screen, **kwargs):
+        if screen is console:
+            calls.append(kwargs)
+        return original(screen, **kwargs)
 
-    console._send_console_message_from_visible_action = spy
+    monkeypatch.setattr(send_acknowledgement, "request_visible_send", spy)
     return calls
 
 
@@ -405,7 +402,7 @@ async def test_running_stop_is_painted_whole_inside_the_action_row(size, request
 )
 @private_profile_test
 async def test_tab_reaches_a_visibly_focused_stop_and_its_key_stops_the_run(
-    key, size, request
+    key, size, request, monkeypatch
 ):
     gateway, host = _held_run_host()
     async with host.run_test(size=size) as pilot:
@@ -415,7 +412,7 @@ async def test_tab_reaches_a_visibly_focused_stop_and_its_key_stops_the_run(
             stop = composer.query_one("#console-stop-generation", Button)
             unfocused = _focus_style(stop)
             user_turns = _user_turns(store)
-            sends = _spy_sends(console)
+            sends = _spy_sends(console, monkeypatch)
 
             composer.focus()
             await pilot.pause()
@@ -612,14 +609,16 @@ async def test_running_reason_copy_matches_the_queue_button(request):
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_enter_on_each_idle_composer_button_runs_its_own_action(request):
+async def test_enter_on_each_idle_composer_button_runs_its_own_action(
+    request, monkeypatch
+):
     gateway, host = _held_run_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)
         store = console._ensure_console_chat_store()
         composer.load_draft("hello menu test")
         await pilot.pause()
-        sends = _spy_sends(console)
+        sends = _spy_sends(console, monkeypatch)
 
         # Menu: Enter opens the Composer actions menu, focus on its first item.
         menu = composer.query_one("#console-composer-menu", Button)
@@ -679,7 +678,7 @@ async def test_enter_on_focused_dictate_starts_dictation_without_sending(
         console, composer = await _mounted(host, pilot)
         composer.load_draft("dictate beside this")
         await pilot.pause()
-        sends = _spy_sends(console)
+        sends = _spy_sends(console, monkeypatch)
         dictate = composer.query_one("#console-dictation", Button)
         dictate.focus()
         await pilot.pause()
@@ -695,7 +694,9 @@ async def test_enter_on_focused_dictate_starts_dictation_without_sending(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_enter_on_running_queue_and_redirect_run_their_own_actions(request):
+async def test_enter_on_running_queue_and_redirect_run_their_own_actions(
+    request, monkeypatch
+):
     gateway, host = _held_run_host()
     async with host.run_test(size=(235, 52)) as pilot:
         console, composer = await _mounted(host, pilot)
@@ -726,7 +727,7 @@ async def test_enter_on_running_queue_and_redirect_run_their_own_actions(request
             await pilot.pause()
             redirect = composer.query_one("#console-redirect-generation", Button)
             assert redirect.display, "Redirect should fit at 235 columns"
-            sends = _spy_sends(console)
+            sends = _spy_sends(console, monkeypatch)
             redirect.focus()
             await pilot.pause()
             await pilot.press("enter")
@@ -768,7 +769,9 @@ async def test_enter_on_running_queue_and_redirect_run_their_own_actions(request
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_enter_collapses_mid_run_and_the_collapsed_stop_takes_enter(request):
+async def test_enter_collapses_mid_run_and_the_collapsed_stop_takes_enter(
+    request, monkeypatch
+):
     """AC#1's "Expand/Stop where shown": Enter on Composer ▾ collapses the
     composer mid-run, and Enter on the collapsed strip's Stop stops the run."""
     gateway, host = _held_run_host()
@@ -776,7 +779,7 @@ async def test_enter_collapses_mid_run_and_the_collapsed_stop_takes_enter(reques
         console, composer = await _mounted(host, pilot)
         try:
             store = await _start_held_run(console, composer, pilot)
-            sends = _spy_sends(console)
+            sends = _spy_sends(console, monkeypatch)
             composer.query_one("#console-composer-collapse", Button).focus()
             await pilot.pause()
             await pilot.press("enter")
@@ -978,7 +981,7 @@ async def test_after_send_the_next_prompt_is_typed_into_the_draft(
         assert fake.start_calls == 0, "a keystroke of the next prompt dictated"
         # Enter sends it (the send path is entered -- this harness does not
         # complete a second turn even for two plain draft sends).
-        sends = _spy_sends(console)
+        sends = _spy_sends(console, monkeypatch)
         await pilot.press("enter")
         await _wait_for(pilot, lambda: len(sends) == 1, "Enter did not send it")
         assert fake.start_calls == 0, "Enter on the next prompt started dictation"

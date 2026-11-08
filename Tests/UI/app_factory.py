@@ -180,7 +180,9 @@ def persist_seeded_config(app, *sections: str) -> None:
     assert save_settings_to_cli_config(values, delete_keys=deletes)
 
 
-def attach_chachanotes_db(app, *, client_id: str = "test-client"):
+def attach_chachanotes_db(
+    app, *, client_id: str = "test-client", db_path: Path | str = ":memory:"
+):
     """Give a factory-built app the durable ChaChaNotes DB a real send needs.
 
     TASK-21590. `_build_test_app` patches `_open_profile_chachanotes` to `None`,
@@ -194,14 +196,10 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     toast: 26 mounted send tests kept pressing Send and asserting against a
     transcript production had silently refused to write.
 
-    ``:memory:`` is load-bearing, not a shortcut. `ConsoleRuntime.
-    ensure_agent_bridge` deliberately refuses to build an agent bridge for a
-    `:memory:` DB ("an in-memory harness still builds neither"), so this
-    restores exactly the precondition the send path lost -- a durable-capable
-    persistence adapter -- without also switching the caller onto the agent
-    loop, which a file-backed DB does and which these tests were never written
-    against. A test that is *about* the agent runtime must attach a
-    file-backed DB itself.
+    Memory storage remains the default for older lightweight fixtures. Stock
+    native capture needs a file-backed source; gateway-only callers selecting a
+    file must disable agent runtime explicitly. File handles created here are
+    factory-owned and retire before the per-test profile is removed.
 
     Attach BEFORE mounting: the store is built lazily on first use and caches
     its persistence adapter.
@@ -209,13 +207,16 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     Args:
         app: A `_build_test_app` product, not yet mounted.
         client_id: Client id recorded on the DB's rows.
+        db_path: Memory storage by default, or the fixture's private database path.
 
     Returns:
         The `CharactersRAGDB` now assigned to ``app.chachanotes_db``.
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
-    db = CharactersRAGDB(":memory:", client_id)
+    db = CharactersRAGDB(db_path, client_id)
+    if not db.is_memory_db:
+        _created_databases.append(db)
     app.chachanotes_db = db
     return db
 

@@ -3479,6 +3479,7 @@ async def test_prepared_native_start_allows_mounted_manual_send(
     tmp_path, _register_runtime_database_owners
 ):
     from textual.widgets import Button
+    from tldw_chatbook.config import get_user_data_dir
     from Tests.Chat.test_console_chat_start import _native_start_rig
 
     controller, store, runs, source, target, chain, request = await _native_start_rig(
@@ -3498,7 +3499,8 @@ async def test_prepared_native_start_allows_mounted_manual_send(
 
     controller._resolve_for_send_bounded = held
     app = _build_manually_mounted_console_app(
-        config_overrides={"splash_screen": {"enabled": False}}
+        config_overrides={"splash_screen": {"enabled": False}},
+        user_data_dir=get_user_data_dir(),
     )
     persist_seeded_config(app, "splash_screen")
     _attach_real_dbs(app, tmp_path)
@@ -3519,6 +3521,9 @@ async def test_prepared_native_start_allows_mounted_manual_send(
                 await pilot.pause(0.1)
             assert chat._console_attach_reconciled and app.screen is chat
             runtime = app.console_runtime
+            assert await asyncio.to_thread(controller._scratch_spaces.dispose)
+            controller._scratch_spaces = runtime._scratch_spaces
+            controller._owns_scratch_spaces = False
             runtime.set_chat_store(store)
             runtime.set_agent_bridge(controller._agent_bridge)
             runtime.set_chat_controller(controller)
@@ -3534,7 +3539,10 @@ async def test_prepared_native_start_allows_mounted_manual_send(
 
             request = replace(
                 request,
-                configuration=controller.resolve_turn_configuration_snapshot(target.id),
+                configuration=await controller.capture_turn_configuration_snapshot(
+                    target.id,
+                    context_provider=chat._session._build_console_turn_execution_context,
+                ),
                 context_epoch=store.conversation_context_epoch(target.id),
             )
             assert controller._chat_start._target_unchanged(request)

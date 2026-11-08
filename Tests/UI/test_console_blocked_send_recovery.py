@@ -133,7 +133,9 @@ async def _mounted_console(tmp_path, monkeypatch, size):
     monkeypatch.setattr(
         console_runtime, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 600.0
     )
-    app = _build_test_app()
+    from tldw_chatbook.config import get_user_data_dir
+
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     database = CharactersRAGDB(tmp_path / "chat.sqlite", "task-33621-2")
     app.chachanotes_db = database
     _persist_console_provider_config(
@@ -170,16 +172,6 @@ async def _mounted_console(tmp_path, monkeypatch, size):
                 return replace(await original_resolve(selection), streaming=False)
 
             monkeypatch.setattr(gateway, "resolve_for_send", resolve)
-            runtime = console._console_runtime()
-            tasks: list[asyncio.Task] = []
-            accept = runtime.accept_turn
-
-            def capture(request, **kwargs):
-                turn_id = accept(request, **kwargs)
-                tasks.append(runtime._turn_custody[turn_id].task)
-                return turn_id
-
-            monkeypatch.setattr(runtime, "accept_turn", capture)
             yield SimpleNamespace(
                 host=host,
                 pilot=pilot,
@@ -189,7 +181,6 @@ async def _mounted_console(tmp_path, monkeypatch, size):
                 session=controller.store.ensure_session(),
                 database=database,
                 calls=calls,
-                tasks=tasks,
             )
     finally:
         if console is not None:
@@ -199,7 +190,7 @@ async def _mounted_console(tmp_path, monkeypatch, size):
 
 async def _send(h, text: str) -> None:
     """Send ``text`` in the active chat through the visible send action."""
-    started = len(h.tasks)
+    session_id = h.store.active_session_id
     h.console._session._sync_console_session_draft()
     h.console._console_composer_or_none().load_draft(text)
     await asyncio.wait_for(
@@ -208,8 +199,12 @@ async def _send(h, text: str) -> None:
         ),
         10,
     )
-    for task in h.tasks[started:]:
-        await asyncio.wait({task}, timeout=30)
+    await _until(
+        h.pilot,
+        lambda: not h.console._console_runtime().has_custodied_turns(session_id),
+        timeout=30,
+        what="The Console turn did not retire.",
+    )
     await h.console._sync_native_console_chat_ui()
     await h.pilot.pause(0.3)
 

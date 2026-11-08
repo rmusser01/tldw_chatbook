@@ -765,13 +765,14 @@ async def test_applying_on_anthropic_submits_none_of_the_hidden_fields(
     commits through the controller with none of them, and the next send hands
     the Anthropic handler none of them, while a shown field (Temperature)
     still goes."""
-    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
         _drain_settings_tasks,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.config import get_user_data_dir
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import (
         SettingsConfigAdapter,
@@ -801,11 +802,9 @@ async def test_applying_on_anthropic_submits_none_of_the_hidden_fields(
             },
         }
     )
-    app = _build_test_app()
-    # File-backed: a send commits its trace from a worker thread, and each
-    # thread's ":memory:" connection is an empty database of its own.
-    app.chachanotes_db = CharactersRAGDB(
-        tmp_path / "chachanotes.sqlite", client_id="hidden-fields"
+    app = _build_test_app(user_data_dir=get_user_data_dir())
+    attach_chachanotes_db(
+        app, db_path=tmp_path / "chachanotes.sqlite", client_id="hidden-fields"
     )
     app.chat_api_provider_value = "anthropic"
     app.chat_api_model_value = "claude-sonnet-4-5"

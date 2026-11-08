@@ -506,6 +506,13 @@ return. Ordinary automatic wake uses its own empty Context and native authorizat
 Runtime disposal fences the registered wake owner before draining workflows and
 retiring downstream stores and scratch.
 
+Cold MCP permission publication retains its actual service, store, permission
+candidate, profile binding and path under the originating opaque claim, including
+ordinary sends with agent runtime disabled. The capture acknowledges that native
+resource receipt once, retaining path/binding and other-source checks without
+permission-store implementation attestation. A replaced source or lost original
+capture context still refuses before effects.
+
 Native Library construction uses the resource registered by that Console runtime.
 Bounded admission captures it and rechecks its runtime/app ownership before
 construction; replacement callbacks cannot run under that bounded claim. Unknown

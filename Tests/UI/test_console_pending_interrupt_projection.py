@@ -87,7 +87,12 @@ async def _seed_console(app, pilot):
     session_id = store.active_session_id
     assert session_id
     outcome = await controller.submit_draft(
-        "Seed this conversation.", session_id=session_id
+        "Seed this conversation.",
+        session_id=session_id,
+        configuration=await controller.capture_turn_configuration_snapshot(
+            session_id,
+            context_provider=console._session._build_console_turn_execution_context,
+        ),
     )
     assert outcome.accepted
     assert next(

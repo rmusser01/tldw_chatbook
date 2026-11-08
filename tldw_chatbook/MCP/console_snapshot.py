@@ -554,17 +554,19 @@ class _CapturedSources:
                 self.permission_reader = callbacks["permission.load"]
                 self.permission_binding = identity[3]
                 self.method_bindings = {**self.method_bindings, **callbacks}
+                publication = (
+                    self.service,
+                    self.store,
+                    candidate,
+                    identity[3],
+                    identity[2],
+                )
                 if ordinary is not None:
                     ordinary.permission = candidate
                     ordinary.permission_path = identity[2]
-                    ordinary.native_permission_publication = (
-                        self.service,
-                        self.store,
-                        candidate,
-                        identity[3],
-                        identity[2],
-                        method_codes,
-                    )
+                    ordinary.native_permission_publication = publication
+                elif tree is not None:
+                    tree.retain_mcp_permission_publication(publication)
             self.require_current()
         return self.permission
 

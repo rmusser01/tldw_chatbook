@@ -103,6 +103,8 @@ class _OrdinaryTurn:
             self.runtime.worktree_activity,
         )
         self.owner = self.claim = self.footprint = None
+        self.permission = self.permission_path = None
+        self.native_permission_publication = None
         self.reference = None
         self.snapshot_sources = []
         self.ssh_sources = {}
@@ -160,6 +162,21 @@ class _OrdinaryTurn:
             raise RuntimeError("original ordinary turn source changed")
         if self.source is not None:
             self.source.check_memory()
+
+    def retain_mcp_permission_publication(self, publication):
+        """Keep the actual publisher's resource receipt under this opaque claim."""
+        self.borrow(self.runtime)
+        service, store, candidate, _binding, path = publication
+        if (
+            self.native_permission_publication is not None
+            or self.permission is not None
+            or getattr(self.app, "unified_mcp_service", None) is not service
+            or service.local_service.store is not store
+            or service._permission_store is not candidate
+        ):
+            raise RuntimeError("Ordinary MCP permission publication changed.")
+        self.permission, self.permission_path = candidate, path
+        self.native_permission_publication = publication
 
     def check_local_sources(self):
         self.check()
@@ -1091,12 +1108,13 @@ async def admit_ordinary_turn(
                         persona_policy_rules=configuration.persona_policy_rules,
                         _admitted=True,
                     )
-                if tree.source is not None:
-                    from .console_configuration_preparation import (
-                        consume_native_mcp_permission_publication,
-                    )
+                from .console_configuration_preparation import (
+                    consume_native_mcp_permission_publication,
+                )
 
-                    consume_native_mcp_permission_publication(tree.source)
+                consume_native_mcp_permission_publication(
+                    tree.source if tree.source is not None else tree
+                )
                 if not original_mcp_capture_matches(
                     controller, session, original_configuration, pending=True
                 ):

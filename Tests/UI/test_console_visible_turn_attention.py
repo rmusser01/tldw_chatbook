@@ -23,7 +23,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
-from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
+from tldw_chatbook.UI.Console_Modules.wiring import (
+    _admit_console_turn_to_runtime,
+    _precapture_turn_authority,
+)
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
     HandoffChannel,
@@ -125,10 +128,16 @@ async def _reach_console(app, pilot, route: str) -> ChatScreen:
     return chat
 
 
+async def _admit_turn(chat, draft, session_id):
+    preparation = await _precapture_turn_authority(chat, session_id)
+    with preparation():
+        return _admit_console_turn_to_runtime(chat, draft, session_id)
+
+
 async def _run_visible_turn(chat, pilot, gateway, marker: str, session_id: str) -> None:
     runtime = chat._console_runtime()
     gateway.reply = marker
-    turn_id = _admit_console_turn_to_runtime(chat, f"say {marker}", session_id)
+    turn_id = await _admit_turn(chat, f"say {marker}", session_id)
     task = runtime._turn_custody[turn_id].task
     assert task is not None
     outcome = await asyncio.wait_for(task, timeout=10)
@@ -180,7 +189,7 @@ async def test_a_turn_finishing_while_console_is_off_screen_still_notifies_once(
         assert not any(_HIDDEN_COPY in text for text in notices)
 
         gateway.arm_two_chunks("HIDDEN")
-        turn_id = _admit_console_turn_to_runtime(chat, "finish while away", session_id)
+        turn_id = await _admit_turn(chat, "finish while away", session_id)
         task = runtime._turn_custody[turn_id].task
         assert task is not None
         await asyncio.wait_for(gateway.first_chunk.wait(), timeout=5)
@@ -222,7 +231,7 @@ async def test_a_turn_finishing_in_a_background_tab_notifies_once_while_console_
         assert not any(_HIDDEN_COPY in text for text in notices)
 
         gateway.arm_two_chunks("BACKGROUND")
-        turn_id = _admit_console_turn_to_runtime(chat, "finish in the background", session_id)
+        turn_id = await _admit_turn(chat, "finish in the background", session_id)
         task = runtime._turn_custody[turn_id].task
         assert task is not None
         await asyncio.wait_for(gateway.first_chunk.wait(), timeout=5)
@@ -271,7 +280,7 @@ async def test_a_turn_finishing_under_a_modal_over_console_raises_no_hidden_noti
         await _run_visible_turn(chat, pilot, gateway, "VISIBLE-FIRST", session_id)
 
         gateway.arm_two_chunks("UNDER-MODAL")
-        turn_id = _admit_console_turn_to_runtime(chat, "finish under a modal", session_id)
+        turn_id = await _admit_turn(chat, "finish under a modal", session_id)
         task = runtime._turn_custody[turn_id].task
         assert task is not None
         await asyncio.wait_for(gateway.first_chunk.wait(), timeout=5)

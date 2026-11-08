@@ -116,6 +116,15 @@ Reason: restore existing native-workflow and ordinary-chat compatibility; no new
 3. Diagnose mounted capture refusals, retain real source/resource/permission/revision fences, and verify supported ordinary provider and UI paths without restoring implementation-identity checks.
 4. Use targeted tests against in-memory Git sources, lint/format and exact branch diffs. Preserve the original checkout HEAD, real index and every staged/unstaged file.
 5. Commit only task-related repairs to codex/task-39147-native-phase-rebuild, push normally and rerun Derived Artifacts on the current head until green. No unrelated fixes, newer-dev integration or merge.
+
+CI repair follow-up 2 (2026-11-08), before implementation:
+ADR required: no. ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md.
+Reason: correct synthetic mounted test-profile ownership and native cold MCP publication acknowledgement while preserving existing source/recovery contracts.
+1. Fetch new-head CI logs and reproduce each remaining mounted preparation refusal.
+2. Use existing factory profile arguments to give affected native mounted fixtures the configured private profile; retain real DBs and all source checks. Ordinary gateway fixtures must use file-backed capture sources with agent runtime explicitly disabled and exact factory-owned database cleanup.
+3. Transfer the native MCP publisher's exact permission candidate/path/binding under the existing ordinary claim even when agent runtime is disabled; consume that resource receipt once without function/code attestation. Run the actual send/recovery regressions and explicit cold/custom-source refusal controls. Fix only demonstrated task-related gaps; do not weaken stock capture or restore implementation checks.
+4. Record exact results, preserve the original index/374 paths and the newly observed unrelated untracked `300`, then commit/push only task-related repairs and rerun after active CI ends.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -309,6 +318,43 @@ that is evidence of an inherited blocker, not a passing compatibility result.
 The original dev HEAD, all index entries and all 374 dirty/untracked path states
 remain unchanged. Repair commits use only Git blobs and a temporary index.
 
+
+Second CI repair batch (2026-11-08): the run on `ab472e8` completed all 15 test
+jobs with 11 failures and 4 successes. Only its redundant aggregate remained
+queued; that task run was cancelled after the tests finished. It is not green.
+
+Native cold MCP permission publication now retains its actual candidate, store,
+profile binding and path under the existing opaque ordinary claim when agent
+runtime is disabled as well as enabled. The receipt is consumed once; actual
+source/path/resource checks remain, and function/code attestation is removed from
+that acknowledgement. Regression coverage includes both modes and explicit
+replaced-source, path, callback, missing-context and kill-switch refusals.
+
+Affected mounted fixtures now use their configured private profile and real file
+storage. Gateway-only fixtures explicitly disable agent runtime; factory-owned
+file databases are physically closed even if an app field is replaced. Native
+fixture handoffs drain the prior scratch owner and use runtime binding/preparation
+APIs. Send observers follow the shared visible request before native/legacy
+dispatch; tests wait for actual custody retirement. Snapshot fixtures rebind
+imported config-module aliases alongside existing callable aliases, preserving the
+native config-installation guard. No production UI, timeout or budget is relaxed.
+
+Targeted checks pass: 15 MCP/publication/refusal controls (39.01s), four mounted
+Retry/native-start/Settings controls (79.74s), Send acknowledgement plus visible
+attention (2 cases, 32.71s), idle composer Enter plus the complete pending-interrupt
+projection journey (2 cases, 125.55s), and the fixture ownership controls (2 cases,
+11.79s). Focused Dictate/Stop observer controls pass 2 cases in 58.31s. Separate
+earlier representative ordinary Stop/Resend/attention/no-controller
+controls passed 4 cases in 77.19s. Cohorts overlap. Exact trees, retained REDs and
+limits are in the UAT report. Ruff comparison adds zero findings; diff checks pass.
+AC #8 stays open until the actual pushed head passes CI.
+
+The original dev HEAD, full real index and original 374 dirty/untracked states
+remain unchanged. A separate writer added untracked `300` between heartbeats;
+round-two auditing also preserves that path, for 375 checked states. No checkout
+file was edited; repairs and task/evidence updates use Git blobs and the private
+index. Existing ADR356 applies; this direct ownership correction needs no new ADR.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
@@ -333,11 +379,12 @@ and wrapped Library feedback. Targeted regressions, persistence controls, mounte
 running/Stop UAT and painted before/after evidence are recorded in the UAT report.
 No bug-free UI or latency claim is made.
 
-Exactly ten task-owned paths cover this layout fix, regression tests, task notes
-and evidence. Unrelated file/index content and HEAD remain preserved. No commit,
-push, reset, stash, replacement PR or merge. No full suite, remote provider,
-other-platform or other PR archive-lineage qualification; broader CSS drift/debt
-and scan-timeout failures remain explicitly qualified.
+The layout fix originally covered ten task-owned paths. Subsequent task-only
+publication and authorized CI repair commits preserve the original dev checkout,
+index and unrelated work. CI remains in progress; no merge or newer-dev integration
+is authorized. No full local suite, remote provider, other-platform or other PR
+archive-lineage qualification; earlier drift/debt and timeout failures remain
+explicitly qualified.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

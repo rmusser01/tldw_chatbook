@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import replace
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -82,6 +82,9 @@ def snapshot_case(catalog_store, mcp_sources, monkeypatch):
         if not module_name.startswith("tldw_chatbook.") or module is config:
             continue
         for alias, value in tuple(vars(module).items()):
+            if isinstance(value, ModuleType) and value.__name__ == config.__name__:
+                monkeypatch.setattr(module, alias, config)
+                continue
             if (
                 callable(value)
                 and getattr(value, "__module__", None) == config.__name__

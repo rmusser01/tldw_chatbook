@@ -1845,8 +1845,9 @@ async def test_pending_mcp_capture_is_opaque_even_when_prefill_skips_agent(
     )
 
 
+@pytest.mark.parametrize("agent_runtime", [False, True])
 async def test_deferred_native_mcp_permission_lazy_publication_keeps_original_source(
-    snapshot_case, native_ordinary_host
+    snapshot_case, native_ordinary_host, agent_runtime
 ):
     import os
     import sys
@@ -1862,6 +1863,7 @@ async def test_deferred_native_mcp_permission_lazy_publication_keeps_original_so
     try:
         snapshot_controls._loop_projection(snapshot_case)
         h = native_ordinary_host
+        h.controller._agent_runtime_enabled = agent_runtime
         original_service = UnifiedMCPControlPlaneService(
             target_store=None,
             context_store=None,
@@ -1890,16 +1892,20 @@ async def test_deferred_native_mcp_permission_lazy_publication_keeps_original_so
             and original_service._permission_store is None
         )
         tools = dict(configuration.tool_configuration)
-        tools["agent_run_budget_maximum"] = replace(
-            tools["agent_run_budget_maximum"], max_subagents=0
-        )
+        if agent_runtime:
+            tools["agent_run_budget_maximum"] = replace(
+                tools["agent_run_budget_maximum"], max_subagents=0
+            )
         result = await h.controller.submit_draft(
             "cold original source",
             session_id=h.session.id,
             configuration=replace(configuration, tool_configuration=tools),
         )
-        assert result.accepted and trees
-        assert original_service._permission_store is trees[0].source.permission
+        assert result.accepted and trees, result.visible_copy
+        assert (trees[0].source is not None) is agent_runtime
+        owner = trees[0].source if agent_runtime else trees[0]
+        assert original_service._permission_store is owner.permission
+        assert owner.native_permission_publication is None
     except BaseException:
         if os.environ.get("TASK8_COLD_DIAGNOSTIC_PEER") == "1":
             traceback.print_exc()

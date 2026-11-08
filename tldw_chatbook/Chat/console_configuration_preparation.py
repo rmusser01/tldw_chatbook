@@ -2351,7 +2351,7 @@ def consume_native_mcp_permission_publication(source):
     publication = source.native_permission_publication
     if witness is None or publication is None:
         return
-    service, store, candidate, binding, path, methods = publication
+    service, store, candidate, binding, path = publication
     original = witness[-1]
     current = _mcp_source_identity(service)
     from tldw_chatbook.MCP.permission_store import MCPPermissionStore
@@ -2366,12 +2366,6 @@ def consume_native_mcp_permission_publication(source):
         or current[0][3][0] is not candidate
         or source.permission is not candidate
         or type(candidate) is not MCPPermissionStore
-        or any(
-            vars(MCPPermissionStore).get(name) is not function
-            or function.__code__ is not code
-            for name, function, code in methods
-        )
-        or current[0][10][0] is not methods[0][1]
         or source.permission_path != path
         or current[2] != path
         or original[1] != current[1]
@@ -2394,6 +2388,7 @@ def consume_native_mcp_permission_publication(source):
         from dataclasses import replace
 
         _mcp_capture_witness.set(replace(claimed, witness=updated))
+    source.native_permission_publication = None
 
 
 def remember_pending_mcp_capture(controller, session, configuration):

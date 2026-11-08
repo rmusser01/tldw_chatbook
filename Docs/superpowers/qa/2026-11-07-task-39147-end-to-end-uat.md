@@ -314,3 +314,104 @@ timeout or budget is relaxed. Preservation auditing compares the complete real
 index, dev HEAD/status and hashes/links/missing states of all 374 starting dirty
 and untracked paths; `/tmp/pr39147-ci-repair-preservation.json` is the current
 packet. No full-suite local sweep, external provider or other-platform UAT was run.
+
+
+## Second CI repair batch — 2026-11-08 (CI still required)
+
+The [run on ab472e8](https://github.com/rmusser01/tldw_chatbook/actions/runs/42441233109)
+completed all 15 test jobs: **11 failed, 4 passed**. The failures are retained in
+`/tmp/pr39147-ci-job-<job-id>.log`. Its aggregate stayed queued after the tests
+finished; normal then force cancellation applied only to that failed task run.
+No unrelated workflow was cancelled. The initial run is also cancelled, not green.
+
+Actual job logs identify the remaining mounted fixture failures: Console P0
+blocked-send and Retry (`128610694933`), prepared-start/manual Send
+(`128610695192`), hidden-field Settings (`128610695208`), Stop controls at all four
+sizes and key/palette/slash routes, visible-turn attention, Resend and Send
+acknowledgement, and pending-interrupt/no-controller cases. Baseline reproduction
+of the source refusal remains inherited-failure evidence; it does not justify
+bypassing native preparation.
+
+The fixture correction selects the configured private profile, gives ordinary
+sends actual file-backed storage and explicitly selects their existing gateway-only
+mode. Factory ownership tracks the exact file database, closes its real connection
+and leaves replacement fields caller-owned. Native-start setup drains its original
+scratch manager before borrowing the runtime's and captures configuration through
+the mounted asynchronous producer. Direct-admission fixtures perform native
+precapture; the pending-interrupt seed uses the controller's capture API. The
+blocked-send helper awaits actual turn retirement instead of watching only the
+legacy acceptance entry. The button observer watches the common visible request,
+which precedes both the new native receiver and legacy dispatch. The no-controller
+case explicitly removes/restores its passive store through the real runtime API.
+Assertions and deadlines are retained.
+
+With those real sources, ordinary agent-runtime-off Send exposed a product defect:
+legitimate cold permission publication changed the captured MCP source, but its
+receipt was retained only when an agent source existed. The native publisher now
+hands the same exact service/store/candidate/binding/path receipt to the ordinary
+owner under its live opaque claim. Consumption retains actual resource, configured
+path/binding and unchanged-other-source checks, then clears the receipt. It no
+longer attests permission-store function/code identity. Replaced sources/paths and
+missing original task context still refuse before effects. A separate sequential
+fixture failure was traced to a stale imported config-module alias; the snapshot
+fixture now rebases that alias to the actual newly installed module along with its
+existing callable aliases. The config-installation guard is unchanged.
+
+Retained RED and scoped GREEN packets (cohorts overlap):
+
+- Profile/database ownership regression: **1 failed in 7.22s**, tree
+  `3d9810b78178e9be6ecdb235a8b48cc807658f3d`,
+  `/tmp/pr39147-ci-round2-profile-fixture-red.txt`; corrected ownership plus the
+  existing exact-original/replacement cleanup control: **2 passed in 11.79s**,
+  tree `7dff96d8bb6151947a07f2a9a6129e24b5444760`,
+  `/tmp/pr39147-ci-round2-profile-fixture-green.txt`.
+- Agent-runtime-off/on cold permission receipt: **2 failed in 9.85s**, tree
+  `eed4069574ca3c96b7520a56e982aa14f753dc7a`,
+  `/tmp/pr39147-ci-round2-cold-mcp-red.txt`. A first corrected packet had **7 passed,
+  1 failed in 27.05s**; sequential stale config-module setup caused the remaining
+  failure, while the agent-on case alone passed. Those packets remain qualified.
+- Final MCP/publication controls: **15 passed in 39.01s**, tree
+  `a4dc048c5f3e06871594e63e04f748871b76d77d`,
+  `/tmp/pr39147-ci-round2-mcp-full-controls.txt`. Both runtime modes pass together;
+  controls retain missing-context, replaced receiver/path/factory/manifest,
+  unqualified cold-source, replaced-controller, fresh switch and native dependency
+  retarget refusals. No diagnostic plugin or bypass environment is active.
+- Final mounted first-send/Retry, native-start/manual Send and Anthropic hidden
+  Settings submission: **4 passed in 79.74s**,
+  `/tmp/pr39147-ci-round2-final-native-controls.txt`.
+- Send acknowledgement ordering at 80×24 and visible attention from Home:
+  **2 passed in 32.71s**, `/tmp/pr39147-ci-round2-send-attention-controls.txt`.
+- The old button observer missed native Send and failed its positive assertion:
+  **1 failed in 33.15s**, `/tmp/pr39147-ci-round2-final-ui-controls.txt`.
+  The corrected observer and complete pending-interrupt projection journey pass
+  **2 cases in 125.55s**, `/tmp/pr39147-ci-round2-final-fixtures-green.txt`.
+- Focused Dictate and focused Stop retain their no-unintended-Send assertions:
+  **2 passed in 58.31s**, `/tmp/pr39147-ci-round2-final-send-observers.txt`,
+  tree `2678e5cff2298af0ade850f72214c016799188cb`.
+- Representative held Stop at 80×24, three sequential visible replies, keyboard
+  Resend and no-controller Stop: **4 passed in 77.19s**,
+  `/tmp/pr39147-ci-round2-ordinary-ui-green.txt`, preceding only final fixture
+  alias/observer refinements. The earlier two ordinary failures in
+  `/tmp/pr39147-ci-round2-ui-other-controls.txt` are not called passing.
+- Late first-batch cleanup/recovery packet: **29 passed, 1 failed in 910.71s**,
+  `/tmp/pr39147-ci-native-and-settings-targeted.txt`. Its 28 native cleanup/recovery
+  controls and Settings case passed; its remaining manual-send fixture refusal is
+  corrected and passes in the final four-case mounted packet above.
+
+The final mounted native and projection packets use product/test tree
+`2678e5cff2298af0ade850f72214c016799188cb`; subsequent task, architecture and QA
+edits plus line-formatting adjustments do not change executable behavior. Commands run with
+`PYTHONPATH=/tmp/pr39147-ci-harness`, `PYTEST_PLUGINS=pr39147_ci_overlay`, and
+`PR39147_CI_TREE=<recorded tree>`; the in-memory loader covers private pytest
+children. This remains local targeted evidence, not actual Linux CI or a full
+suite. All changed Python files add **zero Ruff findings** compared with the
+published task source; inherited debt is retained. `git diff --check` passes.
+No size budget, timeout, assertion or test selection is relaxed in the branch.
+
+Preservation: `/tmp/pr39147-ci-fix-start.json` still covers the original 374
+states. Another writer added unrelated untracked `300` between heartbeats; the
+extended `/tmp/pr39147-ci-fix-round2-start.json` and current audit cover 375 states,
+plus exact real index entries/status and original dev HEAD. No real checkout file
+was edited, and no new worktree or source export was created. AC #8 and task status
+remain open pending a successful exact-head workflow. No full local suite,
+external-provider call, other-platform UAT or newer-dev integration is certified.
