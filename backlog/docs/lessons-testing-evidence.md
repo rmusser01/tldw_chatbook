@@ -25169,3 +25169,13 @@ rows; a common-key-only comparison likewise missed the four additions. The appro
 repair reviewed all eleven statements in those four files and verified the entire
 old/new owner-key delta before publication. Review added/removed keys as well as
 changed common rows; a matching drift count is not evidence that every owner was read.
+
+
+### Pin the runner that supplies an immutable build version (TASK-39147, 2026-11-08)
+
+Run42493042973 passed all15 test jobs and the repaired static gates, then failed
+setup-python because ubuntu-latest selected26.04 while immutable Mermaid inputs
+require Python3.12.11. The official action manifest offered that build for22.04
+and24.04 only. Pinning the aggregate to24.04 preserves its immutable build; changing
+the Python pin or bypassing artifact validation would change the contract instead.
+A green version-pin shape test alone does not establish runner compatibility.

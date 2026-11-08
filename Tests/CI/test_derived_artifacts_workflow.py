@@ -374,6 +374,7 @@ def test_derived_artifact_checkers_use_mermaid_builder_python_pin():
     )
 
     assert setup["with"] == {"python-version": "3.12.11"}
+    assert _job()["runs-on"] == "ubuntu-24.04"
 
 
 def test_required_check_name_is_stable():

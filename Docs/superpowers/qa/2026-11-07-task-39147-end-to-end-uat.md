@@ -674,3 +674,41 @@ harness is partial local evidence, not full-filesystem/isolated-Python or Linux 
 No full local suite, external provider, other-platform UAT, merge or newer-dev
 integration is certified. Overall CI on the next published head is still pending;
 TASK-39147 remains In Progress with AC #8 open.
+
+## Seventh CI follow-up: supported runner for the immutable build (2026-11-08)
+
+[Run42493042973](https://github.com/rmusser01/tldw_chatbook/actions/runs/42493042973)
+tests exact `1a921835b6c26be0512482696538734577c5846f`. All15 test jobs succeed;
+aggregate128785469019 confirms diagnostic inventory, index plans, worker and
+markup gates now pass in Linux CI. The aggregate fails earlier during
+`actions/setup-python@v5`: **3.12.11 x64 was not found for Ubuntu26.04**. The
+subsequent Mermaid check says to use its pinned Python because setup failed.
+Actual packet: `/tmp/pr39147-ci-job-128785469019.log`. The separate merge tick
+128791336060 remains queued and is not cancelled. Overall run success is absent.
+
+The [official action manifest](https://api.github.com/repos/actions/python-versions/git/blobs/25851576302b86c37ffa01ee654d024d6d06b6de)
+(blob identity, not a commit URL) provides Python3.12.11 for Linux x64 Ubuntu22.04
+and24.04, with no26.04 build. Recorded source and exact download entries:
+`/tmp/pr39147-ci-round7-python-support.json`. This time the stable version pin
+outlived the moving runner label. Pin only `derived-artifacts.runs-on` to
+`ubuntu-24.04`; keep the existing `3.12.11` build pin, artifact bytes/manifests,
+checker assertions, all test selections and budgets unchanged. ADR124 applies;
+no new architectural contract or ADR is introduced.
+
+The existing Python-pin workflow regression adds the supported runner constraint.
+RED tree `4d4f92eb4fa820c961ad0c4a80150b9f79db30c0`: **1 failed in0.81s**, solely
+`ubuntu-latest != ubuntu-24.04` (`/tmp/pr39147-ci-round7-runner-red.txt`). GREEN
+executable tree `9f6394c7085310d3acb49bc27011a9a9d5a71d2e`: **43 passed in5.17s**,
+complete derived-artifacts and dispatch-safe workflow test modules, including
+existing negative gate/membership controls (`/tmp/pr39147-ci-round7-workflow-green.txt`).
+Parsed YAML comparison proves the only semantic change is that one runner label.
+All steps, other jobs, Python pin and budgets compare equal. Zero new Ruff findings
+and diff checks pass (`/tmp/pr39147-ci-round7-verification.txt`); existing full
+CI-test-module formatting debt is retained. Self-review confirms no runtime,
+asset, checker, production source or authority changes. Subsequent changes are
+Markdown only. These are local configuration/manifest checks; actual supported
+Ubuntu runner execution remains pending on the next pushed head. No full local
+suite or new live UAT. Prior three mounted Undo profile-setup refusals and other
+qualification limits remain recorded above. Real dev HEAD, full index/status and
+all375 preserved states remain unchanged. Hold the next dispatch until the old
+run including its merge tick completes; never cancel that tick or another run.

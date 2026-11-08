@@ -1415,7 +1415,8 @@ jobs:
     name: Derived artifacts reproduce from their sources
     needs: [preflight, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking, architecture-guards, pr-fast-lane-arch, recovered-suites]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    # Keep the immutable Python build available as ubuntu-latest advances.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:

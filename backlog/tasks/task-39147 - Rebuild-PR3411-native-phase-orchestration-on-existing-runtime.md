@@ -18,7 +18,7 @@ documentation:
 - backlog/decisions/356-native-phase-orchestration-runtime-ownership.md
 - Docs/superpowers/specs/2026-11-07-native-phase-orchestration-rebuild-design.md
 - Docs/superpowers/plans/2026-11-07-native-phase-orchestration-rebuild.md
-updated_date: 2026-11-08 07:04
+updated_date: 2026-11-08 08:38
 ---
 
 ## Description
@@ -49,6 +49,7 @@ Replace PR3411's orchestration implementation with a thin phase coordinator usin
 - [x] #18 Re-delivered closing reviews are idempotent for explicitly reviewed terminal history with known or unknown accounting, preserve revision/liveness checks and never reopen removed payloads.
 - [x] #19 The system-prompt editor keeps Apply/Clear/Cancel fully visible and usable at 80×24, including after resizing and Library feedback, with unchanged action results and targeted regression/UAT evidence.
 - [x] #20 The explicitly approved minimal inherited CI repairs pass unchanged diagnostic, query-plan, worker and markup gates, with genuine plan evidence and targeted DOM-loss/literal-rendering regressions.
+- [x] #21 The derived-artifact job selects a runner that provides its unchanged pinned Python build; the immutable artifact-version gate and all existing checks/budgets remain enforced.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -163,6 +164,15 @@ Reason: repair existing DOM-loss/literal-rendering defects and record reviewed d
 3. Capture actual production-query EXPLAIN QUERY PLAN results on the current AgentRuns schema with sqlite_stat1 absent. Pin all three existing workflow indexes with positive plans and dropped-index controls; add plan-pinned census rows only after those tests pass.
 4. Review statement changes for all eight inherited stale diagnostic owners against their last pinned source before regenerating the inventory. Retain all privacy/sink checks and do not relax scanners, census counts, assertions or budgets.
 5. Run the targeted regressions, all four unchanged failing checkers, affected existing controls and lint/format/diff checks. Record exact RED/GREEN evidence and limits, audit preservation, commit-tree/CAS and push only this task branch, then dispatch one exact-head Derived Artifacts run after checking no task run is active. Follow actual logs until overall current-head success; no merge, newer-dev integration or full local sweep.
+
+
+Seventh CI follow-up (runner compatibility, before implementation):
+ADR required: no new ADR
+ADR path: backlog/decisions/124-canvas-mermaid-subset-and-immutable-runtime-profiles.md
+Reason: retain the existing immutable build/runtime contract by selecting a supported runner for its already pinned Python; no runtime, artifact, dependency or authority contract changes.
+1. Retain actual aggregate log 128785469019: all 15 test jobs and the four repaired static gates pass, but setup-python cannot provide pinned 3.12.11 on Ubuntu26.04. Verify supported Linux images in the official actions/python-versions manifest.
+2. Strengthen the existing Python-pin workflow regression with its supported runner, observe RED, then pin only the aggregate runner to Ubuntu24.04. Preserve Python3.12.11, asset inputs/output checks, all other jobs, timeout budgets and gates.
+3. Run targeted workflow positive/negative gate controls, lint/diff and preservation checks. Record actual failures/limits, commit-tree/CAS and push only this task branch. Do not dispatch while the existing run's merge-queue tick is active, and never cancel it; dispatch once after it completes and follow exact-head CI.
 
 <!-- SECTION:PLAN:END -->
 
@@ -491,6 +501,28 @@ Detailed packets and self-review are in the UAT report. The full real index/stat
 dev HEAD and 375 preserved path states still audit unchanged. AC #8 stays open for
 actual exact-head CI; no merge or newer-dev integration. Existing ADR356 applies;
 these routine view/evidence repairs require no new ADR.
+
+
+Seventh CI follow-up: run42493042973 on 1a921835b6 passes all 15 test jobs
+and all four repaired static gates in Linux CI. Its aggregate128785469019 still
+fails: ubuntu-latest now selected Ubuntu26.04, for which setup-python has no
+3.12.11 x64 build. The later Mermaid version refusal is a consequence of that
+failed setup; the immutable Python/input/output checks remain correct.
+
+Only the aggregate runner is pinned to Ubuntu24.04, which the official
+`actions/python-versions` manifest provides for the unchanged Python3.12.11.
+Manifest blob25851576302b86c37ffa01ee654d024d6d06b6de records 22.04/24.04 Linux x64,
+with no26.04 build. The existing Python-pin regression fails before correction
+(1 failure in0.81s); targeted workflow/dispatch controls pass43 cases in5.17s
+on executable tree9f6394c7085310d3acb49bc27011a9a9d5a71d2e. Parsed YAML confirms
+every other job, step, check, Python pin and timeout budget is identical.
+Zero new Ruff findings and diff checks pass; existing CI-test-module formatting
+debt is retained. This is configuration/manifest evidence, not an actual Ubuntu
+rerun. The old run's queued merge tick128791336060 is left alone and blocks a
+new dispatch until it completes. AC8/status remain open for actual new-head CI.
+No production/asset/checker changes, relaxed budgets, newer-dev integration or
+merge. Full-index/status/HEAD and375-state preservation passes. ADR124's existing
+immutable build contract applies; no new ADR is needed.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
