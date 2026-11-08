@@ -184,6 +184,86 @@ async def test_a_focus_the_user_moves_before_the_swap_lands_is_kept(request, mov
         )
 
 
+async def _settle_swap(host, pilot, screen) -> None:
+    """Wait for the swap, then for its own focus (an app call_later)."""
+    import asyncio
+
+    for _ in range(100):
+        if not screen._category_pane_swap_pending:
+            break
+        await pilot.pause(0.05)
+    assert not screen._category_pane_swap_pending
+    landed = asyncio.Event()
+    host.call_later(landed.set)
+    await asyncio.wait_for(landed.wait(), timeout=5)
+
+
+@private_profile_test
+async def test_a_focus_the_user_moves_while_the_panes_rebuild_is_kept(request):
+    """TASK-39135 review r12s-rev2 I1': input keeps running while the swap
+    awaits the panes' rebuild (81-1,348 ms measured), so the check at swap
+    start alone missed a move made then. The detail pane's rebuild is held,
+    "/" moves focus to the rail filter, and the filter keeps it."""
+    import asyncio
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+        pane = screen.query_one("#settings-detail-pane")
+        entered, go = asyncio.Event(), asyncio.Event()
+        real_recompose = pane.recompose
+
+        async def held_recompose():
+            entered.set()
+            await go.wait()
+            return await real_recompose()
+
+        pane.recompose = held_recompose
+        try:
+            screen._select_category("appearance", restore_focus=True)
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            await pilot.press("slash")
+            assert getattr(host.focused, "id", None) == "settings-category-search"
+        finally:
+            go.set()
+        await _settle_swap(host, pilot, screen)
+
+        assert screen.active_category == "appearance"
+        assert getattr(host.focused, "id", None) == "settings-category-search"
+
+
+@private_profile_test
+async def test_a_tab_into_the_panes_the_swap_destroys_keeps_the_landing(request):
+    """TASK-39135 review r12s-rev2 M-a: Overview's "Open Providers & Models"
+    sits in the detail pane the switch rebuilds. A Tab mid-swap moved focus to
+    the next button there, the swap destroyed it, and Textual's focus reset
+    left the user on the Domain Defaults group toggle (where Space collapses
+    the group). A move into the rebuilt panes is not the user's to keep, so
+    the switch still lands on its rail row."""
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        assert screen.active_category == "overview"
+        opener = screen.query_one("#settings-overview-open-providers-models", Button)
+        opener.focus()
+        await _settle(pilot)
+
+        await screen._category_swap_lock.acquire()
+        try:
+            await pilot.press("enter")
+            assert screen._category_pane_swap_pending
+            await pilot.press("tab")
+            assert host.focused is not opener
+        finally:
+            screen._category_swap_lock.release()
+        await _settle_swap(host, pilot, screen)
+
+        assert screen.active_category == "providers-models"
+        assert getattr(host.focused, "id", None) == "settings-category-providers-models"
+
+
 @private_profile_test
 async def test_category_switch_keeps_compact_pane_classes_at_a_compact_size(request):
     """Compact geometry is only measured at a compact size.

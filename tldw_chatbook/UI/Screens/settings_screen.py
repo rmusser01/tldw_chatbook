@@ -4775,14 +4775,8 @@ class SettingsScreen(BaseAppScreen):
                 if not getattr(self, "is_mounted", False):
                     return
                 focus_id = self._focused_id_in_category_panes()
-                if (
-                    self._pending_category_focus_value is not None
-                    and self.focused is not self._pending_category_focus_from
-                ):
-                    # TASK-39135: focus moved after the switch recorded its
-                    # landing (checked before the rebuild, which can reset it).
-                    self._pending_category_focus_value = None
-                    self._theme_list_focus_pending = False
+                if self._focus_left_pending_origin():
+                    self._withdraw_pending_category_focus()
                 self.release_mouse_capture_for_teardown()
                 async with self.batch():
                     for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
@@ -4797,9 +4791,14 @@ class SettingsScreen(BaseAppScreen):
                 self.sweep_stale_mouse_capture()
                 if not getattr(self, "is_mounted", False):
                     return
+                if self._focus_left_pending_origin():
+                    # TASK-39135 review r12s-rev2: input keeps running while the
+                    # panes rebuild, so a move can land mid-rebuild as well.
+                    self._withdraw_pending_category_focus()
+                    focus_id = None  # the user's focus stands
                 category_value = self._pending_category_focus_value
                 if category_value is not None:
-                    self._pending_category_focus_value = None
+                    self._withdraw_pending_category_focus(keep_theme_list=True)
                     self._focus_category(category_value)
                 elif focus_id:
                     self._restore_category_pane_focus(focus_id)
@@ -4816,6 +4815,35 @@ class SettingsScreen(BaseAppScreen):
                 # the winner's own follow-ups into a queue nothing drains.
                 if revision == self._category_swap_revision:
                     self._category_pane_swap_pending = False
+
+    def _withdraw_pending_category_focus(self, *, keep_theme_list: bool = False) -> None:
+        """Drop a switch's pending landing and what had focus when it was made."""
+        self._pending_category_focus_value = None
+        self._pending_category_focus_from = None
+        if not keep_theme_list:
+            self._theme_list_focus_pending = False
+
+    def _focus_left_pending_origin(self) -> bool:
+        """TASK-39135: whether the user moved focus since a switch recorded it.
+
+        Counted only for a move from a widget still attached to a widget
+        outside the two panes the swap rebuilds. Focus that lands in those
+        panes, or Textual's reset after they are removed, cannot be told from
+        the swap's own churn, so the landing stands (review r12s-rev2).
+        """
+        origin, focused = self._pending_category_focus_from, self.focused
+        if (
+            self._pending_category_focus_value is None
+            or origin is None
+            or not origin.is_attached
+            or focused is None
+            or focused is origin
+        ):
+            return False
+        rebuilt = ("settings-detail-pane", "settings-impact-pane")
+        return not any(
+            getattr(node, "id", None) in rebuilt for node in focused.ancestors_with_self
+        )
 
     def _focused_id_in_category_panes(self) -> str | None:
         """The focused widget's id, if this swap is about to destroy it.
@@ -25952,7 +25980,7 @@ class SettingsScreen(BaseAppScreen):
         category_value = self._pending_category_focus_value
         if category_value is None:
             return
-        self._pending_category_focus_value = None
+        self._withdraw_pending_category_focus(keep_theme_list=True)
         self._focus_category(category_value)
 
     @on(DescendantFocus)
