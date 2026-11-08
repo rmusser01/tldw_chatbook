@@ -970,7 +970,9 @@ _BUDGETS: dict[str, int] = {
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the agent bridge gets the services bundle's storage (+1).
-    "tldw_chatbook/Chat/console_runtime.py": 7040,
+    # 2026-11-07, TASK-39117 (owner size waiver): 7069 -> 7072 (+3) -- the
+    # runtime's dispose closes every thread's idle AgentRunsDB handle.
+    "tldw_chatbook/Chat/console_runtime.py": 7072,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in

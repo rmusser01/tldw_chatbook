@@ -350,6 +350,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         reconcile_on_init: bool = True,
     ) -> None:
         self._init_store_kernel()
+        self._join_connection_registry(db_path)  # owner's idle close (TASK-39117)
         self.receipt_capability_available = False
         super().__init__(db_path, client_id)
         # After super().__init__: the agent_runs table exists (base_db ran
@@ -385,7 +386,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open through BaseDB's db.base path (ADR-353 provenance section)."""
-        return BaseDB._get_connection(self)
+        return BaseDB._get_connection(self, check_same_thread=False)
 
     def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
         """AgentRuns per-connection policy (kernel wraps registration/gating).

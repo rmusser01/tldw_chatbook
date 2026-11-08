@@ -617,6 +617,176 @@ async def test_app_unmount_kernel_store_close_never_aborts_a_straggler_write(
     ), took
 
 
+def test_app_unmount_retires_every_agent_runs_handle_through_the_console_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-39117: the console runtime owns the app's AgentRunsDB and its
+    dispose (run by the quit) closed only its own thread's handle, so one an
+    agent worker or receipt read opened on a pool thread outlived the app."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_runtime import (
+        ConsoleRuntime,
+        dispose_console_runtime,
+    )
+
+    app = SimpleNamespace(
+        chachanotes_db=SimpleNamespace(db_path=tmp_path / "chat.db"),
+        conversation_local_marks_service=None,
+    )
+    runtime = ConsoleRuntime(app)
+    runtime.ensure_agent_bridge(
+        store_factory=ConsoleChatStore, provider_gateway_factory=object
+    )
+    db = runtime._agent_runs_db
+    kept = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kept")
+
+    async def quit_after_a_worker_read() -> tuple[list[str], list[str]]:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(kept, db.get_run, "missing")
+        opened = _lease_threads(db)
+        owner = _unmount_owner(monkeypatch, console_runtime=runtime)
+
+        async def dispose_the_runtime() -> None:
+            await dispose_console_runtime(owner)
+
+        # The quit's console step (LifecycleMixin._shutdown_console_runtime
+        # ends in this call); the stub skips only its view-worker drain.
+        owner._shutdown_app_owned_lifecycles = dispose_the_runtime
+        await owner.on_unmount()
+        return opened, _lease_threads(db)
+
+    try:
+        opened, left = asyncio.run(quit_after_a_worker_read())
+    finally:
+        kept.shutdown(wait=True)
+        db.close()
+
+    assert "kept_0" in opened
+    assert left == []
+
+
+def test_rag_ingest_batch_leaves_no_indexing_handle_for_the_quit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-39117: the RAG ingest worker closed only its own thread's
+    indexing-DB handle after a batch, so one the embedding path opened on a
+    pool thread (the attached cache store) outlived the app."""
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import datetime, timezone
+
+    from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+    from tldw_chatbook.RAG_Search.ingestion_indexing import (
+        IndexEntry,
+        IngestionIndexer,
+    )
+    from tldw_chatbook.RAG_Search.simplified.data_models import IndexingResult
+
+    db = RAGIndexingDB(tmp_path / "rag_indexing.db")
+    embed_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kept")
+
+    class Service:
+        """The real batch API; embeddings read the attached cache on a pool."""
+
+        def __init__(self) -> None:
+            self.store = None
+            self.embeddings = SimpleNamespace(set_embedding_cache_store=self.attach)
+            self.vector_store = SimpleNamespace(delete_document=lambda _doc_id: None)
+            self.cache = SimpleNamespace(clear=lambda: None)
+
+        def attach(self, store) -> None:
+            self.store = store
+
+        async def index_batch_optimized(self, documents, **_kwargs):
+            await asyncio.get_running_loop().run_in_executor(
+                embed_pool, self.store.get_cached_embeddings, "model", ["digest"]
+            )
+            return [
+                IndexingResult(
+                    doc_id=d["id"], chunks_created=1, time_taken=0.0, success=True
+                )
+                for d in documents
+            ]
+
+    indexer = IngestionIndexer(rag_service=Service(), indexing_db=db)
+    try:
+        assert indexer.submit(
+            IndexEntry(
+                item_id="1",
+                item_type="media",
+                last_modified=datetime.now(timezone.utc),
+                document={"id": "media_1", "content": "c", "title": "t", "metadata": {}},
+            )
+        )
+        assert indexer.wait_until_idle(30)
+        assert indexer.stats()["indexed"] == 1
+        asyncio.run(_unmount_owner(monkeypatch).on_unmount())
+        left = _lease_threads(db)
+    finally:
+        indexer.stop()
+        embed_pool.shutdown(wait=True)
+        db.close_idle_connections()
+        db.close()
+
+    assert left == []
+
+
+@pytest.mark.parametrize("owner", ["agent_runs", "rag_indexing"])
+def test_owner_idle_close_never_aborts_a_straggler_write(owner: str, tmp_path: Path):
+    """TASK-39117: the console runtime's dispose and the RAG indexing owners
+    now close every thread's idle handle; a worker writing across that close
+    keeps its open transaction and commits it, and the close returns at once."""
+    import threading
+    import time
+
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+    from tldw_chatbook.RAG_Search.ingestion_indexing import _retire_indexing_db
+
+    if owner == "agent_runs":
+        db = AgentRunsDB(tmp_path / "agent_runs.db")
+        close = db.close_idle_connections  # what the runtime's dispose runs
+    else:
+        db = RAGIndexingDB(tmp_path / "rag_indexing.db")
+        close = lambda: _retire_indexing_db(db)  # noqa: E731
+    with db.transaction() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS quit_probe (n TEXT NOT NULL)")
+    entered, release = threading.Event(), threading.Event()
+    outcome: list[str] = []
+
+    def straggler() -> None:
+        try:
+            with db.transaction() as conn:
+                conn.execute("INSERT INTO quit_probe (n) VALUES ('a')")
+                entered.set()
+                release.wait(20)
+                conn.execute("INSERT INTO quit_probe (n) VALUES ('b')")
+            outcome.append("committed")
+        except Exception as exc:  # noqa: BLE001 - the assertion reports it
+            outcome.append(f"{type(exc).__name__}: {exc}")
+            entered.set()
+        finally:
+            db.close()
+
+    writer = threading.Thread(target=straggler)
+    writer.start()
+    assert entered.wait(5)
+    started = time.monotonic()
+    try:
+        close()
+        took = time.monotonic() - started
+    finally:
+        release.set()
+        writer.join(10)
+    try:
+        rows = _rows(db, "quit_probe")
+    finally:
+        db.close()
+
+    assert (outcome, rows, took < 1.0) == (["committed"], 2, True), took
+
+
 def _loop_gaps() -> tuple[list[float], asyncio.Task]:
     """Record the event loop's gaps between 20 ms ticks."""
     import time

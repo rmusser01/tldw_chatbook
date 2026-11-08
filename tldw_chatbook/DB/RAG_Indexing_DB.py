@@ -163,6 +163,7 @@ class RAGIndexingDB(SQLiteStoreKernel):
         # Must precede _initialize_schema(): it already uses the held
         # connection.
         self._init_store_kernel()
+        self._join_connection_registry(self.db_path_str)  # owners' idle close
 
         self._initialize_schema()
 
