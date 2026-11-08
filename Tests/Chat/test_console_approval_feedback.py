@@ -29,7 +29,11 @@ def test_interrupt_provenance_helpers_keep_original_host_aliases():
         "_review_decision",
         "_stamp_answer_provenance",
     ):
-        assert getattr(host, name) is getattr(domain, name)
+        assert (
+            getattr(host, name)
+            is getattr(domain, name)
+            is getattr(domain, name[1:], None)
+        )
 
 
 def captured(round_id="r", revision=1):

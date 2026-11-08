@@ -49,9 +49,9 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Agents.approval_provenance import (
-    _approval_decision_fact as _approval_decision_fact,
-    _review_decision as _review_decision,
-    _stamp_answer_provenance as _stamp_answer_provenance,
+    approval_decision_fact as _approval_decision_fact,  # noqa: F401 - retained host alias
+    review_decision as _review_decision,  # noqa: F401 - retained host alias
+    stamp_answer_provenance as _stamp_answer_provenance,  # noqa: F401 - retained host alias
     approval_was_unanswered as approval_was_unanswered,  # noqa: PLC0414 - retained public seam
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait

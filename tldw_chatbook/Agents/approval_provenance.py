@@ -239,3 +239,8 @@ def _stamp_answer_provenance(
         and read_global_approval_was_unanswered()(row, decisions)
     )
     return result
+
+
+approval_decision_fact = _approval_decision_fact
+review_decision = _review_decision
+stamp_answer_provenance = _stamp_answer_provenance

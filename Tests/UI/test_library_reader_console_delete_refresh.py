@@ -200,9 +200,13 @@ def test_the_settle_wait_reads_flags_the_console_still_sets():
     A rename would make that wait pass without covering the deferred replay it
     exists for; this fails instead.
     """
+    from tldw_chatbook.UI.Console_Modules import config_sync
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    names = set(ChatScreen._run_coalesced_control_bar_sync.__code__.co_names)
+    delegate = ChatScreen._run_coalesced_control_bar_sync
+    assert delegate.__globals__["config_sync"] is config_sync
+    assert "run_coalesced_control_bar_sync" in delegate.__code__.co_names
+    names = set(config_sync.run_coalesced_control_bar_sync.__code__.co_names)
     assert {
         "_console_control_bar_replay_whole_sync",
         "_console_control_bar_sync_scheduled",
