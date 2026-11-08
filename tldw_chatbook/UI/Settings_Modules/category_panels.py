@@ -91,19 +91,17 @@ class ScopeText:
 class SettingsCategoryPanel(Protocol):
     """What a category provides so the screen need not special-case it.
 
-    Every registered panel subclasses this class. The first six members are
-    required. The rest are optional (TASK-1378.2): the defaults below give the
-    answer the screen gives an unregistered category, so a panel overrides
-    only the surfaces it owns. They were drawn from Providers & Models alone,
-    so the next category to move may need to reshape them.
+    Every registered panel subclasses this class. Required: ``category``,
+    ``commit_model``, ``render``, ``has_unsaved_changes``, ``request_save``,
+    ``revert`` and ``scope_text``. Everything below "optional members" has a
+    default that gives the answer the screen gives an unregistered category,
+    so a panel overrides only the surfaces it owns (TASK-1378.2). Those were
+    drawn from Providers & Models alone, so the next category to move may
+    need to reshape them.
     """
 
     category: SettingsCategoryId
     commit_model: CommitModel
-    #: A switch to this category keeps the screen's focus state (the field
-    #: the Inspector names, and the provider form's pending echo
-    #: suppressions); a switch anywhere else drops it.
-    keeps_field_focus: bool = False
 
     def render(self, screen: SettingsScreen) -> ComposeResult:
         """Compose the category's detail pane."""
@@ -126,6 +124,12 @@ class SettingsCategoryPanel(Protocol):
         ...
 
     # -- optional members -------------------------------------------------
+
+    #: A switch to this category keeps the screen's focused field (the one
+    #: the Inspector names); a switch anywhere else drops it. The same switch
+    #: also drops the provider form's pending echo suppressions, which are
+    #: Providers & Models' state still kept on the screen.
+    keeps_field_focus: bool = False
 
     def unsaved_count(self, screen: SettingsScreen) -> int:
         """How many fields are unsaved (the banner's "N unsaved")."""
@@ -155,8 +159,17 @@ class SettingsCategoryPanel(Protocol):
         return any widgets that follow it."""
         return ()
 
+    def refresh_inspector_actions(self, screen: SettingsScreen) -> None:
+        """Re-apply the panel's adjustments after the screen refreshes the
+        Inspector's Save/Revert pair (every caller of that refresh)."""
+
     def test(self, screen: SettingsScreen) -> bool:
-        """Run the category's ``t``; False lets the screen answer it."""
+        """Run the category's ``t``; False lets the screen answer it.
+
+        The screen offers ``t`` (footer, F1, the key itself) only for a
+        category in ``SettingsScreen.TESTABLE_SETTINGS_CATEGORIES``, with its
+        verb in ``TEST_ACTION_LABELS``: list it there too.
+        """
         return False
 
     def navigate(self, screen: SettingsScreen, context: Mapping[str, object]) -> bool:
@@ -165,7 +178,12 @@ class SettingsCategoryPanel(Protocol):
         return False
 
     def focus(self, screen: SettingsScreen, widget_id: str) -> bool:
-        """Name a newly focused field in the Inspector; False clears it."""
+        """Name a newly focused field in the Inspector; False clears it.
+
+        Which fields count as guided, and where the guide starts, still come
+        from settings_screen's ``_FOCUSED_FIELD_GUIDANCE_METHODS`` and
+        ``_FIELD_GUIDE_FIRST_ROW_ID``: list the category there too.
+        """
         return False
 
     def poll(self, screen: SettingsScreen) -> bool:
@@ -1238,7 +1256,6 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
         )
         from .providers_models_card import unsaved_edits_note
 
-        self.relabel_revert(screen)
         screen._update_provider_return_widgets()
         # TASK-33007.4 (AC#3): the next new chat reads saved config, so a
         # dirty form says its edits wait for s, and (#3057) which ones.
@@ -1261,8 +1278,8 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
             # typing and push the active field past the compact fold.
             screen._reveal_settings_focus_after_refresh()
 
-    def relabel_revert(self, screen: SettingsScreen) -> None:
-        """While snapshot preferences cannot be read, ``r`` reloads them."""
+    def refresh_inspector_actions(self, screen: SettingsScreen) -> None:
+        # While snapshot preferences cannot be read, ``r`` reloads them.
         if not (self.showing(screen) and screen._snapshot_preferences_unavailable):
             return
         try:

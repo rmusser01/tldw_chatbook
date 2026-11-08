@@ -111,6 +111,12 @@ A separate trap in the same test: the held provider read gave up waiting for the
 
 **The ratio flips with load (round-13 re-deal, 2026-11-12).** On the same 18-CPU machine at load about 10, fourteen timed census entries took 1.6-3.3 times as long in CI's slowest run (28 PR runs) as serially here; 2.1 weighted by time, and 2.6 at the top of the 3-10 s band most new entries sat in. Charging the 38 entries measured that day at their raw local seconds (186 s in all) would have priced them at well under half of the about 485 s the ratio projects for CI; with every shard dealt to 13.2-13.3 pytest min, a gap that size is the whole margin. The ratio is a property of the day's load, not a constant: measure it in the same session as the entries you price.
 
+## A caller search for `name()` misses a method scheduled by reference (TASK-1378.2, 2026-11-07)
+
+**Incident.** TASK-1378.2 moved the "Revert (r) — reload preferences" relabel out of `SettingsScreen._update_guided_action_widgets` and paired it with that method's callers. The caller search was `grep "_update_guided_action_widgets()"`, which found two. The third, `providers_models_card.py`'s `screen.call_after_refresh(screen._update_guided_action_widgets)`, passes the method without parentheses, so the search never saw it. That unpaired deferred call could reset Revert to "no changes", disabled, while snapshot preferences were unreadable. Review I1 found it with a probe; no test covered the relabel.
+
+**What to do.** Search for the bare name (`grep -rn "_name\b"`), untruncated, before you move behaviour out of a method or claim you have listed its callers: a method handed to `call_after_refresh`, `set_timer`, `run_worker` or a `lambda` has no `()` at the call site. Better still, keep the behaviour inside the method (here, the method now asks the panel's `refresh_inspector_actions` hook itself), so a caller cannot skip it.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:

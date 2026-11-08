@@ -10209,6 +10209,8 @@ class SettingsScreen(BaseAppScreen):
                 continue
             button.disabled = not actions_enabled
             button.label = self._guided_action_label(base, dirty=dirty)
+        if (registered := CATEGORY_PANELS.get(category)) is not None:
+            registered.refresh_inspector_actions(self)
 
     def _category_status(self, summary: SettingsCategorySummary) -> str:
         if self._category_has_unsaved_changes(summary.category):
@@ -14485,7 +14487,6 @@ class SettingsScreen(BaseAppScreen):
                 pass
         if not fenced:
             self._update_guided_action_widgets()
-            PROVIDERS_MODELS_PANEL.relabel_revert(self)
 
     def _vllm_default_recovery(self):
         """Return app-owned failed-release state, if this app exposes the store."""
@@ -23717,7 +23718,7 @@ class SettingsScreen(BaseAppScreen):
         ownership = self._ownership_record(summary.category)
         registered = CATEGORY_PANELS.get(summary.category)
         own_body = registered.inspector(self) if registered is not None else None
-        if summary.category is SettingsCategoryId.HOOKS:
+        if own_body is None and summary.category is SettingsCategoryId.HOOKS:
             yield Static("Hook permissions", classes="destination-section")
             yield Static(
                 "Commands receive event data on stdin and run as an argument array. "
@@ -23727,7 +23728,9 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
                 markup=False,
             )
-        if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+        if own_body is not None:  # a panel's body comes before any category arm
+            yield from own_body
+        elif summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
                 "Chat display name",
@@ -23786,8 +23789,6 @@ class SettingsScreen(BaseAppScreen):
             yield self._detail_row("Scope", "Global fallback defaults and paste collapse")
             yield self._detail_row("Save", STAGED_SAVE_BEHAVIOR_COPY)
             return
-        elif own_body is not None:
-            yield from own_body
         elif summary.category is SettingsCategoryId.LIBRARY_RAG:
             # UX review item 9 (Scope Inspector clipping): a blank spacer
             # ahead of the RAG-specific guidance, separating it from the
@@ -33394,7 +33395,6 @@ class SettingsScreen(BaseAppScreen):
                 "Raw CLI unlock save is still in progress.", severity="warning"
             )
             return
-            return
         if category is SettingsCategoryId.WEB_SEARCH:
             self._web_search_model().capture_pending_input()
         if category is SettingsCategoryId.ADVANCED_CONFIG:
@@ -33494,7 +33494,15 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _revert_category(self, category: SettingsCategoryId) -> None:
-        """Discard a dirty category's staged edits (post-confirmation)."""
+        """Discard a dirty category's staged edits (post-confirmation).
+
+        Raises:
+            ValueError: For a category served by a registered panel; its
+                ``revert`` owns the discard (popping the draft here would
+                toast "reverted" without repainting its widgets).
+        """
+        if category in CATEGORY_PANELS:
+            raise ValueError(f"{category} reverts through its registered panel")
         if category is SettingsCategoryId.HOOKS:
             if not self._hooks_saving:
 
