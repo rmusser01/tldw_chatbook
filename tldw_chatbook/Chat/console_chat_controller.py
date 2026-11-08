@@ -18516,7 +18516,8 @@ class ConsoleChatController:
             for task in read_tasks:
                 if task is not asyncio.current_task():
                     self._cancel_task_on_owner_loop(task)
-            return True
+            # A concurrent read must not consume Stop for a live response.
+            review_stopped = True
         native_tasks = self._ordinary_native_commit_tasks(session_id)
         if native_tasks:
             with self._active_submit_tasks_lock:

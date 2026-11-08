@@ -506,6 +506,11 @@ return. Ordinary automatic wake uses its own empty Context and native authorizat
 Runtime disposal fences the registered wake owner before draining workflows and
 retiring downstream stores and scratch.
 
+Stop cancels current session/app preparation reads and continues through native
+settlement of an already streaming response. A concurrent read does not consume
+that visible Stop action. Cancelled read handles stay owned until their physical
+callbacks return; reads belonging only to another session remain unaffected.
+
 Cold MCP permission publication retains its actual service, store, permission
 candidate, profile binding and path under the originating opaque claim, including
 ordinary sends with agent runtime disabled. The capture acknowledges that native

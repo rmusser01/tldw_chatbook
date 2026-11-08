@@ -125,6 +125,14 @@ Reason: correct synthetic mounted test-profile ownership and native cold MCP pub
 3. Transfer the native MCP publisher's exact permission candidate/path/binding under the existing ordinary claim even when agent runtime is disabled; consume that resource receipt once without function/code attestation. Run the actual send/recovery regressions and explicit cold/custom-source refusal controls. Fix only demonstrated task-related gaps; do not weaken stock capture or restore implementation checks.
 4. Record exact results, preserve the original index/374 paths and the newly observed unrelated untracked `300`, then commit/push only task-related repairs and rerun after active CI ends.
 
+
+CI repair follow-up 3 (2026-11-08), before implementation:
+ADR required: no. ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md.
+Reason: correct existing ordinary Stop and physical-read ownership behavior without adding a boundary or relaxing any fence.
+1. Retain the actual Space-on-Stop CI failure and isolated local passes separately. Diagnose missing explicit Stop records without widening UI deadlines or claiming the intermittent failure is fixed.
+2. Add a deterministic concurrent native-read/stream Stop regression, including app/session attribution, repeated Stop and physical-read retirement. Correct only reproduced control-flow defects; retain native settlement and live-resource protection.
+3. Run targeted Stop/read/dispatch controls and mounted Space/Enter checks, update exact task/UAT evidence and preservation, then commit/push only task fixes and rerun after all active task CI jobs finish.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -354,6 +362,30 @@ remain unchanged. A separate writer added untracked `300` between heartbeats;
 round-two auditing also preserves that path, for 375 checked states. No checkout
 file was edited; repairs and task/evidence updates use Git blobs and the private
 index. Existing ADR356 applies; this direct ownership correction needs no new ADR.
+
+
+Third CI repair batch (2026-11-08): the run on `3a2f2a4` passes the admission
+lane and multiple previously failing UI lanes, but its focused Space-on-Stop case
+fails to observe the explicit user-stop transcript row. That exact mounted failure
+passes in isolation locally; it is retained as intermittent evidence, not called
+fixed from those local passes alone.
+
+A deterministic native-read barrier exposes a related Stop defect: an app-scoped
+or same-session preparation read caused Stop to return before finalizing an already
+streaming response. Stop now cancels those original reads and continues through
+existing native stream settlement. Unrelated-session reads remain running, repeated
+Stop records one user marker, and finite read ownership remains live until physical
+return. No resource, permission, revision, recovery or implementation-identity
+check is added or removed by this control-flow correction.
+
+The new regression has 2 failing cases and 1 passing unrelated-session control
+before correction (22.63s). Final Stop, dispatch-CAS and repeated native-read
+cancellation controls pass 11 cases in 65.84s; both focused Stop UI cases pass in
+53.50s. Assertions, test/UI deadlines and budgets are unchanged. Exact packets,
+source trees and the original CI qualification are in the UAT report. The task
+remains In Progress with AC #8 open for exact-head CI. Existing ADR356 applies;
+no new ADR is required. Dev HEAD, full real index and all 375 dirty/untracked
+states remain preserved; changes use only the private Git index and objects.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

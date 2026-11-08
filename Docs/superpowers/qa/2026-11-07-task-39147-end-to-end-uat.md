@@ -415,3 +415,61 @@ plus exact real index entries/status and original dev HEAD. No real checkout fil
 was edited, and no new worktree or source export was created. AC #8 and task status
 remain open pending a successful exact-head workflow. No full local suite,
 external-provider call, other-platform UAT or newer-dev integration is certified.
+
+
+## Third CI repair batch — concurrent read and streaming Stop
+
+The [run on 3a2f2a4](https://github.com/rmusser01/tldw_chatbook/actions/runs/42450072567)
+passes the admission-sensitive gate and previously failing Settings/attention/Stop
+lanes, but UI lane 4 reports **170 passed, 1 failed in 851.12s**. Its remaining
+failure is the focused Space-on-Stop case at 160×45: the button receives the key
+and the provider submit reports stopped, but the test never observes the required
+`Response stopped by user.` system row. Actual job log:
+`/tmp/pr39147-ci-job-128637182697.log`. Other lanes were still running during this
+repair; the workflow is not green and no active test job was cancelled.
+
+That exact case passes on unchanged pushed code in isolation: **1 passed in
+69.09s**, `/tmp/pr39147-ci-round3-space-stop-red.txt` (the exploratory filename is
+not a claim that the test failed). A separate instrumented diagnosis passes
+**1 case in 29.25s**, `/tmp/pr39147-ci-round3-space-stop-diagnostic.txt`; its real
+controller snapshot has no concurrent preparation read and records the user Stop
+normally. `/tmp/pr39147-ci-round3-stop-diagnostic.jsonl` retains the diagnosis.
+Those isolated passes do not explain away or relabel the actual CI failure.
+
+Source analysis finds an early return after cancelling current preparation reads.
+It can consume Stop while an already streaming response still needs terminal
+settlement. The new test parks an actual finite native-read worker concurrently
+with a real persisted streaming response. App-scoped and same-session variants
+fail before correction; the unrelated-session control passes: **2 failed, 1 passed
+in 22.63s**, `/tmp/pr39147-ci-round3-concurrent-read-stop-red.txt`, tree
+`f177d837fcb32c0cd871d99d7f7b1272699e7693` (unchanged product source).
+
+The repair replaces that early success return with a retained cancellation result
+and continues through existing native commit/stream Stop logic. It retains original
+read attribution/cancellation, exact native settlement and all existing source,
+permission, revision and recovery checks. It does not restore implementation
+attestation. Repeated Stop records one explicit marker. The original finite-read
+record remains unretired while its worker is blocked and retires only after
+physical return; an unrelated-session read is not cancelled.
+
+Verification on tree `10f668eeb6ace9a255955d118197c08b7126f94f`:
+
+- New three-way concurrent-read regression, existing six direct/agent/sync
+  dispatch-CAS settlement cases and the two repeated-cancellation read ownership
+  controls: **11 passed in 65.84s**,
+  `/tmp/pr39147-ci-round3-stop-read-controls.txt`.
+- Original focused Stop Enter at 80×24 and Space at 160×45:
+  **2 passed in 53.50s**, `/tmp/pr39147-ci-round3-mounted-stop-controls.txt`.
+  The original assertions and five-second Stop wait remain unchanged.
+- Ruff comparison across all branch-changed Python files adds **zero findings**;
+  `/tmp/pr39147-ci-round3-lint.txt`. The new test formats cleanly and subsequent
+  formatting preserves its AST. Existing formatter/lint debt is retained.
+
+Commands use the existing Git-source harness with `PYTEST_PLUGINS=pr39147_ci_overlay`
+and the recorded tree, without diagnostic plugins in verification. New regression
+node: `Tests/Chat/test_console_durable_commit_offload.py::test_stop_with_concurrent_preparation_read_still_finalizes_live_stream`.
+No assertion, required CI check, deadline or size budget is relaxed. The original
+CI failure remains unqualified until the new pushed head is tested. No full local
+suite, external-provider or other-platform run; newer-dev integration and merging
+remain outside scope. The complete real index, dev HEAD and 375 preserved path
+states remain unchanged. Existing ADR356 covers this direct Stop/lifetime fix.
