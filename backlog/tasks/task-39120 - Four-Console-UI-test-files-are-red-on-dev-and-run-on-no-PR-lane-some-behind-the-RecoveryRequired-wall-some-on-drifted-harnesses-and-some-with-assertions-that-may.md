@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-07 07:31
+updated_date: 2026-11-08 01:28
 labels:
 - follow-up
 - tests
@@ -100,6 +100,8 @@ Classified every red on base 8b762b52fa (2026-11-07). The fixable test drift is 
 **Files.** `Tests/UI/test_console_inspector_section.py`, `Tests/UI/test_console_store_continuity.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md` (the reused-route lesson).
 
 AC#1 stays unticked: the RR nodes still fail plain, by the brief's ruling (TASK-39141's stream). After this change, store continuity plain gives 4 failed (all RR), 2 passed; before it was 5 failed (4 RR plus the wake render), 1 passed.
+
+**Review r12t-rev1 (2026-11-07).** The store-continuity docstrings and an assertion message said "unmounted". With the reused route, the Console is suspended (`on_screen_suspend` keeps `runtime.view`), so they now say "suspended". The wake test keeps its name because docs cite it, and its docstring notes this. Plain `-n 4`, 3 runs at load 25-61: 2 passed and 4 RR each, as before. Under the temporary marker (load 62): 4 passed, and 2 failed (the active-leaf product red and the reattach redesign), as before.
 
 **Proposed follow-ups (not done here).**
 - Product: after a headless wake turn, move the durable active leaf to the wake reply, not leave it on the notice. Red test: `test_transcript_payload_db_and_active_leaf_all_agree`, run under a `bootstrap_profile` marker until the RR fix lands.

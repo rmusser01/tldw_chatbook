@@ -72,8 +72,9 @@ class _StallingWakeGateway:
     (`console_chat_controller.py`, the `AGENT_WAKE` branch). Holding the
     probe therefore parks the whole wake turn before it has written
     anything, which is what lets a test navigate away and have BOTH wake
-    rows land with no Console mounted. A cold llama.cpp probe is the
-    everyday shape of this stall.
+    rows land while the Console is suspended (the reusable route keeps its
+    one ChatScreen installed, so it is suspended, not unmounted). A cold
+    llama.cpp probe is the everyday shape of this stall.
     """
 
     def __init__(self, reply: str = SEEDED_REPLY) -> None:
@@ -431,7 +432,11 @@ def _db_chain(db, conversation_id):
 
 
 async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
-    """Drive P3b: a wake turn that COMPLETES with no Console mounted.
+    """Drive P3b: a wake turn that COMPLETES while the Console is suspended.
+
+    Since fed0b7257a (TASK-31520) the Console route suspends its installed
+    ChatScreen on navigation instead of unmounting it; `on_screen_suspend`
+    keeps `runtime.view`.
 
     Returns ``(chat2, store, session_id, conversation_id, runs_db, run_id)``
     with Console re-entered through the real navigation API.
@@ -460,7 +465,7 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
     _step("nav: leaving console")
     await _navigate(app, pilot, "library", expect="LibraryScreen")
     _step("nav: left console")
-    assert chat not in app.screen_stack, "Console must actually unmount"
+    assert chat not in app.screen_stack, "Console must actually be suspended"
 
     # ...and only NOW let the turn finish: both wake rows land headless.
     _step("wake: releasing provider")
@@ -499,6 +504,9 @@ async def test_a_wake_that_ran_while_console_was_unmounted_is_in_the_transcript(
     tmp_path, request: pytest.FixtureRequest,
 ):
     """P3b. Executed on unmodified production: the user saw 2 of 4 rows.
+
+    The name predates TASK-31520: the Console is now suspended, not
+    unmounted, while the wake runs (docs cite the name, so it is kept).
 
     The wake turn genuinely ran -- it reached the provider, appended its
     machine-origin SYSTEM notice and its assistant reply, persisted both to
